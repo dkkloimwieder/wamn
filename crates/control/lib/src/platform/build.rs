@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 
 use crate::delivery::environment::EnvironmentFile;
+use crate::platform_build::start_stage;
 
 use super::document::{ClusterDocument, Provider};
 use super::steps::read_platform_version;
@@ -34,14 +35,20 @@ pub async fn apply(
     let repository = std::fs::canonicalize(repository).context("find the repository")?;
     let directory = std::fs::canonicalize(directory).context("find the install directory")?;
     let docker = docker_configuration(document, &directory)?;
-    build_packages(&repository, &packages, &docker, &document.cluster_name).await?;
+    {
+        let _stage = start_stage("package-builds");
+        build_packages(&repository, &packages, &docker, &document.cluster_name).await?;
+    }
     // Stamp-only reads the local UI bundle. The runbook builds it before stamping.
-    run(Command::new("pnpm").current_dir(&repository).args([
-        "--filter",
-        "@wamn/platform-ui",
-        "build",
-    ]))
-    .await?;
+    {
+        let _stage = start_stage("ui-build");
+        run(Command::new("pnpm").current_dir(&repository).args([
+            "--filter",
+            "@wamn/platform-ui",
+            "build",
+        ]))
+        .await?;
+    }
     let chart = directory.join("release-chart");
     if chart.exists() {
         std::fs::remove_dir_all(&chart).context("remove the old install chart")?;
@@ -52,20 +59,29 @@ pub async fn apply(
         .current_dir(&repository)
         .env("DOCKER_CONFIG", &docker)
         .args(platform_arguments(&document.registry, &chart));
-    let output = command
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .with_context(|| format!("start build-platform --stamp-only from {}", ctl.display()))?;
-    successful(output, "build-platform --stamp-only").with_context(|| {
-        format!(
-            "could not stamp platform {version}; build its images once with \
+    {
+        let _stage = start_stage("stamp-only");
+        let status = command
+            .stdin(Stdio::null())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .with_context(|| {
+                format!(
+                    "start build-platform --stamp-only for platform {version} from {}",
+                    ctl.display()
+                )
+            })?;
+        ensure!(
+            status.success(),
+            "build-platform --stamp-only for platform {version} exited {status}; \
+             see stderr above. If images are missing, build them once with \
              `wamn-ctl build-platform --registry {} --out {}`",
             document.registry,
             chart.display()
-        )
-    })?;
+        );
+    }
     ensure!(
         stamped(&chart, &document.registry, version)?,
         "build-platform did not stamp every image of {version} into {}",

@@ -13,13 +13,44 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{Context as _, ensure};
+use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use wamn_execution_contract::canonical_json_bytes;
 
 use crate::release_chart::{CHART_VERSION, ImageSet, QualificationImages, stamp};
+
+/// Print the elapsed time when a build stage ends, including on failure.
+pub(crate) struct Stage {
+    name: String,
+    start: Instant,
+}
+
+pub(crate) fn start_stage(name: impl Into<String>) -> Stage {
+    let name = name.into();
+    eprintln!(
+        "build-platform {name} start {}",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+    );
+    Stage {
+        name,
+        start: Instant::now(),
+    }
+}
+
+impl Drop for Stage {
+    fn drop(&mut self) {
+        eprintln!(
+            "build-platform {} end {} elapsed {:.3}s",
+            self.name,
+            Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            self.start.elapsed().as_secs_f64()
+        );
+    }
+}
 
 /// The content of the platform UI produced by one platform build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +191,7 @@ async fn stamp_from_registry(
         "the chart output {} exists",
         request.out.display()
     );
+    let stage = start_stage("registry-reads");
     let registry = &request.registry;
     let mut pinned = Vec::new();
     let mut missing = Vec::new();
@@ -198,6 +230,7 @@ async fn stamp_from_registry(
     );
     let [host, runner, gates, identity, http, materializer] =
         <[String; 6]>::try_from(pinned).map_err(|_| anyhow::anyhow!("six images were resolved"))?;
+    drop(stage);
     stamp_chart(
         request,
         ([host, runner, gates, identity], (http, materializer)),
@@ -223,6 +256,7 @@ fn stamp_chart(
     ([host, runner, gates, identity], (http, materializer)): ([String; 4], (String, String)),
     receipt: &PlatformBuildReceipt,
 ) -> anyhow::Result<PathBuf> {
+    let _stage = start_stage("stamp");
     let chart = stamp(
         &request.repository.join("deploy/platform/release"),
         &ImageSet {
@@ -258,12 +292,15 @@ async fn build_then_push(
     roles: &Path,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
 ) -> anyhow::Result<([String; 4], (String, String))> {
-    run(Command::new("pnpm").current_dir(&request.repository).args([
-        "--filter",
-        "@wamn/platform-ui",
-        "build",
-    ]))
-    .await?;
+    {
+        let _stage = start_stage("ui-build");
+        run(Command::new("pnpm").current_dir(&request.repository).args([
+            "--filter",
+            "@wamn/platform-ui",
+            "build",
+        ]))
+        .await?;
+    }
     let head = run(Command::new("git").current_dir(&request.repository).args([
         "rev-parse",
         "--verify",
@@ -272,6 +309,7 @@ async fn build_then_push(
     .await?;
     let mut references = Vec::new();
     for target in ["host", "runner", "gates", "identity"] {
+        let _stage = start_stage(format!("image-build-{target}"));
         let reference = format!("{}/wamn-{target}:{CHART_VERSION}", request.registry);
         run(docker(&request.repository)?
             .args(["--target", target, "--tag", &reference])
@@ -281,11 +319,14 @@ async fn build_then_push(
         .await?;
         references.push((target, reference));
     }
-    run(docker(&request.repository)?
-        .args(["--target", "roles", "--output"])
-        .arg(format!("type=local,dest={}", roles.display()))
-        .arg(&request.repository))
-    .await?;
+    {
+        let _stage = start_stage("roles-export");
+        run(docker(&request.repository)?
+            .args(["--target", "roles", "--output"])
+            .arg(format!("type=local,dest={}", roles.display()))
+            .arg(&request.repository))
+        .await?;
+    }
     let mut components = Vec::new();
     for (file, role) in [
         ("http_route.wasm", "http"),
@@ -296,6 +337,7 @@ async fn build_then_push(
     }
     let mut pushed = Vec::new();
     for (target, reference) in &references {
+        let _stage = start_stage(format!("push-{target}"));
         pushed.push(push_image(&mut run, &request.registry, target, reference).await?);
     }
     let images = <[String; 4]>::try_from(pushed)
@@ -357,6 +399,7 @@ async fn push_roles(
     let insecure = loopback(registry);
     let mut pushed = Vec::new();
     for (role, bytes) in components {
+        let _stage = start_stage(format!("push-{role}"));
         let digest = wash_runtime::oci::push_component(
             &format!("{registry}/wamn/{role}:{CHART_VERSION}"),
             &bytes,

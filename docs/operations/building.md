@@ -87,6 +87,19 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 ## Platform UI
 
 `wamn-ctl build-platform` builds `apps/platform_ui/dist` with `pnpm --filter @wamn/platform-ui build` before it builds and pushes the platform images.
+The command writes one line to stderr when each stage starts and ends.
+The stages cover the UI build, four image builds, roles export, each push, and the chart stamp.
+Each line includes a UTC timestamp in RFC 3339 format. End lines also include elapsed seconds:
+
+```text
+build-platform <stage> start <RFC 3339 UTC>
+build-platform <stage> end <RFC 3339 UTC> elapsed <seconds>s
+```
+
+`--stamp-only` prints these lines around registry reads and the chart stamp.
+Step 4.6 forwards these lines as they arrive and times its package builds, UI build, and stamp-only command.
+An end line marks the stage exit, including failure. The command exit status reports success or failure.
+
 The platform UI is a platform asset and has no `wamn.k` or package artifact.
 Install the workspace dependencies with `pnpm install --offline` before the build.
 
