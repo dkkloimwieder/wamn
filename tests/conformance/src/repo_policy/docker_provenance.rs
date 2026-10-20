@@ -70,7 +70,7 @@ fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Pr
         problems.require(
             mounts
                 .iter()
-                .any(|line| line.contains(id) && line.contains("sharing=shared")),
+                .any(|line| line.contains(id) && line.contains("sharing=locked")),
             || format!("{owner} lost shared download cache {id}"),
         );
     }

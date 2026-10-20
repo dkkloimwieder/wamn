@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn only_missing_registry_images_trigger_a_build() {
-        let missing = "Error: the registry does not hold 1 of the 0.1.37 images: localhost/wamn-runner (not found)";
+        let missing = "Error: the registry does not hold 1 of the 0.1.38 images: localhost/wamn-runner (not found)";
         assert!(build_after_stamp(false, missing));
         assert!(!build_after_stamp(true, missing));
         for error in [
