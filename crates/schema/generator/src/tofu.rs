@@ -28,13 +28,17 @@ pub fn render_project_tofu(
         "projects/{}/locations/{}/clusters/{}",
         project.project_id, project.zone, project.cluster_name
     );
+    let (region, _) = project
+        .zone
+        .rsplit_once('-')
+        .expect("validated zone has a zone suffix");
     let cluster = json!({
         "name": project.cluster_name,
         "project": project.project_id,
         "location": project.zone,
         "release_channel": {"channel": project.release_channel.to_ascii_uppercase()},
-        "network": project.network,
-        "subnetwork": project.subnetwork,
+        "network": format!("projects/{}/global/networks/{}", project.project_id, project.network),
+        "subnetwork": format!("projects/{}/regions/{region}/subnetworks/{}", project.project_id, project.subnetwork),
         "ip_allocation_policy": {
             "cluster_secondary_range_name": project.pod_secondary_range_name,
             "services_secondary_range_name": project.service_secondary_range_name,
@@ -50,7 +54,7 @@ pub fn render_project_tofu(
         "remove_default_node_pool": true,
         "initial_node_count": 1,
         "deletion_protection": true,
-        "lifecycle": {"prevent_destroy": true},
+        "lifecycle": {"prevent_destroy": true, "ignore_changes": ["initial_node_count"]},
     });
     let mut imports = vec![json!({"to": "google_container_cluster.cluster", "id": cluster_id})];
     let mut pools = Map::new();
@@ -95,7 +99,7 @@ pub fn render_project_tofu(
                 "taint": taints,
                 "service_account": project.node_service_account,
             },
-            "lifecycle": {"prevent_destroy": true},
+            "lifecycle": {"prevent_destroy": true, "ignore_changes": ["node_count"]},
         });
         if pool.spot {
             resource["upgrade_settings"] = json!({"max_surge": 0, "max_unavailable": 1});
@@ -191,8 +195,11 @@ mod tests {
         assert_eq!(cluster["name"], "wamn");
         assert_eq!(cluster["project"], "wamn-dev");
         assert_eq!(cluster["location"], "us-central1-a");
-        assert_eq!(cluster["network"], "wamn");
-        assert_eq!(cluster["subnetwork"], "wamn-us-central1");
+        assert_eq!(cluster["network"], "projects/wamn-dev/global/networks/wamn");
+        assert_eq!(
+            cluster["subnetwork"],
+            "projects/wamn-dev/regions/us-central1/subnetworks/wamn-us-central1"
+        );
         assert_eq!(cluster["release_channel"]["channel"], "REGULAR");
         assert_eq!(
             cluster["ip_allocation_policy"],
@@ -218,6 +225,10 @@ mod tests {
         assert_eq!(cluster["initial_node_count"], 1);
         assert_eq!(cluster["deletion_protection"], true);
         assert_eq!(cluster["lifecycle"]["prevent_destroy"], true);
+        assert_eq!(
+            cluster["lifecycle"]["ignore_changes"],
+            json!(["initial_node_count"])
+        );
 
         let pools = resources["google_container_node_pool"].as_object().unwrap();
         let declared_pools = declared["node_pools"].as_array().unwrap();
@@ -232,6 +243,7 @@ mod tests {
             assert!(pool.get("initial_node_count").is_none());
             assert!(pool.get("autoscaling").is_none());
             assert_eq!(pool["lifecycle"]["prevent_destroy"], true);
+            assert_eq!(pool["lifecycle"]["ignore_changes"], json!(["node_count"]));
             for field in ["machine_type", "spot", "disk_type"] {
                 assert_eq!(pool["node_config"][field], source[field]);
             }
