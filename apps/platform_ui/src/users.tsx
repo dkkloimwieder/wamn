@@ -1,7 +1,9 @@
-import { createSignal, For, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { Button, Field, FieldError, Input, Label } from "@wfe/components/fields";
-import { SelectField } from "@wfe/components/select";
+import { Button, FieldError, Input } from "@wfe/components/fields";
+import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
+import { Records } from "./records";
+import { emailError } from "./email";
 import { createForm } from "@wfe/form";
 import { environment, member, orgAdmin, project, projectAdmin, user } from "@wamn/control-org-client";
 import type { Outcome } from "@wamn/web-runtime";
@@ -39,129 +41,143 @@ export function Users(props: ScreenProps): JSX.Element {
     }
   };
   const defaults = { email: "", displayName: "" };
+  const Email = (field: CustomFieldProps<typeof defaults, "email">) => <Input {...field} type="email" />;
   const [values, setValues] = createSignal(defaults);
   const form = createForm({
     values,
     defaults: () => defaults,
     onValuesChange: setValues,
-    validate: (snapshot) =>
-      snapshot.email.trim() && snapshot.displayName.trim()
+    validate: (snapshot) => {
+      const email = emailError(snapshot.email);
+      if (email) return { fields: { email } };
+      return snapshot.email.trim() && snapshot.displayName.trim()
         ? {}
-        : { form: "Enter an email address and a display name." },
+        : { form: "Enter an email address and a display name." };
+    },
     onSubmit: async (snapshot) => {
-      const invited = value(
-        await user.invite(props.transport, [
-          {
-            requestId: crypto.randomUUID(),
-            value: {
-              ...snapshot,
-              memberships: [],
-              projectAdmins: [],
-              orgAdmin: false,
+      try {
+        const invited = value(
+          await user.invite(props.transport, [
+            {
+              requestId: crypto.randomUUID(),
+              value: {
+                ...snapshot,
+                memberships: [],
+                projectAdmins: [],
+                orgAdmin: false,
+              },
             },
-          },
-        ]),
-      );
-      await refresh();
-      if (active) setInvitation(invited);
-      return { ok: true };
+          ]),
+        );
+        await refresh();
+        if (active) setInvitation(invited);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, errors: { form: String(error) } };
+      }
     },
   });
+  // Present the existing write lock without creating another form coordinator.
+  const invitationForm = Object.create(form, {
+    pending: { get: () => form.pending || pending() },
+  }) as typeof form;
   return (
     <Page title="Users">
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
       <Show when={props.holds(user.USER_INVITE_ROUTE.operation)}>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void form.submit();
+        <FormView
+          description={
+            {
+              id: "invite-user",
+              fields: [
+                { field: "email", label: "Email", control: "custom" },
+                { field: "displayName", label: "Display name", control: "text" },
+              ],
+              submit: { id: "invite-user", label: "Invite user" },
+            } as const satisfies FormDescription<typeof defaults>
+          }
+          bindings={{
+            form: invitationForm,
+            fields: { email: Email },
           }}
-        >
-          <Field>
-            <Label for="invite-email">Email</Label>
-            <Input
-              id="invite-email"
-              type="email"
-              value={form.values.email}
-              onValueChange={(email) => form.setValue("email", email)}
-            />
-          </Field>
-          <Field>
-            <Label for="invite-name">Display name</Label>
-            <Input
-              id="invite-name"
-              value={form.values.displayName}
-              onValueChange={(name) => form.setValue("displayName", name)}
-            />
-          </Field>
-          <Show when={form.errors.form}>
-            <FieldError role="alert">{form.errors.form}</FieldError>
-          </Show>
-          <Show when={form.phase === "error"}>
-            <FieldError role="alert">{String(form.failure)}</FieldError>
-          </Show>
-          <Button type="submit" disabled={pending() || form.pending}>
-            Invite user
-          </Button>
-          <Show when={form.phase === "success"}>
-            <p role="status">{invitation()?.invited ? "User invited." : "User is already enrolled."}</p>
-          </Show>
-        </form>
+        />
+        <Show when={form.phase === "success"}>
+          <p role="status">{invitation()?.invited ? "User invited." : "User is already enrolled."}</p>
+        </Show>
       </Show>
-      <ul aria-label="Users">
-        <For each={users()}>
-          {(person) => (
-            <li aria-label={person.email}>
-              <Button onClick={() => props.open(`users/${encodeURIComponent(person.principalId)}`)}>
-                {person.displayName}
+      <Records
+        id="users"
+        title="Users"
+        rows={users()}
+        rowKey={(person) => person.principalId}
+        columns={[
+          { id: "name", header: "Name", size: 180 },
+          { id: "email", header: "Email", accessorKey: "email", size: 250 },
+          { id: "state", header: "State", size: 170 },
+          { id: "role", header: "Role", size: 120 },
+          { id: "activate", header: "Account", size: 170 },
+          { id: "admin", header: "Administration", size: 190 },
+        ]}
+        cells={{
+          name: (cell) => (
+            <Button onClick={() => props.open(`users/${encodeURIComponent(cell.row.principalId)}`)}>
+              {cell.row.displayName}
+            </Button>
+          ),
+          state: (cell) => <>User state: {cell.row.status}</>,
+          role: (cell) => <>{cell.row.orgAdmin ? "Org admin" : "User"}</>,
+          activate: (cell) => (
+            <Show
+              when={props.holds(
+                cell.row.status === "active"
+                  ? user.USER_DEACTIVATE_ROUTE.operation
+                  : user.USER_ACTIVATE_ROUTE.operation,
+              )}
+            >
+              <Button
+                disabled={pending() || form.pending}
+                onClick={() =>
+                  void write(() =>
+                    (cell.row.status === "active" ? user.deactivate : user.activate)(props.transport, [
+                      {
+                        requestId: crypto.randomUUID(),
+                        value: { principalId: cell.row.principalId },
+                      },
+                    ]),
+                  )
+                }
+              >
+                {cell.row.status === "active" ? "Deactivate user" : "Activate user"}
               </Button>
-              <p>{person.email}</p>
-              <p>User state: {person.status}</p>
-              <p>{person.orgAdmin ? "Org admin" : "User"}</p>
-              <Show
-                when={props.holds(
-                  person.status === "active"
-                    ? user.USER_DEACTIVATE_ROUTE.operation
-                    : user.USER_ACTIVATE_ROUTE.operation,
-                )}
+            </Show>
+          ),
+          admin: (cell) => (
+            <Show
+              when={props.holds(
+                cell.row.orgAdmin
+                  ? orgAdmin.ORG_ADMIN_REVOKE_ROUTE.operation
+                  : orgAdmin.ORG_ADMIN_GRANT_ROUTE.operation,
+              )}
+            >
+              <Button
+                disabled={pending() || form.pending}
+                onClick={() =>
+                  void write(() =>
+                    (cell.row.orgAdmin ? orgAdmin.revoke : orgAdmin.grant)(props.transport, [
+                      {
+                        requestId: crypto.randomUUID(),
+                        value: { principalId: cell.row.principalId },
+                      },
+                    ]),
+                  )
+                }
               >
-                <Button
-                  disabled={pending() || form.pending}
-                  onClick={() =>
-                    void write(() =>
-                      (person.status === "active" ? user.deactivate : user.activate)(props.transport, [
-                        { requestId: crypto.randomUUID(), value: { principalId: person.principalId } },
-                      ]),
-                    )
-                  }
-                >
-                  {person.status === "active" ? "Deactivate user" : "Activate user"}
-                </Button>
-              </Show>
-              <Show
-                when={props.holds(
-                  person.orgAdmin
-                    ? orgAdmin.ORG_ADMIN_REVOKE_ROUTE.operation
-                    : orgAdmin.ORG_ADMIN_GRANT_ROUTE.operation,
-                )}
-              >
-                <Button
-                  disabled={pending() || form.pending}
-                  onClick={() =>
-                    void write(() =>
-                      (person.orgAdmin ? orgAdmin.revoke : orgAdmin.grant)(props.transport, [
-                        { requestId: crypto.randomUUID(), value: { principalId: person.principalId } },
-                      ]),
-                    )
-                  }
-                >
-                  {person.orgAdmin ? "Revoke org admin" : "Grant org admin"}
-                </Button>
-              </Show>
-            </li>
-          )}
-        </For>
-      </ul>
+                {cell.row.orgAdmin ? "Revoke org admin" : "Grant org admin"}
+              </Button>
+            </Show>
+          ),
+        }}
+      />
     </Page>
   );
 }
@@ -225,16 +241,26 @@ export function User(props: ScreenProps): JSX.Element {
   const form = createForm({
     values,
     defaults: () => defaults,
-    onValuesChange: setValues,
+    onValuesChange: (next) => setValues(next.project === values().project ? next : { ...next, env: "" }),
     validate: (snapshot) => (snapshot.project && snapshot.env ? {} : { form: "Select a project and an environment." }),
     onSubmit: async (snapshot) => {
-      value(
-        await member.grant(props.transport, [{ requestId: crypto.randomUUID(), value: { ...snapshot, principalId } }]),
-      );
-      await refresh();
-      return { ok: true };
+      try {
+        value(
+          await member.grant(props.transport, [
+            { requestId: crypto.randomUUID(), value: { ...snapshot, principalId } },
+          ]),
+        );
+        await refresh();
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, errors: { form: String(error) } };
+      }
     },
   });
+  // Present the existing write lock without creating another form coordinator.
+  const membershipForm = Object.create(form, {
+    pending: { get: () => form.pending || pending() },
+  }) as typeof form;
   return (
     <Page title={person()?.displayName ?? "User"}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
@@ -244,103 +270,108 @@ export function User(props: ScreenProps): JSX.Element {
             <p>{current().email}</p>
             <p>User state: {current().status}</p>
             <Show when={props.holds(member.MEMBER_GRANT_ROUTE.operation, form.values.project || undefined)}>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void form.submit();
+              <FormView
+                description={
+                  {
+                    id: "user-membership",
+                    fields: [
+                      { field: "project", label: "Project", control: "select" },
+                      { field: "env", label: "Environment", control: "select" },
+                    ],
+                    submit: { id: "grant-membership", label: "Grant membership" },
+                  } as const satisfies FormDescription<typeof defaults>
+                }
+                bindings={{
+                  form: membershipForm,
+                  choices: {
+                    project: () => projects().map((entry) => ({ value: entry.project, label: entry.project })),
+                    env: () =>
+                      (projects().find((entry) => entry.project === form.values.project)?.environments ?? []).map(
+                        (env) => ({ value: env, label: env }),
+                      ),
+                  },
                 }}
-              >
-                <Field>
-                  <Label>Project</Label>
-                  <SelectField
-                    label="Project"
-                    choices={projects().map((entry) => ({ value: entry.project, label: entry.project }))}
-                    value={form.values.project}
-                    onValueChange={(name) => setValues({ project: name, env: "" })}
-                  />
-                </Field>
-                <Field>
-                  <Label>Environment</Label>
-                  <SelectField
-                    label="Environment"
-                    choices={(
-                      projects().find((entry) => entry.project === form.values.project)?.environments ?? []
-                    ).map((env) => ({ value: env, label: env }))}
-                    value={form.values.env}
-                    onValueChange={(env) => form.setValue("env", env)}
-                  />
-                </Field>
-                <Show when={form.errors.form}>
-                  <FieldError role="alert">{form.errors.form}</FieldError>
-                </Show>
-                <Show when={form.phase === "error"}>
-                  <FieldError role="alert">{String(form.failure)}</FieldError>
-                </Show>
-                <Button type="submit" disabled={pending() || form.pending}>
-                  Grant membership
-                </Button>
-                <Show when={form.phase === "success"}>
-                  <p role="status">Membership granted.</p>
-                </Show>
-              </form>
+              />
+              <Show when={form.phase === "success"}>
+                <p role="status">Membership granted.</p>
+              </Show>
             </Show>
-            <ul aria-label="Project access">
-              <For each={projects()}>
-                {(entry) => (
-                  <li aria-label={entry.project}>
-                    <h2>{entry.project}</h2>
-                    <p>{entry.member?.projectAdmin ? "Project admin" : "User"}</p>
-                    <Show
-                      when={props.holds(
-                        entry.member?.projectAdmin
-                          ? projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation
-                          : projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
-                        entry.project,
-                      )}
+            <Records
+              id="project-access"
+              title="Project access"
+              rows={projects()}
+              rowKey={(entry) => entry.project}
+              columns={[
+                { id: "project", header: "Project", accessorKey: "project", size: 200 },
+                { id: "role", header: "Role", size: 130 },
+                { id: "admin", header: "Administration", size: 200 },
+                { id: "memberships", header: "Memberships", size: 420 },
+              ]}
+              cells={{
+                project: (cell) => <h2>{cell.row.project}</h2>,
+                role: (cell) => <>{cell.row.member?.projectAdmin ? "Project admin" : "User"}</>,
+                admin: (cell) => (
+                  <Show
+                    when={props.holds(
+                      cell.row.member?.projectAdmin
+                        ? projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation
+                        : projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
+                      cell.row.project,
+                    )}
+                  >
+                    <Button
+                      disabled={pending() || form.pending}
+                      onClick={() =>
+                        void write(() =>
+                          (cell.row.member?.projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(props.transport, [
+                            {
+                              requestId: crypto.randomUUID(),
+                              value: { project: cell.row.project, principalId },
+                            },
+                          ]),
+                        )
+                      }
                     >
-                      <Button
-                        disabled={pending() || form.pending}
-                        onClick={() =>
-                          void write(() =>
-                            (entry.member?.projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(props.transport, [
-                              { requestId: crypto.randomUUID(), value: { project: entry.project, principalId } },
-                            ]),
-                          )
-                        }
-                      >
-                        {entry.member?.projectAdmin ? "Revoke project admin" : "Grant project admin"}
-                      </Button>
-                    </Show>
-                    <ul aria-label={`Memberships in ${entry.project}`}>
-                      <For each={entry.member?.environments ?? []}>
-                        {(env) => (
-                          <li>
-                            {env}
-                            <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation, entry.project)}>
-                              <Button
-                                disabled={pending() || form.pending}
-                                onClick={() =>
-                                  void write(() =>
-                                    member.revoke(props.transport, [
-                                      {
-                                        requestId: crypto.randomUUID(),
-                                        value: { project: entry.project, env, principalId },
-                                      },
-                                    ]),
-                                  )
-                                }
-                              >
-                                Revoke membership in {env}
-                              </Button>
-                            </Show>
-                          </li>
-                        )}
-                      </For>
-                    </ul>
-                  </li>
-                )}
-              </For>
-            </ul>
+                      {cell.row.member?.projectAdmin ? "Revoke project admin" : "Grant project admin"}
+                    </Button>
+                  </Show>
+                ),
+                memberships: (cell) => (
+                  <Records
+                    id="user-environments"
+                    title={`Memberships in ${cell.row.project}`}
+                    rows={cell.row.member?.environments ?? []}
+                    rowKey={(env) => env}
+                    columns={[
+                      { id: "env", header: "Environment" },
+                      { id: "revoke", header: "Action", size: 240 },
+                    ]}
+                    cells={{
+                      env: (entry) => <>{entry.row}</>,
+                      revoke: (entry) => (
+                        <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation, cell.row.project)}>
+                          <Button
+                            disabled={pending() || form.pending}
+                            onClick={() =>
+                              void write(() =>
+                                member.revoke(props.transport, [
+                                  {
+                                    requestId: crypto.randomUUID(),
+                                    value: { project: cell.row.project, env: entry.row, principalId },
+                                  },
+                                ]),
+                              )
+                            }
+                          >
+                            Revoke membership in {entry.row}
+                          </Button>
+                        </Show>
+                      ),
+                    }}
+                  />
+                ),
+              }}
+            />
           </>
         )}
       </Show>

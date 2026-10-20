@@ -103,12 +103,12 @@ describe("Environment", () => {
     mount(data);
     await screen.findByRole("region", { name: "Release profile" });
     expect(screen.getByRole("region", { name: "Environment status" }).textContent).toContain("sha256:release");
-    expect(screen.getByRole("list", { name: "Workloads" }).textContent).toContain("Ready: True");
-    expect(screen.getByRole("list", { name: "Live releases" }).textContent).toContain("1 pods");
-    expect(screen.getByRole("list", { name: "Operations" }).textContent).toContain(
+    expect(screen.getByRole("table", { name: "Workloads" }).textContent).toContain("Ready: True");
+    expect(screen.getByRole("table", { name: "Live releases" }).textContent).toContain("1 pods");
+    expect(screen.getByRole("table", { name: "Operations" }).textContent).toContain(
       "receipt: reads id; writes quantity; locks yes; deletes no",
     );
-    expect(screen.getByRole("list", { name: "Roles" }).textContent).toContain("clerk: acme:receiving/record");
+    expect(screen.getByRole("table", { name: "Roles" }).textContent).toContain("clerk: acme:receiving/record");
     expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(1);
   });
 

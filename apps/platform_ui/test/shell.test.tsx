@@ -23,7 +23,7 @@ describe("the app shell", () => {
     const { container } = render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
     expect(await screen.findByText(aud === CONTROL ? "acme" : "Stub app")).toBeDefined();
     expect(await screen.findByText("sign out")).toBeDefined();
-    expect(container.querySelector("nav section")).toBeNull();
+    expect(container.querySelector("nav .ui-dashboard-panel")).toBeNull();
     expect(screen.queryByText("This address names no page.")).toBeNull();
     window.history.pushState({}, "", `/${aud}/unknown`);
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -72,14 +72,14 @@ describe("the app shell", () => {
     open(`/${AUD}/pallets`, fetch);
     await screen.findByText("pallets screen");
     const link = (text: string) => screen.getByText(text).closest("a");
-    expect(link("Pallets")?.getAttribute("data-active")).toBe("true");
+    expect(link("Pallets")?.getAttribute("aria-current")).toBe("page");
     expect(link("Products")).toBeNull();
     expect(screen.getAllByText("query").length).toBe(1);
     fireEvent.click(screen.getByText("aggregate"));
     expect(await screen.findByText("product totals screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/product-totals`));
-    expect(link("aggregate")?.getAttribute("data-active")).toBe("true");
-    expect(link("Pallets")?.getAttribute("data-active")).toBeNull();
+    expect(link("aggregate")?.getAttribute("aria-current")).toBe("page");
+    expect(link("Pallets")?.getAttribute("aria-current")).toBeNull();
     fireEvent.click(screen.getByText("query"));
     expect(await screen.findByText("products screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/products`));
@@ -91,7 +91,7 @@ describe("the app shell", () => {
     fireEvent.click(await screen.findByText("open pallet abc"));
     expect(await screen.findByText("pallet abc record")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`));
-    expect(screen.getByText("Pallets").closest("a")?.getAttribute("data-active")).toBe("true");
+    expect(screen.getByText("Pallets").closest("a")?.getAttribute("aria-current")).toBe("page");
     fireEvent.click(screen.getByText("open pallet def"));
     expect(await screen.findByText("pallet def record")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/def`));

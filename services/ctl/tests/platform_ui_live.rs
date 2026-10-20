@@ -119,7 +119,11 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         .canonicalize()?;
     let mut postgres = wamn_test_postgres::start(&[("wal_level", "logical")])?;
     let system = postgres.create_database("wamn_system")?;
-    let root = PathBuf::from(required("WAMN_TIMINGS_ROOT")?).join("platform-ui-env");
+    let results = PathBuf::from(required("WAMN_TIMINGS_ROOT")?);
+    let report = results.join("platform-ui-screenshots");
+    std::fs::create_dir_all(&report)?;
+    println!("Platform UI screenshots: {}", report.display());
+    let root = results.join("platform-ui-env");
     let wamn = required("WAMN_RECEIVING_DEV_BIN")?;
     let mut up = Command::new(&wamn);
     up.current_dir(&repository)
@@ -192,7 +196,7 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit())
             .kill_on_drop(true).spawn()?;
         let mut input = browser.stdin.take().context("browser input")?;
-        input.write_all(format!("{}\n", json!({"email": SECOND_EMAIL, "project": BROWSER_PROJECT, "env": ENVIRONMENT, "releaseProject": PROJECT, "releaseEnv": ENVIRONMENT, "releaseDigest": endpoint["digest"]})).as_bytes()).await?;
+        input.write_all(format!("{}\n", json!({"reportDirectory": report, "email": SECOND_EMAIL, "project": BROWSER_PROJECT, "env": ENVIRONMENT, "releaseProject": PROJECT, "releaseEnv": ENVIRONMENT, "releaseDigest": endpoint["digest"]})).as_bytes()).await?;
         let mut output = BufReader::new(browser.stdout.take().context("browser output")?);
         let mut line = String::new();
         output.read_line(&mut line).await?;

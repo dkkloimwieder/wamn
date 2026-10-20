@@ -15,6 +15,7 @@
     "skipLibCheck": true,
     "types": ["node", "vite/client"],
     "paths": {
+      "d3-shape": ["./node_modules/@types/d3-shape"],
       "@wamn/web-runtime": ["../../web/runtime/src/index.ts"],
       "@wamn/control-client": ["../target/wamn/wamn_control/client-ts/index.ts"],
       "@wamn/control-org-client": ["../target/wamn/wamn_control/control/client-ts/index.ts"],

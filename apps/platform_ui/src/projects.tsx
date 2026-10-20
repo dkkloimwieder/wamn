@@ -1,7 +1,8 @@
-import { createSignal, For, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { Button, Field, FieldError, Input, Label } from "@wfe/components/fields";
-import { SelectField } from "@wfe/components/select";
+import { Button, FieldError } from "@wfe/components/fields";
+import { FormView, type FormDescription } from "@wfe/generator";
+import { Records } from "./records";
 import { createForm } from "@wfe/form";
 import { control, environment, member, project, projectAdmin } from "@wamn/control-org-client";
 import type { Outcome } from "@wamn/web-runtime";
@@ -33,51 +34,44 @@ export function Projects(props: ScreenProps): JSX.Element {
     onValuesChange: setValues,
     validate: (snapshot) => (snapshot.project.trim() ? {} : { form: "Enter a project name." }),
     onSubmit: async (snapshot) => {
-      value(await project.create(props.transport, [{ requestId: crypto.randomUUID(), value: snapshot }]));
-      await refresh();
-      return { ok: true };
+      try {
+        value(await project.create(props.transport, [{ requestId: crypto.randomUUID(), value: snapshot }]));
+        await refresh();
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, errors: { form: String(error) } };
+      }
     },
   });
   return (
     <Page title="Projects">
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-      <ul aria-label="Projects">
-        <For each={projects()}>
-          {(name) => (
-            <li>
-              <Button onClick={() => props.open(`projects/${encodeURIComponent(name)}`)}>{name}</Button>
-            </li>
-          )}
-        </For>
-      </ul>
+      <Records
+        id="projects"
+        title="Projects"
+        rows={projects()}
+        rowKey={(name) => name}
+        columns={[{ id: "project", header: "Project" }]}
+        cells={{
+          project: (cell) => (
+            <Button onClick={() => props.open(`projects/${encodeURIComponent(cell.row)}`)}>{cell.row}</Button>
+          ),
+        }}
+      />
       <Show when={props.holds(project.PROJECT_CREATE_ROUTE.operation)}>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void form.submit();
-          }}
-        >
-          <Field>
-            <Label for="project-name">Project name</Label>
-            <Input
-              id="project-name"
-              value={form.values.project}
-              onValueChange={(name) => form.setValue("project", name)}
-            />
-          </Field>
-          <Show when={form.errors.form}>
-            <FieldError role="alert">{form.errors.form}</FieldError>
-          </Show>
-          <Show when={form.phase === "error"}>
-            <FieldError role="alert">{String(form.failure)}</FieldError>
-          </Show>
-          <Button type="submit" disabled={form.pending}>
-            Create project
-          </Button>
-          <Show when={form.phase === "success"}>
-            <p role="status">Project created.</p>
-          </Show>
-        </form>
+        <FormView
+          description={
+            {
+              id: "create-project",
+              fields: [{ field: "project", label: "Project name", control: "text" }],
+              submit: { id: "create-project", label: "Create project" },
+            } as const satisfies FormDescription<typeof defaults>
+          }
+          bindings={{ form }}
+        />
+        <Show when={form.phase === "success"}>
+          <p role="status">Project created.</p>
+        </Show>
       </Show>
     </Page>
   );
@@ -133,15 +127,23 @@ export function Project(props: ScreenProps): JSX.Element {
     validate: (snapshot) =>
       snapshot.principalId.trim() && snapshot.env ? {} : { form: "Enter a user ID and select an environment." },
     onSubmit: async (snapshot) => {
-      value(
-        await member.grant(props.transport, [
-          { requestId: crypto.randomUUID(), value: { ...snapshot, project: name } },
-        ]),
-      );
-      await refresh();
-      return { ok: true };
+      try {
+        value(
+          await member.grant(props.transport, [
+            { requestId: crypto.randomUUID(), value: { ...snapshot, project: name } },
+          ]),
+        );
+        await refresh();
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, errors: { form: String(error) } };
+      }
     },
   });
+  // Present the existing write lock without creating another form coordinator.
+  const membershipForm = Object.create(form, {
+    pending: { get: () => form.pending || pending() },
+  }) as typeof form;
   return (
     <Page title={name}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
@@ -169,117 +171,125 @@ export function Project(props: ScreenProps): JSX.Element {
         </Show>
       </Show>
       <h2>Environments</h2>
-      <ul aria-label="Environments">
-        <For each={environments()}>
-          {(env) => (
-            <li>
-              <Button onClick={() => props.open(`projects/${encodeURIComponent(name)}/${encodeURIComponent(env)}`)}>
-                {env}
-              </Button>
-            </li>
-          )}
-        </For>
-      </ul>
+      <Records
+        id="environments"
+        title="Environments"
+        rows={environments()}
+        rowKey={(env) => env}
+        columns={[{ id: "environment", header: "Environment" }]}
+        cells={{
+          environment: (cell) => (
+            <Button onClick={() => props.open(`projects/${encodeURIComponent(name)}/${encodeURIComponent(cell.row)}`)}>
+              {cell.row}
+            </Button>
+          ),
+        }}
+      />
       <h2>Members</h2>
       <Show when={props.holds(member.MEMBER_GRANT_ROUTE.operation)}>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void form.submit();
+        <FormView
+          description={
+            {
+              id: "project-membership",
+              fields: [
+                { field: "principalId", label: "User ID", control: "text" },
+                { field: "env", label: "Environment", control: "select" },
+              ],
+              submit: { id: "grant-membership", label: "Grant membership" },
+            } as const satisfies FormDescription<typeof defaults>
+          }
+          bindings={{
+            form: membershipForm,
+            choices: { env: () => environments().map((env) => ({ value: env, label: env })) },
           }}
-        >
-          <Field>
-            <Label for="member-id">User ID</Label>
-            <Input
-              id="member-id"
-              value={form.values.principalId}
-              onValueChange={(id) => form.setValue("principalId", id)}
-            />
-          </Field>
-          <Field>
-            <Label>Environment</Label>
-            <SelectField
-              label="Environment"
-              choices={environments().map((env) => ({ value: env, label: env }))}
-              value={form.values.env}
-              onValueChange={(env) => form.setValue("env", env)}
-            />
-          </Field>
-          <Show when={form.errors.form}>
-            <FieldError role="alert">{form.errors.form}</FieldError>
-          </Show>
-          <Show when={form.phase === "error"}>
-            <FieldError role="alert">{String(form.failure)}</FieldError>
-          </Show>
-          <Button type="submit" disabled={form.pending || pending()}>
-            Grant membership
-          </Button>
-          <Show when={form.phase === "success"}>
-            <p role="status">Membership granted.</p>
-          </Show>
-        </form>
+        />
+        <Show when={form.phase === "success"}>
+          <p role="status">Membership granted.</p>
+        </Show>
       </Show>
-      <ul aria-label="Members">
-        <For each={members()}>
-          {(person) => (
-            <li aria-label={person.email}>
-              <p>
-                {person.displayName} ({person.email})
-              </p>
-              <p>{person.projectAdmin ? "Project admin" : "Member"}</p>
-              <Show
-                when={props.holds(
-                  person.projectAdmin
-                    ? projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation
-                    : projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
-                )}
+      <Records
+        id="members"
+        title="Members"
+        rows={members()}
+        rowKey={(person) => person.principalId}
+        columns={[
+          { id: "person", header: "Person", size: 260 },
+          { id: "role", header: "Role", size: 130 },
+          { id: "admin", header: "Administration", size: 200 },
+          { id: "memberships", header: "Memberships", size: 420 },
+        ]}
+        cells={{
+          person: (cell) => (
+            <>
+              {cell.row.displayName} ({cell.row.email})
+            </>
+          ),
+          role: (cell) => <>{cell.row.projectAdmin ? "Project admin" : "Member"}</>,
+          admin: (cell) => (
+            <Show
+              when={props.holds(
+                cell.row.projectAdmin
+                  ? projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation
+                  : projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
+              )}
+            >
+              <Button
+                disabled={pending() || form.pending}
+                onClick={() =>
+                  void write(() =>
+                    (cell.row.projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(props.transport, [
+                      {
+                        requestId: crypto.randomUUID(),
+                        value: { project: name, principalId: cell.row.principalId },
+                      },
+                    ]),
+                  )
+                }
               >
-                <Button
-                  disabled={pending() || form.pending}
-                  onClick={() =>
-                    void write(() =>
-                      (person.projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(props.transport, [
-                        {
-                          requestId: crypto.randomUUID(),
-                          value: { project: name, principalId: person.principalId },
-                        },
-                      ]),
-                    )
-                  }
-                >
-                  {person.projectAdmin ? "Revoke project admin" : "Grant project admin"}
-                </Button>
-              </Show>
-              <ul aria-label={`Memberships for ${person.email}`}>
-                <For each={person.environments}>
-                  {(env) => (
-                    <li>
-                      {env}
-                      <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation)}>
-                        <Button
-                          disabled={pending() || form.pending}
-                          onClick={() =>
-                            void write(() =>
-                              member.revoke(props.transport, [
-                                {
-                                  requestId: crypto.randomUUID(),
-                                  value: { project: name, env, principalId: person.principalId },
-                                },
-                              ]),
-                            )
-                          }
-                        >
-                          Revoke membership in {env}
-                        </Button>
-                      </Show>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </li>
-          )}
-        </For>
-      </ul>
+                {cell.row.projectAdmin ? "Revoke project admin" : "Grant project admin"}
+              </Button>
+            </Show>
+          ),
+          memberships: (cell) => (
+            <Records
+              id="member-environments"
+              title={`Memberships for ${cell.row.email}`}
+              rows={cell.row.environments}
+              rowKey={(env) => env}
+              columns={[
+                { id: "env", header: "Environment" },
+                { id: "revoke", header: "Action", size: 240 },
+              ]}
+              cells={{
+                env: (entry) => <>{entry.row}</>,
+                revoke: (entry) => (
+                  <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation)}>
+                    <Button
+                      disabled={pending() || form.pending}
+                      onClick={() =>
+                        void write(() =>
+                          member.revoke(props.transport, [
+                            {
+                              requestId: crypto.randomUUID(),
+                              value: {
+                                project: name,
+                                env: entry.row,
+                                principalId: cell.row.principalId,
+                              },
+                            },
+                          ]),
+                        )
+                      }
+                    >
+                      Revoke membership in {entry.row}
+                    </Button>
+                  </Show>
+                ),
+              }}
+            />
+          ),
+        }}
+      />
     </Page>
   );
 }

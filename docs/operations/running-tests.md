@@ -754,6 +754,15 @@ The browser also opens `receiving/dev` from Project, reads its runtime status an
 If identity limits session renewals, the browser waits for its `Retry-After` period before it reloads the same address.
 The test prints its elapsed time and fails if it exceeds 15 minutes.
 
+The browser uses a 1400 by 900 viewport and saves one PNG for each screen in `<results>/platform-ui-screenshots/`.
+The Rust test and browser print that directory.
+Identity files are `sign-in.png`, `invite.png`, `recover.png`, `reset.png`, and `audience-choice.png`.
+Administration files are `control-layout.png`, `projects.png`, `project.png`, `environment.png`, `users.png`, and `user.png`.
+The other files are `receiving-layout.png` and `not-found.png`.
+Recovery and reset captures show their entry forms. The reset capture includes the missing-code message.
+The test retains these files after service cleanup.
+For the WFE review, copy the PNG files from the printed directory to `/var/tmp/wamn-wfe-ui-report/` and attach them to the report.
+
 Build the native programs and components described in [the development loop](development-loop.md).
 Build the application bundles with `wamn build apps/wamn_receiving apps/client_acme_receiving`.
 Build the platform UI with `pnpm --filter @wamn/platform-ui build`.

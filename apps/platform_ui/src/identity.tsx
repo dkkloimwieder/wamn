@@ -1,7 +1,10 @@
-import { createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import { createSignal, onCleanup, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { Button, Field, FieldError, Input, Label } from "@wfe/components/fields";
+import { Button, FieldError, Input } from "@wfe/components/fields";
 import { createForm, type FormContext } from "@wfe/form";
+import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
+import { Records } from "./records";
+import { emailError } from "./email";
 import {
   enroll,
   environments,
@@ -29,6 +32,17 @@ function signInFailed(error: unknown): string {
   return `Sign in failed: ${message(error)}.`;
 }
 
+type Credentials = { email: string; password: string };
+const Email = (props: CustomFieldProps<{ email: string }, "email">) => (
+  <Input {...props} type="email" autocomplete="username" />
+);
+const Password = (props: CustomFieldProps<Credentials, "password">) => (
+  <Input {...props} type="password" autocomplete="current-password" />
+);
+const NewPasswordInput = (props: CustomFieldProps<{ password: string; again: string }, "password" | "again">) => (
+  <Input {...props} type="password" autocomplete="new-password" />
+);
+
 /** The same form serves the root and a pasted screen address. */
 export function SignInForm(props: {
   readonly submit: (email: string, password: string, context: FormContext) => Promise<void>;
@@ -41,48 +55,32 @@ export function SignInForm(props: {
     values,
     defaults: () => defaults,
     onValuesChange: setValues,
-    validate: () => ({}),
+    validate: (snapshot) => ({ fields: { email: emailError(snapshot.email) } }),
     onSubmit: async (snapshot, context) => {
-      await props.submit(snapshot.email, snapshot.password, context);
-      return { ok: true };
+      try {
+        await props.submit(snapshot.email, snapshot.password, context);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, errors: { form: signInFailed(error) } };
+      }
     },
   });
-  const trouble = () => (form.phase === "error" ? signInFailed(form.failure) : props.trouble);
+  const description = {
+    id: "sign-in",
+    fields: [
+      { field: "email", label: "email", control: "custom" },
+      { field: "password", label: "password", control: "custom" },
+    ],
+    submit: { id: "sign-in", label: "sign in" },
+  } as const satisfies FormDescription<Credentials>;
   return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        void form.submit();
-      }}
-    >
-      <Field>
-        <Label for="shell-email">email</Label>
-        <Input
-          id="shell-email"
-          type="email"
-          autocomplete="username"
-          value={form.values.email}
-          onValueChange={(value) => form.setValue("email", value)}
-        />
-      </Field>
-      <Field>
-        <Label for="shell-password">password</Label>
-        <Input
-          id="shell-password"
-          type="password"
-          autocomplete="current-password"
-          value={form.values.password}
-          onValueChange={(value) => form.setValue("password", value)}
-        />
-      </Field>
-      <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-      <Button type="submit" disabled={form.pending}>
-        sign in
-      </Button>
+    <>
+      <FormView description={description} bindings={{ form, fields: { email: Email, password: Password } }} />
+      <Show when={!form.errors.form && props.trouble}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
       <Link address={props.address} href="/recover">
         forgot password
       </Link>
-    </form>
+    </>
   );
 }
 
@@ -127,22 +125,29 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
         <Show when={credentials()}>
           {(held) => (
             <>
-              <For each={reachable().length > 1 ? reachable() : []}>
-                {(environment) => (
-                  <Button
-                    disabled={entering()}
-                    onClick={() =>
-                      void enter(held().email, held().password, environment.aud).catch((error: unknown) => {
-                        if (active) setTrouble(signInFailed(error));
-                      })
-                    }
-                  >
-                    {environment.project === undefined
-                      ? "Control"
-                      : `${environment.org}/${environment.project}/${environment.env ?? ""}`}
-                  </Button>
-                )}
-              </For>
+              <Records
+                id="audiences"
+                title="Audiences"
+                rows={reachable().length > 1 ? reachable() : []}
+                rowKey={(environment) => environment.aud}
+                columns={[{ id: "audience", header: "Audience" }]}
+                cells={{
+                  audience: (cell) => (
+                    <Button
+                      disabled={entering()}
+                      onClick={() =>
+                        void enter(held().email, held().password, cell.row.aud).catch((error: unknown) => {
+                          if (active) setTrouble(signInFailed(error));
+                        })
+                      }
+                    >
+                      {cell.row.project === undefined
+                        ? "Control"
+                        : `${cell.row.org}/${cell.row.project}/${cell.row.env ?? ""}`}
+                    </Button>
+                  ),
+                }}
+              />
               <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
             </>
           )}
@@ -168,60 +173,42 @@ function NewPassword(
     defaults: () => defaults,
     onValuesChange: setValues,
     validate: (snapshot) => {
+      const email = emailError(snapshot.email);
+      if (email) return { fields: { email } };
       const error = props.missing ?? (snapshot.password !== snapshot.again ? "The two passwords differ." : null);
       return error ? { form: error } : {};
     },
     onSubmit: async (snapshot, context) => {
-      await props.submit(snapshot.email, snapshot.password);
-      if (!context.signal.aborted) props.address.navigate("/", true);
-      return { ok: true };
+      try {
+        await props.submit(snapshot.email, snapshot.password);
+        if (!context.signal.aborted) props.address.navigate("/", true);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, errors: { form: `${props.failed}: ${message(error)}.` } };
+      }
     },
   });
-  const trouble = () =>
-    props.missing ?? form.errors.form ?? (form.phase === "error" ? `${props.failed}: ${message(form.failure)}.` : null);
+  const description = {
+    id: props.id,
+    fields: [
+      { field: "email", label: "email", control: "custom" },
+      { field: "password", label: "password", control: "custom" },
+      { field: "again", label: "password again", control: "custom" },
+    ],
+    submit: { id: "set-password", label: "set password" },
+  } as const satisfies FormDescription<typeof defaults>;
   return (
     <Page title={props.title}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void form.submit();
+      <Show when={props.missing && !form.errors.form}>
+        <FieldError role="alert">{props.missing}</FieldError>
+      </Show>
+      <FormView
+        description={description}
+        bindings={{
+          form,
+          fields: { email: Email, password: NewPasswordInput, again: NewPasswordInput },
         }}
-      >
-        <Field>
-          <Label for={`${props.id}-email`}>email</Label>
-          <Input
-            id={`${props.id}-email`}
-            type="email"
-            autocomplete="username"
-            value={form.values.email}
-            onValueChange={(value) => form.setValue("email", value)}
-          />
-        </Field>
-        <Field>
-          <Label for={`${props.id}-password`}>password</Label>
-          <Input
-            id={`${props.id}-password`}
-            type="password"
-            autocomplete="new-password"
-            value={form.values.password}
-            onValueChange={(value) => form.setValue("password", value)}
-          />
-        </Field>
-        <Field>
-          <Label for={`${props.id}-again`}>password again</Label>
-          <Input
-            id={`${props.id}-again`}
-            type="password"
-            autocomplete="new-password"
-            value={form.values.again}
-            onValueChange={(value) => form.setValue("again", value)}
-          />
-        </Field>
-        <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-        <Button type="submit" disabled={form.pending}>
-          set password
-        </Button>
-      </form>
+      />
     </Page>
   );
 }
@@ -260,43 +247,30 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
     values,
     defaults: () => defaults,
     onValuesChange: setValues,
-    validate: () => ({}),
+    validate: (snapshot) => ({ fields: { email: emailError(snapshot.email) } }),
     onSubmit: async (snapshot) => {
-      await recover(snapshot.email, props.options);
-      return { ok: true };
+      try {
+        await recover(snapshot.email, props.options);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, errors: { form: `Recovery failed: ${message(error)}.` } };
+      }
     },
   });
+  const description = {
+    id: "recover",
+    fields: [{ field: "email", label: "email", control: "custom" }],
+    submit: { id: "recover", label: "send reset link" },
+  } as const satisfies FormDescription<typeof defaults>;
   return (
     <Page title={props.title}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void form.submit();
-        }}
-      >
-        <Field>
-          <Label for="recover-email">email</Label>
-          <Input
-            id="recover-email"
-            type="email"
-            autocomplete="username"
-            value={form.values.email}
-            onValueChange={(value) => form.setValue("email", value)}
-          />
-        </Field>
-        <Show when={form.phase === "error"}>
-          <FieldError role="alert">Recovery failed: {message(form.failure)}.</FieldError>
-        </Show>
-        <Show when={form.phase === "success"}>
-          <p>If this address has an account, a mail with a reset link is on its way.</p>
-        </Show>
-        <Button type="submit" disabled={form.pending}>
-          send reset link
-        </Button>
-        <Link address={props.address} href="/">
-          sign in
-        </Link>
-      </form>
+      <FormView description={description} bindings={{ form, fields: { email: Email } }} />
+      <Show when={form.phase === "success"}>
+        <p>If this address has an account, a mail with a reset link is on its way.</p>
+      </Show>
+      <Link address={props.address} href="/">
+        sign in
+      </Link>
     </Page>
   );
 }

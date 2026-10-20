@@ -1,7 +1,8 @@
 import { For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button } from "@wfe/components/fields";
-import { DashboardShell } from "@wfe/components/layout";
+import { DashboardPanel } from "@wfe/components/layout";
+import { Frame } from "./page";
 import type { Address } from "./address";
 import type { ShellSection } from "./shell";
 
@@ -15,7 +16,7 @@ export default function Layout(props: {
   children: JSX.Element;
 }): JSX.Element {
   return (
-    <DashboardShell
+    <Frame
       header={
         <>
           <span>{props.title}</span>
@@ -25,7 +26,7 @@ export default function Layout(props: {
       navigation={({ close }) => (
         <For each={props.sections}>
           {(section) => (
-            <section>
+            <DashboardPanel class="ui-dashboard-menu">
               <Show when={section.screens.length > 1}>
                 <p>{section.label}</p>
               </Show>
@@ -33,10 +34,10 @@ export default function Layout(props: {
                 {(item) => (
                   <a
                     href={`/${props.aud}/${item.path}`}
-                    data-active={
+                    aria-current={
                       props.address.url().pathname === `/${props.aud}/${item.path}` ||
                       props.address.url().pathname.startsWith(`/${props.aud}/${item.path}/`)
-                        ? "true"
+                        ? "page"
                         : undefined
                     }
                     onClick={(event) => {
@@ -51,12 +52,12 @@ export default function Layout(props: {
                   </a>
                 )}
               </For>
-            </section>
+            </DashboardPanel>
           )}
         </For>
       )}
     >
       {props.children}
-    </DashboardShell>
+    </Frame>
   );
 }

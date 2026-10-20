@@ -1,6 +1,6 @@
 import { createSignal, For, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { uiScope } from "@wfe/components";
+import { DashboardPanel } from "@wfe/components/layout";
 import { Button } from "@wfe/components/fields";
 import { permission } from "@wamn/control-client";
 import { control, environment, member, orgAdmin, project, projectAdmin, release, user } from "@wamn/control-org-client";
@@ -14,7 +14,7 @@ import {
 import { audienceKind, createAddress, matchPath, queryValues, type Address, type Kind } from "./address";
 import type { Scope } from "./scope";
 import { identityPage, SignInForm } from "./identity";
-import { Page, NotFound } from "./page";
+import { Frame, Page, NotFound } from "./page";
 
 const Layout = lazy(() => import("./layout"));
 
@@ -156,34 +156,46 @@ export function Shell(props: ShellProps): JSX.Element {
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const audience = () => address.url().pathname.split("/")[1] ?? "";
   return (
-    <div {...uiScope()}>
-      <Loading>
-        <Show
-          when={identityPage(address.url().pathname)}
-          keyed
-          fallback={
-            <Show when={audience()} keyed fallback={<NotFound />}>
-              {(aud) => (
-                <Show
-                  when={audienceKind(aud, props)}
-                  keyed
-                  fallback={
+    <Loading>
+      <Show
+        when={identityPage(address.url().pathname)}
+        keyed
+        fallback={
+          <Show
+            when={audience()}
+            keyed
+            fallback={
+              <Frame>
+                <NotFound />
+              </Frame>
+            }
+          >
+            {(aud) => (
+              <Show
+                when={audienceKind(aud, props)}
+                keyed
+                fallback={
+                  <Frame>
                     <Page title={props.title}>
                       <p>This address names an environment of another org.</p>
                       <a href="/">sign in</a>
                     </Page>
-                  }
-                >
-                  {(kind) => <Session {...props} aud={aud} kind={kind} options={options} address={address} />}
-                </Show>
-              )}
-            </Show>
-          }
-        >
-          {(Identity) => <Identity title={props.title} scope={props} options={options} address={address} />}
-        </Show>
-      </Loading>
-    </div>
+                  </Frame>
+                }
+              >
+                {(kind) => <Session {...props} aud={aud} kind={kind} options={options} address={address} />}
+              </Show>
+            )}
+          </Show>
+        }
+      >
+        {(Identity) => (
+          <Frame>
+            <Identity title={props.title} scope={props} options={options} address={address} />
+          </Frame>
+        )}
+      </Show>
+    </Loading>
   );
 }
 
@@ -240,19 +252,29 @@ function Session(
     <Show
       when={state()?.status === "signedIn"}
       fallback={
-        <Page title={props.title}>
-          <Show when={state() !== null}>
-            <SignInForm
-              address={props.address}
-              trouble={failure(state())}
-              submit={(email, password) => keeper.signIn(email, password)}
-            />
-          </Show>
-        </Page>
+        <Frame>
+          <Page title={props.title}>
+            <Show when={state() !== null}>
+              <SignInForm
+                address={props.address}
+                trouble={failure(state())}
+                submit={(email, password) => keeper.signIn(email, password)}
+              />
+            </Show>
+          </Page>
+        </Frame>
       }
     >
-      <Show when={trouble()}>{(text) => <p role="alert">{text()}</p>}</Show>
-      <Show when={view()}>
+      <Show
+        when={view()}
+        fallback={
+          <Frame>
+            <DashboardPanel>
+              <Show when={trouble()}>{(text) => <p role="alert">{text()}</p>}</Show>
+            </DashboardPanel>
+          </Frame>
+        }
+      >
         {(shown) => (
           <Layout
             title={props.kind === "control" ? props.org : props.title}
@@ -293,7 +315,7 @@ function Destination(props: {
       when={selected()}
       keyed
       fallback={
-        <Show when={path() !== ""}>
+        <Show when={path() !== ""} fallback={<DashboardPanel />}>
           <NotFound />
         </Show>
       }

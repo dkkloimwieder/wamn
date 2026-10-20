@@ -84,11 +84,11 @@ describe("identity pages", () => {
     open("/", fetch);
     await signIn();
     expect(await screen.findByText("acme/widgets/prod")).toBeDefined();
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "sign in",
-      "acme/widgets/dev",
-      "acme/widgets/prod",
-    ]);
+    expect(
+      Array.from(
+        document.querySelectorAll('.ui-form button[type="submit"], [data-generator-view="audiences"] tbody button'),
+      ).map((button) => button.textContent),
+    ).toEqual(["sign in", "acme/widgets/dev", "acme/widgets/prod"]);
     expect(state.bodies[state.calls.indexOf("/password/environments")]).toEqual({
       email: "someone@wamn.dev",
       password: "a long password string",

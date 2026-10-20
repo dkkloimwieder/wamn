@@ -157,7 +157,9 @@ describe("Projects and Project", () => {
         close={() => {}}
       />
     ));
-    await waitFor(() => expect(screen.getByRole("list", { name: "Environments" }).textContent).toBe("dev"));
+    await waitFor(() =>
+      expect(screen.getByRole("table", { name: "Environments" }).querySelector("tbody")?.textContent).toBe("dev"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",

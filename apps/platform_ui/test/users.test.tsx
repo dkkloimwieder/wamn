@@ -76,7 +76,7 @@ describe("Users decisions", () => {
         }}
       />
     ));
-    input(screen.getByLabelText("Email"), person.email);
+    input(screen.getByRole("textbox", { name: /^Email$/ }), person.email);
     input(screen.getByLabelText("Display name"), person.display_name);
     fireEvent.click(screen.getByRole("button", { name: "Invite user" }));
     await screen.findByText(delivered ? "User invited." : "User is already enrolled.");
@@ -204,7 +204,10 @@ describe("User decisions", () => {
     fireEvent.keyDown(await screen.findByRole("option", { name: "dev" }), { key: "Enter" });
     flush();
     fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
-    const access = () => within(screen.getByRole("listitem", { name: "widgets" }));
+    const access = () =>
+      within(
+        screen.getByRole("table", { name: "Project access" }).querySelector<HTMLElement>('tr[data-row="widgets"]')!,
+      );
     await waitFor(() => expect(access().getByRole("button", { name: "Revoke membership in dev" })).toBeTruthy());
     fireEvent.click(access().getByRole("button", { name: "Grant project admin" }));
     await waitFor(() => expect(access().getByText("Project admin")).toBeTruthy());

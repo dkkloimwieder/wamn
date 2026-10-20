@@ -1,8 +1,11 @@
-import { createSignal, For, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, FieldError } from "@wfe/components/fields";
 import { environment, release } from "@wamn/control-org-client";
 import { Page } from "./page";
+import { DashboardPanel } from "@wfe/components/layout";
+import { Collapsible, Field, FieldValue, FormGrid, Label } from "@wfe/components";
+import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
 
@@ -74,112 +77,163 @@ export function Environment(props: ScreenProps): JSX.Element {
       </Show>
       <Show when={status()}>
         {(current) => (
-          <section aria-label="Environment status">
+          <DashboardPanel role="region" aria-label="Environment status">
             <h2>Status</h2>
             <p>Release: {current().digest ?? "No release"}</p>
-            <dl>
-              <dt>Replicas</dt>
-              <dd>{current().rollout.replicas}</dd>
-              <dt>Updated replicas</dt>
-              <dd>{current().rollout.updatedReplicas}</dd>
-              <dt>Ready replicas</dt>
-              <dd>{current().rollout.readyReplicas}</dd>
-              <dt>Available replicas</dt>
-              <dd>{current().rollout.availableReplicas}</dd>
-            </dl>
+            <FormGrid columns={2}>
+              <Field>
+                <Label>Replicas</Label>
+                <FieldValue value={current().rollout.replicas} />
+              </Field>
+              <Field>
+                <Label>Updated replicas</Label>
+                <FieldValue value={current().rollout.updatedReplicas} />
+              </Field>
+              <Field>
+                <Label>Ready replicas</Label>
+                <FieldValue value={current().rollout.readyReplicas} />
+              </Field>
+              <Field>
+                <Label>Available replicas</Label>
+                <FieldValue value={current().rollout.availableReplicas} />
+              </Field>
+            </FormGrid>
             <h3>Workloads</h3>
-            <ul aria-label="Workloads">
-              <For each={current().workloads}>
-                {(workload) => (
-                  <li>
-                    {workload.name}
-                    <ul>
-                      <For each={workload.conditions}>
-                        {(condition) => (
-                          <li>
-                            {condition.type}: {condition.status}
-                          </li>
-                        )}
-                      </For>
-                    </ul>
-                  </li>
-                )}
-              </For>
-            </ul>
+            <Records
+              id="workloads"
+              title="Workloads"
+              rows={current().workloads}
+              rowKey={(workload) => workload.name}
+              columns={[
+                { id: "name", header: "Workload", accessorKey: "name" },
+                { id: "conditions", header: "Conditions", size: 350 },
+              ]}
+              cells={{
+                conditions: (cell) => (
+                  <Records
+                    id="conditions"
+                    title={`Conditions for ${cell.row.name}`}
+                    rows={cell.row.conditions}
+                    rowKey={(condition) => condition.type}
+                    columns={[{ id: "condition", header: "Condition", size: 300 }]}
+                    cells={{
+                      condition: (entry) => (
+                        <>
+                          {entry.row.type}: {entry.row.status}
+                        </>
+                      ),
+                    }}
+                  />
+                ),
+              }}
+            />
             <h3>Live releases</h3>
-            <ul aria-label="Live releases">
-              <For each={current().live}>
-                {(live) => (
-                  <li>
-                    {live.digest}: {live.pods} pods
-                  </li>
-                )}
-              </For>
-            </ul>
-          </section>
+            <Records
+              id="live-releases"
+              title="Live releases"
+              rows={current().live}
+              rowKey={(live) => live.digest}
+              columns={[
+                { id: "digest", header: "Release", accessorKey: "digest", size: 600 },
+                { id: "pods", header: "Pods" },
+              ]}
+              cells={{ pods: (cell) => <>{cell.row.pods} pods</> }}
+            />
+          </DashboardPanel>
         )}
       </Show>
       <Show when={profile()}>
         {(current) => (
-          <section aria-label="Release profile">
+          <DashboardPanel role="region" aria-label="Release profile">
             <h2>Release profile</h2>
             <p>{current().digest}</p>
             <h3>Operations</h3>
-            <ul aria-label="Operations">
-              <For each={current().operations}>
-                {(operation) => (
-                  <li>
-                    <details>
-                      <summary>
-                        {operation.operation} ({operation.package}/{operation.component})
-                      </summary>
-                      <For each={operation.reaches}>
-                        {(reach) => (
-                          <div>
-                            <p>
-                              {reach.package}: {reach.operations.join(", ")}
-                              {reach.imprecise ? " (imprecise)" : ""}
-                            </p>
-                            <For each={reach.statements}>
-                              {(statement) => (
-                                <div>
-                                  <p>
-                                    {statement.path}
-                                    {statement.refused ? `: ${statement.refused}` : ""}
-                                  </p>
-                                  <ul>
-                                    <For each={statement.relations}>
-                                      {(relation) => (
-                                        <li>
-                                          {relation.table}: reads {relation.reads.join(", ") || "none"}; writes{" "}
-                                          {relation.writes.join(", ") || "none"}; locks {relation.locks ? "yes" : "no"};
-                                          deletes {relation.deletes ? "yes" : "no"}
-                                        </li>
-                                      )}
-                                    </For>
-                                  </ul>
-                                </div>
-                              )}
-                            </For>
-                          </div>
-                        )}
-                      </For>
-                    </details>
-                  </li>
-                )}
-              </For>
-            </ul>
+            <Records
+              id="operations"
+              title="Operations"
+              rows={current().operations}
+              rowKey={(operation) => operation.operation}
+              columns={[{ id: "operation", header: "Operation", size: 950 }]}
+              cells={{
+                operation: (cell) => (
+                  <Collapsible summary={`${cell.row.operation} (${cell.row.package}/${cell.row.component})`}>
+                    <Records
+                      id="reaches"
+                      title="Reaches"
+                      rows={cell.row.reaches}
+                      rowKey={(reach) => reach.package}
+                      columns={[
+                        { id: "reach", header: "Reach", size: 250 },
+                        { id: "statements", header: "Statements", size: 650 },
+                      ]}
+                      cells={{
+                        reach: (reach) => (
+                          <>
+                            {reach.row.package}: {reach.row.operations.join(", ")}
+                            {reach.row.imprecise ? " (imprecise)" : ""}
+                          </>
+                        ),
+                        statements: (reach) => (
+                          <Records
+                            id="statements"
+                            title="Statements"
+                            rows={reach.row.statements}
+                            rowKey={(statement) => statement.path}
+                            columns={[
+                              { id: "path", header: "Statement", size: 200 },
+                              { id: "relations", header: "Relations", size: 450 },
+                            ]}
+                            cells={{
+                              path: (statement) => (
+                                <>
+                                  {statement.row.path}
+                                  {statement.row.refused ? `: ${statement.row.refused}` : ""}
+                                </>
+                              ),
+                              relations: (statement) => (
+                                <Records
+                                  id="relations"
+                                  title="Relations"
+                                  rows={statement.row.relations}
+                                  rowKey={(relation) => relation.table}
+                                  columns={[{ id: "relation", header: "Relation", size: 430 }]}
+                                  cells={{
+                                    relation: (relation) => (
+                                      <>
+                                        {relation.row.table}: reads {relation.row.reads.join(", ") || "none"}; writes{" "}
+                                        {relation.row.writes.join(", ") || "none"}; locks{" "}
+                                        {relation.row.locks ? "yes" : "no"}; deletes{" "}
+                                        {relation.row.deletes ? "yes" : "no"}
+                                      </>
+                                    ),
+                                  }}
+                                />
+                              ),
+                            }}
+                          />
+                        ),
+                      }}
+                    />
+                  </Collapsible>
+                ),
+              }}
+            />
             <h3>Roles</h3>
-            <ul aria-label="Roles">
-              <For each={current().roles}>
-                {(role) => (
-                  <li>
-                    {role.role}: {role.operations.join(", ") || "No operations"}
-                  </li>
-                )}
-              </For>
-            </ul>
-          </section>
+            <Records
+              id="roles"
+              title="Roles"
+              rows={current().roles}
+              rowKey={(role) => role.role}
+              columns={[{ id: "role", header: "Role and operations", size: 950 }]}
+              cells={{
+                role: (cell) => (
+                  <>
+                    {cell.row.role}: {cell.row.operations.join(", ") || "No operations"}
+                  </>
+                ),
+              }}
+            />
+          </DashboardPanel>
         )}
       </Show>
     </Page>

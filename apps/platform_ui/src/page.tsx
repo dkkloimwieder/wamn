@@ -1,13 +1,28 @@
 import type { JSX } from "@solidjs/web";
-import { Card } from "@wfe/components/display";
+import { uiScope } from "@wfe/components";
+import { DashboardPanel, DashboardShell, type DashboardShellProps } from "@wfe/components/layout";
+import { appearance } from "./appearance";
+import "./appearance.css";
 import type { Address } from "./address";
 
 export function Page(props: { title: string; children?: JSX.Element }): JSX.Element {
   return (
-    <Card>
+    <DashboardPanel>
       <h1>{props.title}</h1>
       {props.children}
-    </Card>
+    </DashboardPanel>
+  );
+}
+
+export function Frame(props: DashboardShellProps): JSX.Element {
+  const scope = uiScope();
+  return (
+    <DashboardShell
+      {...scope}
+      {...props}
+      class="platform-appearance"
+      style={{ ...scope.style, ...appearance, height: "100dvh", ...props.style }}
+    />
   );
 }
 
