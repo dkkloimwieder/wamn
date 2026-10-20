@@ -1,9 +1,11 @@
-//! Install the platform through runbook step 4.5 using kubectl and Helm.
+//! Install the platform through runbook step 4.8 using kubectl and Helm.
 
 use std::path::Path;
 use std::process::Stdio;
 
 use anyhow::{Context as _, ensure};
+use ring::rand::SecureRandom as _;
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
@@ -18,7 +20,7 @@ use super::steps::{InstallStep, install_steps};
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.5 under the install lock.
+/// Apply steps 4.3 through 4.5 and the broker part of 4.8 under the install lock.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -28,6 +30,7 @@ const OPERATOR_VERSION: &str = "2.10.3";
 pub async fn apply(
     document: &ClusterDocument,
     platform_version: &str,
+    repository: &Path,
     work_directory: &Path,
     mut progress: impl FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -39,17 +42,15 @@ pub async fn apply(
         context,
         namespace: "platform".into(),
     };
-    for step in install_steps(document, platform_version)
-        .into_iter()
-        .filter(|step| matches!(step.number, "4.3" | "4.4" | "4.4.1" | "4.5"))
-    {
+    for step in applied_steps(document, platform_version) {
         progress(&format!("{} {}: starting", step.number, step.title))?;
         let changed = match step.number {
-            "4.3" => certificates(&target, document, &step).await?,
-            "4.4" => runtime(&target, document, work_directory, &step).await?,
-            "4.4.1" => collector(&target, document, &step).await?,
-            "4.5" => postgres(&target, document, &step).await?,
-            _ => unreachable!("the install step filter selects only 4.3 through 4.5"),
+            "4.3" => certificates(&target, document, repository, &step).await?,
+            "4.4" => runtime(&target, document, repository, work_directory, &step).await?,
+            "4.4.1" => collector(&target, document, repository, &step).await?,
+            "4.5" => postgres(&target, document, repository, &step).await?,
+            "4.8" => broker(&target, document, repository, &step).await?,
+            _ => unreachable!("the install step filter selects only implemented steps"),
         };
         progress(&format!(
             "{} {}: {}",
@@ -58,16 +59,32 @@ pub async fn apply(
             if changed { "done" } else { "skipped" }
         ))?;
     }
-    progress("Steps after 4.5 come in E3.")?;
+    progress("Steps after 4.8 come later.")?;
     Ok(())
+}
+
+fn applied_steps(
+    document: &ClusterDocument,
+    platform_version: &str,
+) -> impl Iterator<Item = InstallStep> {
+    install_steps(document, platform_version)
+        .into_iter()
+        .filter(|step| matches!(step.number, "4.3" | "4.4" | "4.4.1" | "4.5" | "4.8"))
 }
 
 async fn certificates(
     target: &Target,
     document: &ClusterDocument,
+    repository: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let mut changed = apply_file(target, document, "deploy/infra/cert-manager.yaml").await?;
+    let mut changed = apply_file(
+        target,
+        document,
+        repository,
+        "deploy/infra/cert-manager.yaml",
+    )
+    .await?;
     kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
@@ -83,7 +100,7 @@ async fn certificates(
     )
     .await
     .map_err(|error| wait_error(step, error))?;
-    let edge = objects(Path::new("."), "deploy/gcp/letsencrypt.yaml", document)?;
+    let edge = objects(repository, "deploy/gcp/letsencrypt.yaml", document)?;
     for object in &edge {
         changed |= apply_object(target, object).await?;
     }
@@ -109,6 +126,7 @@ async fn certificates(
 async fn runtime(
     target: &Target,
     document: &ClusterDocument,
+    repository: &Path,
     work_directory: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
@@ -122,13 +140,14 @@ async fn runtime(
         )
         .await?;
     }
-    let values = operator_values(Path::new("."), document)?;
+    let values = operator_values(repository, document)?;
     let values_path = work_directory.join("values-operator.yaml");
     write_operator_values(&values_path, &values)?;
     changed |= install_operator(target, &values_path, &values).await?;
     changed |= apply_file(
         target,
         document,
+        repository,
         "deploy/platform/runtime-operator-events-rbac.example.yaml",
     )
     .await?;
@@ -160,7 +179,13 @@ async fn runtime(
         .await?;
         changed = true;
     }
-    changed |= apply_file(target, document, "deploy/infra/wasmcloud-ca-issuer.yaml").await?;
+    changed |= apply_file(
+        target,
+        document,
+        repository,
+        "deploy/infra/wasmcloud-ca-issuer.yaml",
+    )
+    .await?;
     ready(
         target,
         step,
@@ -173,6 +198,7 @@ async fn runtime(
     changed |= apply_file(
         target,
         document,
+        repository,
         "deploy/platform/host-environment-certs.example.yaml",
     )
     .await?;
@@ -185,10 +211,23 @@ async fn runtime(
 async fn collector(
     target: &Target,
     document: &ClusterDocument,
+    repository: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let mut changed = apply_file(target, document, "deploy/platform/otel-collector.yaml").await?;
-    changed |= apply_file(target, document, "deploy/gcp/otel-collector-values.yaml").await?;
+    let mut changed = apply_file(
+        target,
+        document,
+        repository,
+        "deploy/platform/otel-collector.yaml",
+    )
+    .await?;
+    changed |= apply_file(
+        target,
+        document,
+        repository,
+        "deploy/gcp/otel-collector-values.yaml",
+    )
+    .await?;
     rollout(target, step, "platform", "deploy/otel-collector", "300s").await?;
     Ok(changed)
 }
@@ -196,9 +235,16 @@ async fn collector(
 async fn postgres(
     target: &Target,
     document: &ClusterDocument,
+    repository: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let mut changed = apply_file(target, document, "deploy/infra/cnpg-operator.yaml").await?;
+    let mut changed = apply_file(
+        target,
+        document,
+        repository,
+        "deploy/infra/cnpg-operator.yaml",
+    )
+    .await?;
     rollout(
         target,
         step,
@@ -207,18 +253,136 @@ async fn postgres(
         "180s",
     )
     .await?;
-    changed |= apply_file(target, document, "deploy/gcp/cnpg-cluster.yaml").await?;
+    changed |= apply_file(target, document, repository, "deploy/gcp/cnpg-cluster.yaml").await?;
     ready(target, step, "platform", "cluster", "wamn-pg", "600s").await?;
     Ok(changed)
+}
+
+async fn broker(
+    target: &Target,
+    document: &ClusterDocument,
+    repository: &Path,
+    step: &InstallStep,
+) -> anyhow::Result<bool> {
+    let authorization: Option<Value> = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "evt-nats-authorization",
+    )
+    .await?;
+    let mut changed = false;
+    if let Some(secrets) = broker_secrets(authorization.as_ref())? {
+        // Write the context first so a partial failure cannot leave authorization
+        // present without the matching bootstrap password.
+        for secret in secrets {
+            kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
+        }
+        changed = true;
+    }
+    changed |= apply_file(
+        target,
+        document,
+        repository,
+        "deploy/gcp/nats-jetstream.yaml",
+    )
+    .await?;
+    rollout(target, step, "platform", "statefulset/evt-nats", "300s").await?;
+    kubectl::wait(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "job",
+        "evt-nats-tap-stream",
+        "condition=complete",
+        "180s",
+    )
+    .await
+    .map_err(|error| wait_error(step, error))?;
+    Ok(changed)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrokerSecret {
+    api_version: &'static str,
+    kind: &'static str,
+    metadata: SecretMetadata,
+    #[serde(rename = "type")]
+    secret_type: &'static str,
+    string_data: std::collections::BTreeMap<&'static str, String>,
+}
+
+#[derive(Serialize)]
+struct SecretMetadata {
+    name: &'static str,
+    namespace: &'static str,
+}
+
+fn broker_secrets(authorization: Option<&Value>) -> anyhow::Result<Option<[BrokerSecret; 2]>> {
+    if authorization.is_some() {
+        return Ok(None);
+    }
+    let mut random = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut random)
+        .map_err(|_| anyhow::anyhow!("generate broker password"))?;
+    Ok(Some(render_broker_secrets(&hex::encode(random))))
+}
+
+fn render_broker_secrets(password: &str) -> [BrokerSecret; 2] {
+    // event_broker_files owns the same format in test infrastructure, which is
+    // not a production dependency of wamn-control.
+    let authorization = json!({
+        "users": [{
+            "user": "tap-admin",
+            "password": password,
+            "permissions": {
+                "publish": {"allow": [
+                    "$JS.API.STREAM.INFO.WAMN_TAP",
+                    "$JS.API.STREAM.CREATE.WAMN_TAP",
+                    "$JS.API.STREAM.UPDATE.WAMN_TAP",
+                    "_INBOX_tap-admin.>"
+                ]},
+                "subscribe": {"allow": ["_INBOX_tap-admin.>"]}
+            }
+        }]
+    });
+    let context = json!({
+        "url": "nats://evt-nats.platform.svc.cluster.local:4222",
+        "user": "tap-admin",
+        "password": password,
+        "inbox_prefix": "_INBOX_tap-admin"
+    });
+    [
+        ("evt-nats-bootstrap", "context.json", context.to_string()),
+        (
+            "evt-nats-authorization",
+            "authorization.conf",
+            format!("authorization: {authorization}\n"),
+        ),
+    ]
+    .map(|(name, key, value)| BrokerSecret {
+        api_version: "v1",
+        kind: "Secret",
+        metadata: SecretMetadata {
+            name,
+            namespace: "platform",
+        },
+        secret_type: "Opaque",
+        string_data: [(key, value)].into(),
+    })
 }
 
 async fn apply_file(
     target: &Target,
     document: &ClusterDocument,
+    repository: &Path,
     path: &str,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
-    for object in objects(Path::new("."), path, document)? {
+    for object in objects(repository, path, document)? {
         changed |= apply_object(target, &object)
             .await
             .with_context(|| format!("apply manifest {path}"))?;
@@ -449,6 +613,82 @@ async fn helm(target: &Target, arguments: &[&std::ffi::OsStr]) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn broker_secrets_render_only_the_tap_administrator_and_its_context() {
+        let [bootstrap, authorization] = render_broker_secrets("fixed-password");
+        let bootstrap = serde_json::to_value(bootstrap).unwrap();
+        assert_eq!(
+            bootstrap,
+            json!({
+                "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+                "metadata": {"name": "evt-nats-bootstrap", "namespace": "platform"},
+                "stringData": {"context.json": json!({
+                    "url": "nats://evt-nats.platform.svc.cluster.local:4222",
+                    "user": "tap-admin", "password": "fixed-password",
+                    "inbox_prefix": "_INBOX_tap-admin"
+                }).to_string()}
+            })
+        );
+        let authorization = serde_json::to_value(authorization).unwrap();
+        assert_eq!(authorization["apiVersion"], "v1");
+        assert_eq!(authorization["kind"], "Secret");
+        assert_eq!(authorization["type"], "Opaque");
+        assert_eq!(
+            authorization["metadata"],
+            json!({"name": "evt-nats-authorization", "namespace": "platform"})
+        );
+        let data = authorization["stringData"].as_object().unwrap();
+        assert_eq!(data.len(), 1);
+        let text = data["authorization.conf"].as_str().unwrap();
+        let users: Value =
+            serde_json::from_str(text.strip_prefix("authorization: ").unwrap()).unwrap();
+        assert_eq!(
+            users,
+            json!({"users": [{
+                "user": "tap-admin", "password": "fixed-password",
+                "permissions": {
+                    "publish": {"allow": [
+                        "$JS.API.STREAM.INFO.WAMN_TAP",
+                        "$JS.API.STREAM.CREATE.WAMN_TAP",
+                        "$JS.API.STREAM.UPDATE.WAMN_TAP",
+                        "_INBOX_tap-admin.>"
+                    ]},
+                    "subscribe": {"allow": ["_INBOX_tap-admin.>"]}
+                }
+            }]})
+        );
+    }
+
+    #[test]
+    fn existing_authorization_skips_both_secrets_without_reading_its_users() {
+        for existing in [
+            json!({}),
+            json!({"data": {"authorization.conf": "e3-users"}}),
+        ] {
+            assert!(broker_secrets(Some(&existing)).unwrap().is_none());
+        }
+        let secrets = broker_secrets(None).unwrap().unwrap();
+        let context: Value = serde_json::from_str(&secrets[0].string_data["context.json"]).unwrap();
+        let password = context["password"].as_str().unwrap();
+        assert_eq!(password.len(), 64);
+        assert_eq!(hex::decode(password).unwrap().len(), 32);
+    }
+
+    #[test]
+    fn applied_step_list_ends_with_the_broker_after_postgres() {
+        let document: ClusterDocument = serde_json::from_value(json!({
+            "provider": "kind", "project_id": "", "zone": "",
+            "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
+            "registry": "localhost:5000", "buckets": {"web": "", "otel": ""},
+            "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
+        }))
+        .unwrap();
+        let numbers: Vec<_> = applied_steps(&document, "test")
+            .map(|step| step.number)
+            .collect();
+        assert_eq!(numbers, ["4.3", "4.4", "4.4.1", "4.5", "4.8"]);
+    }
 
     #[test]
     fn operator_skip_requires_the_named_release_version_and_equal_values() {

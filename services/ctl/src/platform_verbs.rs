@@ -39,10 +39,16 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
         let document = ClusterDocument::compile(&args.file)?;
         let version = read_platform_version(Path::new("deploy/platform/release/Chart.yaml"))?;
         let directory = wamn_control::platform::lock::work_directory()?;
-        return wamn_control::platform::install::apply(&document, &version, &directory, |line| {
-            writeln!(output, "{line}")?;
-            output.flush().context("write install progress")
-        })
+        return wamn_control::platform::install::apply(
+            &document,
+            &version,
+            Path::new("."),
+            &directory,
+            |line| {
+                writeln!(output, "{line}")?;
+                output.flush().context("write install progress")
+            },
+        )
         .await;
     }
     run_with_chart(

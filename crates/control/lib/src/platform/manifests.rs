@@ -1,4 +1,4 @@
-//! Repository manifests and provider edits for install steps 4.3 through 4.5.
+//! Repository manifests and provider edits for install steps 4.3 through 4.8.
 
 use std::path::Path;
 
@@ -298,6 +298,20 @@ mod tests {
             .unwrap();
             let pg = render("deploy/gcp/cnpg-cluster.yaml");
             let pg = object(&pg, "Cluster", "wamn-pg");
+            let broker = render("deploy/gcp/nats-jetstream.yaml");
+            let server = object(&broker, "StatefulSet", "evt-nats");
+            assert_eq!(server["spec"]["replicas"], 1);
+            assert_eq!(
+                server["spec"]["volumeClaimTemplates"][0]["spec"]["storageClassName"],
+                "standard"
+            );
+            assert!(!names_pool(&Value::Array(broker.clone())));
+            let job = object(&broker, "Job", "evt-nats-tap-stream");
+            assert_eq!(job["spec"]["ttlSecondsAfterFinished"], 600);
+            assert_eq!(
+                job["spec"]["template"]["spec"]["volumes"][1]["secret"]["secretName"],
+                "evt-nats-bootstrap"
+            );
             if provider == Provider::Kind {
                 assert!(
                     account["metadata"]["annotations"]
