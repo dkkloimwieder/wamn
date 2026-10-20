@@ -58,6 +58,9 @@ struct Args {
     /// the run, and the seed of `acme_record_receipt`.
     #[arg(long)]
     db_url: Option<String>,
+    /// The lines of each seeded order and of each receipt.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=100))]
+    lines: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Serialize)]
@@ -79,11 +82,11 @@ enum Call {
     AcmeRecordReceipt,
 }
 
-/// One seeded purchase order and its one line, for one receipt.
+/// One seeded purchase order and its lines, for one receipt.
 #[derive(Debug, Clone)]
 struct Receipt {
     purchase_order_id: String,
-    line_id: String,
+    line_ids: Vec<String>,
 }
 
 /// One purchase order as a worker tracks it.
@@ -149,6 +152,7 @@ struct Summary {
     call: Call,
     tier: String,
     concurrency: usize,
+    lines: u16,
     duration_secs: f64,
     started_at_unix: u64,
     started_at_unix_nanos: u128,
@@ -295,6 +299,7 @@ async fn main() -> anyhow::Result<()> {
             count,
             args.call == Call::AcmeRecordReceipt,
             args.contention,
+            args.lines,
         )
         .await?
     } else {
@@ -461,6 +466,7 @@ async fn main() -> anyhow::Result<()> {
         call: args.call,
         tier: args.tier,
         concurrency: args.concurrency,
+        lines: args.lines,
         duration_secs: elapsed,
         started_at_unix,
         started_at_unix_nanos,
@@ -624,11 +630,16 @@ impl Workload {
                 } else {
                     "acme/acme/record_receipt"
                 };
+                let lines: Vec<Value> = receipt
+                    .line_ids
+                    .iter()
+                    .map(|line| json!({"purchase_order_line_id": line, "quantity": "1", "location_id": SEED_LOCATION}))
+                    .collect();
                 post(&self.target, route, &json!([{
                     "request_id": key,
                     "value": {"idempotency_key": key, "purchase_order_id": receipt.purchase_order_id,
                         "receipt_reference": key, "occurred_at": "2026-10-17T00:00:00Z",
-                        "line": [{"purchase_order_line_id": receipt.line_id, "quantity": "1", "location_id": SEED_LOCATION}]},
+                        "line": lines},
                 }])).await
             }
         }
@@ -827,13 +838,14 @@ async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
     Ok(client)
 }
 
-/// Seed open orders with one line each, optionally with Acme approval.
+/// Seed open orders with `lines` lines each, optionally with Acme approval.
 async fn seed_receipts(
     database: &tokio_postgres::Client,
     prefix: &str,
     count: u64,
     acme: bool,
     contention: bool,
+    lines: u16,
 ) -> anyhow::Result<Vec<Receipt>> {
     database
         .batch_execute(&format!(
@@ -866,13 +878,17 @@ async fn seed_receipts(
                      status, row_version{extra_columns}) \
                    SELECT gen_random_uuid(), $1::text || n::text, '{SEED_SUPPLIER}', 'open', 1{extra_values} \
                    FROM generate_series(1, $2::int4) AS n \
-                   RETURNING id) \
-                 INSERT INTO receiving.purchase_order_line (id, purchase_order_id, line_number, \
-                   item_id, ordered_quantity, received_quantity) \
-                 SELECT gen_random_uuid(), id, 1, '{SEED_ITEM}', $3::int4, 0 FROM orders \
-                 RETURNING purchase_order_id::text, id::text"
+                   RETURNING id), \
+                 seeded AS ( \
+                   INSERT INTO receiving.purchase_order_line (id, purchase_order_id, line_number, \
+                     item_id, ordered_quantity, received_quantity) \
+                   SELECT gen_random_uuid(), id, line, '{SEED_ITEM}', $3::int4, 0 \
+                   FROM orders CROSS JOIN generate_series(1, $4::int4) AS line \
+                   RETURNING purchase_order_id, id) \
+                 SELECT purchase_order_id::text, array_agg(id::text ORDER BY id) \
+                 FROM seeded GROUP BY purchase_order_id"
             ),
-            &[&prefix, &orders, &quantity],
+            &[&prefix, &orders, &quantity, &i32::from(lines)],
         )
         .await
         .context("seed the purchase orders")?;
@@ -886,7 +902,7 @@ async fn seed_receipts(
         .take(usize::try_from(count)?)
         .map(|row| Receipt {
             purchase_order_id: row.get(0),
-            line_id: row.get(1),
+            line_ids: row.get(1),
         })
         .collect())
 }

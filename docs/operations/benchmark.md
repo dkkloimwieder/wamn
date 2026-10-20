@@ -67,7 +67,8 @@ Use `--call get`, `--call update`, `--call query`, `--call receipt-query`, `--ca
 Use `--call app-path` for receipt get with the full fixture and the default edge path.
 `create` calls `supplier/create` with a unique name and key.
 `record_receipt` calls the base `/receiving/record_receipt` route with one line on a separate seeded order.
-Command runs reserve 50 one-line orders per worker per second before timing. The default mix reserves 48,000 additional orders.
+Use `--lines <n>` with `record_receipt` to seed each order with n lines, 1 to 100, and to record all n in each receipt.
+Command runs reserve 50 orders per worker per second before timing. The default mix reserves 48,000 additional orders.
 Each command consumes one order, and the run fails if its seed runs out before the deadline.
 `query` filters purchase orders to open status and follows pages of 20 rows.
 `receipt-query` follows pages of 20 receipts. The receipt query contract has no filter field.
