@@ -493,14 +493,14 @@ impl std::error::Error for NoRelease {}
 /// The route plugin resolves the attachment and its policy, and it admits a
 /// `none` policy itself. Every other policy reaches the authenticator. It reads
 /// the credential from the headers and returns the caller with its exact
-/// operation grants, or the refusal that the guest answers with.
+/// operation grants, no caller for a verified signature, or an HTTP refusal.
 #[async_trait::async_trait]
 pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
     /// Authenticate one request to a route whose policy is not `none`.
     async fn authenticate(
         &self,
         request: AuthenticationRequest<'_>,
-    ) -> Result<AuthenticatedCaller, AuthRejection>;
+    ) -> Result<Option<AuthenticatedCaller>, AuthRejection>;
 }
 
 /// The host's read of whether its environment is inactive.
@@ -525,8 +525,10 @@ pub struct AuthenticationRequest<'a> {
     pub attachment_id: &'a str,
     pub attachment: ServedAttachment<'a>,
     /// The attachment's parsed policy. It is never `none`.
-    pub policy: AttachmentAuthPolicy,
+    pub policy: AttachmentAuthPolicy<'a>,
     pub headers: &'a [Header],
+    /// Exact request bytes, before JSON decoding or route mapping.
+    pub body: &'a [u8],
 }
 
 /// Hand-written so a debug print never shows a header, because the headers
@@ -696,6 +698,7 @@ impl FlowHttpRouting {
         &self,
         attachment_id: &str,
         headers: &[Header],
+        body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         let loaded_release = self
             .release
@@ -730,10 +733,13 @@ impl FlowHttpRouting {
         if policy == AttachmentAuthPolicy::None {
             return Ok(None);
         }
-        let authenticator = self
-            .authenticator
-            .as_ref()
-            .ok_or_else(authentication_unavailable)?;
+        let authenticator = self.authenticator.as_ref().ok_or_else(|| {
+            if matches!(policy, AttachmentAuthPolicy::Signature { .. }) {
+                signature_unauthorized()
+            } else {
+                authentication_unavailable()
+            }
+        })?;
         authenticator
             .authenticate(AuthenticationRequest {
                 manifest,
@@ -742,9 +748,9 @@ impl FlowHttpRouting {
                 attachment,
                 policy,
                 headers,
+                body,
             })
             .await
-            .map(Some)
     }
 
     /// Exercise production route authentication from an integration test.
@@ -761,7 +767,7 @@ impl FlowHttpRouting {
             })
             .into_iter()
             .collect::<Vec<_>>();
-        self.authenticate(attachment_id, &headers)
+        self.authenticate(attachment_id, &headers, &[])
             .await
             .map_err(|rejection| (rejection.status, rejection.code))
     }
@@ -773,6 +779,18 @@ impl FlowHttpRouting {
         attachment_id: &str,
         headers: &[(&str, &str)],
     ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
+        self.authenticate_request_for_test(attachment_id, headers, &[])
+            .await
+    }
+
+    /// Exercise production authentication with the exact request body.
+    #[cfg(feature = "test-util")]
+    pub async fn authenticate_request_for_test(
+        &self,
+        attachment_id: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<Option<AuthenticatedCaller>, (u16, String)> {
         let headers = headers
             .iter()
             .map(|(name, value)| Header {
@@ -780,7 +798,7 @@ impl FlowHttpRouting {
                 value: (*value).to_string(),
             })
             .collect::<Vec<_>>();
-        self.authenticate(attachment_id, &headers)
+        self.authenticate(attachment_id, &headers, body)
             .await
             .map_err(|rejection| (rejection.status, rejection.code))
     }
@@ -919,7 +937,10 @@ fn route_definition(
 /// The Cache-Control value of a successful read response
 /// (`docs/architecture/execution.md`), or `None` for a kind that is not
 /// a read. A read is private unless its route admits anonymous callers.
-fn read_cache_control(kind: OperationType, policy: Option<AttachmentAuthPolicy>) -> Option<String> {
+fn read_cache_control(
+    kind: OperationType,
+    policy: Option<AttachmentAuthPolicy<'_>>,
+) -> Option<String> {
     let scope = if policy == Some(AttachmentAuthPolicy::None) {
         "public"
     } else {
@@ -1009,6 +1030,9 @@ pub fn route_credential<'a>(
         headers,
         ..
     } = *request;
+    if matches!(policy, AttachmentAuthPolicy::Signature { .. }) {
+        return Err(signature_unauthorized());
+    }
     let cookie = session_cookie(headers)?;
     let has_authorization = headers
         .iter()
@@ -1145,6 +1169,14 @@ pub fn unauthorized() -> AuthRejection {
     }
 }
 
+/// Refuse a signature without exposing any detail in the HTTP body.
+pub fn signature_unauthorized() -> AuthRejection {
+    AuthRejection {
+        status: UNAUTHORIZED_STATUS,
+        code: String::new(),
+    }
+}
+
 /// The refusal for a credential mechanism that cannot answer now.
 pub fn authentication_unavailable() -> AuthRejection {
     AuthRejection {
@@ -1219,6 +1251,7 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
         attachment_id: String,
         headers: Vec<Header>,
+        body: Vec<u8>,
     ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<AuthenticatedCaller>>, AuthRejection>>
     {
         let (plugin, trace) = accessor.with(|mut access| {
@@ -1230,7 +1263,7 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
         })?;
         trace
             .run(async move {
-                let caller = match plugin.authenticate(&attachment_id, &headers).await {
+                let caller = match plugin.authenticate(&attachment_id, &headers, &body).await {
                     Ok(caller) => caller,
                     Err(rejection) => return Ok(Err(rejection)),
                 };
@@ -1570,6 +1603,8 @@ mod tests {
         let session = json!({"modes": ["session"]});
         let both = json!({"modes": ["pat", "session"]});
         let none = json!({"modes": ["none"]});
+        let signature =
+            json!({"modes": ["signature"], "header": "X-Signature", "credential": "webhook"});
         for (kind, policy, expected) in [
             (
                 OperationType::Get,
@@ -1598,6 +1633,16 @@ mod tests {
             ),
             (OperationType::Command, &session, None),
             (OperationType::Create, &none, None),
+            (
+                OperationType::Get,
+                &signature,
+                Some("private, no-cache".to_string()),
+            ),
+            (
+                OperationType::Query,
+                &signature,
+                Some(format!("private, {SHORT}")),
+            ),
         ] {
             let mut route = attachment(
                 AttachmentType::Http,

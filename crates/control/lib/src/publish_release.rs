@@ -2929,6 +2929,17 @@ mod tests {
              \"base:widget/get@1.0.0\" at node \"registered\"; set \
              auth-policy modes = [\"pat\"]"
         );
+        let mut signed = anonymous.clone();
+        signed.get_mut("fixture-http").unwrap().auth_policy = serde_json::json!({
+            "modes": ["signature"], "header": "X-Signature", "credential": "webhook"
+        });
+        let error =
+            validate_anonymous_wiring_closure(&signed, &target, &closure_document(true), &facts)
+                .expect_err("signature authentication grants no caller permissions");
+        assert_eq!(
+            error.error_type(),
+            PublishManifestErrorType::UnauthenticatedRegisteredOperation
+        );
 
         let mut transacted_facts = facts.clone();
         transacted_facts
@@ -3501,7 +3512,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":9,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"orders"}]}}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":10,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"orders"}]}}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(
@@ -3534,9 +3545,9 @@ mod manifest_push {
         fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
             let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
                 .expect("fixture is UTF-8")
-                .replacen("\"format-version\":9", "\"format-version\":8", 1);
+                .replacen("\"format-version\":10", "\"format-version\":9", 1);
             let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
-                .expect_err("format eight refuses");
+                .expect_err("format nine refuses");
             assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));
 
             let mut indented = CANONICAL_MANIFEST.to_vec();

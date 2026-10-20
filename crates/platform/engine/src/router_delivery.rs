@@ -296,7 +296,7 @@ pub struct ResolvedTarget {
     pub target: AttachmentTarget,
     pub caller_attached: bool,
     /// `Some` only for attachment ingress. A callerless attachment is legal
-    /// only when its loaded auth policy explicitly names anonymous mode.
+    /// only when its loaded auth policy permits no caller principal.
     anonymous_caller_permitted: Option<bool>,
     registered_operation: Option<String>,
 }
@@ -311,7 +311,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                 caller_attached: true,
                 anonymous_caller_permitted: Some(
                     parse_attachment_auth_policy(attachment.auth_policy())
-                        == Some(AttachmentAuthPolicy::None),
+                        .is_some_and(AttachmentAuthPolicy::has_no_caller),
                 ),
                 registered_operation: attachment.registered_operation().map(str::to_owned),
             })
@@ -610,7 +610,7 @@ mod tests {
     use super::*;
     use crate::flow_http_routing::CredentialType;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":9,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[],"workflow":{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","package-id":"manifest_mint","type":"http","wiring-id":"orders","wiring-version":1}},"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"manifest_mint"},{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":2,"wiring-id":"shipping"},"package-id":"manifest_mint"}]}}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":10,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[],"workflow":{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","package-id":"manifest_mint","type":"http","wiring-id":"orders","wiring-version":1}},"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"manifest_mint"},{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":2,"wiring-id":"shipping"},"package-id":"manifest_mint"}]}}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
@@ -721,6 +721,20 @@ mod tests {
         assert!(caller_matches_source(
             SourceRef::Attachment("orders-http"),
             anonymous.anonymous_caller_permitted,
+            None,
+        ));
+        let mut signed_manifest = manifest();
+        signed_manifest
+            .workflow
+            .attachments
+            .get_mut("orders-http")
+            .unwrap()
+            .auth_policy = serde_json::json!({"modes":["signature"],"header":"X-Signature","credential":"webhook"});
+        let signed = resolve_target(&signed_manifest, SourceRef::Attachment("orders-http"))
+            .expect("the signed attachment resolves");
+        assert!(caller_matches_source(
+            SourceRef::Attachment("orders-http"),
+            signed.anonymous_caller_permitted,
             None,
         ));
 

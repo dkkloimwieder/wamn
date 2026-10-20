@@ -70,6 +70,7 @@ pub struct RouteDefinition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthRejection {
     pub status: u16,
+    /// An empty code requests an empty HTTP response body.
     pub code: String,
 }
 
@@ -347,6 +348,7 @@ pub trait Backend {
         &mut self,
         attachment_id: &str,
         headers: &[Header],
+        body: &[u8],
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection>;
     fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid>;
     fn try_acquire_route(
@@ -406,26 +408,24 @@ async fn try_handle(
         .routes(&method, &authority)
         .map_err(|_| error_response(503, "routing-provider-failed"))?;
     let matched = select_route(routes, &method, &path).map_err(|code| error_response(404, code))?;
+    let body_limit = matched.definition.body_limit.min(limits.body_bytes);
+    let raw_body = read_bounded(body, body_limit).await?;
     let caller = backend
-        .authenticate(&matched.definition.attachment_id, &head.headers)
+        .authenticate(&matched.definition.attachment_id, &head.headers, &raw_body)
         .await
         .map_err(|rejection| rejection_response(&rejection))?;
 
     let mut shape = Shape::Page;
     let body_json = if method == "GET" && matched.definition.mappings.is_empty() {
         // A read carries its one request item in the query string, in the one
-        // canonical encoding, and has no body to read (docs/architecture/execution.md).
+        // canonical encoding (docs/architecture/execution.md).
         let (item, read_shape) = read_query_item(&head.target)?;
         shape = read_shape;
         item
+    } else if raw_body.is_empty() {
+        Value::Null
     } else {
-        let body_limit = matched.definition.body_limit.min(limits.body_bytes);
-        let raw_body = read_bounded(body, body_limit).await?;
-        if raw_body.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&raw_body).map_err(|_| error_response(400, "malformed-json"))?
-        }
+        serde_json::from_slice(&raw_body).map_err(|_| error_response(400, "malformed-json"))?
     };
     let mapped = map_input(
         &matched.definition.mappings,
@@ -854,7 +854,11 @@ fn trace_context(headers: &[Header]) -> Option<TraceContext> {
 }
 
 fn rejection_response(rejection: &AuthRejection) -> HttpResponse {
-    error_response(rejection.status, &rejection.code)
+    let mut response = error_response(rejection.status, &rejection.code);
+    if rejection.code.is_empty() {
+        response.body.clear();
+    }
+    response
 }
 
 fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {

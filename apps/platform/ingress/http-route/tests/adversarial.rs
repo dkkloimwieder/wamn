@@ -97,6 +97,7 @@ impl Backend for FakeBackend {
         &mut self,
         attachment_id: &str,
         _headers: &[Header],
+        _body: &[u8],
     ) -> Result<Option<String>, AuthRejection> {
         self.authenticated_attachments
             .push(attachment_id.to_string());
@@ -376,16 +377,12 @@ fn an_authentication_refusal_never_reaches_delivery() {
         status: 401,
         code: "unauthorized".to_string(),
     });
-    let (_sender, chunks) = mpsc::unbounded();
-    let mut body = StreamedChunks { chunks, reads: 0 };
-
-    let output = handle_request(&mut backend, &mut body, &head(), limits())
-        .now_or_never()
-        .expect("authentication refusal must not await the request body");
+    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
+    let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
 
     assert_eq!(output.status, 401);
     assert_eq!(output.body, br#"{"error":{"code":"unauthorized"}}"#);
-    assert_eq!(body.reads, 0, "authorization precedes body reads");
+    assert_eq!(body.reads, 2, "authentication follows bounded body reads");
     assert!(backend.deliveries.is_empty());
 }
 
@@ -438,7 +435,7 @@ fn cancellation_while_awaiting_the_body_never_starts_delivery() {
     );
 
     assert_eq!(body.reads, 2, "the request awaited another body chunk");
-    assert_eq!(backend.authenticated_attachments, ["attachment-a"]);
+    assert!(backend.authenticated_attachments.is_empty());
     assert!(backend.validated_inputs.is_empty());
     assert!(backend.acquired_routes.is_empty());
     assert!(backend.deliveries.is_empty());
@@ -568,7 +565,7 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
             "{name} unexpectedly delivered"
         );
         if name == "auth" {
-            assert_eq!(body.reads, 0, "auth must precede body reads");
+            assert_eq!(body.reads, 2, "authentication follows bounded body reads");
         }
         if name == "schema" {
             assert_eq!(error_code(&output.body), "schema-invalid");
@@ -932,7 +929,7 @@ fn deadline_adjustments_reach_success_and_error_responses() {
 }
 
 #[test]
-fn a_read_takes_its_one_item_from_the_canonical_query_and_reads_no_body() {
+fn a_read_authenticates_its_body_but_takes_its_item_from_the_canonical_query() {
     let mut read = route();
     read.method = "GET".to_string();
     read.path = "/receipts/get".to_string();
@@ -947,7 +944,10 @@ fn a_read_takes_its_one_item_from_the_canonical_query_and_reads_no_body() {
     let mut body = Chunks::json(&[b"{\"ignored\":true}"]);
     let output = block_on(handle_request(&mut backend, &mut body, &get, limits()));
     assert_eq!(output.status, 200);
-    assert_eq!(body.reads, 0, "a read never reads a body");
+    assert_eq!(
+        body.reads, 2,
+        "a read bounds its body before authentication"
+    );
     assert_eq!(
         serde_json::from_str::<Value>(&backend.deliveries[0].payload).unwrap(),
         json!([item])

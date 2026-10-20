@@ -325,11 +325,11 @@ pub struct HostArgs {
     )]
     pub registry_token_metadata: bool,
 
-    /// Mounted production credential-vault file for node capabilities.
+    /// Mounted production credentials for node capabilities and signature routes.
     #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
     pub credentials_file: Option<PathBuf>,
 
-    /// Project whose platform pool and component credentials this driver uses.
+    /// Project whose platform pool and credentials this host uses.
     #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
     pub project: String,
 
@@ -1156,6 +1156,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
+    let credentials = Arc::new(match (&application, &args.credentials_file) {
+        (Some(_), Some(path)) => WamnCredentials::from_file(path)?,
+        _ => WamnCredentials::empty(),
+    });
     let operations = match application {
         Some(release) => {
             let source: Arc<dyn ArtifactSource> =
@@ -1189,10 +1193,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                             .context("configure the component artifact registry client")?,
                     )
                 };
-            let credentials = Arc::new(match &args.credentials_file {
-                Some(path) => WamnCredentials::from_file(path)?,
-                None => WamnCredentials::empty(),
-            });
             let allowed_hosts = args
                 .allowed_hosts
                 .iter()
@@ -1202,7 +1202,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 Arc::clone(&engine),
                 Arc::clone(&postgres),
                 Arc::clone(&http_transport),
-                credentials,
+                Arc::clone(&credentials),
                 Arc::clone(&logging),
                 allowed_hosts.into(),
                 Arc::clone(release),
@@ -1256,7 +1256,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     );
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
-    let authenticator = PlatformRouteAuthenticator::default();
+    let authenticator = PlatformRouteAuthenticator::default()
+        .with_signature_authentication(credentials, args.project.clone());
     let authenticator = match (&route_auth_scope, &identity_reader) {
         (Some((org, subject)), Some(identity_reader)) => {
             authenticator.with_authentication(Arc::new(

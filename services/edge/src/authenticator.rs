@@ -44,7 +44,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
     async fn authenticate(
         &self,
         request: AuthenticationRequest<'_>,
-    ) -> Result<AuthenticatedCaller, AuthRejection> {
+    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         // An empty cloud authenticator answers a PAT the same way.
         let RouteCredential::Session { token, csrf } = route_credential(&request)? else {
             return Err(authentication_unavailable());
@@ -58,7 +58,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
         if let Some(required) = csrf {
             check_csrf(required, claims.csrf.as_deref(), request.headers)?;
         }
-        Ok(AuthenticatedCaller::new(
+        Ok(Some(AuthenticatedCaller::new(
             request.attachment_id,
             claims.sub.as_str(),
             CredentialType::Session,
@@ -69,6 +69,6 @@ impl RouteAuthenticator for EdgeAuthenticator {
                 .iter()
                 .map(|permission| wamn_catalog::sealed_operation_reference(permission).to_owned())
                 .collect(),
-        ))
+        )))
     }
 }

@@ -7,19 +7,25 @@
 //! reads the caller's permissions through the existing callable-HTTP
 //! project pool. Each read answer stays in the host's
 //! [auth memory](crate::auth_cache), so a repeated caller costs no read.
+//! A signature policy verifies the raw body through the host's project
+//! credential store and returns no caller principal.
 
 use std::sync::Arc;
 
+use hmac::{Hmac, KeyInit as _, Mac as _};
+use sha2::Sha256;
 use tracing::Instrument as _;
+use wamn_catalog::AttachmentAuthPolicy;
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
     RouteAuthenticator, RouteCredential, authentication_unavailable, check_csrf,
-    required_bearer_token, route_credential, unauthorized,
+    required_bearer_token, route_credential, signature_unauthorized, unauthorized,
 };
 use wamn_platform_identity::{PreparedIdentityReads, PrincipalType};
 use wamn_project_state::ADMIN_ROLE;
 use wamn_session::verifier::SessionVerifier;
 
+use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::session_keys::IssuerKeys;
 
 /// Resolve an admitted service against its current tenant status and role
@@ -180,7 +186,7 @@ impl SessionRouteAuthentication {
     }
 }
 
-/// The platform's route authenticator: PAT and session, each present only when
+/// The platform's route authenticator: PAT, session and signature, present when
 /// the host configured it.
 ///
 /// A cloud host always installs one. An empty authenticator refuses a session
@@ -189,9 +195,66 @@ impl SessionRouteAuthentication {
 pub struct PlatformRouteAuthenticator {
     authentication: Option<Arc<RouteAuthentication>>,
     session_authentication: Option<Arc<SessionRouteAuthentication>>,
+    signature_authentication: Option<(Arc<WamnCredentials>, Box<str>)>,
 }
 
 impl PlatformRouteAuthenticator {
+    /// Resolve signature credentials under the host's own project.
+    #[must_use]
+    pub fn with_signature_authentication(
+        mut self,
+        credentials: Arc<WamnCredentials>,
+        project: impl Into<Box<str>>,
+    ) -> Self {
+        self.signature_authentication = Some((credentials, project.into()));
+        self
+    }
+
+    fn authenticate_signature(
+        &self,
+        header: &str,
+        credential: &str,
+        headers: &[Header],
+        body: &[u8],
+    ) -> Result<(), AuthRejection> {
+        let mut values = headers
+            .iter()
+            .filter(|value| value.name.eq_ignore_ascii_case(header));
+        let value = values.next().ok_or_else(signature_unauthorized)?;
+        if values.next().is_some() {
+            return Err(signature_unauthorized());
+        }
+        let signature = value
+            .value
+            .strip_prefix("sha256=")
+            .ok_or_else(signature_unauthorized)?;
+        if signature.len() != 64
+            || !signature
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(signature_unauthorized());
+        }
+        let signature = hex::decode(signature).map_err(|_| signature_unauthorized())?;
+        let (credentials, project) = self
+            .signature_authentication
+            .as_ref()
+            .ok_or_else(signature_unauthorized)?;
+        let secret = credentials
+            .lookup(project, credential)
+            .ok_or_else(signature_unauthorized)?;
+        let secret: SignatureSecret =
+            serde_json::from_str(&secret).map_err(|_| signature_unauthorized())?;
+        if secret.hmac.algorithm != "sha256" {
+            return Err(signature_unauthorized());
+        }
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.hmac.secret.as_bytes())
+            .map_err(|_| signature_unauthorized())?;
+        mac.update(body);
+        mac.verify_slice(&signature)
+            .map_err(|_| signature_unauthorized())
+    }
+
     /// Enable PAT authentication with host-selected database authorities.
     #[must_use]
     pub fn with_authentication(mut self, authentication: Arc<RouteAuthentication>) -> Self {
@@ -289,12 +352,29 @@ impl PlatformRouteAuthenticator {
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignatureSecret {
+    hmac: SignatureHmac,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignatureHmac {
+    algorithm: String,
+    secret: String,
+}
+
 #[async_trait::async_trait]
 impl RouteAuthenticator for PlatformRouteAuthenticator {
     async fn authenticate(
         &self,
         request: AuthenticationRequest<'_>,
-    ) -> Result<AuthenticatedCaller, AuthRejection> {
+    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
+        if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
+            self.authenticate_signature(header, credential, request.headers, request.body)?;
+            return Ok(None);
+        }
         let AuthenticationRequest {
             scope,
             attachment_id,
@@ -310,7 +390,8 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     &scope.tenant_id,
                     &scope.environment,
                 )
-                .await;
+                .await
+                .map(Some);
         }
         let span = tracing::info_span!(
             target: "wamn::route",
@@ -373,13 +454,13 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     tracing::warn!(error = %error, "route operation grants unavailable");
                     authentication_unavailable()
                 })?;
-            Ok(AuthenticatedCaller::new(
+            Ok(Some(AuthenticatedCaller::new(
                 attachment_id,
                 principal.id().as_str(),
                 CredentialType::Pat,
                 permissions.admin,
                 permissions.references.into_iter().collect(),
-            ))
+            )))
         }
         .instrument(span)
         .await
@@ -422,7 +503,7 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
     async fn authenticate(
         &self,
         request: AuthenticationRequest<'_>,
-    ) -> Result<AuthenticatedCaller, AuthRejection> {
+    ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         let RouteCredential::Session { token, csrf } = route_credential(&request)? else {
             return Err(unauthorized());
         };
@@ -460,13 +541,13 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
                 .await
                 .map_err(|_| unauthorized())?;
         }
-        Ok(AuthenticatedCaller::new(
+        Ok(Some(AuthenticatedCaller::new(
             request.attachment_id,
             session.claims().sub.as_str(),
             CredentialType::Session,
             false,
             std::collections::HashSet::new(),
-        ))
+        )))
     }
 }
 
@@ -490,6 +571,10 @@ mod tests {
 
     /// One HTTP route, `orders`, whose policy has `modes`.
     fn routing(modes: &Value) -> FlowHttpRouting {
+        routing_policy(json!({"modes": modes}))
+    }
+
+    fn routing_policy(auth_policy: Value) -> FlowHttpRouting {
         let digest = |hex: char| format!("sha256:{}", hex.to_string().repeat(64));
         let manifest = ServingManifest::new(
             ServingRelease {
@@ -531,7 +616,7 @@ mod tests {
                     definition: json!({
                         "route": {"host": "api.example.test", "path": "/orders", "method": "POST"}
                     }),
-                    auth_policy: json!({"modes": modes}),
+                    auth_policy,
                     registered_operation: None,
                 },
             )]),
@@ -547,6 +632,8 @@ mod tests {
         FlowHttpRouting::new(Some(Arc::new(release)), RouteInFlightLimit::default())
             .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
     }
+
+    mod signature;
 
     #[tokio::test]
     async fn pat_mode_is_recognized_and_an_absent_backend_is_one_generic_outage() {

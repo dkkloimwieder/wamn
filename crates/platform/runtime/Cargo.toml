@@ -44,6 +44,7 @@ chrono = { workspace = true, features = ["std"] }
 deadpool-postgres = "0.14"
 futures-util = { workspace = true }
 hex = { workspace = true }
+hmac = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
@@ -72,6 +73,7 @@ tower-service = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+http-route = { path = "../../../apps/platform/ingress/http-route" }
 # wamn-i87m: the helper test runs the lookup wash-runtime's pull runs, at the
 # exact version wash-runtime resolves.
 docker_credential = "=1.4.0"

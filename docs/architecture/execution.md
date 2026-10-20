@@ -29,12 +29,26 @@ A failed read answers 503 `authentication-unavailable`.
 The control host and an edge box read no status.
 The [status routes](#host-run-routes) of the control host write the row.
 
-An attachment with auth policy `none` has no principal, so it cannot write.
+An attachment with auth policy `none` or `signature` has no principal, so it cannot write.
 If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/control/lib/src/publish_release/components.rs) refuses it.
+
+An authored attachment selects signature authentication with `{"modes":["signature"],"header":"X-Signature","credential":"<handle>"}` in its `auth-policy`.
+The host resolves the handle under its own project through `WamnCredentials`.
+The secret is `{"hmac":{"algorithm":"sha256","secret":"…"}}`.
+
+The ingress reads the body under the route and adapter limits before authentication.
+The host computes HMAC-SHA256, a keyed body digest, over these exact bytes.
+It compares the digest with the header signature in constant time.
+The header value is `sha256=<lowercase hex>`.
+A missing, malformed, or incorrect signature or credential returns 401 with an empty body before delivery.
+
+After verification, delivery follows the same JSON mapping and intent rules as a `none` route with the same body.
+Signature authentication adds no timestamp or replay window.
 
 The method of a route follows from the kind of its operation, and no author writes it.
 Publish writes GET for a route to a `get`, `query` or `projection` operation, and POST for every other route and every wiring.
-A GET carries exactly one request item in its query string, and the router reads no body for it.
+A GET carries exactly one request item in its query string.
+The router reads its bounded body for authentication, but takes the operation input from the query string.
 Each top-level member is one parameter, and its value is the compact JSON text of the member.
 Parameters stand in byte order of their names, and every byte outside the RFC 3986 unreserved set is escaped.
 The router refuses any other spelling, and a request target longer than 8 KiB, with HTTP 400 and the code `invalid-target`.

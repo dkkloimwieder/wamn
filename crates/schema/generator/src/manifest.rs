@@ -933,7 +933,11 @@ fn validate_routes(routes: &RoutesDeclaration) -> Result<(), GenerateError> {
     if let Some(modes) = &routes.auth_modes {
         let policy = serde_json::json!({ "modes": modes });
         match wamn_catalog::parse_attachment_auth_policy(&policy) {
-            None | Some(wamn_catalog::AttachmentAuthPolicy::None) => {
+            None
+            | Some(
+                wamn_catalog::AttachmentAuthPolicy::None
+                | wamn_catalog::AttachmentAuthPolicy::Signature { .. },
+            ) => {
                 return invalid(format!(
                     "routes.auth_modes {modes:?} must be [\"pat\"], [\"session\"] or [\"pat\", \"session\"]"
                 ));

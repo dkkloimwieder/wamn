@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 9;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 10;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -55,14 +55,23 @@ pub const SESSION_AUTHENTICATION_MODE: &str = "session";
 /// This parsed view is not a second wire representation. The manifest retains
 /// the original JSON, including the canonical order of a combined modes list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttachmentAuthPolicy {
+pub enum AttachmentAuthPolicy<'a> {
     None,
     Pat,
     Session,
     PatAndSession,
+    Signature {
+        header: &'a str,
+        credential: &'a str,
+    },
 }
 
-impl AttachmentAuthPolicy {
+impl AttachmentAuthPolicy<'_> {
+    /// Whether this policy admits a request without a caller principal.
+    pub fn has_no_caller(self) -> bool {
+        matches!(self, Self::None | Self::Signature { .. })
+    }
+
     /// Whether this attachment admits a platform access token.
     pub fn allows_pat(self) -> bool {
         matches!(self, Self::Pat | Self::PatAndSession)
@@ -77,14 +86,24 @@ impl AttachmentAuthPolicy {
 /// Parse the exact attachment authentication policy.
 ///
 /// The only shapes are `{"modes":["none"]}`, `{"modes":["pat"]}`,
-/// `{"modes":["session"]}`, and `{"modes":["pat","session"]}`. Unknown
+/// `{"modes":["session"]}`, `{"modes":["pat","session"]}`, and
+/// `{"modes":["signature"],"header":"…","credential":"…"}`. Unknown
 /// fields, scalar modes, duplicates, and other list orders are refused.
-pub fn parse_attachment_auth_policy(policy: &Value) -> Option<AttachmentAuthPolicy> {
+pub fn parse_attachment_auth_policy(policy: &Value) -> Option<AttachmentAuthPolicy<'_>> {
     let object = policy.as_object()?;
+    let modes = object.get("modes")?.as_array()?;
+    if matches!(modes.as_slice(), [mode] if mode.as_str() == Some("signature")) {
+        if object.len() != 3 {
+            return None;
+        }
+        let header = object.get("header")?.as_str()?;
+        let credential = object.get("credential")?.as_str()?;
+        return (!header.is_empty() && !credential.is_empty())
+            .then_some(AttachmentAuthPolicy::Signature { header, credential });
+    }
     if object.len() != 1 {
         return None;
     }
-    let modes = object.get("modes")?.as_array()?;
     match modes.as_slice() {
         [mode] => match mode.as_str()? {
             NO_AUTHENTICATION_MODE => Some(AttachmentAuthPolicy::None),
@@ -1150,9 +1169,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-9 bytes.
+    /// Parse, validate, and admit only canonical format-10 bytes.
     ///
-    /// The version is classified before the format-9 schema is decoded. This is
+    /// The version is classified before the format-10 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1460,7 +1479,7 @@ fn validate_attachment(
             attachment_id: attachment_id.to_owned(),
         }
     })?;
-    if policy == AttachmentAuthPolicy::None && registered_operation.is_some() {
+    if policy.has_no_caller() && registered_operation.is_some() {
         return Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
             attachment_id: attachment_id.to_owned(),
         });
@@ -2140,14 +2159,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 10] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format nine may enter the decoder");
+                .expect_err("only format ten may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {
@@ -2220,6 +2239,74 @@ mod tests {
         )
         .expect_err("component operation must match its selected package coordinate");
         assert!(error.to_string().contains("does not belong"));
+    }
+
+    #[test]
+    fn signature_policy_has_exact_fields_and_no_caller() {
+        let policy = serde_json::json!({
+            "modes": ["signature"], "header": "X-Signature", "credential": "webhook"
+        });
+        let parsed = parse_attachment_auth_policy(&policy).unwrap();
+        assert_eq!(
+            parsed,
+            AttachmentAuthPolicy::Signature {
+                header: "X-Signature",
+                credential: "webhook"
+            }
+        );
+        assert!(parsed.has_no_caller());
+        assert!(!parsed.allows_pat());
+        assert!(!parsed.allows_session());
+        for malformed in [
+            serde_json::json!({"modes":["signature"]}),
+            serde_json::json!({"modes":["signature"],"header":"","credential":"webhook"}),
+            serde_json::json!({"modes":["signature"],"header":"X-Signature","credential":""}),
+            serde_json::json!({"modes":["signature"],"header":null,"credential":"webhook"}),
+            serde_json::json!({"modes":["signature"],"header":"X-Signature","credential":1}),
+            serde_json::json!({"modes":["signature"],"header":"X-Signature","credential":"webhook","extra":true}),
+            serde_json::json!({"modes":["signature","pat"],"header":"X-Signature","credential":"webhook"}),
+            serde_json::json!({"modes":["session","signature"],"header":"X-Signature","credential":"webhook"}),
+            serde_json::json!({"modes":["none","signature"],"header":"X-Signature","credential":"webhook"}),
+            serde_json::json!({"modes":["signature","signature"],"header":"X-Signature","credential":"webhook"}),
+        ] {
+            assert_eq!(
+                parse_attachment_auth_policy(&malformed),
+                None,
+                "{malformed}"
+            );
+        }
+        let mut signed = attachment();
+        signed.auth_policy = policy;
+        let build = |signed| {
+            ServingManifest::new(
+                release(),
+                components(),
+                routes(),
+                wirings(),
+                BTreeMap::from([("orders".into(), signed)]),
+                BTreeMap::new(),
+            )
+        };
+        assert_eq!(
+            build(signed.clone()),
+            Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
+                attachment_id: "orders".into(),
+            })
+        );
+        signed.registered_operation = None;
+        let manifest = build(signed).unwrap();
+        assert_eq!(manifest.format_version, 10);
+        let (decoded, _) =
+            ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).unwrap();
+        assert_eq!(decoded, manifest);
+        let mut old = manifest;
+        old.format_version = 9;
+        assert_eq!(
+            ServingManifest::from_canonical_bytes(&old.canonical_bytes()).unwrap_err(),
+            CatalogIdentityError::UnsupportedServingManifestVersion {
+                requested: "9".into()
+            }
+        );
     }
 
     #[test]

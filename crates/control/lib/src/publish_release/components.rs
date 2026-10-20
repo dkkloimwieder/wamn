@@ -346,7 +346,7 @@ pub(super) fn validate_anonymous_wiring_closure(
                     wiring_version: target.wiring_version,
                 }
             && wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
-                == Some(wamn_catalog::AttachmentAuthPolicy::None)
+                .is_some_and(wamn_catalog::AttachmentAuthPolicy::has_no_caller)
     });
     let reachable = reachable_nodes(document);
     for (attachment_id, _) in anonymous_attachments {
@@ -402,7 +402,7 @@ pub(super) fn resolve_route_component<'a>(
         ));
     }
     if wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
-        == Some(wamn_catalog::AttachmentAuthPolicy::None)
+        .is_some_and(wamn_catalog::AttachmentAuthPolicy::has_no_caller)
     {
         let export = fact
             .operation(operation)

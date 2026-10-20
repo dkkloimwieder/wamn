@@ -84,6 +84,7 @@ impl Backend for GuestBackend {
         &mut self,
         attachment_id: &str,
         headers: &[Header],
+        body: &[u8],
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection> {
         let headers = headers
             .iter()
@@ -94,12 +95,16 @@ impl Backend for GuestBackend {
                 },
             )
             .collect::<Vec<_>>();
-        bindings::wamn::flow_http_routing::routing::authenticate(attachment_id.to_owned(), headers)
-            .await
-            .map_err(|rejection| AuthRejection {
-                status: rejection.status,
-                code: rejection.code,
-            })
+        bindings::wamn::flow_http_routing::routing::authenticate(
+            attachment_id.to_owned(),
+            headers,
+            body.to_vec(),
+        )
+        .await
+        .map_err(|rejection| AuthRejection {
+            status: rejection.status,
+            code: rejection.code,
+        })
     }
 
     fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid> {
