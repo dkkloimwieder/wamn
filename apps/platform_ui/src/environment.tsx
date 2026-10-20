@@ -115,14 +115,10 @@ export function Environment(props: ScreenProps): JSX.Element {
                     title={`Conditions for ${cell.row.name}`}
                     rows={cell.row.conditions}
                     rowKey={(condition) => condition.type}
-                    columns={[{ id: "condition", header: "Condition", size: 300 }]}
-                    cells={{
-                      condition: (entry) => (
-                        <>
-                          {entry.row.type}: {entry.row.status}
-                        </>
-                      ),
-                    }}
+                    columns={[
+                      { id: "type", header: "Condition", accessorKey: "type" },
+                      { id: "status", header: "Status", accessorKey: "status" },
+                    ]}
                   />
                 ),
               }}
@@ -134,9 +130,10 @@ export function Environment(props: ScreenProps): JSX.Element {
               rows={current().live}
               rowKey={(live) => live.digest}
               columns={[
-                { id: "digest", header: "Release", accessorKey: "digest", size: 600 },
+                { id: "digest", header: "Release", accessorKey: "digest", size: 150 },
                 { id: "pods", header: "Pods" },
               ]}
+              formats={{ digest: "short-hash" }}
               cells={{ pods: (cell) => <>{cell.row.pods} pods</> }}
             />
           </DashboardPanel>

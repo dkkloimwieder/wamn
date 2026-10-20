@@ -23,7 +23,7 @@ export const API_BASE = "/api";
 export interface ScreenProps {
   readonly transport: Transport;
   readonly holds: Holds;
-  readonly controlProjects?: readonly string[];
+  readonly controlMine?: control.ControlMineResult;
   readonly params: Readonly<Record<string, string | undefined>>;
   readonly search: Readonly<Record<string, string | undefined>>;
   readonly open: (path: string) => void;
@@ -58,7 +58,7 @@ type Holds = (operation: string, project?: string) => boolean;
 interface View {
   readonly holds: Holds;
   readonly sections: readonly ShellSection[];
-  readonly controlProjects?: readonly string[];
+  readonly controlMine?: control.ControlMineResult;
 }
 
 function reference(operation: string): string {
@@ -127,7 +127,7 @@ async function controlView(transport: Transport, sections: readonly ShellSection
   const holds = controlHolds(outcome.value);
   return {
     holds,
-    controlProjects: projects,
+    controlMine: outcome.value,
     sections: sections
       .map((section) => ({
         ...section,
@@ -341,7 +341,7 @@ function Destination(props: {
             <route.component
               transport={props.transport}
               holds={(operation, project) => props.view.holds(operation, project ?? params.project)}
-              controlProjects={props.view.controlProjects}
+              controlMine={props.view.controlMine}
               params={params}
               search={queryValues(props.address.url().searchParams)}
               open={open}

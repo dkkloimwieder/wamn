@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, FieldError, Input } from "@wfe/components/fields";
+import { Field, FieldValue, FormGrid, Label } from "@wfe/components";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
 import { Records } from "./records";
 import { emailError } from "./email";
@@ -113,11 +114,13 @@ export function Users(props: ScreenProps): JSX.Element {
         columns={[
           { id: "name", header: "Name", size: 180 },
           { id: "email", header: "Email", accessorKey: "email", size: 250 },
+          { id: "principalId", header: "User ID", accessorKey: "principalId", size: 120 },
           { id: "state", header: "State", size: 170 },
           { id: "role", header: "Role", size: 120 },
           { id: "activate", header: "Account", size: 170 },
           { id: "admin", header: "Administration", size: 190 },
         ]}
+        formats={{ principalId: "short-hash" }}
         cells={{
           name: (cell) => (
             <Button onClick={() => props.open(`users/${encodeURIComponent(cell.row.principalId)}`)}>
@@ -184,7 +187,8 @@ export function Users(props: ScreenProps): JSX.Element {
 
 interface ProjectAccess {
   readonly project: string;
-  readonly environments: readonly string[];
+  readonly state: project.ProjectListResultProjects["state"];
+  readonly environments: readonly environment.EnvironmentListResultEnvironments[];
   readonly member?: member.MemberListResultMembers;
 }
 
@@ -203,14 +207,15 @@ export function User(props: ScreenProps): JSX.Element {
     const found = value(people).users.find((entry) => entry.principalId === principalId);
     if (!found) throw new Error("The org has no such user.");
     const access = await Promise.all(
-      value(listed).projects.map(async ({ name }) => {
+      value(listed).projects.map(async ({ name, state }) => {
         const [members, environments] = await Promise.all([
           member.list(props.transport, [{ project: name }]),
           environment.list(props.transport, [{ project: name }]),
         ]);
         return {
           project: name,
-          environments: value(environments).environments.map((entry) => entry.name),
+          state,
+          environments: value(environments).environments,
           member: value(members).members.find((entry) => entry.principalId === principalId),
         };
       }),
@@ -269,6 +274,16 @@ export function User(props: ScreenProps): JSX.Element {
           <>
             <p>{current().email}</p>
             <p>User state: {current().status}</p>
+            <FormGrid columns={2}>
+              <Field>
+                <Label>User ID</Label>
+                <FieldValue value={current().principalId} format="short-hash" />
+              </Field>
+              <Field>
+                <Label>Org admin</Label>
+                <FieldValue value={current().orgAdmin} format="boolean-symbol" />
+              </Field>
+            </FormGrid>
             <Show when={props.holds(member.MEMBER_GRANT_ROUTE.operation, form.values.project || undefined)}>
               <FormView
                 description={
@@ -287,7 +302,7 @@ export function User(props: ScreenProps): JSX.Element {
                     project: () => projects().map((entry) => ({ value: entry.project, label: entry.project })),
                     env: () =>
                       (projects().find((entry) => entry.project === form.values.project)?.environments ?? []).map(
-                        (env) => ({ value: env, label: env }),
+                        (env) => ({ value: env.name, label: env.name }),
                       ),
                   },
                 }}
@@ -303,10 +318,21 @@ export function User(props: ScreenProps): JSX.Element {
               rowKey={(entry) => entry.project}
               columns={[
                 { id: "project", header: "Project", accessorKey: "project", size: 200 },
+                { id: "state", header: "State", accessorKey: "state", size: 100 },
+                {
+                  id: "displayName",
+                  header: "Display name",
+                  accessorFn: (entry) => entry.member?.displayName,
+                  size: 180,
+                },
+                { id: "email", header: "Email", accessorFn: (entry) => entry.member?.email, size: 250 },
+                { id: "principalId", header: "User ID", accessorFn: (entry) => entry.member?.principalId, size: 120 },
+                { id: "orgAdmin", header: "Org admin", accessorFn: (entry) => entry.member?.orgAdmin, size: 100 },
                 { id: "role", header: "Role", size: 130 },
                 { id: "admin", header: "Administration", size: 200 },
                 { id: "memberships", header: "Memberships", size: 420 },
               ]}
+              formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol" }}
               cells={{
                 project: (cell) => <h2>{cell.row.project}</h2>,
                 role: (cell) => <>{cell.row.member?.projectAdmin ? "Project admin" : "User"}</>,
@@ -340,14 +366,17 @@ export function User(props: ScreenProps): JSX.Element {
                   <Records
                     id="user-environments"
                     title={`Memberships in ${cell.row.project}`}
-                    rows={cell.row.member?.environments ?? []}
-                    rowKey={(env) => env}
+                    rows={(cell.row.member?.environments ?? []).map((name) => ({
+                      name,
+                      state: cell.row.environments.find((env) => env.name === name)?.state,
+                    }))}
+                    rowKey={(env) => env.name}
                     columns={[
-                      { id: "env", header: "Environment" },
+                      { id: "env", header: "Environment", accessorKey: "name" },
+                      { id: "state", header: "State", accessorKey: "state" },
                       { id: "revoke", header: "Action", size: 240 },
                     ]}
                     cells={{
-                      env: (entry) => <>{entry.row}</>,
                       revoke: (entry) => (
                         <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation, cell.row.project)}>
                           <Button
@@ -357,13 +386,13 @@ export function User(props: ScreenProps): JSX.Element {
                                 member.revoke(props.transport, [
                                   {
                                     requestId: crypto.randomUUID(),
-                                    value: { project: cell.row.project, env: entry.row, principalId },
+                                    value: { project: cell.row.project, env: entry.row.name, principalId },
                                   },
                                 ]),
                               )
                             }
                           >
-                            Revoke membership in {entry.row}
+                            Revoke membership in {entry.row.name}
                           </Button>
                         </Show>
                       ),

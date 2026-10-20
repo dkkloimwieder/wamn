@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import { createTransport } from "@wamn/web-runtime";
 import { Environment } from "../src/environment";
@@ -103,8 +103,13 @@ describe("Environment", () => {
     mount(data);
     await screen.findByRole("region", { name: "Release profile" });
     expect(screen.getByRole("region", { name: "Environment status" }).textContent).toContain("sha256:release");
-    expect(screen.getByRole("table", { name: "Workloads" }).textContent).toContain("Ready: True");
+    const conditions = within(screen.getByRole("table", { name: "Conditions for http" }));
+    expect(conditions.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Condition", "Status"]);
+    expect(conditions.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Ready", "True"]);
     expect(screen.getByRole("table", { name: "Live releases" }).textContent).toContain("1 pods");
+    expect(within(screen.getByRole("table", { name: "Live releases" })).getByTitle("sha256:release").textContent).toBe(
+      "sha256:r",
+    );
     expect(screen.getByRole("table", { name: "Operations" }).textContent).toContain(
       "receipt: reads id; writes quantity; locks yes; deletes no",
     );

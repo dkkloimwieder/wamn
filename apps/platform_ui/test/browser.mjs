@@ -210,7 +210,7 @@ try {
     "PASS: Users invite, browser enrollment and sign-in, activate/deactivate, org-admin grant/revoke; User membership and project-admin grant/revoke, reload state",
   );
   await visit(page, `${base}${controlPath}/projects/${fixture.project}`);
-  await page.getByLabel("User ID", { exact: true }).fill(fixture.principalId);
+  await page.getByRole("textbox", { name: "User ID", exact: true }).fill(fixture.principalId);
   await page.getByRole("button").and(page.locator('[aria-label="Environment"]')).click();
   await page.getByRole("option", { name: fixture.env, exact: true }).click();
   await page.getByRole("button", { name: "Grant membership", exact: true }).click();

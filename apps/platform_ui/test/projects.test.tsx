@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import { control, environment, member, project, projectAdmin, release, user } from "@wamn/control-org-client";
 import { createTransport } from "@wamn/web-runtime";
@@ -80,6 +80,14 @@ describe("Projects and Project", () => {
     expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
     expect(screen.queryByRole("button", { name: "gadgets" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
+    const table = within(screen.getByRole("table", { name: "Projects" }));
+    expect(table.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "Project",
+      "Project admin",
+      "Org admin",
+    ]);
+    expect(table.getByRole("img", { name: "Yes" })).toBeTruthy();
+    expect(table.getByRole("img", { name: "No" })).toBeTruthy();
     expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
   });
   it("lands Control on Projects and reads control.mine once", async () => {
@@ -92,6 +100,10 @@ describe("Projects and Project", () => {
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
     await screen.findByRole("heading", { name: "Projects" });
     await screen.findByRole("button", { name: "widgets" });
+    expect(
+      await within(screen.getByRole("table", { name: "Projects" })).findByRole("cell", { name: "active" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "State" })).toBeTruthy();
     expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
     expect(session.state.calls.filter((path) => path.endsWith("/control/mine"))).toHaveLength(1);
   });
@@ -133,6 +145,9 @@ describe("Projects and Project", () => {
     fireEvent.click(await screen.findByRole("button", { name: "widgets" }));
     expect(writes).toEqual([[{ request_id: expect.any(String), value: { project: "widgets" } }]]);
     expect(opened).toBe("projects/widgets");
+    expect(
+      within(screen.getByRole("table", { name: "Projects" })).getByRole("cell", { name: "inactive" }),
+    ).toBeTruthy();
   });
 
   it("rejects incomplete membership input without claiming success", async () => {
@@ -158,7 +173,7 @@ describe("Projects and Project", () => {
       />
     ));
     await waitFor(() =>
-      expect(screen.getByRole("table", { name: "Environments" }).querySelector("tbody")?.textContent).toBe("dev"),
+      expect(screen.getByRole("table", { name: "Environments" }).querySelector("tbody")?.textContent).toBe("devactive"),
     );
     fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
     expect(await screen.findByRole("alert")).toHaveProperty(
@@ -166,6 +181,69 @@ describe("Projects and Project", () => {
       "Enter a user ID and select an environment.",
     );
     expect(screen.queryByText("Membership granted.")).toBeNull();
+  });
+
+  it("shows every environment and member field without additional reads", async () => {
+    const principalId = "12345678-1234-4000-8000-000000000001";
+    const calls: string[] = [];
+    const transport = createTransport({
+      baseUrl: "/api",
+      fetch: async (url) => {
+        const path = new URL(String(url), "http://localhost").pathname;
+        calls.push(path);
+        const value = path.endsWith("/environment/list")
+          ? { environments: [{ name: "dev", state: "inactive" }] }
+          : path.endsWith("/project/list")
+            ? { projects: [{ name: "widgets", state: "inactive" }] }
+            : {
+                members: [
+                  {
+                    principal_id: principalId,
+                    display_name: "Alex",
+                    email: "alex@example.invalid",
+                    org_admin: true,
+                    project_admin: true,
+                    environments: ["dev"],
+                  },
+                ],
+              };
+        return new Response(JSON.stringify([{ value }]));
+      },
+    });
+    render(() => (
+      <Project
+        transport={transport}
+        holds={admin}
+        params={{ project: "widgets" }}
+        search={{}}
+        open={() => {}}
+        close={() => {}}
+      />
+    ));
+    await screen.findByText("Alex");
+    const environments = within(screen.getByRole("table", { name: "Environments" }));
+    expect(environments.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Environment", "State"]);
+    expect(environments.getByRole("cell", { name: "inactive" })).toBeTruthy();
+    const members = screen.getByRole("table", { name: "Members" });
+    expect(Array.from(members.querySelectorAll(":scope > thead th")).map((cell) => cell.textContent)).toEqual([
+      "Display name",
+      "Email",
+      "User ID",
+      "Org admin",
+      "Role",
+      "Administration",
+      "Memberships",
+    ]);
+    expect(within(members).getByText("alex@example.invalid")).toBeTruthy();
+    expect(within(members).getByText("Project admin")).toBeTruthy();
+    expect(within(members).getByRole("img", { name: "Yes" })).toBeTruthy();
+    expect(within(members).getByTitle(principalId).textContent).toBe("12345678");
+    expect(within(members).getByRole("button", { name: "Revoke membership in dev" })).toBeTruthy();
+    expect(calls.sort()).toEqual([
+      "/api/wamn_control/environment/list",
+      "/api/wamn_control/member/list",
+      "/api/wamn_control/project/list",
+    ]);
   });
 });
 

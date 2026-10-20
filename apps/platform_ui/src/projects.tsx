@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, FieldError } from "@wfe/components/fields";
 import { FormView, type FormDescription } from "@wfe/generator";
@@ -12,7 +12,17 @@ import { Environment } from "./environment";
 import type { ScreenProps, ShellSection } from "./shell";
 
 export function Projects(props: ScreenProps): JSX.Element {
-  const [projects, setProjects] = createSignal<readonly string[]>(props.controlProjects ?? []);
+  const [projects, setProjects] = createSignal<readonly { name: string; state?: string; projectAdmin?: boolean }[]>(
+    untrack(
+      () =>
+        props.controlMine?.projects
+          .filter((entry) => entry.projectAdmin)
+          .map((entry) => ({
+            name: entry.project,
+            projectAdmin: entry.projectAdmin,
+          })) ?? [],
+    ),
+  );
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;
   onCleanup(() => {
@@ -21,7 +31,13 @@ export function Projects(props: ScreenProps): JSX.Element {
   const refresh = async () => {
     if (!props.holds(project.PROJECT_LIST_ROUTE.operation)) return;
     const result = value(await project.list(props.transport, [{}]));
-    if (active) setProjects(result.projects.map((entry) => entry.name));
+    if (active)
+      setProjects(
+        result.projects.map((entry) => ({
+          ...entry,
+          projectAdmin: props.controlMine?.projects.find((held) => held.project === entry.name)?.projectAdmin,
+        })),
+      );
   };
   void refresh().catch((error: unknown) => {
     if (active) setTrouble(String(error));
@@ -50,11 +66,19 @@ export function Projects(props: ScreenProps): JSX.Element {
         id="projects"
         title="Projects"
         rows={projects()}
-        rowKey={(name) => name}
-        columns={[{ id: "project", header: "Project" }]}
+        rowKey={(entry) => entry.name}
+        columns={[
+          { id: "project", header: "Project" },
+          ...(props.holds(project.PROJECT_LIST_ROUTE.operation)
+            ? [{ id: "state", header: "State", accessorKey: "state" as const }]
+            : []),
+          { id: "projectAdmin", header: "Project admin", accessorKey: "projectAdmin" },
+          { id: "orgAdmin", header: "Org admin", accessorFn: () => props.controlMine?.orgAdmin },
+        ]}
+        formats={{ projectAdmin: "boolean-symbol", orgAdmin: "boolean-symbol" }}
         cells={{
           project: (cell) => (
-            <Button onClick={() => props.open(`projects/${encodeURIComponent(cell.row)}`)}>{cell.row}</Button>
+            <Button onClick={() => props.open(`projects/${encodeURIComponent(cell.row.name)}`)}>{cell.row.name}</Button>
           ),
         }}
       />
@@ -79,7 +103,7 @@ export function Projects(props: ScreenProps): JSX.Element {
 
 export function Project(props: ScreenProps): JSX.Element {
   const name = props.params.project!;
-  const [environments, setEnvironments] = createSignal<readonly string[]>([]);
+  const [environments, setEnvironments] = createSignal<readonly environment.EnvironmentListResultEnvironments[]>([]);
   const [state, setState] = createSignal<"active" | "inactive">();
   const [members, setMembers] = createSignal<readonly member.MemberListResultMembers[]>([]);
   const [trouble, setTrouble] = createSignal<string>();
@@ -97,7 +121,7 @@ export function Project(props: ScreenProps): JSX.Element {
     const nextEnvironments = value(envs).environments;
     const nextMembers = value(people).members;
     if (active) {
-      setEnvironments(nextEnvironments.map((entry) => entry.name));
+      setEnvironments(nextEnvironments);
       if (projects) setState(value(projects).projects.find((entry) => entry.name === name)?.state);
       setMembers(nextMembers);
     }
@@ -175,12 +199,17 @@ export function Project(props: ScreenProps): JSX.Element {
         id="environments"
         title="Environments"
         rows={environments()}
-        rowKey={(env) => env}
-        columns={[{ id: "environment", header: "Environment" }]}
+        rowKey={(env) => env.name}
+        columns={[
+          { id: "environment", header: "Environment" },
+          { id: "state", header: "State", accessorKey: "state" },
+        ]}
         cells={{
           environment: (cell) => (
-            <Button onClick={() => props.open(`projects/${encodeURIComponent(name)}/${encodeURIComponent(cell.row)}`)}>
-              {cell.row}
+            <Button
+              onClick={() => props.open(`projects/${encodeURIComponent(name)}/${encodeURIComponent(cell.row.name)}`)}
+            >
+              {cell.row.name}
             </Button>
           ),
         }}
@@ -200,7 +229,7 @@ export function Project(props: ScreenProps): JSX.Element {
           }
           bindings={{
             form: membershipForm,
-            choices: { env: () => environments().map((env) => ({ value: env, label: env })) },
+            choices: { env: () => environments().map((env) => ({ value: env.name, label: env.name })) },
           }}
         />
         <Show when={form.phase === "success"}>
@@ -213,17 +242,16 @@ export function Project(props: ScreenProps): JSX.Element {
         rows={members()}
         rowKey={(person) => person.principalId}
         columns={[
-          { id: "person", header: "Person", size: 260 },
+          { id: "displayName", header: "Display name", accessorKey: "displayName", size: 180 },
+          { id: "email", header: "Email", accessorKey: "email", size: 250 },
+          { id: "principalId", header: "User ID", accessorKey: "principalId", size: 120 },
+          { id: "orgAdmin", header: "Org admin", accessorKey: "orgAdmin", size: 100 },
           { id: "role", header: "Role", size: 130 },
           { id: "admin", header: "Administration", size: 200 },
           { id: "memberships", header: "Memberships", size: 420 },
         ]}
+        formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol" }}
         cells={{
-          person: (cell) => (
-            <>
-              {cell.row.displayName} ({cell.row.email})
-            </>
-          ),
           role: (cell) => <>{cell.row.projectAdmin ? "Project admin" : "Member"}</>,
           admin: (cell) => (
             <Show

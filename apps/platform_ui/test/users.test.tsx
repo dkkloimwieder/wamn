@@ -85,6 +85,20 @@ describe("Users decisions", () => {
       { email: person.email, display_name: person.display_name, memberships: [], project_admins: [], org_admin: false },
     ]);
     expect(opened).toBe(`users/${principalId}`);
+    const users = within(screen.getByRole("table", { name: "Users" }));
+    expect(users.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "Name",
+      "Email",
+      "User ID",
+      "State",
+      "Role",
+      "Account",
+      "Administration",
+    ]);
+    expect(users.getByTitle(principalId).textContent).toBe("00000000");
+    expect(users.getByRole("cell", { name: person.email })).toBeTruthy();
+    expect(users.getByRole("cell", { name: "User state: active" })).toBeTruthy();
+    expect(users.getByRole("cell", { name: "User" })).toBeTruthy();
   });
   it.each(["Deactivate user", "Activate user", "Grant org admin", "Revoke org admin"])(
     "refreshes after %s",
@@ -195,6 +209,26 @@ describe("User decisions", () => {
     });
     render(() => <User {...props} params={{ principal: principalId }} transport={transport} />);
     await screen.findByRole("heading", { name: person.display_name });
+    expect(screen.getAllByText(person.email)).toHaveLength(3);
+    expect(screen.getByText("User state: active")).toBeTruthy();
+    expect(screen.getAllByTitle(principalId)).toHaveLength(3);
+    const table = screen.getByRole("table", { name: "Project access" });
+    expect(Array.from(table.querySelectorAll(":scope > thead th")).map((cell) => cell.textContent)).toEqual([
+      "Project",
+      "State",
+      "Display name",
+      "Email",
+      "User ID",
+      "Org admin",
+      "Role",
+      "Administration",
+      "Memberships",
+    ]);
+    const row = within(table.querySelector<HTMLElement>('tr[data-row="widgets"]')!);
+    expect(row.getByRole("cell", { name: "active" })).toBeTruthy();
+    expect(row.getByRole("cell", { name: person.display_name })).toBeTruthy();
+    expect(row.getByRole("cell", { name: person.email })).toBeTruthy();
+    expect(row.getByRole("img", { name: "No" })).toBeTruthy();
     expect(screen.queryByText("other-env")).toBeNull();
     expect(calls.filter((path) => path.includes("/member/list"))).toHaveLength(2);
     fireEvent.keyDown(screen.getByRole("button", { name: "Project" }), { key: "Enter" });
@@ -209,6 +243,13 @@ describe("User decisions", () => {
         screen.getByRole("table", { name: "Project access" }).querySelector<HTMLElement>('tr[data-row="widgets"]')!,
       );
     await waitFor(() => expect(access().getByRole("button", { name: "Revoke membership in dev" })).toBeTruthy());
+    const memberships = within(access().getByRole("table", { name: "Memberships in widgets" }));
+    expect(memberships.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "Environment",
+      "State",
+      "Action",
+    ]);
+    expect(memberships.getByRole("cell", { name: "active" })).toBeTruthy();
     fireEvent.click(access().getByRole("button", { name: "Grant project admin" }));
     await waitFor(() => expect(access().getByText("Project admin")).toBeTruthy());
     fireEvent.click(access().getByRole("button", { name: "Revoke project admin" }));

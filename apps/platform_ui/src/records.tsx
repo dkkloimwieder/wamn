@@ -1,6 +1,7 @@
 import { createSignal, Show, untrack, type Component } from "solid-js";
 import { createTable, type NativeColumnDef } from "@wfe/components/table";
-import { TableView, type CustomCellProps } from "@wfe/generator";
+import { ValueDisplay } from "@wfe/components";
+import { TableView, type ColumnPresentation, type CustomCellProps } from "@wfe/generator";
 
 /** Application-owned rows and columns, presented by the shared table. */
 export function Records<Row>(props: {
@@ -9,6 +10,7 @@ export function Records<Row>(props: {
   rows: readonly Row[];
   rowKey: (row: Row) => string;
   columns: readonly NativeColumnDef<Row>[];
+  formats?: Readonly<Record<string, ColumnPresentation["format"]>>;
   cells?: Readonly<Record<string, Component<{ row: Row }>>>;
 }) {
   const [collapsed, setCollapsed] = createSignal(true);
@@ -17,6 +19,7 @@ export function Records<Row>(props: {
     Object.fromEntries(
       columns.map((column) => {
         const Cell = props.cells?.[column.id];
+        const format = props.formats?.[column.id];
         return [
           column.id,
           (cell: CustomCellProps<Row, unknown>) =>
@@ -24,8 +27,10 @@ export function Records<Row>(props: {
               <Show when={cell.row.original} keyed>
                 {(row) => <Cell row={row} />}
               </Show>
+            ) : format ? (
+              <ValueDisplay value={cell.value} format={format} />
             ) : (
-              String(cell.value ?? "")
+              <>{String(cell.value ?? "")}</>
             ),
         ];
       }),
