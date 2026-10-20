@@ -255,7 +255,6 @@ DATABASE_URL="postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
   "$org" "$project" "$environment" "$tenant" 1 \
   "$repository/apps/target/wamn/wamn_receiving/wamn.json" >"$work/event-broker.log"
 event_memory=$(python3 - "$work" "$prefix-events" <<'CONFIGURATION'
-import json
 import pathlib
 import re
 import sys
@@ -266,19 +265,6 @@ deployment = pathlib.Path("deploy/gcp/nats-jetstream.yaml").read_text()
 configuration, = re.findall(r"^  nats.conf: \|\n(.*?)(?=^---$)", deployment, re.M | re.S)
 configuration = textwrap.dedent(configuration).replace("$POD_NAME", sys.argv[2])
 (work / "events.conf").write_text(configuration)
-
-# The local provisioner also creates the shared tap, using its deployed rights.
-authorization_path = work / "event-nats/authorization.conf"
-authorization = json.loads(authorization_path.read_text().split(":", 1)[1])
-users = authorization["users"]
-tap_admin = next(user for user in users if user["user"] == "tap-admin")
-provisioner = next(user for user in users if user["user"].startswith("provisioning_"))
-provisioner["permissions"]["publish"]["allow"].extend(
-    subject for subject in tap_admin["permissions"]["publish"]["allow"]
-    if subject.startswith("$JS.API.STREAM.")
-)
-authorization["users"].remove(tap_admin)
-authorization_path.write_text("authorization: " + json.dumps(authorization) + "\n")
 
 broker, = (document for document in deployment.split("\n---\n") if "\nkind: StatefulSet\n" in document)
 memory, = re.findall(r'^            limits: \{ memory: "([^"]+)" \}$', broker, re.M)

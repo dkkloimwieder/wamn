@@ -192,44 +192,6 @@ async fn enable_cdc(
     target_url: &str,
     identity: &super::activation::DevActivationIdentity,
 ) -> anyhow::Result<super::config::CdcReader> {
-    // The deployment owns the tap limits. Provision the same stream before
-    // the observer subscribes and the host starts publishing previews.
-    Box::pin(async {
-        let deployment = include_str!("../../../../../deploy/gcp/nats-jetstream.yaml");
-        let mut tap = None;
-        for document in serde_yaml::Deserializer::from_str(deployment) {
-            let value: serde_json::Value = serde::Deserialize::deserialize(document)
-                .context("read the deployed event broker declaration")?;
-            if value
-                .pointer("/metadata/name")
-                .and_then(serde_json::Value::as_str)
-                == Some("evt-nats-tap-stream")
-                && let Some(configuration) = value
-                    .pointer("/data/stream.json")
-                    .and_then(serde_json::Value::as_str)
-            {
-                tap = Some(
-                    serde_json::from_str::<async_nats::jetstream::stream::Config>(configuration)
-                        .context("read the deployed router-tap stream")?,
-                );
-            }
-        }
-        let tap = tap.context("deployment lacks the router-tap stream")?;
-        let client = crate::event_streams::connection_options(
-            &args.event_provisioning_username,
-            &args.event_provisioning_password_file,
-        )?
-        .connect(&inputs.event_nats_url)
-        .await
-        .context("connect the router-tap provisioning credential")?;
-        async_nats::jetstream::new(client)
-            .create_or_update_stream(tap)
-            .await
-            .context("provision the deployed router-tap stream")
-            .map(|_| ())
-    })
-    .await?;
-
     let scope = wamn_control_registry::Triple::new(
         &identity.org,
         &identity.project,

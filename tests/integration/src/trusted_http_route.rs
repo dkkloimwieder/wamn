@@ -72,14 +72,14 @@ pub const COMPONENT: &str = "http-request";
 pub const INTERFACE_VERSION: &str = "0.1.0";
 pub const OPERATION: &str = "wamn:node/async-handler@0.1.0";
 pub const ATTACHMENT_ID: &str = "orders-http";
-pub const ROUTE_AUTHORITY: &str = "tap.example.test";
+pub const ROUTE_AUTHORITY: &str = "trusted.example.test";
 pub const ROUTE_PATH: &str = "/deliver";
 const INSTANCE_ID: &str = "upstream-instance";
 const CREDENTIAL_HANDLE: &str = "upstream-v1";
 const GENERATION: i64 = 1;
 const CONTRACT: &str = "wamn:connection/http@0.1.0";
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
-const GENERATION_PASSWORD: &str = "router-tap-live";
+const GENERATION_PASSWORD: &str = "trusted-http-route";
 const GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
 /// The throwaway resources this closure is built over.

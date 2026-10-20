@@ -461,12 +461,11 @@ impl DeliveryClass {
     }
 }
 
-/// How one route call settled: what the caller receives, and the live view's
-/// label and result for it.
+/// How one route call settled: what the caller receives, and the payload of a
+/// respond, which a get's ETag reads. Every other outcome carries `Null`.
 #[derive(Debug)]
 pub struct RouteSettlement {
     pub outcome: DeliveryOutcome,
-    pub label: &'static str,
     pub result: serde_json::Value,
 }
 
@@ -474,14 +473,12 @@ pub struct RouteSettlement {
 ///
 /// A route never retries, so a retryable or rate-limited error lowers to the
 /// failure that a wiring reports after its last attempt, and the caller sees
-/// one shape. The labels and results are the ones [`settled_preview`] gives
-/// the same wiring outcome.
+/// one shape.
 pub fn settle_route(
     outcome: Result<node_types::Emission, node_types::NodeError>,
 ) -> anyhow::Result<RouteSettlement> {
     let failed = |failure_type, detail: node_types::ErrorDetail| RouteSettlement {
-        label: "failed",
-        result: serde_json::json!({"code": detail.code, "message": detail.message}),
+        result: serde_json::Value::Null,
         outcome: DeliveryOutcome::Failed(DeliveryFailure {
             failure_type,
             code: detail.code,
@@ -494,7 +491,6 @@ pub fn settle_route(
                 .map_err(|_| anyhow::anyhow!("wamn:node emitted invalid JSON"))?;
             RouteSettlement {
                 outcome: DeliveryOutcome::Respond(serde_json::to_string(&payload)?),
-                label: "respond",
                 result: payload,
             }
         }
@@ -510,7 +506,6 @@ pub fn settle_route(
         }
         Err(node_types::NodeError::Cancelled) => RouteSettlement {
             outcome: DeliveryOutcome::Cancelled,
-            label: "cancelled",
             result: serde_json::Value::Null,
         },
     })

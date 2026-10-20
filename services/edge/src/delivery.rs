@@ -7,7 +7,7 @@
 //! calls through the same path with its own intent log. A
 //! wiring or registration target has no runner on the box and fails as
 //! `execution-failed`. The box has no model versions, so a read carries no
-//! ETag and ignores `If-None-Match`. The box keeps no tap.
+//! ETag and ignores `If-None-Match`.
 
 use std::sync::Arc;
 

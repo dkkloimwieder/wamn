@@ -41,7 +41,7 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_EVT_NATS_URL")]
     event_nats_url: String,
 
-    /// Runtime credential for publication and the same environment's tap view.
+    /// Runtime credential for publication.
     #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
     event_nats_username: String,
 

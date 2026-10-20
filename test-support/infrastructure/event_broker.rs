@@ -12,11 +12,6 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::Serialize;
 use wamn_control_registry::Triple;
 
-/// Stream operations used by the deployed tap administrator and local provisioning.
-pub fn tap_stream_permissions() -> [String; 3] {
-    ["INFO", "CREATE", "UPDATE"].map(|operation| format!("$JS.API.STREAM.{operation}.WAMN_TAP"))
-}
-
 /// A username and its private password file, without the password in memory.
 #[derive(Debug)]
 pub struct Credentials {
@@ -97,9 +92,8 @@ pub fn prepare(
         source.subjects == [subject.clone()],
         "source stream subjects differ from the environment"
     );
-    let tap = format!("tap.{tenant}.{}.{}.>", scope.project, scope.env.as_str());
     let mut provisioning = Vec::new();
-    let mut runtime = vec![subject.clone(), tap.clone()];
+    let mut runtime = vec![subject.clone()];
     let mut publisher = vec![subject];
     let mut materializer = vec![format!("$JS.API.STREAM.INFO.{}", source.name)];
     let mut observer = Vec::new();
@@ -154,41 +148,18 @@ pub fn prepare(
         "provisioning",
         &source.name,
         provisioning,
-        None,
         &mut users,
     )?;
-    let runtime = credentials(
-        &directory,
-        "runtime",
-        &source.name,
-        runtime,
-        Some(tap.clone()),
-        &mut users,
-    )?;
-    let publisher = credentials(
-        &directory,
-        "publisher",
-        &source.name,
-        publisher,
-        None,
-        &mut users,
-    )?;
+    let runtime = credentials(&directory, "runtime", &source.name, runtime, &mut users)?;
+    let publisher = credentials(&directory, "publisher", &source.name, publisher, &mut users)?;
     let materializer = credentials(
         &directory,
         "materializer",
         &source.name,
         materializer,
-        None,
         &mut users,
     )?;
-    let observer = credentials(
-        &directory,
-        "observer",
-        &source.name,
-        observer,
-        Some(tap),
-        &mut users,
-    )?;
+    let observer = credentials(&directory, "observer", &source.name, observer, &mut users)?;
     let configuration = directory.join("nats.conf");
     write_private(
         &configuration,
@@ -248,7 +219,6 @@ fn credentials(
     role: &str,
     stream: &str,
     publish: Vec<String>,
-    tap: Option<String>,
     users: &mut Vec<Account>,
 ) -> anyhow::Result<Credentials> {
     let username = format!("{role}_{stream}");
@@ -263,8 +233,7 @@ fn credentials(
         &directory.join(format!("{role}-username")),
         username.as_bytes(),
     )?;
-    let mut subscribe = vec![format!("_INBOX_{username}.>")];
-    subscribe.extend(tap);
+    let subscribe = vec![format!("_INBOX_{username}.>")];
     users.push(Account {
         user: username.clone(),
         password,
@@ -434,11 +403,7 @@ mod tests {
                     provisioning || !management,
                     "runtime management permission: {subject}"
                 );
-                assert!(
-                    subject.contains(&source.name)
-                        || subject == "evt.example.fixture.dev.>"
-                        || subject == "tap.example.fixture.dev.>"
-                );
+                assert!(subject.contains(&source.name) || subject == "evt.example.fixture.dev.>");
             }
             assert_eq!(manages, provisioning);
             let subscriptions = user["permissions"]["subscribe"]["allow"]
@@ -448,16 +413,7 @@ mod tests {
                 subscriptions[0],
                 format!("_INBOX_{}.>", user["user"].as_str().unwrap())
             );
-            assert_eq!(
-                subscriptions.len(),
-                if user["user"] == broker.observer.username
-                    || user["user"] == broker.runtime.username
-                {
-                    2
-                } else {
-                    1
-                }
-            );
+            assert_eq!(subscriptions.len(), 1);
         }
         assert_eq!(passwords.len(), 5);
     }

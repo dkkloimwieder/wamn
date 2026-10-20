@@ -546,7 +546,7 @@ Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container a
 The test never builds platform images.
 
 The test runs `platform apply` through sections 4.3 to 4.7, the broker part of 4.8, and 4.9.
-It requires ready PostgreSQL and NATS, a completed tap stream Job, and `WAMN_TAP` in the Job log.
+It requires ready PostgreSQL and NATS.
 It also requires both `identity-ca` ConfigMaps, the identity database Secret, and the three completion ConfigMaps for the provisioning Jobs.
 A second apply must report every step as skipped.
 

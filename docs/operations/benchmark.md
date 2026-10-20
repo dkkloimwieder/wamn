@@ -25,9 +25,6 @@ At run time, it reads the event broker configuration and memory limit from `depl
 It reads `max_slot_wal_keep_size`, `pg_stat_statements.max`, and `pg_stat_statements.track` from `deploy/gcp/cnpg-cluster.yaml`.
 
 The deployed `event_broker_files` generator supplies separate credentials and subject permissions for the development identity.
-The local provisioning user also receives the deployed tap administrator's stream permissions, because `wamn dev up` creates the shared tap.
-`wamn dev up` also creates or updates `WAMN_TAP` from `deploy/gcp/nats-jetstream.yaml`.
-Without this stream, pending previews can exhaust the publisher queue and stall requests.
 
 It starts Receiving through `wamn dev up` and `wamn dev --hold`, with an operator PAT issued by `wamn-identity`.
 It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to cores 6–7.

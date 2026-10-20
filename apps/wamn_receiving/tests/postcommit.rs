@@ -5,24 +5,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::{Context, message::StreamMessage, stream::Stream};
-use futures_util::StreamExt as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
 use wamn_control::release_chart;
 use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryType, Envelope, Op};
 use wamn_gate_harness::journey::PostcommitPhase;
-use wamn_runtime::plugins::wamn_jetstream::{
-    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceType, RouterTapTarget,
-    router_tap_environment_filter,
-};
 
 use super::{
     BASE_PACKAGE_ID, JourneyDocument, OVERLAY_PACKAGE_ID, connect, identity, materializer_durable,
     materializer_stream, overlay_route_path, secret_value,
 };
 
-const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
 pub(super) const WIRING: &str = "quality_create_inspection";
 const PROGRESS_BOUND: Duration = Duration::from_secs(90);
 
@@ -213,61 +207,6 @@ fn consumer_state(info: &async_nats::jetstream::consumer::Info) -> Value {
         "num_redelivered":info.num_redelivered})
 }
 
-async fn delivery_taps(
-    subscriber: &mut async_nats::Subscriber,
-    delivery_id: &str,
-    expected_input: &Value,
-    expected_outcome: &str,
-) -> anyhow::Result<Vec<Value>> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    let mut observed = Vec::new();
-    let mut accepted = false;
-    let mut settled = false;
-    while !accepted || !settled {
-        let message = tokio::time::timeout_at(deadline, subscriber.next())
-            .await
-            .context(
-                "the private handler did not produce both delivery boundaries within 30 seconds",
-            )?
-            .context("the router tap subscription ended")?;
-        let record: RouterTapRecord = serde_json::from_slice(&message.payload)?;
-        if record.delivery_id.as_ref() != delivery_id {
-            continue;
-        }
-        record.validate()?;
-        ensure!(
-            record.source_id.as_ref() == REGISTRATION
-                && record.source_type == RouterTapSourceType::Registration
-                && record.target
-                    == RouterTapTarget::Wiring {
-                        wiring_id: WIRING.into(),
-                        wiring_version: 1,
-                    }
-                && !record.redacted
-                && record.over_ceiling_bytes.is_none(),
-            "the delivery tap does not identify the unchanged private handler"
-        );
-        match record.phase {
-            RouterTapRecordPhase::Accepted => {
-                ensure!(
-                    !accepted && record.payload == *expected_input,
-                    "duplicate handler input differs from the original event"
-                );
-                accepted = true;
-            }
-            RouterTapRecordPhase::Settled => {
-                ensure!(
-                    !settled && record.outcome.as_deref() == Some(expected_outcome),
-                    "private handler settled with the wrong outcome"
-                );
-                settled = true;
-            }
-        }
-        observed.push(json!({"subject":message.subject.as_str(), "record":record}));
-    }
-    Ok(observed)
-}
-
 async fn fixture(project: &Client, label: &str) -> anyhow::Result<(String, String)> {
     let order = uuid::Uuid::new_v4().to_string();
     let line = uuid::Uuid::new_v4().to_string();
@@ -365,17 +304,6 @@ async fn assert_replay_and_progress(
         .build()?;
     let jetstream = async_nats::jetstream::new(nats.clone());
     let mut events = jetstream.get_stream(materializer_stream()).await?;
-    let mut taps = nats
-        .subscribe(
-            router_tap_environment_filter(
-                identity().tenant.as_str(),
-                identity().project.as_str(),
-                identity().environment.as_str(),
-            )
-            .context("the journey identifies a router tap subject")?,
-        )
-        .await?;
-    nats.flush().await?;
     ensure!(
         graph["nodes"]
             .as_object()
@@ -437,16 +365,6 @@ async fn assert_replay_and_progress(
             && replay.sequence > original.sequence,
         "broker deduplication prevented the required second handler delivery"
     );
-    let envelope: Envelope = serde_json::from_slice(&original.payload)?;
-    let source_id = wamn_event_wire::msg_id(
-        identity().project.as_str(),
-        identity().environment.as_str(),
-        envelope.lsn,
-    );
-    let expected_input = json!({"event":"insert", "new":envelope.new});
-    let replay_id = format!("{REGISTRATION}:event:{}:{source_id}", replay.sequence);
-    evidence["replay_taps"] =
-        json!(delivery_taps(&mut taps, &replay_id, &expected_input, "discard").await?);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let consumer = events.consumer_info(materializer_durable()).await?;

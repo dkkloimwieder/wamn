@@ -759,7 +759,7 @@ impl DevConfig {
         &self.event_nats_url
     }
 
-    /// Event username shared by local publication and its environment tap view.
+    /// Event username of local publication.
     pub fn event_nats_username(&self) -> &str {
         &self.event_nats_username
     }

@@ -1,7 +1,6 @@
 //! Guest delivery. A route calls its one operation on the operation host, and
 //! a wiring target goes to the wiring layer through `WiringDelivery`.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
@@ -13,12 +12,12 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest,
-    EXECUTION_FAILED, OperationRefusal, OperationRefusalType, PERMISSION_DENIED,
-    ROUTER_DELIVERY_ID, RouteDelivery, RouteSettlement, Source, SourceRef, StreamedDelivery,
-    derived_causation, lower_operation_refusal, resolve_authorized_target, settle_route,
+    OperationRefusal, OperationRefusalType, ROUTER_DELIVERY_ID, RouteDelivery, RouteSettlement,
+    Source, SourceRef, StreamedDelivery, derived_causation, lower_operation_refusal,
+    resolve_authorized_target, settle_route,
 };
 use wamn_event_wire::Causation;
-use wamn_runtime::plugins::wamn_jetstream::{RouterTapPhase, RouterTapPreview, WamnJetstream};
+use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 
 use crate::operation::OperationHost;
 use crate::query_read::{STREAM_CEILING, StreamEnd, limit_refusal, row_line};
@@ -74,7 +73,6 @@ pub struct WiringCall<'a> {
     pub source: SourceRef<'a>,
     pub delivery_id: String,
     pub package_id: &'a str,
-    pub target: &'a AttachmentTarget,
     pub wiring_id: &'a str,
     pub wiring_version: u32,
     pub caller_attached: bool,
@@ -149,7 +147,7 @@ impl RouterDeliveryBridge {
         &self.release
     }
 
-    /// The JetStream plugin that publishes taps and derived events.
+    /// The JetStream plugin that publishes derived events.
     pub fn jetstream(&self) -> &Arc<WamnJetstream> {
         &self.jetstream
     }
@@ -200,16 +198,6 @@ impl RouterDeliveryBridge {
             Some(trace) => (Some(trace.traceparent), trace.tracestate),
             None => (None, None),
         };
-        // The live view's first boundary, published while the input payload is
-        // still a local: after the request is built it belongs to the driver.
-        self.tap(
-            source,
-            &delivery_id,
-            &target.target,
-            RouterTapPhase::Accepted,
-            Cow::Borrowed(&payload),
-        )
-        .await;
         let attributes = match &self.metrics {
             Some(_) => delivery_attributes(source, &target.target),
             None => Vec::new(),
@@ -251,29 +239,16 @@ impl RouterDeliveryBridge {
                 return match result {
                     Ok(settled) => {
                         self.record(&attributes, DeliveryClass::Delivered);
-                        self.tap(
-                            source,
-                            &delivery_id,
-                            &target.target,
-                            RouterTapPhase::Settled(settled.label),
-                            Cow::Owned(settled.result),
-                        )
-                        .await;
                         Ok(settled.outcome)
                     }
-                    Err(error) => {
-                        self.refuse(source, &delivery_id, &target.target, &attributes, &error)
-                            .await
-                    }
+                    Err(error) => self.refuse(&attributes, &error),
                 };
             }
         };
 
         let Some(wirings) = &self.wirings else {
             let error = anyhow::anyhow!("no wiring layer serves wiring {wiring_id:?}");
-            return self
-                .refuse(source, &delivery_id, &target.target, &attributes, &error)
-                .await;
+            return self.refuse(&attributes, &error);
         };
         wirings
             .deliver(
@@ -282,7 +257,6 @@ impl RouterDeliveryBridge {
                     source,
                     delivery_id,
                     package_id: &target.package_id,
-                    target: &target.target,
                     wiring_id: &wiring_id,
                     wiring_version,
                     caller_attached: target.caller_attached,
@@ -319,7 +293,6 @@ impl RouterDeliveryBridge {
             .to_string();
         let not_modified = || RouteSettlement {
             outcome: DeliveryOutcome::NotModified,
-            label: "not-modified",
             result: serde_json::Value::Null,
         };
         let mut tag = None;
@@ -367,11 +340,8 @@ impl RouterDeliveryBridge {
 
     /// Settle a delivery that the route path or the driver refused, or that
     /// failed to execute.
-    pub async fn refuse(
+    pub fn refuse(
         &self,
-        source: SourceRef<'_>,
-        delivery_id: &str,
-        target: &AttachmentTarget,
         attributes: &[KeyValue],
         error: &anyhow::Error,
     ) -> Result<DeliveryOutcome, DeliveryError> {
@@ -381,32 +351,14 @@ impl RouterDeliveryBridge {
                     .downcast_ref::<OperationRefusal>()
                     .expect("the guarded branch carries an operation refusal")
                     .clone();
-                let (class, literal) = match denial.refusal_type() {
-                    OperationRefusalType::PermissionDenied => {
-                        (DeliveryClass::PermissionDenied, PERMISSION_DENIED)
-                    }
+                let class = match denial.refusal_type() {
+                    OperationRefusalType::PermissionDenied => DeliveryClass::PermissionDenied,
                 };
                 self.record(attributes, class);
-                self.tap(
-                    source,
-                    delivery_id,
-                    target,
-                    RouterTapPhase::Settled(literal),
-                    Cow::Owned(serde_json::Value::Null),
-                )
-                .await;
                 Err(lower_operation_refusal(&denial))
             }
             error => {
                 self.record(attributes, DeliveryClass::ExecutionFailed);
-                self.tap(
-                    source,
-                    delivery_id,
-                    target,
-                    RouterTapPhase::Settled(EXECUTION_FAILED),
-                    Cow::Owned(serde_json::Value::Null),
-                )
-                .await;
                 // The whole chain, not the top context: `invoke wiring node
                 // "store"` alone told six cluster runs nothing about WHY
                 // (wamn-362o.45).
@@ -414,44 +366,6 @@ impl RouterDeliveryBridge {
                 Err(DeliveryError::ExecutionFailed)
             }
         }
-    }
-
-    /// Publish one delivery-boundary preview onto the host's reserved `tap.*`
-    /// namespace — the router-edge live view that `wamn-dggp.10`'s run screen
-    /// consumes in place of `get-run`.
-    ///
-    /// The bridge hands over facts and nothing else. Redaction, the payload
-    /// ceiling and the subject are all the plugin's: it mints every `tap.*`
-    /// subject from its own trusted bind-time claim, which is what makes it the
-    /// only writer of a namespace `producer::publish` refuses to every guest.
-    ///
-    /// Best-effort by contract on that side too — a tap never fails, slows or
-    /// reshapes a delivery, and is a no-op on a host with no data-plane NATS.
-    /// PER-EDGE previews inside the router walk are the DEMAND-GATED UPGRADE and
-    /// are deliberately not built: they would put a publish on every
-    /// `Step::Invoke`. Nothing here forecloses them — a per-edge phase is another
-    /// variant on a subject that already scopes to one delivery.
-    pub async fn tap(
-        &self,
-        source: SourceRef<'_>,
-        delivery_id: &str,
-        target: &AttachmentTarget,
-        phase: RouterTapPhase,
-        payload: Cow<'_, serde_json::Value>,
-    ) {
-        self.jetstream
-            .publish_router_tap(
-                ROUTER_DELIVERY_ID,
-                RouterTapPreview {
-                    delivery_id,
-                    target,
-                    source_type: source.source_type(),
-                    source_id: source.id(),
-                    phase,
-                    payload,
-                },
-            )
-            .await;
     }
 }
 
@@ -756,7 +670,7 @@ impl RouterDeliveryBridge {
 }
 
 /// Map a failure of the route path to the bridge's error, as `refuse` does,
-/// without the live view: a stream settles no tap.
+/// without counting it.
 fn refusal(error: &anyhow::Error) -> DeliveryError {
     match error.downcast_ref::<OperationRefusal>() {
         Some(denial) => lower_operation_refusal(denial),

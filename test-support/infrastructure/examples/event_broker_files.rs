@@ -1,9 +1,8 @@
 //! Write the event NATS files of one deployed environment.
 //!
 //! The users come from `event_broker::prepare`, the same derivation the
-//! cluster tests use, plus the `tap-admin` user that creates `WAMN_TAP`.
-//! docs/operations/gcp.md section 3 runs this program and turns its files
-//! into the Secrets `evt-nats-authorization`, `evt-nats-bootstrap`,
+//! cluster tests use. docs/operations/gcp.md section 3 runs this program and
+//! turns its files into the Secrets `evt-nats-authorization`,
 //! `wamn-event-nats` and `wamn-materializer-nats`.
 //!
 //! cargo run -p wamn-test-infrastructure --example event_broker_files -- \
@@ -17,15 +16,12 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::consumer::pull;
-use ring::rand::{SecureRandom as _, SystemRandom};
-use serde_json::{Value, json};
+use serde_json::Value;
 use wamn_control_provision::events::{
     advisory_stream_config, registration_consumers, source_stream_config,
 };
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
-
-const TAP_ADMIN: &str = "tap-admin";
 
 fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -59,40 +55,12 @@ fn main() -> anyhow::Result<()> {
 
     let directory = work.join("event-nats");
     let configuration: Value = serde_json::from_slice(&fs::read(&broker.configuration)?)?;
-    let mut authorization = configuration
+    let authorization = configuration
         .get("authorization")
-        .context("the broker configuration lacks its authorization block")?
-        .clone();
-    let password = random_password()?;
-    let inbox = format!("_INBOX_{TAP_ADMIN}");
-    authorization["users"]
-        .as_array_mut()
-        .context("the authorization block lacks its users")?
-        .push(json!({
-            "user": TAP_ADMIN,
-            "password": password,
-            "permissions": {
-                "publish": {"allow": event_broker::tap_stream_permissions().into_iter()
-                    .chain([format!("{inbox}.>")]).collect::<Vec<_>>()},
-                "subscribe": {"allow": [format!("{inbox}.>")]},
-            },
-        }));
+        .context("the broker configuration lacks its authorization block")?;
     write_private(
         &directory.join("authorization.conf"),
-        format!(
-            "authorization: {}\n",
-            serde_json::to_string(&authorization)?
-        )
-        .as_bytes(),
-    )?;
-    write_private(
-        &directory.join("context.json"),
-        &serde_json::to_vec(&json!({
-            "url": server,
-            "user": TAP_ADMIN,
-            "password": password,
-            "inbox_prefix": inbox,
-        }))?,
+        format!("authorization: {}\n", serde_json::to_string(authorization)?).as_bytes(),
     )?;
     println!("{}", directory.display());
     Ok(())
@@ -114,14 +82,6 @@ fn declared_consumers(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(registration_consumers(scope, tenant, &manifests))
-}
-
-fn random_password() -> anyhow::Result<String> {
-    let mut random = [0u8; 32];
-    SystemRandom::new()
-        .fill(&mut random)
-        .map_err(|_| anyhow::anyhow!("generate broker password"))?;
-    Ok(hex::encode(random))
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {

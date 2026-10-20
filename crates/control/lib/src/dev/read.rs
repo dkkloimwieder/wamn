@@ -8,15 +8,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::Value;
 use tokio::sync::watch;
 use wamn_authoring_model::{GateRefusal, GateResult};
 use wamn_catalog::{
     AttachmentType, PackageCoordinate, ServingAttachment, ServingComponent,
     ServingComponentOperation, ServingManifest,
-};
-use wamn_runtime::plugins::wamn_jetstream::{
-    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceType, RouterTapTarget,
 };
 
 use super::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
@@ -25,7 +21,7 @@ use crate::release_carrier::ReleaseCarrier;
 /// Number of stages in one development-loop run.
 pub const DEV_STAGE_COUNT: usize = DEV_STAGE_ORDER.len();
 
-/// Maximum trace or tap observations retained by one session.
+/// Maximum trace observations retained by one session.
 pub const DEV_OBSERVATION_LIMIT: usize = 100;
 
 /// Current state of one ordered development stage.
@@ -128,70 +124,6 @@ impl DevReleaseSnapshot {
     }
 }
 
-/// One typed router-tap record received from the environment subject.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DevTapObservation {
-    pub(crate) subject: String,
-    pub(crate) record: RouterTapRecord,
-}
-
-impl DevTapObservation {
-    /// Exact NATS subject that carried this observation.
-    pub fn subject(&self) -> &str {
-        &self.subject
-    }
-
-    /// Delivery boundary represented by this observation.
-    pub const fn phase(&self) -> RouterTapRecordPhase {
-        self.record.phase
-    }
-
-    /// Delivery identity shared by its accepted and settled records.
-    pub fn delivery_id(&self) -> &str {
-        &self.record.delivery_id
-    }
-
-    /// The route or the exact wiring version that the delivery entered.
-    pub const fn target(&self) -> &RouterTapTarget {
-        &self.record.target
-    }
-
-    /// Kind of release source that originated the delivery.
-    pub const fn source_type(&self) -> RouterTapSourceType {
-        self.record.source_type
-    }
-
-    /// Attachment or registration identity within its source kind.
-    pub fn source_id(&self) -> &str {
-        &self.record.source_id
-    }
-
-    /// Whether the platform redacted at least one payload value.
-    pub const fn redacted(&self) -> bool {
-        self.record.redacted
-    }
-
-    /// Driver outcome on settled observations.
-    pub fn outcome(&self) -> Option<&str> {
-        self.record.outcome.as_deref()
-    }
-
-    /// Original payload size when the bounded preview was omitted.
-    pub const fn over_ceiling_bytes(&self) -> Option<u64> {
-        self.record.over_ceiling_bytes
-    }
-
-    /// Redacted payload preview, or null when it exceeded the ceiling.
-    pub const fn payload(&self) -> &Value {
-        &self.record.payload
-    }
-
-    /// Frozen record decoded by the same type that owns publication.
-    pub const fn record(&self) -> &RouterTapRecord {
-        &self.record
-    }
-}
-
 /// One trace summary from sampled collector output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevTraceObservation {
@@ -271,7 +203,6 @@ pub struct DevSnapshot {
     release: Option<Arc<DevReleaseSnapshot>>,
     runtime_endpoint: Option<DevRuntimeEndpoint>,
     traces: Vec<DevTraceObservation>,
-    taps: Vec<DevTapObservation>,
 }
 
 impl DevSnapshot {
@@ -286,7 +217,6 @@ impl DevSnapshot {
             release: None,
             runtime_endpoint: None,
             traces: Vec::with_capacity(DEV_OBSERVATION_LIMIT),
-            taps: Vec::with_capacity(DEV_OBSERVATION_LIMIT),
         }
     }
 
@@ -355,11 +285,6 @@ impl DevSnapshot {
     pub fn traces(&self) -> &[DevTraceObservation] {
         &self.traces
     }
-
-    /// Recent router-tap observations, oldest first.
-    pub fn taps(&self) -> &[DevTapObservation] {
-        &self.taps
-    }
 }
 
 /// Cloneable read-only entry point for one development-loop session.
@@ -406,8 +331,7 @@ pub(crate) use publisher::{DevReadPublisher, dev_read_channel};
 mod publisher {
     use super::{
         DEV_OBSERVATION_LIMIT, DevGateOutcome, DevReadHandle, DevReleaseSnapshot,
-        DevRuntimeEndpoint, DevSnapshot, DevStageState, DevTapObservation, DevTraceObservation,
-        push_bounded,
+        DevRuntimeEndpoint, DevSnapshot, DevStageState, DevTraceObservation,
     };
     use crate::dev::{DevStage, DevStageFailure};
     use crate::release_carrier::ReleaseCarrier;
@@ -451,7 +375,6 @@ mod publisher {
                     snapshot.release = None;
                 }
                 snapshot.traces.clear();
-                snapshot.taps.clear();
             });
         }
 
@@ -545,19 +468,7 @@ mod publisher {
                 true
             });
         }
-
-        /// Append one router tap while retaining the bounded newest suffix.
-        pub fn push_tap(&self, observation: DevTapObservation) {
-            self.update(|snapshot| push_bounded(&mut snapshot.taps, observation));
-        }
     }
-}
-
-fn push_bounded<T>(observations: &mut Vec<T>, observation: T) {
-    if observations.len() == DEV_OBSERVATION_LIMIT {
-        observations.remove(0);
-    }
-    observations.push(observation);
 }
 
 #[cfg(test)]
@@ -741,32 +652,11 @@ mod tests {
                 start_time_unix_nanos: sequence as u64,
                 duration: Duration::from_millis(sequence as u64),
             }]);
-            publisher.push_tap(DevTapObservation {
-                subject: format!("tap.org.project.dev.wiring.{sequence}"),
-                record: RouterTapRecord {
-                    delivery_id: sequence.to_string().into(),
-                    format_version:
-                        wamn_runtime::plugins::wamn_jetstream::RouterTapFormatVersion::V3,
-                    outcome: None,
-                    over_ceiling_bytes: None,
-                    payload: json!({"sequence": sequence}),
-                    phase: RouterTapRecordPhase::Accepted,
-                    redacted: false,
-                    source_id: "route".into(),
-                    source_type: RouterTapSourceType::Attachment,
-                    target: RouterTapTarget::Wiring {
-                        wiring_id: "wiring".into(),
-                        wiring_version: 1,
-                    },
-                },
-            });
         }
 
         let snapshot = handle.snapshot();
         assert_eq!(snapshot.traces().len(), DEV_OBSERVATION_LIMIT);
-        assert_eq!(snapshot.taps().len(), DEV_OBSERVATION_LIMIT);
         assert_eq!(snapshot.traces()[0].trace_id(), "trace-1");
-        assert_eq!(snapshot.taps()[0].delivery_id(), "1");
 
         publisher.merge_traces(vec![DevTraceObservation {
             trace_id: "trace-0".to_owned(),
@@ -852,11 +742,8 @@ mod tests {
 #[cfg(feature = "test-util")]
 pub mod test_support {
     pub use super::publisher::{DevReadPublisher, dev_read_channel};
-    use super::{
-        DevGateOutcome, DevGateVerdict, DevRuntimeEndpoint, DevTapObservation, DevTraceObservation,
-    };
+    use super::{DevGateOutcome, DevGateVerdict, DevRuntimeEndpoint, DevTraceObservation};
     use std::time::Duration;
-    use wamn_runtime::plugins::wamn_jetstream::RouterTapRecord;
 
     pub fn gate_outcome(
         package_id: String,
@@ -888,10 +775,6 @@ pub mod test_support {
             start_time_unix_nanos,
             duration,
         }
-    }
-
-    pub fn tap_observation(subject: String, record: RouterTapRecord) -> DevTapObservation {
-        DevTapObservation { subject, record }
     }
 
     pub fn runtime_endpoint(

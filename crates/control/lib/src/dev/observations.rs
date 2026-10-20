@@ -1,23 +1,16 @@
-//! Live, read-only adapters for the development loop's tap and trace views.
+//! Live, read-only adapter for the development loop's trace view.
 
 use std::error::Error;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use futures_util::StreamExt as _;
 use serde::Deserialize;
 use tokio::task::JoinHandle;
-use wamn_runtime::plugins::wamn_jetstream::{
-    RouterTapRecord, router_tap_environment_filter, router_tap_record_subject,
-};
 
 use super::config::DevConfig;
-use super::read::{
-    DEV_OBSERVATION_LIMIT, DevReadPublisher, DevTapObservation, DevTraceObservation,
-};
+use super::read::{DEV_OBSERVATION_LIMIT, DevReadPublisher, DevTraceObservation};
 
 const TRACE_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const OBSERVATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Failure to start or decode one development observation source.
 #[derive(Debug)]
@@ -61,87 +54,18 @@ impl Error for DevObservationError {
     }
 }
 
-/// Background readers owned for exactly one development-loop session.
+/// The background reader owned for exactly one development-loop session.
 #[derive(Debug)]
 pub(crate) struct DevObservationReaders {
-    tap: JoinHandle<()>,
     traces: JoinHandle<()>,
 }
 
 impl DevObservationReaders {
-    /// Connect both sources before the first stage begins.
+    /// Open the collector trace file before the first stage begins.
     pub(crate) async fn start(
         config: &DevConfig,
         publisher: DevReadPublisher,
     ) -> Result<Self, DevObservationError> {
-        let identity = config.activation_identity();
-        let tap_filter = router_tap_environment_filter(
-            &identity.tenant,
-            &identity.project,
-            &identity.environment,
-        )
-        .ok_or_else(|| {
-            DevObservationError::new(
-                "construct router-tap subscription",
-                "tenant, project, and environment must each be one NATS subject token",
-            )
-        })?;
-        let tap_options = crate::event_streams::connection_options(
-            config.event_nats_username(),
-            config.event_nats_password_file(),
-        )
-        .map_err(|source| {
-            DevObservationError::with_source(
-                "read router-tap credentials",
-                "event credentials refused the configured connection",
-                source,
-            )
-        })?;
-        let tap_client = tokio::time::timeout(
-            OBSERVATION_REQUEST_TIMEOUT,
-            tap_options.connect(config.event_nats_url()),
-        )
-        .await
-        .map_err(|source| {
-            DevObservationError::with_source(
-                "connect router-tap reader",
-                format!(
-                    "event_nats_url did not complete a connection within {}s",
-                    OBSERVATION_REQUEST_TIMEOUT.as_secs()
-                ),
-                source,
-            )
-        })?
-        .map_err(|source| {
-            DevObservationError::with_source(
-                "connect router-tap reader",
-                "event_nats_url refused the configured connection",
-                source,
-            )
-        })?;
-        let mut taps = tokio::time::timeout(
-            OBSERVATION_REQUEST_TIMEOUT,
-            tap_client.subscribe(tap_filter),
-        )
-        .await
-        .map_err(|source| {
-            DevObservationError::with_source(
-                "subscribe router-tap reader",
-                format!(
-                    "event_nats_url did not accept the environment subject within {}s",
-                    OBSERVATION_REQUEST_TIMEOUT.as_secs()
-                ),
-                source,
-            )
-        })?
-        .map_err(|source| {
-            DevObservationError::with_source(
-                "subscribe router-tap reader",
-                "event_nats_url refused the environment-scoped subject",
-                source,
-            )
-        })?;
-
         let path = config.local_artifacts().directory.join("otel/traces.jsonl");
         let offset = match tokio::fs::metadata(&path).await {
             Ok(metadata) => metadata.len(),
@@ -177,24 +101,6 @@ impl DevObservationReaders {
             traces: std::collections::BTreeMap::new(),
         };
 
-        let tap_identity = config.activation_identity().clone();
-        let tap_publisher = publisher.clone();
-        let tap = tokio::spawn(async move {
-            let _client = tap_client;
-            while let Some(message) = taps.next().await {
-                match decode_tap(
-                    &tap_identity.tenant,
-                    &tap_identity.project,
-                    &tap_identity.environment,
-                    message.subject.as_str(),
-                    &message.payload,
-                ) {
-                    Ok(observation) => tap_publisher.push_tap(observation),
-                    Err(error) => tracing::warn!(error = %error, "router-tap observation refused"),
-                }
-            }
-        });
-
         let traces = tokio::spawn(async move {
             let mut interval = tokio::time::interval(TRACE_POLL_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -207,13 +113,12 @@ impl DevObservationReaders {
             }
         });
 
-        Ok(Self { tap, traces })
+        Ok(Self { traces })
     }
 }
 
 impl Drop for DevObservationReaders {
     fn drop(&mut self) {
-        self.tap.abort();
         self.traces.abort();
     }
 }
@@ -443,99 +348,11 @@ fn attribute<'a>(attributes: &'a [TraceAttribute], key: &str) -> Option<&'a str>
         .as_str()
 }
 
-fn decode_tap(
-    tenant: &str,
-    project: &str,
-    environment: &str,
-    subject: &str,
-    bytes: &[u8],
-) -> Result<DevTapObservation, DevObservationError> {
-    let record: RouterTapRecord = serde_json::from_slice(bytes).map_err(|source| {
-        DevObservationError::with_source(
-            "decode router tap",
-            "event_nats_url delivered a malformed router-tap record",
-            source,
-        )
-    })?;
-    record.validate().map_err(|source| {
-        DevObservationError::with_source(
-            "decode router tap",
-            "event_nats_url delivered an impossible router-tap field combination",
-            source,
-        )
-    })?;
-    let expected = router_tap_record_subject(
-        tenant,
-        project,
-        environment,
-        record.subject_token(),
-        &record.delivery_id,
-    )
-    .ok_or_else(|| {
-        DevObservationError::new(
-            "decode router tap",
-            "the record identity cannot form one router-tap subject",
-        )
-    })?;
-    if subject != expected {
-        return Err(DevObservationError::new(
-            "decode router tap",
-            "the record identity disagrees with its NATS subject",
-        ));
-    }
-    Ok(DevTapObservation {
-        subject: subject.to_owned(),
-        record,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use wamn_runtime::plugins::wamn_jetstream::{
-        RouterTapFormatVersion, RouterTapRecordPhase, RouterTapSourceType, RouterTapTarget,
-    };
 
     use super::*;
-
-    #[test]
-    fn typed_tap_reader_requires_subject_and_body_to_name_the_same_delivery() {
-        let record = RouterTapRecord {
-            delivery_id: "delivery-1".into(),
-            format_version: RouterTapFormatVersion::V3,
-            outcome: None,
-            over_ceiling_bytes: None,
-            payload: json!({"rack": "r-1"}),
-            phase: RouterTapRecordPhase::Accepted,
-            redacted: false,
-            source_id: "route-1".into(),
-            source_type: RouterTapSourceType::Attachment,
-            target: RouterTapTarget::Wiring {
-                wiring_id: "rack".into(),
-                wiring_version: 1,
-            },
-        };
-        let bytes = serde_json::to_vec(&record).expect("serialize typed tap");
-        let observation = decode_tap(
-            "tenant-a",
-            "project-a",
-            "dev",
-            "tap.tenant-a.project-a.dev.rack.delivery-1",
-            &bytes,
-        )
-        .expect("matching typed tap is admitted");
-        assert_eq!(observation.delivery_id(), "delivery-1");
-
-        let error = decode_tap(
-            "tenant-a",
-            "project-a",
-            "dev",
-            "tap.tenant-a.project-a.dev.other.delivery-1",
-            &bytes,
-        )
-        .expect_err("a mismatched subject must be refused");
-        assert_eq!(error.operation, "decode router tap");
-    }
 
     fn reader(path: std::path::PathBuf) -> TraceReader {
         let addresses = ["127.0.0.1:41000".parse().unwrap(); 11];

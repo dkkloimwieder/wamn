@@ -353,12 +353,6 @@ mod tests {
                 "standard"
             );
             assert!(!names_pool(&Value::Array(broker.clone())));
-            let job = object(&broker, "Job", "evt-nats-tap-stream");
-            assert_eq!(job["spec"]["ttlSecondsAfterFinished"], 600);
-            assert_eq!(
-                job["spec"]["template"]["spec"]["volumes"][1]["secret"]["secretName"],
-                "evt-nats-bootstrap"
-            );
             if provider == Provider::Kind {
                 assert!(
                     account["metadata"]["annotations"]

@@ -884,8 +884,6 @@ The [runtime tests](../operations/running-tests.md#host-and-package-runtime) cov
 
 OpenTelemetry records invocation and effect spans, request timing, and delivery outcomes.
 Operational logs use INFO. Hosts send request traces to the platform OpenTelemetry collector.
-The bounded router tap supplies the live view without durable node histories.
-Each tap record names a route or a wiring. The host writes only version 3 of the record, and readers refuse versions 1 and 2.
 
 The [deployment guide](../operations/deployment.md) owns probe ports, grace periods, and rollout commands.
 The [native alignment page](native-alignment.md#current-limits) retains the unresolved operator retry and liveness limits.

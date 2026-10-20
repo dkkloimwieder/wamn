@@ -212,29 +212,6 @@ cluster.Cluster {{
         None,
     )
     .await?;
-    kubectl::wait(
-        &kubeconfig,
-        &context,
-        "platform",
-        "job",
-        "evt-nats-tap-stream",
-        "condition=complete",
-        "180s",
-    )
-    .await?;
-    let log = kubectl::kubectl(
-        &kubeconfig,
-        &context,
-        "platform",
-        &["logs", "job/evt-nats-tap-stream"],
-        None,
-    )
-    .await?;
-    std::fs::write(directory.join("tap-stream.log"), &log)?;
-    ensure!(
-        log.contains("WAMN_TAP"),
-        "tap Job log does not name WAMN_TAP"
-    );
     for (namespace, kind, name) in [
         ("hosts", "configmap", "identity-ca"),
         ("edge", "configmap", "identity-ca"),

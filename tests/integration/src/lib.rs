@@ -27,7 +27,6 @@ mod reconcile_live;
 mod route_authentication_live;
 #[cfg(test)]
 mod route_interface_live;
-mod router_tap_live;
 pub mod startup_burst;
 pub mod streambench;
 pub mod throughput_bench;

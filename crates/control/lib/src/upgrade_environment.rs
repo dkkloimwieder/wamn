@@ -39,9 +39,6 @@ const WORKLOAD_GUESTS: [(&str, &str); 2] = [
     ("materializer.wasm", "materializer"),
 ];
 const BROKER_POD: &str = "evt-nats-0";
-const TAP_JOB: &str = "evt-nats-tap-stream";
-const TAP_CHECK_POD: &str = "evt-nats-check";
-const TAP_PRESENT: &str = r#""config":{"name":"WAMN_TAP""#;
 const COMMAND_TIMEOUT: Duration = Duration::from_hours(3);
 
 #[derive(Clone, Debug)]
@@ -469,8 +466,7 @@ impl Run {
         Ok((done(!pushed), outputs))
     }
 
-    /// Stage 5: capacity, broker and `WAMN_TAP`, before any change to the
-    /// environment.
+    /// Stage 5: capacity and broker, before any change to the environment.
     async fn preflight(&self) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
@@ -491,8 +487,7 @@ impl Run {
                 .join(", "),
         );
 
-        let tap = self.broker(&kubectl).await?;
-        outputs.insert("WAMN_TAP".to_owned(), tap.to_owned());
+        self.broker(&kubectl).await?;
 
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
         outputs.insert("tenant".to_owned(), databases.tenant.clone());
@@ -957,22 +952,13 @@ impl Run {
     }
 
     /// The broker check of stage 5, which runs again before stages 8 and 9
-    /// (§4.3): the broker is Ready, and the tap Job runs when `WAMN_TAP` is
-    /// missing.
-    async fn broker(&self, kubectl: &Kubectl) -> anyhow::Result<&'static str> {
+    /// (§4.3): the broker is Ready.
+    async fn broker(&self, kubectl: &Kubectl) -> anyhow::Result<()> {
         let broker = kubectl
             .json(&["-n", "platform", "get", "pod", BROKER_POD])
             .await?;
         ensure!(ready(&broker), "the broker pod {BROKER_POD} is not Ready");
-        if self.tap_exists(kubectl).await? {
-            return Ok("present");
-        }
-        self.run_tap_job(kubectl).await?;
-        ensure!(
-            self.tap_exists(kubectl).await?,
-            "WAMN_TAP is still missing after the tap Job"
-        );
-        Ok("made by the tap Job")
+        Ok(())
     }
 
     /// The wait of §4.3 before a retry: Ready nodes and Ready platform pods.
@@ -1348,97 +1334,6 @@ impl Run {
             ("run record".to_owned(), file.display().to_string()),
         ]);
         Ok((StepResult::Done, outputs))
-    }
-
-    /// Runs the check pod of `deploy/gcp/evt-nats-check.yaml` and reads its log.
-    async fn tap_exists(&self, kubectl: &Kubectl) -> anyhow::Result<bool> {
-        let manifest = self.checkout.join("deploy/gcp/evt-nats-check.yaml");
-        let manifest = manifest.display().to_string();
-        kubectl
-            .run(&[
-                "-n",
-                "platform",
-                "delete",
-                "pod",
-                TAP_CHECK_POD,
-                "--ignore-not-found",
-            ])
-            .await?;
-        kubectl.run(&["apply", "-f", &manifest]).await?;
-        let waited = kubectl
-            .run(&[
-                "-n",
-                "platform",
-                "wait",
-                &format!("pod/{TAP_CHECK_POD}"),
-                "--for=jsonpath={.status.phase}=Succeeded",
-                "--timeout=120s",
-            ])
-            .await;
-        let log = kubectl
-            .run(&["-n", "platform", "logs", TAP_CHECK_POD])
-            .await;
-        let saved = self.work.join("logs").join("evt-nats-check.log");
-        fs::write(&saved, log.as_deref().unwrap_or_default())?;
-        kubectl
-            .run(&[
-                "-n",
-                "platform",
-                "delete",
-                "pod",
-                TAP_CHECK_POD,
-                "--ignore-not-found",
-            ])
-            .await?;
-        waited?;
-        Ok(log?.contains(TAP_PRESENT))
-    }
-
-    /// Runs the tap-stream Job of `deploy/gcp/nats-jetstream.yaml` alone, so
-    /// that no other document of that file changes.
-    async fn run_tap_job(&self, kubectl: &Kubectl) -> anyhow::Result<()> {
-        let file = self.checkout.join("deploy/gcp/nats-jetstream.yaml");
-        let job = tap_job(
-            &fs::read_to_string(&file).with_context(|| format!("read {}", file.display()))?,
-        )?;
-        let path = self.work.join("tap-job.yaml");
-        fs::write(&path, job)?;
-        let saved = self.work.join("logs").join("tap-job-previous.log");
-        let previous = kubectl
-            .run(&["-n", "platform", "logs", &format!("job/{TAP_JOB}")])
-            .await;
-        fs::write(&saved, previous.unwrap_or_default())?;
-        kubectl
-            .run(&[
-                "-n",
-                "platform",
-                "delete",
-                "job",
-                TAP_JOB,
-                "--ignore-not-found",
-            ])
-            .await?;
-        kubectl
-            .run(&["apply", "-f", &path.display().to_string()])
-            .await?;
-        let waited = kubectl
-            .run(&[
-                "-n",
-                "platform",
-                "wait",
-                "--for=condition=complete",
-                &format!("job/{TAP_JOB}"),
-                "--timeout=180s",
-            ])
-            .await;
-        let log = kubectl
-            .run(&["-n", "platform", "logs", &format!("job/{TAP_JOB}")])
-            .await;
-        fs::write(
-            self.work.join("logs").join("tap-job.log"),
-            log.unwrap_or_default(),
-        )?;
-        waited.map(|_| ())
     }
 }
 
@@ -2627,19 +2522,6 @@ fn memory(quantity: &str) -> anyhow::Result<u64> {
         .with_context(|| format!("the memory quantity {quantity} is too large"))
 }
 
-/// The Job document of the tap stream, alone.
-fn tap_job(file: &str) -> anyhow::Result<String> {
-    let mut found = None;
-    for document in serde_yaml::Deserializer::from_str(file) {
-        let value = <serde_yaml::Value as serde::Deserialize>::deserialize(document)?;
-        if value["kind"] == "Job" && value["metadata"]["name"] == TAP_JOB {
-            ensure!(found.is_none(), "the file has two Jobs {TAP_JOB}");
-            found = Some(serde_yaml::to_string(&value)?);
-        }
-    }
-    found.with_context(|| format!("the file has no Job {TAP_JOB}"))
-}
-
 /// The superuser connections of the system database and the project
 /// database of one environment, through one pod port-forward. The password
 /// stays in memory, and every recorded cause is redacted of it.
@@ -3050,19 +2932,6 @@ mod tests {
         let groups = host_group_requests(&host_values(checkout).unwrap()).unwrap();
         let names: Vec<&str> = groups.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(names, ["default", "wms", "control"]);
-    }
-
-    #[test]
-    fn the_tap_job_is_taken_alone_from_its_file() {
-        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(3)
-            .unwrap();
-        let file = fs::read_to_string(checkout.join("deploy/gcp/nats-jetstream.yaml")).unwrap();
-        let job: serde_yaml::Value = serde_yaml::from_str(&tap_job(&file).unwrap()).unwrap();
-        assert_eq!(job["kind"], "Job");
-        assert_eq!(job["metadata"]["name"], TAP_JOB);
-        assert!(tap_job("kind: ConfigMap\n").is_err());
     }
 
     #[test]

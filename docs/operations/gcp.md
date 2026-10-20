@@ -382,7 +382,7 @@ for project in receiving wms; do
 done
 ```
 
-`authorization.conf` is `authorization: ` followed by JSON. Merge the two files: the Receiving users, its `tap-admin`, and the WMS users without their `tap-admin`:
+`authorization.conf` is `authorization: ` followed by JSON. Merge the users of the two files:
 
 ```bash
 W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-nats
@@ -390,7 +390,7 @@ W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-n
 import json, sys
 def users(path):
     return json.loads(open(path).read().split(':', 1)[1])['users']
-merged = users(sys.argv[1]) + [u for u in users(sys.argv[2]) if u['user'] != 'tap-admin']
+merged = users(sys.argv[1]) + users(sys.argv[2])
 print('authorization: ' + json.dumps({'users': merged}))
 PY
 )
@@ -401,10 +401,8 @@ Make the broker Secrets, install the broker, and make the user Secrets:
 ```bash
 W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-nats
 kubectl -n platform create secret generic evt-nats-authorization --from-file=authorization.conf=$W/merged-authorization.conf
-kubectl -n platform create secret generic evt-nats-bootstrap --from-file=context.json=$E/context.json
 kubectl apply -f deploy/gcp/nats-jetstream.yaml
 kubectl -n platform rollout status statefulset/evt-nats --timeout=300s
-kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s
 for role in provisioning publisher observer; do
   kubectl -n platform create secret generic evt-nats-$role \
     --from-file=username=$E/$role-username --from-file=password=$E/$role-password
@@ -427,7 +425,7 @@ kubectl -n hosts create secret generic wamn-event-nats-wms \
 kubectl -n hosts create secret generic wamn-materializer-nats-wms --from-file=binding.json=$F/binding.json
 ```
 
-Make sure that the stream `WAMN_TAP` exists. The log shows `"config":{"name":"WAMN_TAP"`:
+Make sure that the provisioning user can read the source stream. The log shows `"config":{"name":"EVT_3_dkk_9_receiving_3_dev"`:
 
 ```bash
 kubectl apply -f deploy/gcp/evt-nats-check.yaml
@@ -897,7 +895,7 @@ openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev 
 
 ### 5.1 Pool after the daily guard
 
-The guard sets pool `main` to 0 nodes every day. Scale `pg`, `main` and `bench` back to 1 node each. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
+The guard sets pool `main` to 0 nodes every day. Scale `pg`, `main` and `bench` back to 1 node each. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`.:
 
 ```bash
 gcloud container clusters resize wamn --node-pool pg --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
@@ -906,9 +904,6 @@ gcloud container clusters resize wamn --node-pool bench --num-nodes 1 --zone us-
 until kubectl -n platform get pod wamn-pg-1 >/dev/null 2>&1; do sleep 5; done
 kubectl -n platform wait pod/wamn-pg-1 --for=condition=Ready --timeout=900s
 kubectl -n platform rollout status statefulset/evt-nats --timeout=600s
-kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found
-kubectl apply -f deploy/gcp/nats-jetstream.yaml
-kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=300s
 ```
 
 The port-forwards end with their pods, so start them again (sections 4.5 and 4.8).

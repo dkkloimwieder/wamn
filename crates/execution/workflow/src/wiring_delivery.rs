@@ -1,19 +1,17 @@
 //! The wiring arm of the delivery bridge. The router driver walks the wiring
 //! and the bridge settles the delivery. A route never reaches this module.
 
-use std::borrow::Cow;
-
 use opentelemetry::KeyValue;
-use wamn_catalog::{AttachmentTarget, RegistrationDelivery};
+use wamn_catalog::RegistrationDelivery;
 use wamn_engine::router_delivery::{
-    DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome, EXECUTION_FAILED,
+    DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome,
     EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureType as WireFailureType,
     OperationRefusal, PartialCompletion, ROUTER_DELIVERY_ID, SourceRef, lower_operation_refusal,
 };
 use wamn_event_wire::Causation;
 use wamn_execution_host::{RouterDeliveryBridge, WiringCall, WiringDelivery, WiringPreload};
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
-use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, RouterTapPhase};
+use wamn_runtime::plugins::wamn_jetstream::DerivedPublishRequest;
 use wamn_runtime::plugins::wamn_postgres::{EventRunAdmission, EventRunAdmitted};
 
 use crate::router_response::{InterruptedResponse, PartialEvidence};
@@ -34,7 +32,6 @@ impl WiringDelivery for RouterDriver {
             source,
             delivery_id,
             package_id,
-            target,
             wiring_id,
             wiring_version,
             caller_attached,
@@ -97,16 +94,6 @@ impl WiringDelivery for RouterDriver {
         match result {
             Ok(delivery) => {
                 bridge.record(attributes, DeliveryClass::Delivered);
-                let (outcome, result) = settled_preview(&delivery.outcome);
-                bridge
-                    .tap(
-                        source,
-                        &delivery_id,
-                        target,
-                        RouterTapPhase::Settled(outcome),
-                        result,
-                    )
-                    .await;
                 publish_emit(
                     bridge,
                     package_id,
@@ -118,7 +105,7 @@ impl WiringDelivery for RouterDriver {
                 .await?;
                 lower_with_evidence(delivery.outcome, delivery.partial)
             }
-            Err(error) => refuse(bridge, source, &delivery_id, target, attributes, &error).await,
+            Err(error) => refuse(bridge, attributes, &error),
         }
     }
 }
@@ -216,11 +203,8 @@ impl RouterDriver {
 /// Settle a delivery that the driver refused or failed to execute. A failure
 /// after a declared committed result keeps its evidence. Every other refusal
 /// settles as a route refusal does.
-async fn refuse(
+fn refuse(
     bridge: &RouterDeliveryBridge,
-    source: SourceRef<'_>,
-    delivery_id: &str,
-    target: &AttachmentTarget,
     attributes: &[KeyValue],
     error: &anyhow::Error,
 ) -> Result<DeliveryOutcome, DeliveryError> {
@@ -230,21 +214,10 @@ async fn refuse(
             .downcast_ref::<OperationRefusal>()
             .map_or(DeliveryError::ExecutionFailed, lower_operation_refusal);
         bridge.record(attributes, DeliveryClass::ExecutionFailed);
-        bridge
-            .tap(
-                source,
-                delivery_id,
-                target,
-                RouterTapPhase::Settled(EXECUTION_FAILED),
-                Cow::Owned(serde_json::Value::Null),
-            )
-            .await;
         tracing::warn!(error = %format_args!("{:#}", interrupted.source), "router delivery failed after a declared committed result");
         return partial_outcome(&interrupted.evidence, FailedOutcome::Error(failure));
     }
-    bridge
-        .refuse(source, delivery_id, target, attributes, error)
-        .await
+    bridge.refuse(attributes, error)
 }
 
 /// The wiring position this bridge resolved before the walk names the
@@ -292,49 +265,6 @@ async fn publish_emit(
             );
             DeliveryError::ExecutionFailed
         })
-}
-
-/// How one settled delivery reads in the live view: the outcome label, and the
-/// result the caller was given.
-///
-/// This mirrors [`lower_outcome`] arm for arm, INCLUDING its two order-sensitive
-/// rulings — a running walk is a failure whatever verdict it carries, and a
-/// first verdict stands over a later frontier failure. A live view that
-/// disagreed with what the caller actually received would be worse than none,
-/// because it would be believed.
-///
-/// The verdict payloads are BORROWED. The plugin copies only if it will publish,
-/// so a host with no data-plane NATS pays nothing for a preview it drops.
-pub(crate) fn settled_preview(outcome: &Outcome) -> (&'static str, Cow<'_, serde_json::Value>) {
-    if matches!(outcome.status, WalkStatus::Running) {
-        return (EXECUTION_FAILED, Cow::Owned(serde_json::Value::Null));
-    }
-    match outcome.verdict.as_ref() {
-        Some(Verdict::Respond { payload, .. }) => ("respond", Cow::Borrowed(payload)),
-        Some(Verdict::Emit { event, .. }) => ("emit", Cow::Borrowed(event)),
-        Some(Verdict::Discard) => ("discard", Cow::Owned(serde_json::Value::Null)),
-        None => match outcome.status {
-            WalkStatus::Cancelled => ("cancelled", Cow::Owned(serde_json::Value::Null)),
-            WalkStatus::Failed => (
-                "failed",
-                Cow::Owned(match outcome.failure.as_ref() {
-                    // The kind is deliberately absent: it has no wire spelling
-                    // of its own, and a `Debug` rendering on a subject a console
-                    // parses would drift the moment the enum is edited.
-                    Some(failure) => serde_json::json!({
-                        "code": failure.detail.code,
-                        "message": failure.detail.message,
-                    }),
-                    None => serde_json::Value::Null,
-                }),
-            ),
-            // A completed walk with no verdict never settled anything, and
-            // `lower_outcome` refuses both of these the same way.
-            WalkStatus::Completed | WalkStatus::Running => {
-                (EXECUTION_FAILED, Cow::Owned(serde_json::Value::Null))
-            }
-        },
-    }
 }
 
 pub(crate) fn lower_with_evidence(
@@ -475,8 +405,7 @@ mod tests {
     }
 
     /// A route answers each node outcome exactly as its one-node respond
-    /// wiring does: the caller's outcome and the live view's label and result
-    /// both match. A retryable or rate-limited error reads as the wiring's
+    /// wiring does. A retryable or rate-limited error reads as the wiring's
     /// failure after its last attempt, because a route never retries.
     #[test]
     fn a_route_settles_each_node_outcome_as_its_one_node_wiring() {
@@ -540,8 +469,6 @@ mod tests {
         ];
         for (route, wiring) in cases {
             let settled = settle_route(route).expect("every node outcome settles");
-            let (label, result) = settled_preview(&wiring);
-            assert_eq!((settled.label, &settled.result), (label, &*result));
             assert_eq!(
                 format!("{:?}", settled.outcome),
                 format!(
@@ -596,71 +523,6 @@ mod tests {
             hops: 1,
             verdict,
         }
-    }
-
-    /// The live view shows the caller's truth, not a second opinion: for every
-    /// outcome shape, the preview's label agrees with what `lower_outcome`
-    /// actually returns — including the two arms whose ORDER decides the answer.
-    #[test]
-    fn a_settled_preview_never_contradicts_what_the_caller_received() {
-        let respond = Verdict::Respond {
-            payload: serde_json::json!({"accepted": true}),
-            node_id: "respond".into(),
-        };
-
-        let responded = outcome_of(WalkStatus::Completed, Some(respond.clone()));
-        let (label, result) = settled_preview(&responded);
-        assert_eq!(label, "respond");
-        assert_eq!(*result, serde_json::json!({"accepted": true}));
-
-        // A running walk is refused whatever verdict it carries — `lower_outcome`
-        // tests `Running` BEFORE the verdict, so a preview that read the verdict
-        // first would promise a caller a response it never got.
-        let (label, _) = settled_preview(&outcome_of(WalkStatus::Running, Some(respond.clone())));
-        assert_eq!(label, EXECUTION_FAILED);
-        assert!(matches!(
-            lower_outcome(outcome_of(WalkStatus::Running, Some(respond.clone()))),
-            Err(DeliveryError::ExecutionFailed)
-        ));
-
-        // A first verdict stands over a later frontier failure, so the preview
-        // shows the verdict rather than the failure.
-        let mut second_verdict = outcome_of(WalkStatus::Failed, Some(respond));
-        second_verdict.failure = Some(Failure {
-            node: "later-terminal".into(),
-            kind: FailureKind::SecondVerdict,
-            detail: ErrorDetail::coded("second-verdict", "later terminal refused"),
-        });
-        assert_eq!(settled_preview(&second_verdict).0, "respond");
-
-        // Verdictless walks read off the status alone.
-        assert_eq!(
-            settled_preview(&outcome_of(WalkStatus::Cancelled, None)).0,
-            "cancelled"
-        );
-        assert_eq!(
-            settled_preview(&outcome_of(WalkStatus::Completed, None)).0,
-            EXECUTION_FAILED
-        );
-        assert_eq!(
-            settled_preview(&outcome_of(WalkStatus::Completed, Some(Verdict::Discard))).0,
-            "discard"
-        );
-
-        // A failure's preview carries the caller's own code and message and
-        // nothing the caller did not get.
-        let mut failed = outcome_of(WalkStatus::Failed, None);
-        failed.failure = Some(Failure {
-            node: "retired-coordinate".into(),
-            kind: FailureKind::InvalidInput,
-            detail: ErrorDetail::coded("bad-order", "order is invalid"),
-        });
-        let (label, result) = settled_preview(&failed);
-        assert_eq!(label, "failed");
-        assert_eq!(
-            *result,
-            serde_json::json!({"code": "bad-order", "message": "order is invalid"})
-        );
     }
 }
 
