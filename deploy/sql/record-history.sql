@@ -277,7 +277,10 @@ REVOKE ALL ON FUNCTION wamn_history.log_row_change() FROM PUBLIC;
 -- The log function calls wamn_history.row_image with the authority of the
 -- writer, so every writer of a logged relation needs EXECUTE on it.
 -- record-history-app-grants.sql grants it to wamn_app.
-GRANT USAGE ON SCHEMA wamn_history TO wamn_db_owner;
+-- apply-package also creates the stamp and log functions of each package
+-- relation in this schema (wamn-c8a5v.2), so wamn_db_owner holds CREATE.
+-- The platform relations keep the shared functions of this file.
+GRANT USAGE, CREATE ON SCHEMA wamn_history TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.stamp_row() TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.create_history_table(text, text, boolean)
     TO wamn_db_owner;

@@ -54,7 +54,11 @@ fn history_value(
 ) -> Result<PurchaseOrderHistoryValue, AccessError> {
     let image = |text: Option<String>| {
         text.and_then(|text| {
-            wamn_record_history::retain_columns(&text, &PURCHASE_ORDER_HISTORY_COLUMNS)
+            wamn_record_history::retain_columns(
+                &text,
+                &PURCHASE_ORDER_HISTORY_COLUMNS,
+                crate::generated::purchase_order::TIMESTAMPTZ_COLUMNS,
+            )
         })
         .ok_or_else(|| AccessError::internal("history read returned no JSON object image"))
     };

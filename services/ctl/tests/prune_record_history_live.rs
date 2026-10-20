@@ -832,7 +832,7 @@ async fn a_retention_change_waits_for_a_running_prune() {
         format!(
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON {SCHEMA}.parcel FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.log_row_change('P1D')"
+             EXECUTE FUNCTION wamn_history.{SCHEMA}__parcel_log('P1D')"
         ),
         "apply-package committed the P1D retention after the prune"
     );

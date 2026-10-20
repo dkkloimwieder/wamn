@@ -280,14 +280,39 @@ fn the_fold_refuses_rows_that_do_not_form_one_read() {
 fn retained_columns_keep_their_raw_spelling_and_order() {
     let image = r#"{"id": 1, "a\"b": "x", "doc": {"k": [1.50, "}", ","]}, "amount": 12.3400, "acme_note": "overlay"}"#;
     assert_eq!(
-        retain_columns(image, &["amount", "doc", "id", "a\"b", "absent"]).as_deref(),
+        retain_columns(image, &["amount", "doc", "id", "a\"b", "absent"], &[]).as_deref(),
         Some(r#"{"id": 1, "a\"b": "x", "doc": {"k": [1.50, "}", ","]}, "amount": 12.3400}"#)
     );
-    assert_eq!(retain_columns(image, &[]).as_deref(), Some("{}"));
-    assert_eq!(retain_columns("{}", &["id"]).as_deref(), Some("{}"));
+    assert_eq!(retain_columns(image, &[], &[]).as_deref(), Some("{}"));
+    assert_eq!(retain_columns("{}", &["id"], &[]).as_deref(), Some("{}"));
     assert_eq!(
-        retain_columns(r#" { "id" : 1 } "#, &["id"]).as_deref(),
+        retain_columns(r#" { "id" : 1 } "#, &["id"], &[]).as_deref(),
         Some(r#"{"id" : 1}"#)
+    );
+}
+
+#[test]
+fn retained_timestamptz_columns_take_one_spelling_from_either_spelling() {
+    let to_jsonb = r#"{"id": 1, "updated_at": "2026-10-20T09:32:00.6219-04:00", "note": "2026-10-20T09:32:00-04:00"}"#;
+    let canonical = r#"{"id": 1, "updated_at": "2026-10-20T13:32:00.621900Z"}"#;
+    assert_eq!(
+        retain_columns(to_jsonb, &["id", "updated_at", "note"], &["updated_at"]).as_deref(),
+        Some(
+            r#"{"id": 1, "updated_at": "2026-10-20T13:32:00.621900Z", "note": "2026-10-20T09:32:00-04:00"}"#
+        )
+    );
+    assert_eq!(
+        retain_columns(canonical, &["id", "updated_at"], &["updated_at"]).as_deref(),
+        Some(canonical)
+    );
+    assert_eq!(
+        retain_columns(
+            r#"{"updated_at": "infinity"}"#,
+            &["updated_at"],
+            &["updated_at"]
+        )
+        .as_deref(),
+        Some(r#"{"updated_at": "infinity"}"#)
     );
 }
 
@@ -301,7 +326,7 @@ fn retained_columns_refuse_text_that_is_not_one_object() {
         r#"{"id": 1} {}"#,
         r#"{"id" 1}"#,
     ] {
-        assert_eq!(retain_columns(text, &["id"]), None, "{text}");
+        assert_eq!(retain_columns(text, &["id"], &[]), None, "{text}");
     }
 }
 
@@ -310,8 +335,8 @@ fn a_fold_over_retained_columns_shows_only_those_columns() {
     let declared = ["id", "note", "updated_at"];
     let current = r#"{"id": 1, "note": "second", "overlay": true, "updated_at": "2026-10-02T10:00:00.250000Z"}"#;
     let before = r#"{"note": "first", "overlay": false}"#;
-    let current = retain_columns(current, &declared).unwrap();
-    let before = retain_columns(before, &declared).unwrap();
+    let current = retain_columns(current, &declared, &[]).unwrap();
+    let before = retain_columns(before, &declared, &[]).unwrap();
     let rows = [
         row(1, "insert", "{}", &current, 2),
         row(2, "update", &before, &current, 2),

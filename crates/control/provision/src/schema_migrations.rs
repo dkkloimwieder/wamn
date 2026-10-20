@@ -330,6 +330,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0021_remove_model_versions.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0022_record_history_relation_functions.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0022_record_history_relation_functions.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

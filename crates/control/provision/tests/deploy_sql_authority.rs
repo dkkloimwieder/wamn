@@ -1557,12 +1557,13 @@ fn history_grants(url: &str) -> String {
 #[test]
 fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
     const SYSTEM_DATABASE: &str = "wamn_floor_history_system";
-    const OWNER_GRANTS: [&str; 6] = [
+    const OWNER_GRANTS: [&str; 7] = [
         "create_history_table wamn_db_owner EXECUTE",
         "log_row_change wamn_db_owner EXECUTE",
         "row_image wamn_db_owner EXECUTE",
         "stamp_row wamn_db_owner EXECUTE",
         "timestamptz_image wamn_db_owner EXECUTE",
+        "wamn_history wamn_db_owner CREATE",
         "wamn_history wamn_db_owner USAGE",
     ];
     const APP_GRANTS: [&str; 3] = [

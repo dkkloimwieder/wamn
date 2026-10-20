@@ -159,6 +159,22 @@ pub(super) fn emit_model_data(
         writeln!(source, "pub use sql::{};", row.name).expect("writing to a String cannot fail");
     }
     source.push('\n');
+    // A history read canonicalizes these columns of every image, because an
+    // entry keeps the `to_jsonb` spelling (wamn-c8a5v.2).
+    let timestamptz = table
+        .columns()
+        .iter()
+        .filter(|column| column.column_type() == ColumnType::Timestamptz)
+        .map(|column| format!("{:?}", column.name()))
+        .collect::<Vec<_>>();
+    writeln!(
+        source,
+        "/// The `timestamptz` columns of the model's relation.\n\
+         #[allow(dead_code)]\n\
+         pub const TIMESTAMPTZ_COLUMNS: &[&str] = &[{}];\n",
+        timestamptz.join(", ")
+    )
+    .expect("writing to a String cannot fail");
     for (action, operation) in &model.operations {
         writeln!(
             source,

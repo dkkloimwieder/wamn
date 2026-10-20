@@ -485,9 +485,15 @@ Every stamp in one transaction carries the same instant, and that instant is not
 The function reads no users row, and no stamp column has a foreign key.
 Only the platform trigger functions read `app.user_id`, and no authorization or row policy reads it.
 The [claims lint](../../tests/conformance/src/repo_policy/session_claims.rs) admits those readers by name, and it admits `wamn_history.log_row_change` as the reader of `app.operation`.
+It also admits the two function templates of `apply_package/record_history.rs`, which generate the functions of the package relations.
 
 After the migrations apply, apply-package installs one `wamn_record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
-The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.
+The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes the generated function `wamn_history.<schema>__<relation>_stamp()`.
+apply-package generates that function from the selected columns and the other columns of the relation, which it reads from the catalog after the migrations.
+The function assigns each selected column, and it tests a change with `NEW.<column>::text IS DISTINCT FROM OLD.<column>::text` for each other column.
+It reads no catalog and builds no JSONB. It follows the rules of `wamn_history.stamp_row`, which the platform relations keep.
+apply-package replaces a generated function only when its stored source differs, and it refuses a name of 64 bytes or more with `record-history-function-name-too-long`.
+A column change that does not run through apply-package leaves the function on the old column list until the next apply.
 apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
 It then reads each trigger of the owned relations as the text that `pg_get_triggerdef` renders.
 It refuses with `record-history-trigger-mismatch` when that text differs from the text that the declarations derive.
@@ -517,7 +523,7 @@ An entry has these columns:
 - `changed_by`: the actor, from `app.user_id`.
 - `changed_at`: the one time of the entry, from `transaction_timestamp()`. Retention expires entries by this time.
 - `transaction_id`: the 64-bit value of `pg_current_xact_id()`, stored as `bigint`.
-- `before` and `after`: the JSONB images, rendered by `wamn_history.row_image`.
+- `before` and `after`: the JSONB images. A package relation keeps the `to_jsonb` spelling, and a platform relation keeps the spelling of `wamn_history.row_image`.
 
 Every column is `NOT NULL`, and the primary key is `(row_key, position)`.
 A CHECK on `operation` accepts three shapes only: an operation token, `wamn:<component>`, and `admin:<kebab-purpose>`.
@@ -551,10 +557,15 @@ It sets `TimeZone` to UTC inside the function.
 It spells each `timestamptz` column as the platform canonicalizer spells it: UTC RFC 3339 with exactly six fractional digits and a `Z`.
 Every other value keeps the `to_jsonb` spelling.
 The log function and the stamp function compare row values as JSONB text, so a change of numeric scale alone is a change.
+The generated functions of a package relation compare each column as text, with the same result.
+Their images keep the `to_jsonb` spelling, so a `timestamptz` value carries the session offset (`wamn-c8a5v.2`).
+The entries written before that change keep the canonical spelling, and the [history read](#history-read) canonicalizes both.
+A primary key column of type `timestamptz` keeps the canonical spelling in `row_key`, so every entry of one row has one key.
 Such a change moves the stamps and writes an entry. A true no-op moves no stamp and writes no entry.
 
 The log function calls `row_image` with the authority of the writer.
 `record-history.sql` therefore grants `USAGE` on `wamn_history` and `EXECUTE` on `row_image` and `timestamptz_image` to `wamn_db_owner`.
+It also grants `CREATE` on `wamn_history` to `wamn_db_owner`, which owns the generated functions. Project migration `0022_record_history_relation_functions.sql` grants it to an existing database.
 [`deploy/sql/record-history-app-grants.sql`](../../deploy/sql/record-history-app-grants.sql) grants the same three privileges to `wamn_app`.
 `CATALOG_SCHEMA_SQL` composes it after `record-history.sql`.
 Every other tenant or package applier applies it after `record-history.sql`.
@@ -576,8 +587,9 @@ The exclusion row names the package that owns the relation, and its relation id 
 A migration that creates a table whose name ends with `_history` refuses with `history-table-name-reserved`.
 
 apply-package installs one `wamn_record_history_log` trigger on each owned logged relation.
-The trigger runs `AFTER INSERT OR UPDATE OR DELETE` for each row and executes `wamn_history.log_row_change` with one argument, the retention.
-The function derives the history table name from the relation and ignores the argument.
+The trigger runs `AFTER INSERT OR UPDATE OR DELETE` for each row and executes the generated function `wamn_history.<schema>__<relation>_log()` with one argument, the retention.
+The function names the primary key columns, every column of the relation, and the history table as static SQL, so a write reads no catalog and plans no dynamic statement.
+It ignores the argument, which the retention run reads. A platform relation runs `wamn_history.log_row_change` with the same argument.
 A retention of `"none"` removes the trigger, and the history table and its entries stay.
 apply-package compares the text of each installed log trigger with the declared text, and it replaces a trigger whose retention argument differs.
 It then refuses a result that still differs.
@@ -729,7 +741,7 @@ A history read on such a relation therefore shows only the columns that it decla
 
 - Its SQL builds the current row with `jsonb_build_object` from the declared columns, so the read needs no grant on an overlay column.
 - `wamn_history.timestamptz_image` spells each `timestamptz` column as `wamn_history.row_image` spells it. `record-history.sql` grants `EXECUTE` on it to `wamn_db_owner`, and `record-history-app-grants.sql` grants it to `wamn_app`.
-- The guest keeps only the declared columns of `before`, `after`, and the current row with `retain_columns` from `wamn-record-history`. Each kept member keeps its raw text.
+- The guest keeps only the declared columns of `before`, `after`, and the current row with `retain_columns` from `wamn-record-history`. Each kept member keeps its raw text, except a `timestamptz` column that the generated `TIMESTAMPTZ_COLUMNS` of the model names. That value takes the canonical spelling from either spelling.
 
 [Receiving](../../apps/wamn_receiving/query/load_purchase_order_history.sql) reads `purchase_order` this way, and its read shows no Acme column.
 An overlay history read uses the same rule with its own columns.

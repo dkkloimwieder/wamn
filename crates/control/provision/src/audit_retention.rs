@@ -25,9 +25,11 @@ pub const AUDIT_RETENTION_READ_COLUMNS: [&str; 3] = ["row_key", "position", "cha
 
 /// Each relation of the current database whose log keeps its entries for n days.
 ///
-/// The query reads every `wamn_record_history_log` trigger that runs
-/// `wamn_history.log_row_change` with the one argument `P<n>D` on a relation
-/// that has its history table. It returns `schema_name`, `relation_name`,
+/// The query reads every `wamn_record_history_log` trigger that runs a
+/// `wamn_history` function with the one argument `P<n>D` on a relation that
+/// has its history table. A platform relation runs the shared
+/// `wamn_history.log_row_change`, and a package relation runs its generated
+/// log function (`wamn-c8a5v.2`). It returns `schema_name`, `relation_name`,
 /// `history_name`, and `days`, the text of n, in byte order of schema and
 /// relation.
 /// An `unlimited` argument returns no row. The query reads catalogs only, so it
@@ -51,7 +53,6 @@ SELECT log.schema_name, log.relation_name, log.history_name, log.days
            AND trigger.tgname = 'wamn_record_history_log'
            AND trigger.tgnargs = 1
            AND routine_namespace.nspname = 'wamn_history'
-           AND routine.proname = 'log_row_change'
        ) AS log
  WHERE log.days IS NOT NULL
    AND EXISTS (SELECT FROM pg_catalog.pg_class AS history

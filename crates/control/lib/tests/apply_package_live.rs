@@ -1568,10 +1568,10 @@ async fn record_history_triggers_follow_the_declaration() {
         [
             "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
              ON inventory.panel FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')",
+             EXECUTE FUNCTION wamn_history.inventory__panel_stamp()",
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON inventory.panel_line FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
+             EXECUTE FUNCTION wamn_history.inventory__panel_line_log('P30D')",
         ],
         "one stamp trigger for the relation that selects columns, none for [], \
          and the declared log trigger"
@@ -1609,10 +1609,10 @@ async fn record_history_triggers_follow_the_declaration() {
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON inventory.panel_line FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
+             EXECUTE FUNCTION wamn_history.inventory__panel_line_log('P30D')",
             "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
              ON inventory.rack FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.stamp_row('created_at')",
+             EXECUTE FUNCTION wamn_history.inventory__rack_stamp()",
         ],
         "the trigger that the declaration no longer needs is removed"
     );
@@ -1782,10 +1782,10 @@ async fn record_history_log_follows_the_declaration() {
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON inventory.panel FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.log_row_change('unlimited')",
+             EXECUTE FUNCTION wamn_history.inventory__panel_log('unlimited')",
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON inventory.panel_line FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
+             EXECUTE FUNCTION wamn_history.inventory__panel_line_log('P30D')",
         ]
     );
     let owner = wamn_control_provision::DB_OWNER_ROLE.to_owned();
@@ -1868,7 +1868,7 @@ async fn record_history_log_follows_the_declaration() {
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
           ON inventory.panel FOR EACH ROW \
-          EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
+          EXECUTE FUNCTION wamn_history.inventory__panel_log('P90D')"
         ]
     );
     client
@@ -1914,7 +1914,7 @@ async fn record_history_log_follows_the_declaration() {
         [
             "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
           ON inventory.panel FOR EACH ROW \
-          EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
+          EXECUTE FUNCTION wamn_history.inventory__panel_log('P90D')"
         ]
     );
 

@@ -532,7 +532,9 @@ mod tests {
             .map(|row| {
                 let declared_image = |column: &str| {
                     row.get::<_, Option<String>>(column)
-                        .and_then(|text| retain_columns(&text, &declared))
+                        .and_then(|text| {
+                            retain_columns(&text, &declared, &["created_at", "updated_at"])
+                        })
                         .context("the history read returned an image")
                 };
                 Ok((

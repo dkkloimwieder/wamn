@@ -337,9 +337,16 @@ const PLATFORM_TRIGGER_CLAIMS: [&str; 2] = ["app.user_id", "app.operation"];
 /// attribution and take no authorization decision. `wamn_history.log_row_change`
 /// is the level-2 log function that owner ruling 29 admits. The kind → type
 /// migrations replace the same two functions with the text of
-/// `record-history.sql` (wamn-ld93.7).
-const PLATFORM_TRIGGER_READERS: [(&str, &str); 6] = [
+/// `record-history.sql` (wamn-ld93.7). apply-package generates the stamp and
+/// log function of each package relation from the two templates in
+/// `apply_package/record_history.rs`, whose header names the function
+/// `wamn_history.{name}` (wamn-c8a5v.2).
+const PLATFORM_TRIGGER_READERS: [(&str, &str); 7] = [
     ("deploy/sql/record-history.sql", "wamn_history.stamp_row"),
+    (
+        "crates/control/lib/src/apply_package/record_history.rs",
+        "wamn_history.{name}",
+    ),
     (
         "deploy/sql/record-history.sql",
         "wamn_history.log_row_change",
