@@ -35,6 +35,67 @@ The map uses project `wms` and connection handle `labels-store`, with the object
 The [WMS cluster setup](../../apps/wamn_wms/tests/cluster/deployment.rs) creates this Secret for its tests.
 Production deployment supplies its own credentials through the same Secret contract.
 
+### HTTP connection credentials
+
+Before starting the host, create a connection Secret in its namespace.
+Store the credential map under `credentials.json`.
+The outer key names the project.
+The inner key names the connection instance, which `env apply` also uses as its credential handle.
+Each inner value is a JSON string with a `headers` object:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-http-credentials-acme--orders--dev
+  namespace: wamn-system
+type: Opaque
+stringData:
+  credentials.json: |
+    {"orders":{"upstream":"{\"headers\":{\"authorization\":\"Bearer <token>\"}}"}}
+```
+
+Replace `<token>` with the endpoint credential before creating the Secret.
+Keep the Secret manifest outside committed files.
+For an endpoint that needs no credential, use `"{\"headers\":{}}"` as the inner value.
+
+Mount this Secret at `/etc/wamn/credentials` in the host values.
+Map its `credentials.json` key to the file of the same name.
+Set `WAMN_CREDENTIALS_FILE=/etc/wamn/credentials/credentials.json`.
+Set `WAMN_ALLOWED_HOSTS` to the endpoint origin, such as `https://api.example.com:443`.
+The [WMS host values](../../deploy/platform/values-host-wms-pat.yaml) show the volume and mount structure.
+`env apply` does not mount connection credentials.
+The operator supplies these host values through `WAMN_RELEASE_HOST_GROUP`.
+
+Bind the release's `upstream` HTTP requirement with an `environment.k` document:
+
+```python
+import environment
+
+environment.Environment {
+    org = "acme"
+    project = "orders"
+    env = "dev"
+    release = "sha256:<release digest>"
+    route_host = "orders.example.com"
+    policy = "dev"
+    connections = {
+        upstream = {
+            type = "http"
+            definition = {
+                "primary-authority" = "https://api.example.com/"
+                "tls-verification" = "verify-authority"
+            }
+        }
+    }
+}
+```
+
+Replace the release placeholder with the published digest.
+Run `wamn-ctl env apply environment.k`.
+The host reads the credential and adds its headers to the outgoing request.
+The guest receives the response and never receives the credential.
+
 ## Deployment ordering
 
 Build and exercise the exact selected source and artifacts before publication.

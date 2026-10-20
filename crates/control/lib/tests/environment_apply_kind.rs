@@ -20,7 +20,8 @@
 //! 4. `env show` output applied again writes nothing.
 //!    A separate HTTP environment binds one requirement, reproduces its
 //!    document through show, and preserves its rows and Helm revision on reapply.
-//!    Its endpoint needs no server until the HTTP send case runs.
+//!    One POST through transform -> http-request reaches its recording server.
+//!    The server sees one bearer header and the guest returns status 200.
 //! 5. A12: two environments in one namespace; every object and Secret name
 //!    differs and derives from the coordinate, and each host mounts only its
 //!    own Secrets.
@@ -102,6 +103,9 @@ use wamn_control::publish_release::push_manifest_bytes;
 use wamn_control::release_chart::{ImageSet, Target, image_set, release_name, stamp};
 use wamn_control_registry::{Template, Triple};
 use wamn_engine::release_manifest::release_label;
+
+#[path = "support/http_connection.rs"]
+mod http_connection;
 
 const NAMESPACE: &str = "wamn-system";
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
@@ -303,6 +307,27 @@ impl Run {
     }
 
     async fn remove(&self) {
+        if self.work.join("kubeconfig").exists() {
+            for resource in [
+                format!("deployment/{}", http_connection::SERVICE),
+                format!("service/{}", http_connection::SERVICE),
+                format!("secret/{}", http_connection::SECRET),
+            ] {
+                let _ = self
+                    .run(
+                        "kubectl",
+                        &[
+                            "-n",
+                            NAMESPACE,
+                            "delete",
+                            &resource,
+                            "--ignore-not-found",
+                            "--wait=false",
+                        ],
+                    )
+                    .await;
+            }
+        }
         let _ = Command::new("kind")
             .args(["delete", "cluster", "--name", &self.cluster])
             .output()
@@ -311,6 +336,15 @@ impl Run {
             .args(["rm", "--force", "--volumes", &self.registry])
             .output()
             .await;
+        let _ = Command::new("docker")
+            .args([
+                "image",
+                "rm",
+                &format!("{}-http-fixture:debug", self.cluster),
+            ])
+            .output()
+            .await;
+        let _ = std::fs::remove_file(self.work.join("http-fixture.json"));
     }
 }
 
@@ -763,14 +797,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let manifest_a = release(MANIFEST, &version, None)?;
     let manifest_b = release(MANIFEST_B, &version, None)?;
     let manifest_h = release(MANIFEST_H, &version, Some(&device))?;
-    let manifest_http = release(
-        &MANIFEST.replace(
-            r#""connections":[]"#,
-            r#""connections":[{"requirement-type":"http","store-alias":"erp"}]"#,
-        ),
-        &version,
-        None,
-    )?;
+    let transform =
+        http_connection::component(run, repository, &local, &version, "transform").await?;
+    let request =
+        http_connection::component(run, repository, &local, &version, "http-request").await?;
+    let manifest_http = http_connection::release(&manifest_h, &version, vec![transform, request])?;
+    http_connection::deploy(run, repository).await?;
 
     // The http role image: the chart's route guest, copied into the registry.
     let loopback = matches!(
@@ -904,10 +936,21 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
                 {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
                 {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{local}/wamn/components")},
+                {"name": "WAMN_CREDENTIALS_FILE", "value": "/etc/wamn/credentials/credentials.json"},
+                {"name": "WAMN_ALLOWED_HOSTS", "value": http_connection::ORIGIN},
             ],
             "ociCaPaths": ["/apply-registry/ca.crt"],
-            "volumes": [{"name": "apply-registry", "secret": {"secretName": "apply-registry"}}],
-            "volumeMounts": [{"name": "apply-registry", "mountPath": "/apply-registry", "readOnly": true}],
+            "volumes": [
+                {"name": "apply-registry", "secret": {"secretName": "apply-registry"}},
+                {"name": "connection-credentials", "secret": {
+                    "secretName": http_connection::SECRET,
+                    "items": [{"key": "credentials.json", "path": "credentials.json"}]
+                }},
+            ],
+            "volumeMounts": [
+                {"name": "apply-registry", "mountPath": "/apply-registry", "readOnly": true},
+                {"name": "connection-credentials", "mountPath": "/etc/wamn/credentials", "readOnly": true},
+            ],
         }))?,
     )?;
     let platform = Platform {
@@ -1159,11 +1202,11 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let mut http = document("http", "http.orders.example");
     http.release = DeclaredRelease::Digest(http_digest.clone());
     http.connections.insert(
-        "erp".to_owned(),
+        "upstream".to_owned(),
         ConnectionDefinition {
             requirement_type: wamn_catalog::RequirementType::Http,
             definition: json!({
-                "primary-authority": "http://http-fixture:8080/",
+                "primary-authority": format!("{}/", http_connection::ORIGIN),
                 "tls-verification": "disabled"
             }),
         },
@@ -1185,6 +1228,23 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     ))
     .await?;
     let http_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
+    // Register the same gated graph that the fixture release carries.
+    let wiring = http_connection::wiring()?;
+    http_project
+        .execute(
+            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
+         version, graph_json, wiring_hash) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
+            &[
+                &http_tenant,
+                &PACKAGE,
+                &version,
+                &wiring.wiring_id,
+                &1_i32,
+                &serde_json::to_string(&wiring)?,
+                &wiring.wiring_hash().as_str(),
+            ],
+        )
+        .await?;
     let http_rows = async || -> anyhow::Result<Value> {
         Ok(http_project
             .query_one(
@@ -1211,12 +1271,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             && http_before["instances"][0]["requirement_type"] == "http"
             && http_before["instances"][0]["active_generation"] == 1
             && http_before["generations"].as_array().is_some_and(|rows| rows.len() == 1)
-            && http_before["generations"][0]["definition_json"] == http.connections["erp"].definition
-            && http_before["generations"][0]["credential_set_handle"] == "erp"
+            && http_before["generations"][0]["definition_json"] == http.connections["upstream"].definition
+            && http_before["generations"][0]["credential_set_handle"] == "upstream"
             && http_before["bindings"].as_array().is_some_and(|rows| rows.len() == 1)
             && http_before["bindings"][0]["manifest_digest"] == http_digest
-            && http_before["bindings"][0]["instance_id"] == "erp"
-            && http_before["bindings"][0]["store_alias"] == "erp"
+            && http_before["bindings"][0]["instance_id"] == "upstream"
+            && http_before["bindings"][0]["store_alias"] == "upstream"
             && http_before["bindings"][0]["binding_status"] == "active"
             && http_before["bindings"][0]["validation_status"] == "valid",
     );
@@ -1238,6 +1298,28 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             && http_revisions == http_second_revisions
             && http_revisions == http_shown_revisions,
     );
+    let service = format!("http://{http_name}-http.{NAMESPACE}.svc.cluster.local/http/send");
+    let (status, body) = route_probe_post(run, &service, &http.route_host).await?;
+    let observed = run
+        .run(
+            "kubectl",
+            &[
+                "-n",
+                NAMESPACE,
+                "logs",
+                &format!("deployment/{}", http_connection::SERVICE),
+            ],
+        )
+        .await?;
+    let assertion = http_connection::assert_observed_request(status, &body, &observed);
+    run.pass(
+        "HTTP guest sends once with its host-held bearer credential and receives 200",
+        "POST /http/send; kubectl logs deployment/http-fixture",
+        json!({"status": status, "body": body, "requests": observed,
+            "error": assertion.as_ref().err().map(ToString::to_string)}),
+        assertion.is_ok(),
+    );
+    assertion?;
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;
@@ -1931,10 +2013,29 @@ fn the_fixture_releases_are_canonical_manifests() {
 /// GET `url` from a pod in the namespace with `Host: route_host`, and return
 /// the status and the body.
 async fn route_probe(run: &Run, url: &str, route_host: &str) -> anyhow::Result<(u16, String)> {
+    route_probe_request(run, url, route_host, "").await
+}
+
+async fn route_probe_post(run: &Run, url: &str, route_host: &str) -> anyhow::Result<(u16, String)> {
+    route_probe_request(
+        run,
+        url,
+        route_host,
+        "--request POST --header 'Content-Type: application/json' --data '{\"id\":1}'",
+    )
+    .await
+}
+
+async fn route_probe_request(
+    run: &Run,
+    url: &str,
+    route_host: &str,
+    request: &str,
+) -> anyhow::Result<(u16, String)> {
     let pod = format!("route-probe-{}", route_host.replace('.', "-"));
     let script = format!(
         "curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body \
-         --write-out '%{{http_code}}\\n' --header 'Host: {route_host}' '{url}'; cat /tmp/body"
+         --write-out '%{{http_code}}\\n' --header 'Host: {route_host}' {request} '{url}'; cat /tmp/body"
     );
     run.run(
         "kubectl",
