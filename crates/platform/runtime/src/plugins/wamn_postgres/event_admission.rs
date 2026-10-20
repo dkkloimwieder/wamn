@@ -6,7 +6,7 @@
 //! with the executor credential: one `runs` row of the event grain and one
 //! `run_queue` row, in one transaction. The executor's column-exact INSERT
 //! reaches no service principal, binding world, or legacy flow column, so the
-//! run-plane grain check admits only an event run from it.
+//! run-plane grain check admits event and schedule runs from these columns.
 
 use wamn_run_state::queue::{insert_event_run_sql, insert_run_queue_sql, select_event_run_sql};
 

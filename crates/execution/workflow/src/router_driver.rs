@@ -1469,10 +1469,6 @@ mod tests {
                 attachment(AttachmentType::Studio, "studio-wiring"),
             ),
             (
-                "cron".to_owned(),
-                attachment(AttachmentType::Cron, "background-wiring"),
-            ),
-            (
                 "route".to_owned(),
                 ServingAttachment {
                     target: wamn_catalog::AttachmentTarget::Route {
@@ -1492,6 +1488,7 @@ mod tests {
             routes: BTreeSet::new(),
             attachments,
             workflow: wamn_catalog::WorkflowSection {
+                schedules: BTreeMap::new(),
                 wirings: BTreeSet::new(),
                 attachments: workflow_attachments,
                 registrations: BTreeMap::from([(

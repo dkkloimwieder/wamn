@@ -927,7 +927,7 @@ pub fn declared_consumers(
     let workflows = manifest
         .workflows
         .iter()
-        .map(|(name, workflow)| (name, &workflow.registration));
+        .filter_map(|(name, workflow)| Some((name, workflow.registration.as_ref()?)));
     handlers
         .chain(workflows)
         .map(|(name, registration)| {

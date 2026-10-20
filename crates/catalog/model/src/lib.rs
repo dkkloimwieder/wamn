@@ -61,7 +61,7 @@ pub use serving_manifest::{
     RouteCanonicalization, RouteLineOrder, SERVING_MANIFEST_FORMAT_VERSION,
     SESSION_AUTHENTICATION_MODE, ServedAttachment, ServingAttachment, ServingComponent,
     ServingComponentOperation, ServingManifest, ServingRegistration, ServingRegistrationInput,
-    ServingRelation, ServingRelease, ServingRoute, ServingWiring,
+    ServingRelation, ServingRelease, ServingRoute, ServingSchedule, ServingWiring,
     UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment, WorkflowSection,
     parse_attachment_auth_policy, release_manifest_configmap_name,
 };
@@ -663,7 +663,6 @@ pub enum AttachmentType {
     Http,
     Internal,
     Studio,
-    Cron,
 }
 
 /// Unresolved attachment input. Resolution is mandatory before hashing.

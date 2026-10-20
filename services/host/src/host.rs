@@ -1484,6 +1484,45 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     builder = builder.with_liveness(Arc::clone(&liveness));
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
+    let mut schedule_tasks = tokio::task::JoinSet::new();
+    if let Some(release) = &release
+        && !release.manifest().workflow.schedules.is_empty()
+    {
+        let url = executor_platform_url
+            .as_deref()
+            .context("scheduled workflows require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
+        let (client, connection) = tokio_postgres::connect(url, NoTls)
+            .await
+            .context("connect workflow schedule admission")?;
+        schedule_tasks.spawn(async move {
+            if let Err(error) = connection.await {
+                tracing::error!(%error, "workflow schedule database connection stopped");
+            }
+        });
+        let scope = release_scope(&args)?;
+        let workflows = wamn_workflow::PostgresWorkflows::new(
+            client,
+            "wamn_run",
+            &scope.tenant_id,
+            &scope.environment,
+        );
+        let schedules = release
+            .manifest()
+            .workflow
+            .schedules
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let digest = release.release().manifest_digest.as_str().to_owned();
+        let stopped = stopping.clone();
+        schedule_tasks.spawn(async move {
+            if let Err(error) =
+                wamn_workflow::schedule::serve(&workflows, &digest, &schedules, stopped).await
+            {
+                tracing::error!(%error, "workflow schedule task stopped");
+            }
+        });
+    }
     let mut ingress_connections = None;
     let mut ingress_handler = None;
     if let Some(addr) = args.http_addr {
@@ -1661,6 +1700,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         )
         .await
     };
+    schedule_tasks.shutdown().await;
     if let Some(queue) = &queue {
         queue.revoke();
     }

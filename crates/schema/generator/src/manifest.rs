@@ -38,20 +38,24 @@ pub struct PackageManifest {
     /// The route entries generation writes for the generated operations.
     #[serde(default, skip_serializing_if = "RoutesDeclaration::is_default")]
     pub routes: RoutesDeclaration,
-    /// Wirings that an application event starts, off the request path, keyed
+    /// Wirings that an event or schedule starts, off the request path, keyed
     /// by workflow id (docs/plan/workflow-feature.md 4.2).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub workflows: BTreeMap<String, WorkflowDeclaration>,
 }
 
-/// One wiring of the package that an application event starts. The wiring can
+/// One wiring of the package that an event or schedule starts. The wiring can
 /// enter at any node, and the queue runs it with no caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowDeclaration {
     /// The wiring id in `publication/wirings`.
     pub wiring: String,
-    pub registration: EventRegistrationDeclaration,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration: Option<EventRegistrationDeclaration>,
+    /// Five-field cron in UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
 }
 
 /// One strict package-local operation backed only by declared static SQL.
@@ -1406,18 +1410,40 @@ fn refuse_command_only_fields(
     }
 }
 
-/// Each workflow names a wiring and a registration. Its id is a registration
-/// id of the package beside the operation ids, and it has no dot, so it never
-/// repeats an operation's `module.operation` id.
+/// Each workflow names a wiring and exactly one event or schedule trigger.
+/// Its id has no dot, so it cannot repeat an operation's `module.operation` id.
 fn validate_workflows(manifest: &PackageManifest) -> Result<(), GenerateError> {
     for (workflow_id, workflow) in &manifest.workflows {
         validate_identifier(workflow_id, "workflow id")?;
         validate_identifier(&workflow.wiring, "workflow wiring")?;
-        validate_registration(
-            manifest,
-            &format!("workflow {workflow_id}"),
-            &workflow.registration,
-        )?;
+        match (&workflow.registration, &workflow.schedule) {
+            (Some(registration), None) => {
+                validate_registration(manifest, &format!("workflow {workflow_id}"), registration)?;
+            }
+            (None, Some(schedule)) => {
+                let parsed = croner::parser::CronParser::builder()
+                    .seconds(croner::parser::Seconds::Disallowed)
+                    .year(croner::parser::Year::Disallowed)
+                    .build()
+                    .parse(schedule);
+                if schedule.split_whitespace().count() != 5 || parsed.is_err() {
+                    return Err(GenerateError::new(
+                        GenerateErrorType::InvalidOperation,
+                        format!(
+                            "workflow-schedule-invalid: workflow {workflow_id} requires a five-field cron schedule in UTC"
+                        ),
+                    ));
+                }
+            }
+            _ => {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidOperation,
+                    format!(
+                        "workflow-trigger-exclusive: workflow {workflow_id} must declare exactly one of schedule and registration"
+                    ),
+                ));
+            }
+        }
     }
     Ok(())
 }

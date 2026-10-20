@@ -1,11 +1,13 @@
 [package]
 name = "wamn-workflow"
-description = "The wiring layer: the graph walk, wiring delivery, the queue, Cron, and registrations. Every node calls invoke_operation."
+description = "The wiring layer: the graph walk, wiring delivery, the queue, schedules, and registrations. Every node calls invoke_operation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono = { workspace = true, features = ["clock"] }
+croner = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }

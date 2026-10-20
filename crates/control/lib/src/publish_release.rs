@@ -518,7 +518,8 @@ pub fn assemble_local_release(
         &mut components,
     )?;
     let registrations = derive_serving_registrations(&package_manifests, &entry_targets)?;
-    refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
+    let schedules = derive_serving_schedules(&package_manifests, &entry_targets)?;
+    refuse_unregistered_one_node_wirings(&one_node, &registrations, &schedules)?;
     let (route_attachments, wiring_attachments) = ServingAttachment::split(attachments.clone());
     let manifest = ServingManifest {
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -532,6 +533,7 @@ pub fn assemble_local_release(
             wirings,
             attachments: wiring_attachments,
             registrations,
+            schedules,
         },
         // Every application release serves the fixed application
         // administration routes (docs/plan/platform-ui.md §4.6).
@@ -1006,7 +1008,8 @@ async fn publish_release_from_sources(
         &mut components,
     )?;
     let registrations = derive_serving_registrations(package_manifests, &entry_targets)?;
-    refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
+    let schedules = derive_serving_schedules(package_manifests, &entry_targets)?;
+    refuse_unregistered_one_node_wirings(&one_node, &registrations, &schedules)?;
     let (route_attachments, wiring_attachments) =
         ServingAttachment::split(request.attachments.clone());
 
@@ -1022,6 +1025,7 @@ async fn publish_release_from_sources(
             wirings,
             attachments: wiring_attachments,
             registrations,
+            schedules,
         },
         // Every application release serves the fixed application
         // administration routes (docs/plan/platform-ui.md §4.6).
@@ -1369,6 +1373,52 @@ fn serving_ops(
         .collect()
 }
 
+/// Resolve every scheduled workflow against this release's selected wirings.
+fn derive_serving_schedules(
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    entry_targets: &BTreeMap<String, Vec<ReleaseWiringTarget>>,
+) -> Result<BTreeMap<String, wamn_catalog::ServingSchedule>, PublishManifestError> {
+    let mut schedules = BTreeMap::new();
+    for manifest in package_manifests.values() {
+        for (workflow_id, workflow) in &manifest.workflows {
+            let Some(schedule) = &workflow.schedule else {
+                continue;
+            };
+            let targets = entry_targets
+                .values()
+                .flatten()
+                .filter(|target| {
+                    target.package_id == manifest.package.id
+                        && target.package_version == manifest.package.version
+                        && target.wiring_id == workflow.wiring
+                })
+                .collect::<Vec<_>>();
+            if targets.len() != 1 {
+                return Err(PublishManifestError::new(
+                    PublishManifestErrorType::Registration,
+                    format!(
+                        "workflow {workflow_id:?} names wiring {:?}, which resolves to {} selected wiring(s); expected exactly one",
+                        workflow.wiring,
+                        targets.len()
+                    ),
+                ));
+            }
+            let target = targets[0];
+            schedules.insert(
+                format!("{}::{workflow_id}", manifest.package.id),
+                wamn_catalog::ServingSchedule {
+                    package_id: manifest.package.id.clone(),
+                    workflow_id: workflow_id.clone(),
+                    wiring_id: target.wiring_id.clone(),
+                    wiring_version: target.wiring_version,
+                    schedule: schedule.clone(),
+                },
+            );
+        }
+    }
+    Ok(schedules)
+}
+
 /// The release registrations: one for each event handler, whose wiring enters
 /// at the handler and which the driver walks when its event arrives, and one
 /// for each declared workflow, whose wiring can enter at any node and whose
@@ -1434,7 +1484,9 @@ fn derive_serving_registrations(
             );
         }
         for (workflow_id, workflow) in &manifest.workflows {
-            let declaration = &workflow.registration;
+            let Some(declaration) = &workflow.registration else {
+                continue;
+            };
             check_registration_source(
                 package_manifests,
                 &format!("workflow {workflow_id:?}"),
@@ -1701,13 +1753,13 @@ fn project_routes(
     Ok(routes)
 }
 
-/// Refuse a wiring with no edges unless a registration names it.
+/// Refuse a wiring with no edges unless a registration or schedule names it.
 ///
-/// A graph with no edges is a route. A registration keeps its one-node wiring
-/// until the workflow epic moves registrations off wirings.
+/// A declared workflow or event handler can keep its one-node wiring.
 fn refuse_unregistered_one_node_wirings(
     one_node: &[ReleaseWiringTarget],
     registrations: &BTreeMap<String, ServingRegistration>,
+    schedules: &BTreeMap<String, wamn_catalog::ServingSchedule>,
 ) -> Result<(), PublishManifestError> {
     for target in one_node {
         let registered = registrations.values().any(|registration| {
@@ -1715,7 +1767,12 @@ fn refuse_unregistered_one_node_wirings(
                 && registration.wiring_id == target.wiring_id
                 && registration.wiring_version == target.wiring_version
         });
-        if !registered {
+        let has_schedule = schedules.values().any(|schedule| {
+            schedule.package_id == target.package_id
+                && schedule.wiring_id == target.wiring_id
+                && schedule.wiring_version == target.wiring_version
+        });
+        if !registered && !has_schedule {
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::Wiring,
                 format!(
@@ -2491,6 +2548,33 @@ mod tests {
                 "missing refusal fact {fact:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_schedule_resolves_its_workflow_and_allows_a_one_node_wiring() {
+        let mut manifest = handler_manifest();
+        manifest.workflows.insert(
+            "hourly".to_owned(),
+            wamn_schema_generator::WorkflowDeclaration {
+                wiring: "tick".to_owned(),
+                registration: None,
+                schedule: Some("0 * * * *".to_owned()),
+            },
+        );
+        let manifests = BTreeMap::from([("observer_fixture".to_owned(), manifest)]);
+        let target = ReleaseWiringTarget {
+            package_id: "observer_fixture".to_owned(),
+            package_version: "3.0.0".to_owned(),
+            wiring_id: "tick".to_owned(),
+            wiring_version: 2,
+        };
+        let targets =
+            BTreeMap::from([("wamn:node/handler@0.1.0".to_owned(), vec![target.clone()])]);
+        let schedules = derive_serving_schedules(&manifests, &targets).unwrap();
+        assert_eq!(schedules["observer_fixture::hourly"].wiring_version, 2);
+        assert_eq!(schedules["observer_fixture::hourly"].schedule, "0 * * * *");
+        refuse_unregistered_one_node_wirings(&[target], &BTreeMap::new(), &schedules).unwrap();
+        assert!(derive_serving_schedules(&manifests, &BTreeMap::new()).is_err());
     }
 
     #[test]

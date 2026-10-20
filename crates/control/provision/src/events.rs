@@ -82,7 +82,7 @@ pub fn registration_consumers(
         let workflows = manifest
             .workflows
             .iter()
-            .map(|(name, workflow)| (name, &workflow.registration));
+            .filter_map(|(name, workflow)| Some((name, workflow.registration.as_ref()?)));
         for (name, registration) in handlers.chain(workflows) {
             let durable = format!(
                 "mat_{}_{}_{}",

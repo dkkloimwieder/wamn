@@ -978,17 +978,22 @@ impl<'a> ServedAttachment<'a> {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WorkflowSection {
     pub wirings: BTreeSet<ServingWiring>,
-    /// The attachments that start a wiring, Cron included.
+    /// The attachments that start a wiring.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub attachments: BTreeMap<String, WiringAttachment>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub registrations: BTreeMap<String, ServingRegistration>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub schedules: BTreeMap<String, ServingSchedule>,
 }
 
 impl WorkflowSection {
     /// Whether this release has no workflow fact.
     pub fn is_empty(&self) -> bool {
-        self.wirings.is_empty() && self.attachments.is_empty() && self.registrations.is_empty()
+        self.wirings.is_empty()
+            && self.attachments.is_empty()
+            && self.registrations.is_empty()
+            && self.schedules.is_empty()
     }
 }
 
@@ -1039,6 +1044,18 @@ pub struct ServingRegistration {
     pub delivery: RegistrationDelivery,
 }
 
+/// One declared schedule targeting an exact released wiring.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ServingSchedule {
+    pub package_id: String,
+    pub workflow_id: String,
+    pub wiring_id: String,
+    pub wiring_version: u32,
+    /// Five-field cron, evaluated in UTC.
+    pub schedule: String,
+}
+
 /// The complete release document a serving process mounts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -1085,6 +1102,7 @@ impl ServingManifest {
                 wirings,
                 attachments: workflow_attachments,
                 registrations,
+                schedules: BTreeMap::new(),
             },
             host_routes: BTreeSet::new(),
         };
@@ -1379,6 +1397,36 @@ impl ServingManifest {
             )?;
         }
 
+        for (key, schedule) in &self.workflow.schedules {
+            validate_package_member(&package_versions, &schedule.package_id)?;
+            validate_text(&schedule.workflow_id, "workflow-id")?;
+            if key != &format!("{}::{}", schedule.package_id, schedule.workflow_id)
+                || schedule.workflow_id.contains("::")
+                || self.workflow.registrations.contains_key(key)
+            {
+                return invalid(format!(
+                    "schedule key {key:?} must name one declared workflow"
+                ));
+            }
+            validate_wiring_target(
+                &targets,
+                &schedule.package_id,
+                &schedule.wiring_id,
+                schedule.wiring_version,
+            )?;
+            if schedule.schedule.split_whitespace().count() != 5
+                || croner::parser::CronParser::builder()
+                    .seconds(croner::parser::Seconds::Disallowed)
+                    .year(croner::parser::Year::Disallowed)
+                    .build()
+                    .parse(&schedule.schedule)
+                    .is_err()
+            {
+                return invalid(format!(
+                    "workflow-schedule-invalid: {key:?} requires five-field cron in UTC"
+                ));
+            }
+        }
         for (registration_id, registration) in &self.workflow.registrations {
             validate_package_member(&package_versions, &registration.package_id)?;
             validate_package_member(&package_versions, &registration.source_package_id)?;
@@ -1437,11 +1485,6 @@ fn validate_route_target(
     let operation = attachment.operation.as_str();
     validate_text(component, "component")?;
     validate_text(operation, "operation")?;
-    if attachment.type_ == AttachmentType::Cron {
-        return invalid(format!(
-            "cron attachment {attachment_id:?} cannot target a route"
-        ));
-    }
     if !routes.contains(&(attachment.package_id.as_str(), component, operation)) {
         return Err(CatalogIdentityError::UnresolvableManifestRoute {
             package_id: attachment.package_id.clone(),
@@ -1729,6 +1772,55 @@ mod tests {
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("fixture manifest is valid")
+    }
+
+    #[test]
+    fn schedules_are_canonical_and_require_a_released_wiring() {
+        let mut manifest = manifest();
+        manifest.workflow.schedules.insert(
+            "base::hourly".into(),
+            ServingSchedule {
+                package_id: "base".into(),
+                workflow_id: "hourly".into(),
+                wiring_id: "orders".into(),
+                wiring_version: 3,
+                schedule: "0 * * * *".into(),
+            },
+        );
+        let bytes = manifest.canonical_bytes();
+        let (decoded, _) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
+        assert_eq!(decoded, manifest);
+        let mut invalid = manifest.clone();
+        invalid
+            .workflow
+            .schedules
+            .get_mut("base::hourly")
+            .unwrap()
+            .wiring_version = 99;
+        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
+        let mut invalid = manifest.clone();
+        invalid
+            .workflow
+            .schedules
+            .get_mut("base::hourly")
+            .unwrap()
+            .package_id = "absent".into();
+        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
+        let mut invalid = manifest.clone();
+        invalid
+            .workflow
+            .schedules
+            .get_mut("base::hourly")
+            .unwrap()
+            .schedule = "* * * * * *".into();
+        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
+        let mut invalid = manifest;
+        let schedule = invalid.workflow.schedules.remove("base::hourly").unwrap();
+        invalid
+            .workflow
+            .schedules
+            .insert("base::other".into(), schedule);
+        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
     }
 
     #[test]
@@ -2626,19 +2718,6 @@ mod tests {
                 .to_string()
                 .contains("differs from its route operation")
         );
-
-        let mut cron = route_attachment();
-        cron.type_ = AttachmentType::Cron;
-        let error = ServingManifest::new(
-            release(),
-            components(),
-            routes(),
-            wirings(),
-            BTreeMap::from([("widget-get".to_string(), cron)]),
-            BTreeMap::new(),
-        )
-        .expect_err("a cron attachment cannot target a route");
-        assert!(error.to_string().contains("cannot target a route"));
     }
 
     #[test]

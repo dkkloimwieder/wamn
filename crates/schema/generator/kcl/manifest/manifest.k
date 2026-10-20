@@ -350,7 +350,11 @@ schema Routes:
 
 schema Workflow:
     wiring: str
-    registration: Registration
+    registration?: Registration
+    schedule?: str
+
+    check:
+        (registration != Undefined) != (schedule != Undefined), "workflow-trigger-exclusive: declare exactly one of schedule and registration"
 
 schema Package:
     """The whole manifest. A package's wamn.k is one Package instance."""

@@ -931,6 +931,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "croner"
+version = "4.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b5b023fc2978536bbb2a3b71237964fc4630bec1eb31077b4977127f4cdb9c0"
+dependencies = [
+ "chrono",
+ "derive_builder",
+ "strum",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4428,6 +4439,9 @@ name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
 
 [[package]]
 name = "strum_macros"
@@ -5349,6 +5363,7 @@ name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [
  "boon",
+ "croner",
  "schemars",
  "serde",
  "serde_json",
@@ -6231,6 +6246,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
+ "croner",
  "hex",
  "proptest",
  "serde",
@@ -6385,6 +6401,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "boon",
+ "chrono",
+ "croner",
  "opentelemetry",
  "opentelemetry_sdk",
  "ring",

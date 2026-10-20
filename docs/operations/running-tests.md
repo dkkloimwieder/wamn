@@ -898,3 +898,14 @@ cargo test --locked --offline -p wamn-execution-host --lib queue::automation_liv
 
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).
 Use the application delivery journeys for deployed startup, readiness, authenticated requests, queue delivery, and cleanup.
+
+### Workflow schedules
+
+The schedule admission test starts a disposable PostgreSQL 18 server through the shared test fixture.
+It connects two callers with executor credentials, starts one due moment concurrently, and requires exactly one listed run.
+It also requires a node with an operation grant to refuse the run with no caller.
+Run it from the repository root:
+
+```bash
+TMPDIR=/var/tmp cargo test -p wamn-workflow --lib schedule_replicas_admit_one_run_without_a_caller -- --ignored --nocapture
+```

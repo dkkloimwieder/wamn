@@ -32,6 +32,7 @@ mod queue;
 mod router_action;
 mod router_driver;
 mod router_response;
+pub mod schedule;
 mod wiring_delivery;
 mod wiring_lowering;
 

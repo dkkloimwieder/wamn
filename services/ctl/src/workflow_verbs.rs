@@ -19,6 +19,8 @@ pub enum WorkflowCommand {
     Release(RunArgs),
     /// Print the newest runs of the environment, one JSON object per line.
     List(ListArgs),
+    /// Print each declared workflow of the selected release, one JSON object per line.
+    Declared(DeclaredArgs),
 }
 
 /// The tenant and environment every workflow verb acts in.
@@ -76,6 +78,15 @@ pub struct ListArgs {
     pub limit: u32,
 }
 
+#[derive(Debug, Args)]
+pub struct DeclaredArgs {
+    #[command(flatten)]
+    pub scope: WorkflowScope,
+    /// Select an installed release by its manifest digest.
+    #[arg(long)]
+    pub release_digest: String,
+}
+
 /// Connect with project-admin authority and bind the contract to the scope.
 async fn workflows(scope: &WorkflowScope) -> anyhow::Result<PostgresWorkflows> {
     let (client, connection) = tokio_postgres::connect(&scope.admin_database_url, NoTls)
@@ -93,6 +104,43 @@ async fn workflows(scope: &WorkflowScope) -> anyhow::Result<PostgresWorkflows> {
 /// Run one workflow verb and print its result.
 pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
     match command {
+        WorkflowCommand::Declared(args) => {
+            let (mut client, connection) =
+                tokio_postgres::connect(&args.scope.admin_database_url, NoTls)
+                    .await
+                    .context("connect to the project database")?;
+            tokio::spawn(connection);
+            let tx = client.transaction().await?;
+            let bytes = wamn_control::publish_release::read_release(
+                &tx,
+                &args.scope.tenant,
+                &args.release_digest,
+            )
+            .await?
+            .context("the selected release is not installed")?;
+            let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+            tx.commit().await?;
+            for schedule in manifest.workflow.schedules.values() {
+                println!("{}", serde_json::to_string(schedule)?);
+            }
+            for (id, registration) in &manifest.workflow.registrations {
+                if registration.delivery == wamn_catalog::RegistrationDelivery::Queue {
+                    let (_, workflow_id) = id
+                        .split_once("::")
+                        .context("workflow registration has no package")?;
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "package-id": registration.package_id,
+                            "workflow-id": workflow_id,
+                            "wiring-id": registration.wiring_id,
+                            "wiring-version": registration.wiring_version,
+                            "registration": registration,
+                        })
+                    );
+                }
+            }
+        }
         WorkflowCommand::Start(args) => {
             let input =
                 serde_json::from_slice(&std::fs::read(&args.input).context("read the input file")?)

@@ -5,8 +5,9 @@ use tokio_postgres::{Client, Transaction};
 use wamn_catalog::ServingManifest;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
-    insert_automation_run_sql, insert_run_queue_sql, list_workflow_runs_sql, park_queued_run_sql,
-    release_parked_run_sql, select_automation_run_sql, select_run_queue_state_sql,
+    insert_automation_run_sql, insert_run_queue_sql, insert_schedule_run_sql,
+    list_workflow_runs_sql, park_queued_run_sql, release_parked_run_sql, select_automation_run_sql,
+    select_run_queue_state_sql, select_schedule_run_sql,
 };
 use wamn_runtime::plugins::route_authentication::queued_service_caller;
 
@@ -28,8 +29,8 @@ SELECT canonical_bytes FROM catalog.releases \
 
 /// The workflow contract over one tenant and environment.
 ///
-/// The client must hold project-admin authority: a start reads the catalog
-/// and the service principal, and writes `runs` and `run_queue`.
+/// Automation uses project-admin authority. Schedules use the executor
+/// credential, which reads the release and admits runs with no caller.
 pub struct PostgresWorkflows {
     client: Mutex<Client>,
     /// The run plane schema, for example `wamn_run`.
@@ -139,12 +140,37 @@ impl PostgresWorkflows {
                     request.package_id, request.wiring_id, request.wiring_version
                 ))
             })?;
+        if let Trigger::Schedule { workflow_id, due } = &request.trigger {
+            let declared = release.workflow.schedules.values().any(|schedule| {
+                schedule.package_id == request.package_id
+                    && schedule.workflow_id == *workflow_id
+                    && schedule.wiring_id == request.wiring_id
+                    && schedule.wiring_version == request.wiring_version
+            });
+            if !declared {
+                return Err(refused(format!(
+                    "workflow {workflow_id:?} has no schedule for this released wiring"
+                )));
+            }
+            if request.idempotency_key
+                != crate::schedule::idempotency_key(&request.package_id, workflow_id, *due)
+                || request.input != serde_json::json!({"due": crate::schedule::due_text(*due)})
+            {
+                return Err(refused(
+                    "schedule key or input differs from its due moment".to_owned(),
+                ));
+            }
+        }
+        let policy_sql = match &request.trigger {
+            Trigger::Automation { .. } => {
+                "SELECT durability_class FROM environment_policies WHERE tenant_id = $1 AND expected_environment = $2 FOR SHARE"
+            }
+            Trigger::Schedule { .. } => {
+                "SELECT durability_class FROM environment_policies WHERE tenant_id = $1 AND expected_environment = $2"
+            }
+        };
         let policy = transaction
-            .query_opt(
-                "SELECT durability_class FROM environment_policies \
-                 WHERE tenant_id = $1 AND expected_environment = $2 FOR SHARE",
-                &[&self.tenant(), &self.environment()],
-            )
+            .query_opt(policy_sql, &[&self.tenant(), &self.environment()])
             .await
             .map_err(|error| WorkflowError::storage("read the environment policy", error))?
             .ok_or_else(|| refused("the environment policy is absent".to_owned()))?;
@@ -191,9 +217,6 @@ impl Workflows for PostgresWorkflows {
                 "the idempotency key is empty",
             ));
         }
-        let Trigger::Automation {
-            service_principal_id,
-        } = &request.trigger;
         let version = i32::try_from(request.wiring_version).map_err(|_| {
             WorkflowError::new(
                 WorkflowErrorType::Refused,
@@ -209,33 +232,52 @@ impl Workflows for PostgresWorkflows {
             .map_err(|error| WorkflowError::storage("begin the start", error))?;
         self.scope(&transaction).await?;
         let (wiring_hash, durability) = self.admit(&transaction, request).await?;
-        let caller = queued_service_caller(&transaction, self.tenant(), service_principal_id)
-            .await
-            .map_err(|error| {
-                WorkflowError::with_source(
-                    WorkflowErrorType::Refused,
-                    "the service principal does not admit the start",
-                    error,
-                )
-            })?;
-        let principal = caller.principal_id();
+        let principal = match &request.trigger {
+            Trigger::Automation {
+                service_principal_id,
+            } => Some(
+                queued_service_caller(&transaction, self.tenant(), service_principal_id)
+                    .await
+                    .map_err(|error| {
+                        WorkflowError::with_source(
+                            WorkflowErrorType::Refused,
+                            "the service principal does not admit the start",
+                            error,
+                        )
+                    })?
+                    .principal_id()
+                    .to_owned(),
+            ),
+            Trigger::Schedule { .. } => None,
+        };
+        let tenant = self.tenant();
+        let environment = self.environment();
+        let mut binds: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![
+            &tenant,
+            &request.package_id,
+            &request.manifest_digest,
+            &environment,
+            &request.wiring_id,
+            &version,
+            &wiring_hash,
+        ];
+        if let Some(principal) = &principal {
+            binds.push(principal);
+        }
+        binds.extend([
+            &request.idempotency_key as &(dyn tokio_postgres::types::ToSql + Sync),
+            &input,
+        ]);
+        let mut insert_binds = binds.clone();
+        insert_binds.push(&durability);
+        let (insert_sql, select_sql) = match &request.trigger {
+            Trigger::Automation { .. } => {
+                (insert_automation_run_sql(), select_automation_run_sql())
+            }
+            Trigger::Schedule { .. } => (insert_schedule_run_sql(), select_schedule_run_sql()),
+        };
         let inserted = transaction
-            .query_opt(
-                &insert_automation_run_sql(),
-                &[
-                    &self.tenant(),
-                    &request.package_id,
-                    &request.manifest_digest,
-                    &self.environment(),
-                    &request.wiring_id,
-                    &version,
-                    &wiring_hash,
-                    &principal,
-                    &request.idempotency_key,
-                    &input,
-                    &durability,
-                ],
-            )
+            .query_opt(&insert_sql, &insert_binds)
             .await
             .map_err(|error| WorkflowError::storage("admit the run", error))?;
         let run_id: String = if let Some(row) = inserted {
@@ -249,21 +291,7 @@ impl Workflows for PostgresWorkflows {
             run_id
         } else {
             transaction
-                .query_opt(
-                    select_automation_run_sql(),
-                    &[
-                        &self.tenant(),
-                        &request.package_id,
-                        &request.manifest_digest,
-                        &self.environment(),
-                        &request.wiring_id,
-                        &version,
-                        &wiring_hash,
-                        &principal,
-                        &request.idempotency_key,
-                        &input,
-                    ],
-                )
+                .query_opt(select_sql, &binds)
                 .await
                 .map_err(|error| WorkflowError::storage("read the first run", error))?
                 .ok_or_else(|| {

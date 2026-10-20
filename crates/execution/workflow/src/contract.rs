@@ -44,6 +44,11 @@ pub enum Trigger {
     /// An operator or a test acting as a service principal. The run executes
     /// with that principal's permissions at the time it runs.
     Automation { service_principal_id: String },
+    /// A declared schedule, admitted by the executor with no caller.
+    Schedule {
+        workflow_id: String,
+        due: chrono::DateTime<chrono::Utc>,
+    },
 }
 
 /// One run to admit.

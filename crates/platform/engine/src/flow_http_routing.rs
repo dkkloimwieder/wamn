@@ -1953,10 +1953,9 @@ mod tests {
 
     #[test]
     fn only_the_attachment_kinds_that_carry_an_http_route_are_served() {
-        // Every kind is given a route document, including the two that cannot
+        // Every kind is given a route document, including the one that cannot
         // legally have one: the filter under test is the kind, not the route.
         let attachments = [
-            ("cron-attachment", AttachmentType::Cron),
             ("http-attachment", AttachmentType::Http),
             ("internal-attachment", AttachmentType::Internal),
             ("studio-attachment", AttachmentType::Studio),
@@ -1970,7 +1969,7 @@ mod tests {
         assert_eq!(
             served_ids(&served),
             ["http-attachment", "studio-attachment"],
-            "an internal or cron attachment has no HTTP route and must never be reachable \
+            "an internal attachment has no HTTP route and must never be reachable \
              over HTTP"
         );
     }

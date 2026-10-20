@@ -30,7 +30,9 @@ pub(super) fn derive_catalog_registrations(
     // A workflow's registration id is its workflow id; the release names the
     // wiring it starts.
     for (workflow_id, workflow) in &manifest.workflows {
-        let registration = &workflow.registration;
+        let Some(registration) = &workflow.registration else {
+            continue;
+        };
         declarations.insert(
             workflow_id.clone(),
             EventRegistration {
@@ -84,6 +86,39 @@ pub(super) async fn reconcile_package_registrations(
         )
         .await
         .context("delete stale package registrations")?
+        > 0;
+    Ok(changed)
+}
+
+/// Replace the package's schedule projection in the same transaction as registrations.
+pub(super) async fn reconcile_package_schedules(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    manifest: &wamn_schema_generator::PackageManifest,
+) -> anyhow::Result<bool> {
+    let mut retained = Vec::new();
+    let mut changed = false;
+    for (workflow_id, workflow) in &manifest.workflows {
+        let Some(schedule) = &workflow.schedule else {
+            continue;
+        };
+        retained.push(workflow_id.as_str());
+        changed |= tx.execute(
+            "INSERT INTO catalog.workflow_schedules AS current \
+             (tenant_id, package_id, workflow_id, schedule) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (tenant_id, package_id, workflow_id) DO UPDATE \
+             SET schedule = EXCLUDED.schedule WHERE current.schedule IS DISTINCT FROM EXCLUDED.schedule",
+            &[&tenant, &manifest.package.id, &workflow_id, &schedule],
+        ).await.with_context(|| format!("reconcile schedule {workflow_id:?}"))? > 0;
+    }
+    changed |= tx
+        .execute(
+            "DELETE FROM catalog.workflow_schedules WHERE tenant_id = $1 AND package_id = $2 \
+         AND workflow_id <> ALL($3::text[])",
+            &[&tenant, &manifest.package.id, &retained],
+        )
+        .await
+        .context("delete stale package schedules")?
         > 0;
     Ok(changed)
 }
@@ -146,6 +181,47 @@ mod tests {
             declarations.contains_key("audit.observe"),
             "the event handler keeps its own registration"
         );
+    }
+
+    #[test]
+    fn schedule_requires_exactly_one_valid_five_field_trigger() {
+        let registration =
+            serde_json::json!({"source_package":"source_fixture","entity":"item","ops":["insert"]});
+        for workflow in [
+            serde_json::json!({"wiring":"item_label"}),
+            serde_json::json!({"wiring":"item_label","schedule":"* * * * *","registration":registration}),
+        ] {
+            let manifest = parsed(observer_with_workflow("item_label", workflow));
+            let error =
+                wamn_schema_generator::validate_operation_vocabulary(&manifest).unwrap_err();
+            assert!(error.to_string().contains("workflow-trigger-exclusive"));
+        }
+        for cron in [
+            "",
+            "@daily",
+            "* * * *",
+            "* * * * * *",
+            "0 0 * * * 2027",
+            "61 * * * *",
+            "bad * * * *",
+        ] {
+            let manifest = parsed(observer_with_workflow(
+                "item_label",
+                serde_json::json!({"wiring":"item_label","schedule":cron}),
+            ));
+            let error =
+                wamn_schema_generator::validate_operation_vocabulary(&manifest).unwrap_err();
+            assert!(
+                error.to_string().contains("workflow-schedule-invalid"),
+                "{cron}: {error}"
+            );
+        }
+        let manifest = parsed(observer_with_workflow(
+            "item_label",
+            serde_json::json!({"wiring":"item_label","schedule":"*/5 * * * *"}),
+        ));
+        wamn_schema_generator::validate_operation_vocabulary(&manifest).unwrap();
+        assert!(!derive_catalog_registrations(&manifest).contains_key("item_label"));
     }
 
     #[test]

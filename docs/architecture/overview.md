@@ -91,7 +91,7 @@ Each one writes `{"$ref": "generated/routes/<model>/<action>.json"}`.
 Publication, component admission and the client generator resolve the name against the package root, so a contract change moves the served schema and its definition hash.
 An authored operation keeps the input schema that its author writes.
 Publication refuses a wiring with no edges, because a graph with no edges is a route.
-The one exception is a wiring that a registration names, because a registration still delivers to a wiring.
+A registration or schedule can name a one-node wiring.
 
 Publication produces an immutable release manifest addressed by its digest.
 Deployment supplies that digest and artifact location to the host.

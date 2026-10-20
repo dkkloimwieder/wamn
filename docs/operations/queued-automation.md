@@ -52,3 +52,20 @@ The run keeps the status `dispatched`, and a park of a parked run changes nothin
 A running or finished run refuses the park.
 A release returns a parked run to the queue, and a run that is not parked refuses it.
 The list prints one JSON object per run, newest first, with its status and its `queued` and `parked` flags.
+
+## Declared workflows
+
+Set `WAMN_PG_ADMIN_URL` as above, then select the installed release by its digest:
+
+```bash
+wamn-ctl workflow declared --tenant acme --environment dev --release-digest "$RELEASE_DIGEST"
+```
+
+The command prints each declared workflow with its schedule or event registration.
+`workflow list` continues to print runs.
+Author schedules in `wamn.k` under `workflows.<id>.schedule`, then run `wamn build` for the package.
+Use five-field cron in UTC and omit `registration` for that workflow.
+Apply the package and publish the release before the host loads it.
+The host uses `WAMN_EXECUTOR_PLATFORM_PG_URL` to admit scheduled runs with no caller.
+A scheduled wiring can use nodes that require no operation grant.
+See [workflows](../architecture/execution.md#workflows) for timing and retry behavior.

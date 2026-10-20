@@ -453,6 +453,7 @@ mod tests {
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
             workflow: WorkflowSection {
+                schedules: BTreeMap::new(),
                 wirings: BTreeSet::new(),
                 attachments: BTreeMap::new(),
                 registrations: BTreeMap::new(),

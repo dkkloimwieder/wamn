@@ -118,6 +118,7 @@ base64 = "0.22"
 boon = "0.6"
 bytes = "1"
 chrono = { version = "0.4", default-features = false }
+croner = "4.0.1"
 clap = "4"
 data-encoding = "2.11"
 futures-util = "0.3"

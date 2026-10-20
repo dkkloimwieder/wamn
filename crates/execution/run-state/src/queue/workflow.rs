@@ -74,6 +74,30 @@ pub fn select_event_run_sql() -> &'static str {
         AND input_json = $10::text::jsonb"
 }
 
+/// Admit a scheduled run with no caller. Binds match automation admission,
+/// with the principal omitted: `$8` key, `$9` input, `$10` durability.
+pub fn insert_schedule_run_sql() -> String {
+    format!(
+        "INSERT INTO runs (tenant_id, package_id, manifest_digest, environment, \
+             wiring_id, wiring_version, wiring_hash, trigger_source, \
+             idempotency_key, input_json, status, durability_class) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'schedule', $8, \
+                 $9::text::jsonb, '{dispatched}', $10) \
+         ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+         RETURNING run_id",
+        dispatched = RunStatus::Dispatched.as_sql(),
+    )
+}
+
+/// Read a repeated scheduled start. Binds match its insert without durability.
+pub fn select_schedule_run_sql() -> &'static str {
+    "SELECT run_id FROM runs WHERE tenant_id = $1 AND package_id = $2 \
+        AND manifest_digest = $3 AND environment = $4 AND wiring_id = $5 \
+        AND wiring_version = $6 AND wiring_hash = $7 AND trigger_source = 'schedule' \
+        AND service_principal_id IS NULL AND idempotency_key = $8 \
+        AND input_json = $9::text::jsonb"
+}
+
 /// Queue one admitted run. Binds: `$1` tenant, `$2` run id.
 pub fn insert_run_queue_sql() -> &'static str {
     "INSERT INTO run_queue (tenant_id, run_id) VALUES ($1, $2)"

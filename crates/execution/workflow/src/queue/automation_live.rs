@@ -171,9 +171,16 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: PostgreSQL 18 binaries"]
+async fn schedule_replicas_admit_one_run_without_a_caller() -> anyhow::Result<()> {
+    run_automation(Mode::Schedule).await
+}
+
 /// Which case the fixture runs. The wiring `echo` has one node, and the mode
 /// picks the component it runs.
 enum Mode {
+    Schedule,
     /// The echo guest, through admission, park, release, and permission checks.
     Admission,
     /// A guest that stays active until the adapter stops.
@@ -220,6 +227,21 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         .batch_execute("CREATE SCHEMA application_data")
         .await?;
     wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
+    if matches!(mode, Mode::Schedule) {
+        // Existing catalogs must receive the table's full authority surface too.
+        admin
+            .batch_execute("DROP TABLE catalog.workflow_schedules")
+            .await?;
+        wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
+        let row = admin.query_one(
+            "SELECT relrowsecurity AND relforcerowsecurity, \
+             has_table_privilege('wamn_app', 'catalog.workflow_schedules', 'SELECT'), \
+             (SELECT count(*) FROM pg_policy WHERE polrelid = 'catalog.workflow_schedules'::regclass) \
+             FROM pg_class WHERE oid = 'catalog.workflow_schedules'::regclass", &[],
+        ).await?;
+        assert!(row.get::<_, bool>(0) && row.get::<_, bool>(1));
+        assert_eq!(row.get::<_, i64>(2), 2);
+    }
     let converged = wamn_control::reconcile_run_plane::reconcile(&admin, &schema, false).await?;
     assert!(
         converged.actions.is_empty(),
@@ -243,7 +265,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
     let node = match &mode {
-        Mode::Admission => Node::echo(component_bytes()),
+        Mode::Admission | Mode::Schedule => Node::echo(component_bytes()),
         Mode::Shutdown => Node::echo(shutdown::component_bytes()),
         Mode::Jsonata(bytes) => jsonata::node(bytes.clone()),
     };
@@ -267,7 +289,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let graph_hash = document.wiring_hash();
     admin.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ($1,'automation','1.0.0','echo',1,$2::text::jsonb,$3)",
         &[&TENANT,&serde_json::to_string(&document)?,&graph_hash.as_str()]).await?;
-    let manifest: ServingManifest = serde_json::from_value(json!({
+    let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"packages":[{"package-id":"automation","package-version":"1.0.0"}]},
         "components":[{"package-id":"automation",
@@ -275,6 +297,18 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
           "operations":{(node.operation.clone()):node.serving}}],
         "routes":[],"attachments":{},"workflow":{"wirings":[wamn_catalog::ServingWiring::new("automation", document.clone())]}
     }))?;
+    if matches!(mode, Mode::Schedule) {
+        manifest.workflow.schedules.insert(
+            "automation::hourly".to_owned(),
+            wamn_catalog::ServingSchedule {
+                package_id: "automation".to_owned(),
+                workflow_id: "hourly".to_owned(),
+                wiring_id: "echo".to_owned(),
+                wiring_version: 1,
+                schedule: "0 * * * *".to_owned(),
+            },
+        );
+    }
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -284,6 +318,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     admin.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT,&release.release().manifest_digest.as_str(),&canonical]).await?;
     let mut credentials = ClassCredentials::default();
+    let mut executor_url = String::new();
     let db_name: String = admin
         .query_one("SELECT current_database()", &[])
         .await?
@@ -331,6 +366,9 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         let mut url = url::Url::parse(database.url())?;
         url.set_username(&role).unwrap();
         url.set_password(Some("automation-test-only")).unwrap();
+        if family == WorkloadRoleFamily::ExecutorPlatform {
+            executor_url = url.to_string();
+        }
         credentials = credentials.with_class(class, url.to_string());
     }
     let postgres = Arc::new(WamnPostgres::new(WamnPostgresConfig {
@@ -410,6 +448,39 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
             service_principal_id: SERVICE.to_owned(),
         },
     };
+    if let Mode::Schedule = mode {
+        let due = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z")?
+            .with_timezone(&chrono::Utc);
+        request.trigger = Trigger::Schedule {
+            workflow_id: "hourly".to_owned(),
+            due,
+        };
+        request.input = json!({"due": crate::schedule::due_text(due)});
+        request.idempotency_key = crate::schedule::idempotency_key("automation", "hourly", due);
+        let (first, connection) = tokio_postgres::connect(&executor_url, NoTls).await?;
+        tokio::spawn(connection);
+        let (second, connection) = tokio_postgres::connect(&executor_url, NoTls).await?;
+        tokio::spawn(connection);
+        let first = PostgresWorkflows::new(first, schema.as_str(), TENANT, "test");
+        let second = PostgresWorkflows::new(second, schema.as_str(), TENANT, "test");
+        let (a, b) = tokio::join!(first.start(&request), second.start(&request));
+        let run = a?;
+        assert_eq!(run, b?);
+        let listed = first.list(10).await?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].run_id, run);
+        assert_eq!(listed[0].trigger_source.as_deref(), Some("schedule"));
+        let row = admin.query_one("SELECT service_principal_id IS NULL, registration_id IS NULL, invocation_context = '{}'::jsonb FROM wamn_run.runs WHERE run_id = $1", &[&run]).await?;
+        assert!(row.get::<_, bool>(0) && row.get::<_, bool>(1) && row.get::<_, bool>(2));
+        let error = drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("permission denied for operation {OPERATION}")
+        );
+        return Ok(());
+    }
     if let Mode::Jsonata(_) = mode {
         return jsonata::run(
             &admin,

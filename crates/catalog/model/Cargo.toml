@@ -19,6 +19,7 @@ license.workspace = true
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+croner = { workspace = true }
 boon = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

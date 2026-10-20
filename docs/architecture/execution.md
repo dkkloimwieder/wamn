@@ -352,12 +352,12 @@ That refusal carries SQLSTATE `55000` and the message `actor-required`, as the s
 A workflow is a released wiring that runs off the request path.
 The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wamn-workflow` is the trait `Workflows`, with four operations.
 
-- `start` admits one run of a released wiring under a service principal. It writes the `runs` row and the `run_queue` row in one transaction, and a repeated idempotency key returns the first run.
+- `start` admits one released wiring under a service principal or a declared schedule. It writes the run and queue row together. A repeated key returns the first run.
 - `park` moves the `available_at` of a queued run to `infinity`, so no claim takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
 - `release` returns a parked run to the queue.
 - `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
 
-`PostgresWorkflows` implements the contract with project-admin authority, and the `wamn-ctl workflow` commands call it ([queued automation](../operations/queued-automation.md)).
+`PostgresWorkflows` admits automation with project-admin authority and schedules with executor authority, and the `wamn-ctl workflow` commands call it ([queued automation](../operations/queued-automation.md)).
 Its SQL lives in `wamn-run-state` beside the claim SQL.
 
 An application event starts a workflow that the package declares in `wamn.json` under `workflows`.
@@ -370,6 +370,21 @@ The executor credential inserts only the event run columns, and the delivery id 
 The queue runs the wiring with no caller, and an event handler's wiring still walks when its event arrives.
 A node that needs an operation grant refuses, so an event workflow runs palette nodes.
 `list` shows an event run with the trigger `event`, and `park` and `release` act on it.
+
+A package can instead declare `workflows.<id>.schedule` in `wamn.k`.
+Each workflow declares exactly one of `registration` and `schedule`.
+The schedule is a five-field cron expression in UTC, parsed by `croner`.
+Apply-package reconciles `catalog.workflow_schedules`, and publish freezes schedules and wiring versions in the release manifest.
+A schedule must name a workflow wiring in that release.
+
+One host task serves all schedules of its environment's loaded release.
+Its first due moment is strictly after startup.
+At each due moment, it calls `Workflows::start` with input `{"due":"<due RFC 3339>"}`.
+The key is `<package id>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
+Replicas use the same key, so concurrent starts return one run.
+The executor admits the run with no caller, and a node that requires an operation grant refuses.
+Missed or refused ticks produce a log entry without catch-up, and host shutdown cancels the task.
+A host with no schedules starts no schedule task.
 
 The [JSONata node](../../apps/platform/execution/jsonata/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.

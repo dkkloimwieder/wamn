@@ -274,14 +274,13 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
     "attempts",
 ];
 
-/// Every `runs` column the executor-platform family INSERTs: the event run
-/// grain, and no other (owner ruling on `wamn-upl3.6`).
+/// Every `runs` column the executor-platform family INSERTs for event and schedule runs.
 ///
-/// The host admits an event-started workflow run under the authority of the
+/// The host admits an event or schedule run under the authority of the
 /// release that declares the workflow (`wamn_run_state::queue::insert_event_run_sql`).
 /// The list reaches no service principal, binding world, legacy flow, event
 /// ancestry, capture or caller-outcome column, so the run-plane grain check
-/// admits only an event run from this family. Automation admission stays with
+/// admits event and schedule runs from this family. Automation admission stays with
 /// project-admin authority.
 pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 13] = [
     "tenant_id",
@@ -299,7 +298,7 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 13] = [
     "durability_class",
 ];
 
-/// The `run_queue` columns an event admission writes. The FIFO position, the
+/// The `run_queue` columns an event or schedule admission writes. The FIFO position, the
 /// crash budget and the lease take their defaults.
 pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["tenant_id", "run_id"];
 /// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
@@ -656,9 +655,8 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 /// * `runs` and `run_queue` INSERT, column grain over
 ///   [`EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS`] and
 ///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`], plus `SELECT` on
-///   `environment_policies`: the host admits an event-started workflow run
-///   under its release's authority (`wamn-upl3.6`). The grain check admits only
-///   an event run from these columns.
+///   `environment_policies`: the host admits event and schedule runs
+///   under the declaring release. These columns admit no caller identity.
 /// * `effect_attempts`: `SELECT` only. The claim path only asks whether a row
 ///   exists.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
