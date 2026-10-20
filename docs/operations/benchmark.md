@@ -355,6 +355,7 @@ It ran after the update replay on the same data, with about 35,000 more write lo
 | --- | --- | --- | --- | --- | --- |
 | Local 0.1.28, [`local-pg-0.1.28.json`](../../tests/bench/local-pg-0.1.28.json) | 2489/s, p50 6.20 | 1386/s, p50 11.58 | 5.39 ms | not measured | not measured |
 | GCP tier 2, 0.1.36, 2026-10-20 12:12–12:18 UTC | 2319/s, p50 6.35 | 585/s, p50 26.02 | 19.66 ms | 1110/s, p50 13.46 | 12.55 ms, 64% |
+| GCP tier 2, 0.1.36 with `wamn-c8a5v.2`, 2026-10-20 14:29–14:34 UTC, [`gcp-pg-0.1.36-c8a5v.2.json`](../../tests/bench/gcp-pg-0.1.36-c8a5v.2.json) | 2039/s, p50 7.02 | 668/s, p50 20.94 | 13.93 ms | 1033/s, p50 14.55 | 6.40 ms, 46% |
 
 The GCP run used pool `pg` for PostgreSQL alone, on an `e2-standard-2` node.
 The pgbench client ran in the Job `tools/bench/pg-floor/gcp-client.yaml` on pool `bench`, beside the idle Receiving host.
@@ -387,6 +388,13 @@ Inside the triggers, the dynamic history `INSERT` is planned again for each row:
 The catalog queries are planned once per session and run for each row. `row_image` runs twice at 0.28 ms, and the primary key query takes 0.32 ms.
 The `jsonb_each` diff takes 0.27 ms, the tenant lookup 0.13 ms, and the stamp write-back 0.11 ms.
 Every trigger and command statement ran as `wamn_app`. The foreign key check ran as `wamn_db_owner`.
+
+The third row is the same procedure after `wamn-c8a5v.2`, on new nodes of the same pools.
+The package relations then run generated trigger functions with static SQL, and their images keep the `to_jsonb` spelling.
+In that run, the triggers cost 6.40 ms at p50 against 12.55 ms, and 8.45 ms against 12.94 ms in the mean.
+Their server time per update fell from 6.78 ms to 2.63 ms, and the nested plans fell from 36,212 to 720.
+Update throughput rose from 585/s to 668/s. Simple-update fell from 2319/s to 2039/s on the new nodes, so compare the rows within each run.
+Before this run, the Cluster kept `auto_explain` silent outside `wamn_pg_floor`, and the other databases committed about 6 transactions per second.
 
 ## Request round-trips
 
