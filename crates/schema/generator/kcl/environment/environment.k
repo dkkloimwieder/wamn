@@ -10,7 +10,7 @@ import regex
 
 schema Connection:
     """A connection definition. Credentials are provisioned, never declared."""
-    type: "blobstore"
+    type: "blobstore" | "http"
     definition: {str:any}
 
 schema Environment:

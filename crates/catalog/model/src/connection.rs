@@ -231,7 +231,7 @@ impl RequirementType {
                 "a gcs definition takes no credential handle; the host signs with its pod's service account"
                     .to_owned(),
             ),
-            (Self::Blobstore, false, None | Some("")) => Err(
+            (Self::Blobstore, false, None | Some("")) | (Self::Http, _, None | Some("")) => Err(
                 "the credential handle must not be empty; the host resolves it by name".to_owned(),
             ),
             _ => Ok(()),
@@ -373,6 +373,25 @@ mod tests {
                 .expect_err("the plugin needs a nonempty coordinate");
             assert!(error.contains(&format!("{coordinate} is empty")), "{error}");
         }
+    }
+
+    #[test]
+    fn http_needs_a_nonempty_credential_handle() {
+        let definition = serde_json::json!({
+            "primary-authority": "http://http-fixture:8080/", "tls-verification": "disabled"
+        });
+        for handle in [None, Some("")] {
+            assert_eq!(
+                RequirementType::Http.check_credential_handle(&definition, handle),
+                Err(
+                    "the credential handle must not be empty; the host resolves it by name"
+                        .to_owned()
+                )
+            );
+        }
+        RequirementType::Http
+            .check_credential_handle(&definition, Some("erp"))
+            .expect("the host resolves a named credential");
     }
 
     /// Confinement is the split itself: an author may name an OBJECT, and may

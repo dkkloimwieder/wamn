@@ -18,6 +18,9 @@
 //!    connection's generation. The fixture's components declare no store
 //!    alias, so there is no binding to change.
 //! 4. `env show` output applied again writes nothing.
+//!    A separate HTTP environment binds one requirement, reproduces its
+//!    document through show, and preserves its rows and Helm revision on reapply.
+//!    Its endpoint needs no server until the HTTP send case runs.
 //! 5. A12: two environments in one namespace; every object and Secret name
 //!    differs and derives from the coordinate, and each host mounts only its
 //!    own Secrets.
@@ -760,6 +763,14 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let manifest_a = release(MANIFEST, &version, None)?;
     let manifest_b = release(MANIFEST_B, &version, None)?;
     let manifest_h = release(MANIFEST_H, &version, Some(&device))?;
+    let manifest_http = release(
+        &MANIFEST.replace(
+            r#""connections":[]"#,
+            r#""connections":[{"requirement-type":"http","store-alias":"erp"}]"#,
+        ),
+        &version,
+        None,
+    )?;
 
     // The http role image: the chart's route guest, copied into the registry.
     let loopback = matches!(
@@ -864,7 +875,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         insecure_registry: false,
         oci_ca_paths: ca.clone(),
     };
-    for bytes in [&manifest_a, &manifest_b, &manifest_h] {
+    for bytes in [&manifest_a, &manifest_b, &manifest_h, &manifest_http] {
         let (_, release) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
         qualification_artifact::push(
             &releases,
@@ -1132,6 +1143,104 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         json!({"document": shown.to_kcl(), "revisions": after_show, "generation": generation_three}),
         after_show == first && generation_three == generation_two,
     );
+
+    // HTTP follows the same bind and show paths in its own environment.
+    let http_digest = push_manifest_bytes(
+        &manifest_http,
+        &platform.release_artifact_base,
+        false,
+        &platform.oci_ca_paths,
+        &platform.registry_auth_file,
+    )
+    .await?
+    .digest
+    .as_str()
+    .to_owned();
+    let mut http = document("http", "http.orders.example");
+    http.release = DeclaredRelease::Digest(http_digest.clone());
+    http.connections.insert(
+        "erp".to_owned(),
+        ConnectionDefinition {
+            requirement_type: wamn_catalog::RequirementType::Http,
+            definition: json!({
+                "primary-authority": "http://http-fixture:8080/",
+                "tls-verification": "disabled"
+            }),
+        },
+    );
+    apply(&http, "http-first").await?;
+    let http_name = release_name(ORG, PROJECT, "http")?;
+    let http_revisions = run.revisions(&http_name).await?;
+    let suffix: String = system
+        .query_one(
+            "SELECT instance_suffix FROM registry.project_envs \
+              WHERE org = $1 AND project = $2 AND env = 'http'",
+            &[&ORG, &PROJECT],
+        )
+        .await?
+        .get(0);
+    let database = wamn_control_provision::project_env_database_name(ORG, PROJECT, "http", &suffix);
+    let (http_project, http_task) = connect(&format!(
+        "postgresql://postgres:{password}@127.0.0.1:{port}/{database}"
+    ))
+    .await?;
+    let http_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
+    let http_rows = async || -> anyhow::Result<Value> {
+        Ok(http_project
+            .query_one(
+                "SELECT jsonb_build_object(\
+                    'instances', (SELECT jsonb_agg(to_jsonb(i) ORDER BY instance_id) \
+                        FROM catalog.connection_instances i WHERE tenant_id = $1 AND environment = 'http'), \
+                    'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY instance_id, generation) \
+                        FROM catalog.connection_generations g WHERE tenant_id = $1 AND environment = 'http'), \
+                    'bindings', (SELECT jsonb_agg(to_jsonb(b) ORDER BY manifest_digest, component_digest, store_alias) \
+                        FROM catalog.connection_bindings b WHERE tenant_id = $1 AND environment = 'http'))",
+                &[&http_tenant],
+            )
+            .await?
+            .get(0))
+    };
+    let http_before = http_rows().await?;
+    let http_shown = environment::show::show(&platform, &http.triple()).await?;
+    run.pass(
+        "HTTP binds its instance, generation and release requirement and show reproduces the document",
+        &format!("wamn-ctl env show {ORG}/{PROJECT}/http; SELECT connection rows"),
+        json!({"document": http_shown.to_kcl(), "rows": http_before}),
+        http_shown == http
+            && http_before["instances"].as_array().is_some_and(|rows| rows.len() == 1)
+            && http_before["instances"][0]["requirement_type"] == "http"
+            && http_before["instances"][0]["active_generation"] == 1
+            && http_before["generations"].as_array().is_some_and(|rows| rows.len() == 1)
+            && http_before["generations"][0]["definition_json"] == http.connections["erp"].definition
+            && http_before["generations"][0]["credential_set_handle"] == "erp"
+            && http_before["bindings"].as_array().is_some_and(|rows| rows.len() == 1)
+            && http_before["bindings"][0]["manifest_digest"] == http_digest
+            && http_before["bindings"][0]["instance_id"] == "erp"
+            && http_before["bindings"][0]["store_alias"] == "erp"
+            && http_before["bindings"][0]["binding_status"] == "active"
+            && http_before["bindings"][0]["validation_status"] == "valid",
+    );
+    apply(&http, "http-again").await?;
+    let http_second = http_rows().await?;
+    let http_second_revisions = run.revisions(&http_name).await?;
+    apply(&http_shown, "http-shown").await?;
+    let http_after_show = http_rows().await?;
+    let http_shown_revisions = run.revisions(&http_name).await?;
+    run.pass(
+        "HTTP second apply and show output applied write no rows or Helm revision",
+        &format!(
+            "wamn-ctl env apply; helm -n {NAMESPACE} history {http_name}; SELECT connection rows"
+        ),
+        json!({"before": http_before, "second": http_second, "shown": http_after_show,
+            "revisions": [http_revisions, http_second_revisions, http_shown_revisions]}),
+        http_before == http_second
+            && http_before == http_after_show
+            && http_revisions == http_second_revisions
+            && http_revisions == http_shown_revisions,
+    );
+    http_task.abort();
+    drop(http_project);
+    environment::delete::delete(&platform, &http.triple(), true).await?;
     system_task.abort();
 
     // 5. A12: a second environment in the same namespace.

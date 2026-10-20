@@ -188,6 +188,18 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn an_http_definition_takes_its_instance_id_as_the_handle() {
+        let definition = json!({
+            "primary-authority": "http://http-fixture:8080/", "tls-verification": "disabled"
+        });
+        let handle = credential_handle(RequirementType::Http, &definition, "erp");
+        assert_eq!(handle.as_deref(), Some("erp"));
+        RequirementType::Http
+            .check_credential_handle(&definition, handle.as_deref())
+            .expect("the instance id is a valid handle");
+    }
+
+    #[test]
     fn a_definition_that_needs_a_handle_takes_its_instance_id() {
         let definition = json!({"endpoint": "http://x", "container": "c", "prefix": "p"});
         let handle = credential_handle(RequirementType::Blobstore, &definition, "labels");

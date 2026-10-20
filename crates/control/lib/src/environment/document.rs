@@ -235,6 +235,119 @@ mod tests {
         })
     }
 
+    fn http_document() -> Value {
+        let mut value = document();
+        value["connections"] = json!({
+            "erp": {"type": "http", "definition": {
+                "primary-authority": "http://http-fixture:8080/", "tls-verification": "disabled"
+            }}
+        });
+        value
+    }
+
+    #[test]
+    fn reads_an_http_connection_and_refuses_an_unknown_type() {
+        let mut value = http_document();
+        let parsed = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            parsed.connections["erp"].requirement_type,
+            RequirementType::Http
+        );
+        assert_eq!(
+            parsed.connections["erp"].definition,
+            value["connections"]["erp"]["definition"]
+        );
+        value["connections"]["erp"]["type"] = json!("ftp");
+        let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
+        assert!(
+            error
+                .root_cause()
+                .to_string()
+                .contains("unknown variant `ftp`, expected `blobstore` or `http`"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn refuses_invalid_http_coordinates_by_name() {
+        for coordinate in ["primary-authority", "tls-verification"] {
+            for (replacement, reason) in [
+                (
+                    None,
+                    format!(" lacks {coordinate}; Http reads it at resolve time"),
+                ),
+                (
+                    Some(json!("")),
+                    format!("'s {coordinate} is empty; Http needs it"),
+                ),
+                (
+                    Some(json!(42)),
+                    format!("'s {coordinate} must be a string; Http reads it as one"),
+                ),
+            ] {
+                let mut value = http_document();
+                let definition = value["connections"]["erp"]["definition"]
+                    .as_object_mut()
+                    .unwrap();
+                if let Some(replacement) = replacement {
+                    definition.insert(coordinate.to_owned(), replacement);
+                } else {
+                    definition.remove(coordinate);
+                }
+                let error =
+                    EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    format!("connection erp: the generation definition{reason}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_unread_http_keys_and_a_nonobject_definition() {
+        for key in ["provider", "endpoint", "headers"] {
+            let mut value = http_document();
+            value["connections"]["erp"]["definition"][key] = json!("unused");
+            let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "connection erp: the generation definition carries {key}, which Http never reads; a coordinate nobody reads is a coordinate nobody validates"
+                )
+            );
+        }
+        let mut value = http_document();
+        value["connections"]["erp"]["definition"] = json!("not an object");
+        let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "connection erp: the generation definition must be a JSON object"
+        );
+    }
+
+    #[test]
+    fn the_kcl_schema_accepts_http_and_refuses_an_unknown_connection_type() {
+        let parsed =
+            EnvironmentDocument::from_json(http_document().to_string().as_bytes()).unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("wamn-environment-http-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create the directory");
+        let file = directory.join("environment.k");
+        let kcl = parsed.to_kcl();
+        std::fs::write(&file, &kcl).expect("write the document");
+        let compiled = EnvironmentDocument::compile(&file);
+        std::fs::write(&file, kcl.replace("type = \"http\"", "type = \"ftp\""))
+            .expect("write the unknown type");
+        let refused = EnvironmentDocument::compile(&file);
+        std::fs::remove_dir_all(&directory).expect("remove the directory");
+        assert_eq!(compiled.expect("HTTP compiles"), parsed);
+        assert!(
+            refused.is_err(),
+            "the schema refuses an unknown connection type"
+        );
+    }
+
     #[test]
     fn reads_a_document_and_refuses_an_unknown_field() {
         let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes())
