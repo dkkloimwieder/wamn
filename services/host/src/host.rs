@@ -21,6 +21,7 @@ use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
 use wash_runtime::washlet::ClusterHostBuilder;
 
+use wamn_catalog::ServingManifest;
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
 use wamn_control_registry::{Triple, project_env_tenant};
@@ -644,11 +645,25 @@ fn host_credentials(
     }
 }
 
-/// Name the callable-HTTP credential only when the loaded release demands PAT
-/// authorization. Configuration is transport, not authority: a release-less or
-/// anonymous-only host must ignore an ambient URL rather than acquire its pool.
-fn demanded_http_admitter_url(pat_routes: bool, configured_url: Option<String>) -> Option<String> {
-    if pat_routes { configured_url } else { None }
+fn declares_connection_requirement(manifest: &ServingManifest) -> bool {
+    manifest
+        .components
+        .iter()
+        .any(|component| !component.descriptor.connections.is_empty())
+}
+
+/// Name the callable-HTTP credential for route authorization or connection resolution.
+/// A host with neither demand ignores an ambient URL rather than acquiring its pool.
+fn demanded_http_admitter_url(
+    authenticated_routes: bool,
+    connection_requirements: bool,
+    configured_url: Option<String>,
+) -> Option<String> {
+    if authenticated_routes || connection_requirements {
+        configured_url
+    } else {
+        None
+    }
 }
 
 fn require_queue_admission(
@@ -960,6 +975,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let session_routes = application.is_some_and(|loaded_release| {
         requires_session_route_authentication(loaded_release.manifest())
     });
+    let connection_requirements = application
+        .is_some_and(|loaded_release| declares_connection_requirement(loaded_release.manifest()));
     let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
@@ -1073,9 +1090,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // wamn-0h0g.22.11 CUT THE CALLABLE-HTTP CLASS OVER on the same terms.
     // Trusted component HTTP effects remain executor-only (wamn-0h0g.10.16),
     // but wamn-10yt.3.2 reuses that exact pool family for the host-owned
-    // app_system.permissions read a PAT route requires. The manifest-derived
-    // gate above makes the generation mandatory for that demand only; an
-    // anonymous-only or release-less host retains the absent, fail-closed arm.
+    // app_system.permissions read that PAT/session routes require. Connection
+    // resolution also uses this class. The manifest-derived gate retains the
+    // pool for either demand; a host with neither retains the absent arm.
     // EventMaterializer uses the same explicit-source rule: only the dedicated
     // URL names that class, and absence removes the shared guest placeholder.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
@@ -1084,8 +1101,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let event_materializer_url = std::env::var("WAMN_EVENT_MATERIALIZER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
-    let http_admitter_url =
-        demanded_http_admitter_url(pat_routes || session_routes, http_admitter_url);
+    let http_admitter_url = demanded_http_admitter_url(
+        pat_routes || session_routes,
+        connection_requirements,
+        http_admitter_url,
+    );
     let guest_url = std::env::var("WAMN_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
@@ -2876,16 +2896,120 @@ mod tests {
     }
 
     #[test]
-    fn callable_http_configuration_is_not_authority_without_pat_demand() {
+    fn callable_http_configuration_is_not_authority_without_release_demand() {
         assert_eq!(
-            demanded_http_admitter_url(false, Some(ADMITTER.to_owned())),
+            demanded_http_admitter_url(false, false, Some(ADMITTER.to_owned())),
             None,
-            "an anonymous-only release must not name an ambient credential"
+            "an anonymous-only release without connections must not name an ambient credential"
         );
         assert_eq!(
-            demanded_http_admitter_url(true, Some(ADMITTER.to_owned())).as_deref(),
+            demanded_http_admitter_url(true, false, Some(ADMITTER.to_owned())).as_deref(),
             Some(ADMITTER),
-            "a PAT-protected release keeps the credential it requires"
+            "a PAT/session-protected release keeps the credential it requires"
+        );
+    }
+
+    fn anonymous_release(connections: Vec<wamn_catalog::ComponentConnection>) -> ServingManifest {
+        use std::collections::{BTreeMap, BTreeSet};
+        use wamn_catalog::{
+            AttachmentTarget, AttachmentType, ComponentDescriptor, DefinitionHash, OperationType,
+            PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
+            ServingRelease, ServingRoute,
+        };
+
+        let mut descriptor = ComponentDescriptor::named("http-request", "0.1", RELEASE_DIGEST);
+        descriptor.connections = connections;
+        ServingManifest::new(
+            ServingRelease {
+                packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
+            },
+            BTreeSet::from([ServingComponent {
+                package_id: "cat".into(),
+                descriptor,
+                operations: BTreeMap::from([(
+                    "request".into(),
+                    ServingComponentOperation {
+                        committed_result_schema: None,
+                        registered_operation: None,
+                        permissions: BTreeSet::new(),
+                        statements: BTreeMap::new(),
+                    },
+                )]),
+                statement_instances: BTreeMap::new(),
+            }]),
+            BTreeSet::from([ServingRoute {
+                package_id: "cat".into(),
+                component: "http-request".into(),
+                operation: "request".into(),
+                type_: OperationType::Command,
+                reads: BTreeSet::new(),
+                revision: None,
+                idempotency: None,
+                canonicalization: None,
+            }]),
+            BTreeSet::new(),
+            BTreeMap::from([(
+                "orders".into(),
+                ServingAttachment {
+                    type_: AttachmentType::Http,
+                    package_id: "cat".into(),
+                    target: AttachmentTarget::Route {
+                        component: "http-request".into(),
+                        operation: "request".into(),
+                    },
+                    definition_hash: DefinitionHash::parse(RELEASE_DIGEST).unwrap(),
+                    definition: serde_json::json!({
+                        "id": "orders",
+                        "kind": "http",
+                        "source-id": "public",
+                        "route": {"path": "/orders", "method": "POST"}
+                    }),
+                    auth_policy: serde_json::json!({"modes": ["none"]}),
+                    registered_operation: None,
+                },
+            )]),
+            BTreeMap::new(),
+        )
+        .expect("anonymous release is valid")
+    }
+
+    #[test]
+    fn an_anonymous_release_with_a_connection_keeps_the_callable_http_credential() {
+        let manifest = anonymous_release(vec![wamn_catalog::ComponentConnection {
+            store_alias: "upstream".into(),
+            requirement_type: wamn_catalog::ComponentConnectionType::Http,
+        }]);
+        let authenticated_routes = requires_pat_route_authentication(&manifest)
+            || requires_session_route_authentication(&manifest);
+        assert!(!authenticated_routes);
+        assert!(declares_connection_requirement(&manifest));
+        assert_eq!(
+            demanded_http_admitter_url(
+                authenticated_routes,
+                declares_connection_requirement(&manifest),
+                Some(ADMITTER.to_owned()),
+            )
+            .as_deref(),
+            Some(ADMITTER),
+            "an anonymous-only release needs the credential to resolve its connection"
+        );
+    }
+
+    #[test]
+    fn an_anonymous_release_without_connections_drops_the_callable_http_credential() {
+        let manifest = anonymous_release(Vec::new());
+        let authenticated_routes = requires_pat_route_authentication(&manifest)
+            || requires_session_route_authentication(&manifest);
+        assert!(!authenticated_routes);
+        assert!(!declares_connection_requirement(&manifest));
+        assert_eq!(
+            demanded_http_admitter_url(
+                authenticated_routes,
+                declares_connection_requirement(&manifest),
+                Some(ADMITTER.to_owned()),
+            ),
+            None,
+            "an anonymous-only release without connections must not name an ambient credential"
         );
     }
 
