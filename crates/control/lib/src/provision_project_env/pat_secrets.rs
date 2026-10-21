@@ -126,6 +126,29 @@ async fn issue_pat_secret(
     purpose: PatPurpose,
     path: &Path,
 ) -> anyhow::Result<IssuedPatSecret> {
+    let (principal, issued) = mint_pat(client, pat_client, triple, purpose).await?;
+    let secret = render_pat_secret(
+        triple,
+        namespace,
+        purpose,
+        principal.id().as_str(),
+        &issued.token,
+        &issued.token_prefix,
+        &issued.expires_at,
+    )?;
+    write_secret_json(path, &secret)?;
+    Ok(IssuedPatSecret {
+        purpose: purpose.purpose,
+        path: path.to_path_buf(),
+    })
+}
+
+async fn mint_pat(
+    client: &mut Client,
+    pat_client: &PatClient,
+    triple: &Triple,
+    purpose: PatPurpose,
+) -> anyhow::Result<(Principal, crate::pat_client::PatResponse)> {
     let subject = purpose.subject(triple)?;
     let display_name = purpose.display_name(triple);
     let principal = resolve_or_create_service(client, &subject, &display_name).await?;
@@ -162,20 +185,35 @@ async fn issue_pat_secret(
         purpose.purpose
     );
 
-    let secret = render_pat_secret(
-        triple,
-        namespace,
-        purpose,
-        principal.id().as_str(),
-        &issued.token,
-        &issued.token_prefix,
-        &issued.expires_at,
-    )?;
-    write_secret_json(path, &secret)?;
-    Ok(IssuedPatSecret {
-        purpose: purpose.purpose,
-        path: path.to_path_buf(),
-    })
+    Ok((principal, issued))
+}
+
+/// Mint a management-author PAT for a recorded environment without writing it.
+///
+/// # Errors
+///
+/// Returns an error if the environment, principal, role, or issuance is invalid.
+pub async fn mint_management_author_pat(
+    system_url: &str,
+    issuer: &crate::pat_client::PatIssuerConfig,
+    triple: &Triple,
+) -> anyhow::Result<crate::pat_client::PatResponse> {
+    let pat_client = PatClient::new(issuer)?;
+    super::validate_project_env(&triple.org, &triple.project, triple.env.as_str())?;
+    super::read_project_env_instance(system_url, triple).await?;
+    let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
+        .await
+        .context("system db connect for PAT issuance")?;
+    let connection_task = tokio::spawn(connection);
+    let result = async {
+        client.batch_execute("SET ROLE wamn_system").await?;
+        let (_, pat) = mint_pat(&mut client, &pat_client, triple, MANAGEMENT_AUTHOR).await?;
+        Ok(pat)
+    }
+    .await;
+    drop(client);
+    let _ = connection_task.await;
+    result
 }
 
 async fn resolve_or_create_service(

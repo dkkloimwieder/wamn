@@ -111,7 +111,9 @@ pub use output::{
     ProvisionedRoute, ensure_distinct_secret_paths, ensure_secret_path, read_json,
     secret_annotation, secret_value, write_secret_json,
 };
-pub use pat_secrets::{IssuedPatSecret, parse_pat_prefix, revoke_provisioning_pat};
+pub use pat_secrets::{
+    IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
+};
 pub use registry::{
     claim_environment_instance, project_tenant_environment, read_project_env_instance,
     read_project_env_policy, resolve_cluster,

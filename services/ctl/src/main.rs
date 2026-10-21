@@ -5,6 +5,7 @@ use std::str::FromStr as _;
 mod platform_verbs;
 mod print_platform_principals;
 mod project_verbs;
+mod publish_wired_release;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
@@ -94,6 +95,8 @@ enum Command {
     ///
     /// PRECONDITION: run `env apply` for this environment FIRST; it reconciles the run plane `wamn_run`. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(release_verbs::PublishReleaseArgs),
+    /// Mint a PAT in memory, gate and author wirings, and publish their release.
+    PublishWiredRelease(publish_wired_release::PublishWiredReleaseArgs),
 
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
@@ -161,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::AuthorWiring(args) => release_verbs::author(args).await,
         Command::PublishRelease(args) => release_verbs::publish(args).await,
+        Command::PublishWiredRelease(args) => publish_wired_release::run(args).await,
 
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),
         Command::ReconcileReplicaIdentity(args) => {
