@@ -332,16 +332,19 @@ impl OwnedPostgres {
             .spawn()
             .context("start the owned PostgreSQL process")?;
         self.process = Some(process);
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + Duration::from_secs(120);
         loop {
-            ensure!(
-                self.process
-                    .as_mut()
-                    .expect("the process was started")
-                    .try_wait()?
-                    .is_none(),
-                "the owned PostgreSQL process exited before readiness"
-            );
+            if let Some(status) = self
+                .process
+                .as_mut()
+                .expect("the process was started")
+                .try_wait()?
+            {
+                anyhow::bail!(
+                    "the owned PostgreSQL process exited with {status} before readiness; last 20 lines of server.log:\n{}",
+                    log_tail(&self.directory.join("server.log"))
+                );
+            }
             if let Ok(pid) = fs::read_to_string(self.directory.join("data/postmaster.pid"))
                 && pid
                     .lines()
@@ -352,7 +355,8 @@ impl OwnedPostgres {
             }
             ensure!(
                 Instant::now() < deadline,
-                "the owned PostgreSQL process did not become ready"
+                "the owned PostgreSQL process did not become ready within 120 s; last 20 lines of server.log:\n{}",
+                log_tail(&self.directory.join("server.log"))
             );
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -458,6 +462,17 @@ fn report_cleanup_failure(action: &str, error: &anyhow::Error) {
     }
 }
 
+fn log_tail(path: &Path) -> String {
+    match fs::read_to_string(path) {
+        Ok(log) => {
+            let mut lines: Vec<_> = log.lines().rev().take(20).collect();
+            lines.reverse();
+            lines.join("\n")
+        }
+        Err(error) => format!("cannot read server.log: {error}"),
+    }
+}
+
 fn private_file(path: &Path) -> anyhow::Result<File> {
     OpenOptions::new()
         .write(true)
@@ -479,6 +494,35 @@ fn valid_database_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_tail_keeps_the_last_twenty_lines_and_reports_an_absent_log() {
+        let path = std::env::temp_dir().join(format!(
+            "wamn-test-postgres-log-tail-{}",
+            std::process::id()
+        ));
+        let log = (1..=25)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        private_file(&path)
+            .unwrap()
+            .write_all(log.as_bytes())
+            .unwrap();
+        let long_tail = log_tail(&path);
+        fs::write(&path, "first\nsecond\nthird\n").unwrap();
+        let short_tail = log_tail(&path);
+        fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            long_tail,
+            (6..=25)
+                .map(|line| format!("line {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert_eq!(short_tail, "first\nsecond\nthird");
+        assert!(log_tail(&path).starts_with("cannot read server.log: "));
+    }
 
     #[test]
     fn prerequisites_fail_naming_every_missing_variable_and_program() {
