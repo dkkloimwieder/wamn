@@ -90,6 +90,7 @@ Rows marked *done* or *dropped* stay for the record.
 | C36 | Prometheus `/metrics` | host | — | M |
 | C37 | Alerting (Slack, PagerDuty) | package over C20 | C4 | S |
 | C38 | Cross-package reads: one package reads another package's model | platform | owner ruling | — |
+| C39 | CDC only for the models that an event registration reads | platform | owner ruling | S |
 | C1 | Native driver sidecar: `wamn:connection/driver` + declared container | plugin + deploy | — | L |
 
 ### Edge
@@ -173,11 +174,25 @@ An org declares a connection once, and each environment that names it binds the 
 
 Out of this epic: no UI, no Secret Manager, no RESTlet (C22, Epic 5), no ODBC (C23), and no cross-package reads (C38).
 
+### Rulings
+
+Owner rulings of 2026-10-21 on the scoping forks. Each ruling is recorded verbatim on `wamn-lcaxg`.
+
+| Ruling | Invariant to measure |
+| --- | --- |
+| The org record is `registry.org_connections (org, name, type, definition)` in the control database. Instances and generations stay in each project catalog. The credential handle is `org:<org>:<name>`. Only `http` connections can be org-scoped. s3 blobstore follows when a consumer needs it. | Two environments that name one org connection resolve one secret. |
+| The credentials file has version 2 with an `orgs` map. The host still reads the old file. | A host resolves an org handle only for its own org. |
+| `environment.k` changes in `Connection` only, which also accepts `{ org = "<name>" }`. | The platform-install lane hears of the change before the commit. |
+| `apps/platform/wamn_integration` is a base package. It owns `setting`, `log` and their SQL operations, and integrations compose it. "No new WIT" means no new platform capability. Generated operation WIT is allowed. | An integration keeps no state outside `setting`, `log` and the catalog. |
+| The environment grants the integration application the named consumer command. The grant is declared and authorized at apply, never per call. A schedule run acts as its application. | A consumer command runs from an integration workflow only when the environment grants it. |
+| The kind case gets event NATS and a CDC reader, because the issue 3 push event needs CDC on the consumer. C39 records the alternative for a later ruling. | The kind case deploys `wamn_integration` and the consumer with CDC on. |
+| `http-page` gains the parameters `method` and `body-input-pointer`. SuiteQL pages in offset style, with an optional `has-more` pointer that stops the loop. This deviates from the Epic 3 ruling, whose cursor style described the fixture. The node serves the vendor's shape. | A SuiteQL query pages with one POST body on every page and stops when `has-more` is false. |
+
 ### Issues
 
 1. **Org-scoped connection.** A control-database record `(org, name, type, definition)` and a credential handle keyed by org. `wamn-ctl connection declare` writes the record. `environment.k` references it by name: `connections.<alias> = { org = "<name>" }`. `env apply` materializes the instance, generation and binding through the existing `bind`, and looks up the credential under the org handle. Invariant: two environments that name one org connection resolve one secret, and a changed org definition appends a generation in each environment at its next apply. A live Postgres test covers the invariant.
 2. **`wamn_integration`.** The package lives under `apps/platform` and holds the models `setting` and `log`. `rest_connector` loses its `item` model and ends in a fixture consumer command. It reads and writes `last_synced_at` through `setting`. The kind case follows.
-3. **NetSuite (C21).** The package `apps/netsuite` runs as one application with `wamn_integration`. Its operations call SuiteTalk REST with `oauth1`: record get, a SuiteQL query paged by `http-page` in cursor style, create and update. One scheduled pull wiring runs `http-page → jsonata → <consumer command>`, windowed by `last_synced_at`. One push wiring starts from a consumer event. The kind case runs against a NetSuite-shaped fixture that verifies OAuth1, pages SuiteQL and creates one record. The issue lists the fixture needs before the case is written. Live calls against the owner's account are owner-run and documented in the issue, never in a test target.
+3. **NetSuite (C21).** The package `apps/netsuite` runs as one application with `wamn_integration`. Its operations call SuiteTalk REST with `oauth1`: record get, a SuiteQL query paged by `http-page` in offset style, create and update. One scheduled pull wiring runs `http-page → jsonata → <consumer command>`, windowed by `last_synced_at`. One push wiring starts from a consumer event. The kind case runs against a NetSuite-shaped fixture that verifies OAuth1, pages SuiteQL and creates one record. The issue lists the fixture needs before the case is written. Live calls against the owner's account are owner-run and documented in the issue, never in a test target.
 
 Per-issue budget: build, clippy, fmt check, unit tests, and the live Postgres test for issue 1. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
 
