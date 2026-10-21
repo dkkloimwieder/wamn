@@ -249,10 +249,11 @@ Invariants A5 must keep (each is already a ruling or a refusal today):
 - `run` / `run-stream` stay refused inside a host transaction.
 - Authorization stays at publish; the only runtime check is the entry's grant, once, at `begin-operation` or at `authenticate`.
 - The composed component's digest is a function of source bytes only; `wac` is deterministic, and the route layer's bytes are pinned like any member.
+- The guest supplies no trust data (ruled 2026-10-20 from the spike, `wamn-cbqzl`). The host mints the delivery id at `begin-operation`. `authenticate` returns an opaque caller handle, and `begin-operation` checks it. The request hash and the result are the application's idempotency data, which the host stores without interpreting.
 
 Cost: a contract change across publish, the generator, the Postgres plugin's transaction surface, the edge host, and the flow tests. Weeks, not days. It touches the security model, so it gets the review the composition spec got.
 
-Spike: compose `http-route` into Receiving by hand with `begin-operation` / `commit` stubbed on the Postgres plugin, run get and update c16 locally against the current path. That number decides between A1 and A5.
+Spike: compose `http-route` into Receiving by hand with `begin-operation` / `commit` stubbed on the Postgres plugin, run get and update c16 locally against the current path. Done in `wamn-cbqzl`: A5 was ruled on its result (decision 1). Its results and its list of shortcuts are in that issue's notes.
 
 ### A3 (H8): taps, what they are, who reads them, and the options
 
@@ -315,7 +316,7 @@ No function on the list is lost under A5 or A2. Batched requests: a request can 
 
 ## Open decisions for the owner
 
-1. Ruled 2026-10-20: the application as the HTTP workload (A5) is the direction. Native base routes (A1) is a fallback only, taken if the A5 spike finds a serious issue not foreseen here.
+1. Ruled 2026-10-20: A5, the application as the HTTP workload. The spike (`wamn-cbqzl`) found no blocker. It cut host CPU per request by about 20% on get and update, with the same Postgres work.
 2. Ruled 2026-10-20: taps are deleted (A3, T-none). Nothing reads them; writes are already recorded in the write log; dev request/response bodies, if wanted, come from a host flag that logs to the local trace file, never a hardwired publish. Event NATS stays for auth drops, guest registration and the materializer.
 3. Triggers generated per relation (P1) now, or history written by the generated statement (P8) once overlay composition settles? In flight: epic wamn-c8a5v does P1 and P3 (issue .2) scoped by the GCP trigger measurement (issue .1, M4 and M5); P8 is not in the epic and waits on the overlay composition spec.
 4. Does an `update`'s stored `result` need the full row (P4), or is the row itself the authoritative outcome for a replay-free retry?
