@@ -506,8 +506,9 @@ cluster.Cluster {{
     let mut serving = document.clone();
     serving.registry = artifacts
         .artifact_base
-        .strip_suffix("/packages")
-        .context("fixture package registry suffix")?
+        .split('/')
+        .next()
+        .context("fixture package registry host")?
         .to_owned();
     serving_chart(&document, &serving, &work, &artifacts).await?;
     serving_credentials(&kubeconfig, &context, &directory, &host_group, &artifacts).await?;
@@ -1085,7 +1086,8 @@ async fn artifact_registry(
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     Ok(wamn_control::package_artifact::PackageRegistry {
-        artifact_base: format!("{authority}/packages"),
+        // Qualification needs <registry>/<path>/releases (delivery::sibling_bases).
+        artifact_base: format!("{authority}/wamn/packages"),
         registry_auth_file: auth,
         insecure_registry: false,
         oci_ca_paths: vec![certs.join("ca.crt")],
