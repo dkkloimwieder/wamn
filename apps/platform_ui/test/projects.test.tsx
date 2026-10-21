@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { control, environment, member, project, projectAdmin, release, user } from "@wamn/control-org-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
+import { GrantMembership } from "../src/membership";
 import { controlSections, Project } from "../src/projects";
 import { CONTROL, identity, input } from "./fixtures";
 
@@ -77,9 +78,9 @@ describe("Projects and Project", () => {
     render(() => (
       <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={session.fetch} />
     ));
-    await screen.findByRole("button", { name: "widgets" });
+    await screen.findByRole("link", { name: "widgets" }, { timeout: 5000 });
     expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
-    expect(screen.queryByRole("button", { name: "gadgets" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "gadgets" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
     const table = within(screen.getByRole("table", { name: "Projects" }));
     expect(table.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
@@ -90,6 +91,8 @@ describe("Projects and Project", () => {
     expect(table.getByRole("img", { name: "Yes" })).toBeTruthy();
     expect(table.getByRole("img", { name: "No" })).toBeTruthy();
     expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
+    await waitFor(() => expect(session.state.calls.filter((call) => call.endsWith("/control/mine"))).toHaveLength(2));
   });
   it("lands Control on Projects and reads control.mine once", async () => {
     const session = identity(true);
@@ -100,7 +103,7 @@ describe("Projects and Project", () => {
     window.history.pushState({}, "", `/${CONTROL}`);
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
     await screen.findByRole("table", { name: "Projects" });
-    await screen.findByRole("button", { name: "widgets" });
+    await screen.findByRole("link", { name: "widgets" });
     expect(
       await within(screen.getByRole("table", { name: "Projects" })).findByRole("cell", { name: "active" }),
     ).toBeTruthy();
@@ -131,14 +134,17 @@ describe("Projects and Project", () => {
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
     await screen.findByRole("table", { name: "Projects" });
     const header = screen.getByRole("button", { name: "Table controls" }).closest(".table-workspace-header-actions")!;
+    expect(document.querySelector(".ui-dashboard")?.getAttribute("data-scroll")).toBe("content");
     fireEvent.click(within(header as HTMLElement).getByRole("button", { name: "Create project" }));
     await screen.findByRole("heading", { name: "Create project" });
     expect(window.location.pathname).toBe(`/${CONTROL}/create-project`);
+    expect(document.querySelector(".ui-dashboard")?.getAttribute("data-scroll")).toBe("main");
     expect(screen.queryByRole("table", { name: "Projects" })).toBeNull();
     input(screen.getByLabelText("Project name"), "create");
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
-    await screen.findByRole("button", { name: "create" });
+    await screen.findByRole("link", { name: "create" });
     expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
+    expect(document.querySelector(".ui-dashboard")?.getAttribute("data-scroll")).toBe("content");
     expect(screen.queryByLabelText("Project name")).toBeNull();
     expect(await screen.findByText("Project created.")).toHaveProperty("role", "status");
     expect(writes).toEqual([[{ request_id: expect.any(String), value: { project: "create" } }]]);
@@ -146,7 +152,7 @@ describe("Projects and Project", () => {
     expect(
       within(screen.getByRole("table", { name: "Projects" })).getByRole("cell", { name: "inactive" }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "create" }));
+    fireEvent.click(screen.getByRole("link", { name: "create" }));
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/create`));
   });
 
@@ -160,7 +166,7 @@ describe("Projects and Project", () => {
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
     await screen.findByRole("heading", { name: "Create project" });
     const location = within(screen.getByRole("navigation", { name: "Platform location" }));
-    expect(location.getByRole("link", { name: "Projects" })).toBeTruthy();
+    expect(location.getByRole("link", { name: "PROJECTS" })).toBeTruthy();
     expect(
       within(screen.getByRole("navigation", { name: "Primary navigation" }))
         .getByRole("link", { name: "Projects" })
@@ -185,7 +191,8 @@ describe("Projects and Project", () => {
       },
     });
     render(() => (
-      <Project
+      <GrantMembership
+        returnTo="projects/widgets/members"
         transport={transport}
         holds={admin}
         params={{ project: "widgets" }}
@@ -194,13 +201,10 @@ describe("Projects and Project", () => {
         close={() => {}}
       />
     ));
-    await waitFor(() =>
-      expect(screen.getByRole("table", { name: "Environments" }).querySelector("tbody")?.textContent).toBe("devactive"),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Grant membership" }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      "Enter a user ID and select an environment.",
+      "Enter a user ID and select a project and an environment.",
     );
     expect(screen.queryByText("Membership granted.")).toBeNull();
   });
@@ -235,6 +239,7 @@ describe("Projects and Project", () => {
     });
     render(() => (
       <Project
+        table="members"
         transport={transport}
         holds={admin}
         params={{ project: "widgets" }}
@@ -246,25 +251,20 @@ describe("Projects and Project", () => {
       />
     ));
     await screen.findByText("Alex");
-    const environments = within(screen.getByRole("table", { name: "Environments" }));
-    expect(environments.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Environment", "State"]);
-    expect(environments.getByRole("cell", { name: "inactive" })).toBeTruthy();
     const members = screen.getByRole("table", { name: "Members" });
     expect(Array.from(members.querySelectorAll(":scope > thead th")).map((cell) => cell.textContent)).toEqual([
       "Display name",
       "Email",
       "User ID",
       "Org admin",
-      "Role",
-      "Administration",
+      "Project admin",
       "Memberships",
     ]);
     expect(within(members).getByText("alex@example.invalid")).toBeTruthy();
-    expect(within(members).getByText("Project admin")).toBeTruthy();
-    expect(within(members).getByRole("img", { name: "Yes" })).toBeTruthy();
+    expect(within(members).getAllByRole("img", { name: "Yes" })).toBeTruthy();
     expect(within(members).getByTitle(principalId).textContent).toBe("12345678");
     expect(screen.queryByRole("table", { name: "Memberships for alex@example.invalid" })).toBeNull();
-    fireEvent.click(within(members).getByRole("button", { name: "Alex" }));
+    fireEvent.click(within(members).getByRole("link", { name: "Alex" }));
     expect(opened).toBe(`projects/widgets/members/${principalId}`);
     expect(members.querySelector("table")).toBeNull();
     expect(calls.sort()).toEqual([
@@ -276,6 +276,68 @@ describe("Projects and Project", () => {
 });
 
 describe("Project member", () => {
+  it.each(["Revoke membership", "Revoke project admin"])(
+    "returns to Members when %s removes the member from the project",
+    async (action) => {
+      const principalId = "12345678-1234-4000-8000-000000000001";
+      let removed = false;
+      const session = identity(true, [], undefined, {
+        org_admin: false,
+        projects: [{ project: "widgets", project_admin: true }],
+      });
+      const fetch: typeof globalThis.fetch = async (url, init) => {
+        const path = new URL(String(url), "http://localhost").pathname;
+        if (path.endsWith("/environment/list"))
+          return new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }]));
+        if (path.endsWith("/member/list"))
+          return new Response(
+            JSON.stringify([
+              {
+                value: {
+                  members: removed
+                    ? []
+                    : [
+                        {
+                          principal_id: principalId,
+                          display_name: "Alex",
+                          email: "alex@example.invalid",
+                          org_admin: false,
+                          project_admin: action === "Revoke project admin",
+                          environments: action === "Revoke membership" ? ["dev"] : [],
+                        },
+                      ],
+                },
+              },
+            ]),
+          );
+        if (path.endsWith("/revoke")) {
+          const [request] = JSON.parse(String(init?.body));
+          removed = true;
+          return new Response(
+            JSON.stringify([
+              {
+                request_id: request.request_id,
+                value: { ...request.value, member: false, project_admin: false },
+              },
+            ]),
+          );
+        }
+        return session.fetch(url, init);
+      };
+      window.history.pushState({}, "", `/${CONTROL}/projects/widgets/members/${principalId}`);
+      render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
+      fireEvent.click(await screen.findByRole("button", { name: action }));
+      await screen.findByRole("table", { name: "Members" });
+      expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets/members`);
+      expect(screen.queryByRole("link", { name: "Alex" })).toBeNull();
+      expect(screen.queryByRole("heading", { name: "No page here" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
+      await screen.findByRole("heading", { name: "Grant membership" });
+      expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets/members/grant`);
+      expect(await screen.findByRole("textbox", { name: "User ID" })).toBeTruthy();
+    },
+  );
+
   it("lets a project admin open a member and grant or revoke one membership per command", async () => {
     const principalId = "12345678-1234-4000-8000-000000000001";
     let environments = ["dev"];
@@ -319,23 +381,26 @@ describe("Project member", () => {
       }
       return session.fetch(url, init);
     };
-    window.history.pushState({}, "", `/${CONTROL}/projects/widgets`);
+    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/members`);
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Alex" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Alex" }));
     const table = await screen.findByRole("table", { name: "Memberships for alex@example.invalid" });
     expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets/members/${principalId}`);
     expect(table.closest("td")).toBeNull();
     expect(screen.queryByRole("table", { name: "Members" })).toBeNull();
     const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
-    expect(breadcrumbs.queryByRole("link", { name: "members" })).toBeNull();
-    expect(breadcrumbs.getByRole("link", { name: "widgets" })).toBeTruthy();
-    fireEvent.click(within(table).getByRole("button", { name: "Revoke membership in dev" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership in dev" })).toBeNull());
-    fireEvent.keyDown(screen.getByRole("button", { name: "Environment" }), { key: "Enter" });
+    expect(breadcrumbs.getByRole("link", { name: "MEMBERS" })).toBeTruthy();
+    expect(breadcrumbs.getByRole("link", { name: "WIDGETS" })).toBeTruthy();
+    fireEvent.click(within(table).getByRole("button", { name: "Revoke membership" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
+    await screen.findByRole("heading", { name: "Grant membership" });
+    expect(screen.queryByRole("table")).toBeNull();
+    fireEvent.keyDown(await screen.findByRole("button", { name: "Environment" }), { key: "Enter" });
     fireEvent.keyDown(await screen.findByRole("option", { name: "dev" }), { key: "Enter" });
     flush();
     fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
-    await screen.findByRole("button", { name: "Revoke membership in dev" });
+    await screen.findByRole("button", { name: "Revoke membership" });
     expect(writes).toEqual([
       { path: "/api/wamn_control/member/revoke", value: { project: "widgets", env: "dev", principal_id: principalId } },
       { path: "/api/wamn_control/member/grant", value: { project: "widgets", env: "dev", principal_id: principalId } },
@@ -427,6 +492,6 @@ describe("project state action", () => {
       expect(screen.getByRole("button", { name: "Activate project" }).hasAttribute("disabled")).toBe(false),
     );
     expect(screen.queryByRole("button", { name: "Inactivate project" })).toBeNull();
-    expect(screen.getByText("Project state: inactive")).toBeTruthy();
+    expect(screen.getByText("State: inactive")).toBeTruthy();
   });
 });

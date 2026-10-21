@@ -13,10 +13,13 @@ Receiving and WMS retain their Solid 1 shell until M3.
 
 The scope, address, permission, and query implementations therefore exist in both shells during the migration.
 Session renewal and the cookie transport retain one owner in `web/runtime`.
-DashboardShell and DashboardPanel frame each screen.
+DashboardShell and DashboardPanel frame dashboard screens.
+Unknown addresses and missing details show one standalone EntryPanel with a heading, one sentence, and a return link.
+These pages have no dashboard, sidebar, header, breadcrumbs, or form.
 FormView and TableView render forms and record lists through their application-owned bindings.
-Create project and Invite user appear beside the table controls and refresh through `toolbarActions`.
-Each action opens its own form screen and returns to the table after submission.
+Create project, Invite user, and Grant membership appear beside the table controls through `toolbarActions`.
+Each action opens its own form screen and returns to the owning table after submission.
+Cancel shares the form action layout and returns to the same table.
 No data entry action opens a modal.
 
 Records supplies wfe pagination for every table, with 25 rows per page and the total returned row count.
@@ -26,22 +29,38 @@ The identity endpoint `/password/environments` also lacks server pagination.
 Workloads, conditions, and live releases come from `environment.status`.
 Operations, roles, reaches, statements, and relations come from `release.profile`.
 Membership and audience tables use the same pagination.
+Refresh requests fresh data from each table’s owning API, including `control.mine` for project administrators.
 
 The Environment screen links to separate screens for Workloads, Live releases, Operations, and Roles.
 Each of these screens holds one table in the full panel.
-Rows open screens for memberships, workload conditions, reaches, statements, and relations.
-Each screen gives its tables the full panel width. Membership grants stay inline, with one command per change.
-The sign-in, invitation, recovery, and reset pages use wfe EntryPanel with `@wfe/form` and FormView.
+
+Project links to separate Environments and Members tables. User links to separate Project access and Memberships tables.
+Each table occupies its own screen with `scroll="content"` and no outer padding.
+Rows link to memberships, workload conditions, role operations, reaches, reach operations, statements, relations, and relation fields.
+Each column shows one fact. Parent tables show counts for growing lists.
+Record links use native anchors with the wfe accent color.
+
+Project, User, Environment, and membership records place normal-sized actions beside the title in one shared group.
+The visible lifecycle verbs are Activate and Inactivate. API identifiers retain their existing names.
+State cells contain only the value. Pods cells contain only the count.
+
+Sign-in, invitation, recovery, reset, and no-access pages use standalone wfe EntryPanel pages with distinct titles.
+Theme and a main landmark wrap each default viewport panel. These pages contain no dashboard Frame.
+Identity forms use `@wfe/form` and FormView. The no-access panel contains a return link.
 Their rules also exist in both shells until M3.
+
 After sign-in, an audience table replaces the form.
 Its columns show the org, project, and environment.
-Breadcrumbs appear on screens after audience selection, but identity screens and audience choice omit them.
+Breadcrumbs appear on dashboard screens after audience selection. Every breadcrumb uses literal uppercase text, including record names.
+Identity screens and audience choice omit breadcrumbs.
+
+An audience with no available screens shows a named empty-state card and a link to audience selection.
 One audience opens automatically.
 
 Each dashboard uses `Theme` from wfe v0.0.5 with its unchanged light defaults.
 WFE owns the theme properties, styles, fonts, and licenses.
 This follows [Adopt the components](../../web/wfe/docs/adoption.md) and [Default theme](../../web/wfe/docs/theme.md).
-The application owns page height. EntryPanel owns the centered identity form layout.
+The application owns dashboard height. EntryPanel owns the centered identity form layout.
 
 The type check keeps `strict` enabled and omits `exactOptionalPropertyTypes`, which the wfe form source does not support.
 
@@ -51,3 +70,15 @@ The page reads only the org from `/config.json` and offers the audiences that id
 The platform UI is a platform asset with no `wamn.k` or package artifact.
 [Building](../../docs/operations/building.md#platform-ui) owns its build record.
 [Deployment](../../docs/operations/deployment.md#platform-ui-files) owns upload and routing at `control.wamn.dev`.
+
+To test these UI changes with existing generated clients, run the commands directly from the repository root:
+
+```sh
+pnpm --filter @wamn/platform-ui exec tsc --noEmit
+pnpm --filter @wamn/platform-ui exec vitest run
+pnpm --filter @wamn/platform-ui exec vite build
+pnpm exec prettier --check 'apps/platform_ui/src/**/*.{ts,tsx,css}' 'apps/platform_ui/test/**/*.{ts,tsx,mjs}'
+```
+
+The package scripts also generate host clients through Cargo.
+The direct commands above do not run Cargo or the live browser fixture.

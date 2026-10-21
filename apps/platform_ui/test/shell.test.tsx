@@ -21,19 +21,32 @@ describe("the app shell", () => {
     const { fetch } = identity(true);
     window.history.pushState({}, "", `/${aud}`);
     const { container } = render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
-    expect(await screen.findByText(aud === CONTROL ? "acme" : "Stub app")).toBeDefined();
+    expect(await screen.findByText(aud === CONTROL ? "ACME" : "STUB APP")).toBeDefined();
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
     expect(container.querySelector("nav .ui-dashboard-panel")).toBeNull();
+    expect(screen.getByRole("heading", { name: "No screens available" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
+    expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
     expect(screen.queryByText("This address names no page.")).toBeNull();
     window.history.pushState({}, "", `/${aud}/unknown`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(container.querySelector(".ui-dashboard")).toBeNull();
+    expect(container.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${aud}`);
+    window.history.pushState({}, "", `/${aud}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
+    expect(screen.queryByText("This address names no page.")).toBeNull();
   });
 
   it("refuses an address that names an environment of another org", async () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:project-env:other:widgets:dev:k3m9x2p7/pallets", fetch);
     expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
+    expect(document.querySelector(".ui-dashboard")).toBeNull();
+    expect(document.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
     expect(state.calls).toEqual([]);
   });
 
@@ -48,7 +61,7 @@ describe("the app shell", () => {
     const { state, fetch } = identity(true);
     open(`/${AUD}/products`, fetch);
     expect(await screen.findByText("products screen")).toBeDefined();
-    expect(screen.queryByLabelText("password")).toBeNull();
+    expect(screen.queryByLabelText("Password")).toBeNull();
     expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
   });
 
@@ -118,9 +131,9 @@ describe("the app shell", () => {
     const location = within(screen.getByRole("navigation", { name: "Platform location" }));
     expect(
       location.getAllByRole("listitem").map((item) => item.querySelector("a, [aria-current]")?.textContent),
-    ).toEqual(["Stub app", "Pallets", "a/b", "update"]);
-    expect(location.getByText("update").getAttribute("aria-current")).toBe("page");
-    fireEvent.click(location.getByRole("link", { name: "a/b" }));
+    ).toEqual(["STUB APP", "PALLETS", "A/B", "UPDATE"]);
+    expect(location.getByText("UPDATE").getAttribute("aria-current")).toBe("page");
+    fireEvent.click(location.getByRole("link", { name: "A/B" }));
     await screen.findByText("pallet a/b record");
     expect(window.location.pathname).toBe(`/${AUD}/pallets/a%2Fb`);
     expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
@@ -200,9 +213,21 @@ describe("the app shell", () => {
     expect(state.calls).toEqual([]);
   });
 
-  it("shows no page for an address that names none", async () => {
-    const { fetch } = identity(true);
-    open(`/${AUD}/nothing/here`, fetch);
-    expect(await screen.findByText("This address names no page.")).toBeDefined();
-  });
+  it.each([`/${AUD}/nothing/here`, "/unknown", "//unknown"])(
+    "shows a standalone not-found page at %s",
+    async (path) => {
+      const { fetch } = identity(true);
+      open(`${window.location.origin}${path}`, fetch);
+      const heading = await screen.findByRole("heading", { name: "No page here" });
+      const panel = heading.closest(".ui-entry-panel")!;
+      expect(panel.getAttribute("data-size")).toBe("viewport");
+      expect(document.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
+      expect(document.querySelector(".ui-dashboard, header, nav, form")).toBeNull();
+      expect(document.querySelectorAll(".ui-theme[data-ui]")).toHaveLength(1);
+      expect(panel.querySelector(".ui-entry-panel-surface")?.children).toHaveLength(3);
+      expect(screen.getAllByRole("heading")).toHaveLength(1);
+      expect(screen.getAllByRole("link")).toHaveLength(1);
+      expect(screen.getByRole("link").getAttribute("href")).toBe(path.startsWith(`/${AUD}/`) ? `/${AUD}` : "/");
+    },
+  );
 });

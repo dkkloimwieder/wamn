@@ -84,6 +84,7 @@ describe("Environment", () => {
     let opened = "";
     render(() => (
       <Project
+        table="environments"
         transport={data.transport}
         holds={controlHolds({ orgAdmin: false, projects: [{ project: "widgets", projectAdmin: true }] })}
         params={{ project: "widgets" }}
@@ -94,7 +95,7 @@ describe("Environment", () => {
         close={() => {}}
       />
     ));
-    fireEvent.click(await screen.findByRole("button", { name: "dev" }));
+    fireEvent.click(await screen.findByRole("link", { name: "dev" }));
     expect(opened).toBe("projects/widgets/dev");
   });
 
@@ -134,14 +135,14 @@ describe("Environment", () => {
     await screen.findByRole("table", { name: "Workloads" });
     expect(window.location.pathname).toBe(`${base}/workloads`);
     expect(screen.getAllByRole("table")).toHaveLength(1);
-    fireEvent.click(await screen.findByRole("button", { name: "http" }));
+    fireEvent.click(await screen.findByRole("link", { name: "http" }));
     const conditions = within(await screen.findByRole("table", { name: "Conditions for http" }));
     expect(window.location.pathname).toBe(`${base}/workloads/http`);
-    expect(conditions.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Condition", "Status"]);
+    expect(conditions.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Condition", "State"]);
     expect(conditions.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Ready", "True"]);
     expect(screen.queryByRole("table", { name: "Workloads" })).toBeNull();
     fireEvent.click(
-      within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "Workloads" }),
+      within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "WORKLOADS" }),
     );
     await screen.findByRole("table", { name: "Workloads" });
     for (const [label, path] of [
@@ -150,7 +151,7 @@ describe("Environment", () => {
       ["Operations", "operations"],
     ] as const) {
       fireEvent.click(
-        within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "dev" }),
+        within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "DEV" }),
       );
       fireEvent.click(await screen.findByRole("link", { name: label }));
       await screen.findByRole("table", { name: label });
@@ -159,35 +160,46 @@ describe("Environment", () => {
       expect(screen.queryByRole("region", { name: "Environment status" })).toBeNull();
       expect(screen.queryByRole("region", { name: "Release profile" })).toBeNull();
       const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
-      expect(breadcrumbs.getByText(label).getAttribute("aria-current")).toBe("page");
+      expect(breadcrumbs.getByText(label.toUpperCase()).getAttribute("aria-current")).toBe("page");
       if (label === "Live releases") {
         const releases = within(screen.getByRole("table", { name: label }));
         expect(releases.getByTitle("sha256:release").textContent).toBe("sha256:r");
-        expect(releases.getByText("1 pods")).toBeTruthy();
+        expect(releases.getByRole("cell", { name: "1" })).toBeTruthy();
       }
       if (label === "Roles") {
-        expect(screen.getByRole("table", { name: label }).textContent).toContain("clerk: acme:receiving/record");
+        expect(
+          within(screen.getByRole("table", { name: label }))
+            .getByRole("link", { name: "clerk" })
+            .getAttribute("href"),
+        ).toBe(`${base}/roles/clerk`);
       }
     }
-    fireEvent.click(await screen.findByRole("button", { name: "acme:receiving/record (acme/receiving)" }));
+    fireEvent.click(await screen.findByRole("link", { name: "acme:receiving/record" }));
     await screen.findByRole("table", { name: "Reaches" });
     expect(window.location.pathname).toBe(`${base}/operations/acme%3Areceiving%2Frecord`);
     expect(screen.queryByRole("table", { name: "Operations" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "acme: acme:receiving/record" }));
+    fireEvent.click(screen.getByRole("link", { name: "acme" }));
     await screen.findByRole("table", { name: "Statements" });
     expect(window.location.pathname).toBe(`${base}/operations/acme%3Areceiving%2Frecord/reaches/acme`);
     expect(screen.queryByRole("table", { name: "Reaches" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "record.sql" }));
+    fireEvent.click(screen.getByRole("link", { name: "record.sql" }));
     const relations = await screen.findByRole("table", { name: "Relations" });
     expect(window.location.pathname).toBe(
       `${base}/operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql`,
     );
-    expect(relations.textContent).toContain("receipt: reads id; writes quantity; locks yes; deletes no");
+    expect(
+      within(relations)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Relation", "Read fields", "Write fields", "Locks", "Deletes"]);
+    expect(within(relations).getByRole("link", { name: "receipt" })).toBeTruthy();
+    expect(within(relations).getByRole("img", { name: "Yes" })).toBeTruthy();
+    expect(within(relations).getByRole("img", { name: "No" })).toBeTruthy();
     expect(screen.queryByRole("table", { name: "Statements" })).toBeNull();
     expect(relations.closest("td")).toBeNull();
     const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
-    expect(breadcrumbs.getByRole("link", { name: "Operations" }).getAttribute("href")).toBe(`${base}/operations`);
-    expect(breadcrumbs.getByRole("link", { name: "acme:receiving/record" }).getAttribute("href")).toBe(
+    expect(breadcrumbs.getByRole("link", { name: "OPERATIONS" }).getAttribute("href")).toBe(`${base}/operations`);
+    expect(breadcrumbs.getByRole("link", { name: "ACME:RECEIVING/RECORD" }).getAttribute("href")).toBe(
       `${base}/operations/acme%3Areceiving%2Frecord`,
     );
   });
@@ -197,6 +209,13 @@ describe("Environment", () => {
     ["live-releases", "Live releases"],
     ["operations", "Operations"],
     ["roles", "Roles"],
+    ["roles/clerk", "Role operations"],
+    ["operations/acme%3Areceiving%2Frecord/reaches/acme/operations", "Reach operations"],
+    ["operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql/relations/receipt/reads", "Read fields"],
+    [
+      "operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql/relations/receipt/writes",
+      "Write fields",
+    ],
     ["workloads/http", "Conditions for http"],
     ["operations/acme%3Areceiving%2Frecord", "Reaches"],
     ["operations/acme%3Areceiving%2Frecord/reaches/acme", "Statements"],
@@ -220,22 +239,75 @@ describe("Environment", () => {
     ));
     expect((await screen.findByRole("table", { name: table })).closest("td")).toBeNull();
     expect(screen.getAllByRole("table")).toHaveLength(1);
+    const reads = data.calls.filter((call) => call.includes("/environment/status")).length;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
+    await waitFor(() =>
+      expect(data.calls.filter((call) => call.includes("/environment/status"))).toHaveLength(reads + 1),
+    );
   });
 
-  it("reports a missing detail", async () => {
+  it.each([
+    "workloads/missing",
+    "roles/missing",
+    "operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql/relations/missing/reads",
+    "operations/missing",
+    "operations/acme%3Areceiving%2Frecord/reaches/missing",
+    "operations/acme%3Areceiving%2Frecord/reaches/acme/statements/missing.sql",
+  ])("shows a standalone not-found page for the missing detail %s", async (path) => {
     const data = fixture();
+    const session = identity(true);
+    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
     render(() => (
-      <Environment
-        transport={data.transport}
-        holds={() => true}
-        params={{ project: "widgets", env: "dev", operation: "missing" }}
-        search={{}}
-        open={() => {}}
-        close={() => {}}
+      <Shell
+        title="WAMN"
+        org="acme"
+        sections={[]}
+        controlSections={controlSections}
+        fetch={(url, init) =>
+          String(url).includes("/api/wamn_control/") && !String(url).endsWith("/control/mine")
+            ? data.fetch(url, init)
+            : session.fetch(url, init)
+        }
       />
     ));
     await screen.findByText("This address names no page.");
+    expect(document.querySelector(".ui-dashboard, header, nav, form")).toBeNull();
+    expect(document.querySelectorAll(".ui-entry-panel")).toHaveLength(1);
+    expect(document.querySelector(".ui-entry-panel")?.getAttribute("data-size")).toBe("viewport");
+    expect(screen.getAllByRole("heading")).toHaveLength(1);
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${CONTROL}`);
     expect(screen.queryByRole("table")).toBeNull();
+    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/workloads/http`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await screen.findByRole("table", { name: "Conditions for http" });
+    expect(document.querySelector(".ui-dashboard")).not.toBeNull();
+    expect(screen.queryByText("This address names no page.")).toBeNull();
+  });
+
+  it("uses the standalone page when status confirms that an environment disappeared", async () => {
+    const data = fixture();
+    const session = identity(true);
+    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev`);
+    render(() => (
+      <Shell
+        title="WAMN"
+        org="acme"
+        sections={[]}
+        controlSections={controlSections}
+        fetch={(url, init) => {
+          if (String(url).includes("/environment/status"))
+            return Promise.resolve(
+              new Response(JSON.stringify([{ error: { code: "environment_not_found", detail: { field: "env" } } }])),
+            );
+          return String(url).includes("/api/wamn_control/") && !String(url).endsWith("/control/mine")
+            ? data.fetch(url, init)
+            : session.fetch(url, init);
+        }}
+      />
+    ));
+    await screen.findByRole("heading", { name: "No page here" });
+    expect(document.querySelector(".ui-dashboard")).toBeNull();
   });
 
   it.each(["active", "inactive"] as const)(
@@ -260,7 +332,7 @@ describe("Environment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Inactivate environment" }));
     await screen.findByRole("alert");
     expect(screen.queryByRole("button", { name: "Activate environment" })).toBeNull();
-    expect(screen.getByText("Environment state: active")).toBeTruthy();
+    expect(screen.getByText("State: active")).toBeTruthy();
   });
 
   it("does not request a profile when no release is installed", async () => {

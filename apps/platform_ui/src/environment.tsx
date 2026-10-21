@@ -1,22 +1,28 @@
-import { createSignal, For, onCleanup, Show } from "solid-js";
+import { createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, FieldError } from "@wfe/components/fields";
 import { environment, release } from "@wamn/control-org-client";
-import { NotFound, Page } from "./page";
+import { MissingPage, Page, RecordLink } from "./page";
 import { DashboardPanel } from "@wfe/components/layout";
-import { ButtonLink, Field, FieldValue, FormGrid, Label } from "@wfe/components";
+import { Field, FieldValue, FormGrid, Label } from "@wfe/components";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
 
 export function Environment(
-  props: ScreenProps & { table?: "workloads" | "live-releases" | "operations" | "roles" },
+  props: ScreenProps & {
+    table?: "workloads" | "live-releases" | "operations" | "roles";
+    reachOperations?: boolean;
+    fields?: "reads" | "writes";
+  },
 ): JSX.Element {
-  const scope = { project: props.params.project!, env: props.params.env! };
+  const scope = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
   const [state, setState] = createSignal<"active" | "inactive">();
   const [status, setStatus] = createSignal<environment.EnvironmentStatusResult>();
   const [profile, setProfile] = createSignal<release.ReleaseProfileResult>();
   const [trouble, setTrouble] = createSignal<string>();
+  const [missing, setMissing] = createSignal(false);
+  const [loaded, setLoaded] = createSignal(false);
   const [pending, setPending] = createSignal(false);
   let active = true;
   onCleanup(() => {
@@ -27,20 +33,26 @@ export function Environment(
       environment.list(props.transport, [{ project: scope.project }]),
       environment.status(props.transport, [scope]),
     ]);
+    if (observed.status === "refused" && observed.code === "environment_not_found") {
+      if (active) setMissing(true);
+      return;
+    }
     const entry = value(listed).environments.find((entry) => entry.name === scope.env);
-    if (!entry) throw new Error("This environment is not an environment of the project.");
+    if (active) setMissing(!entry);
+    if (!entry) return;
     if (active) setState(entry.state);
     const next = value(observed);
     if (active) {
       setStatus(next);
-      setProfile(undefined);
+      if (!next.digest) setProfile(undefined);
     }
     if (next.digest) {
       const nextProfile = value(await release.profile(props.transport, [{ ...scope, digest: next.digest }]));
       if (active) setProfile(nextProfile);
     }
+    if (active) setLoaded(true);
   };
-  void refresh().catch((error: unknown) => {
+  void untrack(refresh).catch((error: unknown) => {
     if (active) setTrouble(String(error));
   });
   const toggle = async () => {
@@ -65,29 +77,48 @@ export function Environment(
   const reach = () => operation()?.reaches.find((entry) => entry.package === props.params.reach);
   const statement = () => reach()?.statements.find((entry) => entry.path === props.params.statement);
   const workload = () => status()?.workloads.find((entry) => entry.name === props.params.workload);
-  const detail = props.params.workload ?? props.params.statement ?? props.params.reach ?? props.params.operation;
+  const role = () => profile()?.roles.find((entry) => entry.role === props.params.role);
+  const relation = () => statement()?.relations.find((entry) => entry.table === props.params.relation);
+  const operationPath = `${base}/operations/${encodeURIComponent(props.params.operation ?? "")}`;
+  const reachPath = `${operationPath}/reaches/${encodeURIComponent(props.params.reach ?? "")}`;
+  const statementPath = `${reachPath}/statements/${encodeURIComponent(props.params.statement ?? "")}`;
+  const relationPath = `${statementPath}/relations/${encodeURIComponent(props.params.relation ?? "")}`;
+  const detail =
+    props.params.workload ??
+    props.params.role ??
+    props.params.relation ??
+    props.params.statement ??
+    props.params.reach ??
+    props.params.operation;
   return (
-    <>
+    <Show when={!missing()} fallback={<MissingPage />}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
       <Show
         when={detail}
         fallback={
           <>
             <Show when={!props.table}>
-              <Page title={`${scope.project}/${scope.env}`}>
-                <Show when={state()}>
-                  <p>Environment state: {state()}</p>
+              <Page
+                title={`${scope.project}/${scope.env}`}
+                actions={
                   <Show
-                    when={props.holds(
-                      state() === "active"
-                        ? environment.ENVIRONMENT_INACTIVATE_ROUTE.operation
-                        : environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
-                    )}
+                    when={
+                      state() &&
+                      props.holds(
+                        state() === "active"
+                          ? environment.ENVIRONMENT_INACTIVATE_ROUTE.operation
+                          : environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
+                      )
+                    }
                   >
                     <Button disabled={pending()} onClick={() => void toggle()}>
                       {state() === "active" ? "Inactivate environment" : "Activate environment"}
                     </Button>
                   </Show>
+                }
+              >
+                <Show when={state()}>
+                  <p>State: {state()}</p>
                 </Show>
                 <Show when={status()}>
                   {(current) => (
@@ -123,7 +154,7 @@ export function Environment(
                     </DashboardPanel>
                   )}
                 </Show>
-                <nav aria-label="Environment tables">
+                <nav aria-label="Environment tables" class="ui-form-actions">
                   <For
                     each={[
                       { path: "workloads", label: "Workloads" },
@@ -133,17 +164,9 @@ export function Environment(
                     ]}
                   >
                     {(entry) => (
-                      <ButtonLink
-                        href={`/${props.params.aud}/${base}/${entry.path}`}
-                        onClick={(event) => {
-                          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
-                            return;
-                          event.preventDefault();
-                          props.open(`${base}/${entry.path}`);
-                        }}
-                      >
+                      <RecordLink screen={props} path={`${base}/${entry.path}`}>
                         {entry.label}
-                      </ButtonLink>
+                      </RecordLink>
                     )}
                   </For>
                 </nav>
@@ -152,6 +175,7 @@ export function Environment(
             <Show when={props.table === "workloads" && status()}>
               <div class="platform-table-screen">
                 <Records
+                  refresh={refresh}
                   id="workloads"
                   title="Workloads"
                   rows={status()?.workloads ?? []}
@@ -161,15 +185,15 @@ export function Environment(
                     {
                       id: "conditions",
                       header: "Conditions",
-                      accessorFn: (entry) => entry.conditions.map((condition) => condition.type).join(", "),
+                      accessorFn: (entry) => entry.conditions.length,
                       size: 350,
                     },
                   ]}
                   cells={{
                     name: (cell) => (
-                      <Button onClick={() => props.open(`${base}/workloads/${encodeURIComponent(cell.row.name)}`)}>
+                      <RecordLink screen={props} path={`${base}/workloads/${encodeURIComponent(cell.row.name)}`}>
                         {cell.row.name}
-                      </Button>
+                      </RecordLink>
                     ),
                   }}
                 />
@@ -178,34 +202,37 @@ export function Environment(
             <Show when={props.table === "live-releases" && status()}>
               <div class="platform-table-screen">
                 <Records
+                  refresh={refresh}
                   id="live-releases"
                   title="Live releases"
                   rows={status()?.live ?? []}
                   rowKey={(entry) => entry.digest}
                   columns={[
                     { id: "digest", header: "Release", accessorKey: "digest", size: 150 },
-                    { id: "pods", header: "Pods" },
+                    { id: "pods", header: "Pods", accessorKey: "pods" },
                   ]}
                   formats={{ digest: "short-hash" }}
-                  cells={{ pods: (cell) => <>{cell.row.pods} pods</> }}
                 />
               </div>
             </Show>
             <Show when={props.table === "operations" && (profile() || (status() && !status()?.digest))}>
               <div class="platform-table-screen">
                 <Records
+                  refresh={refresh}
                   id="operations"
                   title="Operations"
                   rows={profile()?.operations ?? []}
                   rowKey={(entry) => entry.operation}
-                  columns={[{ id: "operation", header: "Operation", size: 950 }]}
+                  columns={[
+                    { id: "operation", header: "Operation", size: 400 },
+                    { id: "package", header: "Package", accessorKey: "package", size: 250 },
+                    { id: "component", header: "Component", accessorKey: "component", size: 250 },
+                  ]}
                   cells={{
                     operation: (cell) => (
-                      <Button
-                        onClick={() => props.open(`${base}/operations/${encodeURIComponent(cell.row.operation)}`)}
-                      >
-                        {cell.row.operation} ({cell.row.package}/{cell.row.component})
-                      </Button>
+                      <RecordLink screen={props} path={`${base}/operations/${encodeURIComponent(cell.row.operation)}`}>
+                        {cell.row.operation}
+                      </RecordLink>
                     ),
                   }}
                 />
@@ -214,16 +241,20 @@ export function Environment(
             <Show when={props.table === "roles" && (profile() || (status() && !status()?.digest))}>
               <div class="platform-table-screen">
                 <Records
+                  refresh={refresh}
                   id="roles"
                   title="Roles"
                   rows={profile()?.roles ?? []}
                   rowKey={(entry) => entry.role}
-                  columns={[{ id: "role", header: "Role and operations", size: 950 }]}
+                  columns={[
+                    { id: "role", header: "Role" },
+                    { id: "operations", header: "Operations", accessorFn: (entry) => entry.operations.length },
+                  ]}
                   cells={{
                     role: (cell) => (
-                      <>
-                        {cell.row.role}: {cell.row.operations.join(", ") || "No operations"}
-                      </>
+                      <RecordLink screen={props} path={`${base}/roles/${encodeURIComponent(cell.row.role)}`}>
+                        {cell.row.role}
+                      </RecordLink>
                     ),
                   }}
                 />
@@ -232,125 +263,220 @@ export function Environment(
           </>
         }
       >
-        <Page title={detail} />
-        <Show when={props.params.workload}>
-          <Show when={status()}>
-            <Show when={workload()} fallback={<NotFound />}>
+        <Show when={loaded()}>
+          <Show
+            when={
+              (!props.params.workload || workload()) &&
+              (!props.params.role || role()) &&
+              (!props.params.operation || operation()) &&
+              (!props.params.reach || reach()) &&
+              (!props.params.statement || statement()) &&
+              (!props.params.relation || relation())
+            }
+            fallback={<MissingPage />}
+          >
+            <Page title={detail} />
+            <Show when={!!props.params.workload && workload()}>
               {(current) => (
                 <div class="platform-table-screen">
                   <Records
+                    refresh={refresh}
                     id="conditions"
                     title={`Conditions for ${current().name}`}
                     rows={current().conditions}
                     rowKey={(entry) => entry.type}
                     columns={[
                       { id: "type", header: "Condition", accessorKey: "type" },
-                      { id: "status", header: "Status", accessorKey: "status" },
+                      { id: "status", header: "State", accessorKey: "status" },
                     ]}
+                  />
+                </div>
+              )}
+            </Show>
+            <Show when={!!props.params.role && role()}>
+              {(current) => (
+                <div class="platform-table-screen">
+                  <Records
+                    refresh={refresh}
+                    id="role-operations"
+                    title="Role operations"
+                    rows={current().operations}
+                    rowKey={(entry) => entry}
+                    columns={[{ id: "operation", header: "Operation" }]}
+                    cells={{
+                      operation: (cell) => (
+                        <RecordLink screen={props} path={`${base}/operations/${encodeURIComponent(cell.row)}`}>
+                          {cell.row}
+                        </RecordLink>
+                      ),
+                    }}
+                  />
+                </div>
+              )}
+            </Show>
+            <Show when={props.params.operation && !props.params.reach}>
+              <div class="platform-table-screen">
+                <Records
+                  refresh={refresh}
+                  id="reaches"
+                  title="Reaches"
+                  rows={operation()!.reaches}
+                  rowKey={(entry) => entry.package}
+                  columns={[
+                    { id: "package", header: "Package" },
+                    {
+                      id: "precision",
+                      header: "Precision",
+                      accessorFn: (entry) => (entry.imprecise ? "Imprecise" : "Precise"),
+                    },
+                    { id: "operations", header: "Operations" },
+                    { id: "statements", header: "Statements" },
+                  ]}
+                  cells={{
+                    package: (cell) => (
+                      <RecordLink
+                        screen={props}
+                        path={`${operationPath}/reaches/${encodeURIComponent(cell.row.package)}`}
+                      >
+                        {cell.row.package}
+                      </RecordLink>
+                    ),
+                    operations: (cell) => (
+                      <RecordLink
+                        screen={props}
+                        path={`${operationPath}/reaches/${encodeURIComponent(cell.row.package)}/operations`}
+                      >
+                        {cell.row.operations.length}
+                      </RecordLink>
+                    ),
+                    statements: (cell) => (
+                      <RecordLink
+                        screen={props}
+                        path={`${operationPath}/reaches/${encodeURIComponent(cell.row.package)}`}
+                      >
+                        {cell.row.statements.length}
+                      </RecordLink>
+                    ),
+                  }}
+                />
+              </div>
+            </Show>
+            <Show when={props.params.reach && !props.params.statement && props.reachOperations}>
+              <div class="platform-table-screen">
+                <Records
+                  refresh={refresh}
+                  id="reach-operations"
+                  title="Reach operations"
+                  rows={reach()!.operations}
+                  rowKey={(entry) => entry}
+                  columns={[{ id: "operation", header: "Operation" }]}
+                  cells={{
+                    operation: (cell) => (
+                      <RecordLink screen={props} path={`${base}/operations/${encodeURIComponent(cell.row)}`}>
+                        {cell.row}
+                      </RecordLink>
+                    ),
+                  }}
+                />
+              </div>
+            </Show>
+            <Show when={props.params.reach && !props.params.statement && !props.reachOperations}>
+              <div class="platform-table-screen">
+                <Records
+                  refresh={refresh}
+                  id="statements"
+                  title="Statements"
+                  rows={reach()!.statements}
+                  rowKey={(entry) => entry.path}
+                  columns={[
+                    { id: "path", header: "Statement", size: 300 },
+                    { id: "refused", header: "Refusal", accessorKey: "refused", size: 300 },
+                    { id: "relations", header: "Relations", accessorFn: (entry) => entry.relations.length },
+                  ]}
+                  cells={{
+                    path: (cell) => (
+                      <RecordLink screen={props} path={`${reachPath}/statements/${encodeURIComponent(cell.row.path)}`}>
+                        {cell.row.path}
+                      </RecordLink>
+                    ),
+                  }}
+                />
+              </div>
+            </Show>
+            <Show when={props.params.statement && !props.params.relation}>
+              <div class="platform-table-screen">
+                <Records
+                  refresh={refresh}
+                  id="relations"
+                  title="Relations"
+                  rows={statement()!.relations}
+                  rowKey={(entry) => entry.table}
+                  columns={[
+                    { id: "relation", header: "Relation" },
+                    { id: "reads", header: "Read fields" },
+                    { id: "writes", header: "Write fields" },
+                    { id: "locks", header: "Locks", accessorKey: "locks" },
+                    { id: "deletes", header: "Deletes", accessorKey: "deletes" },
+                  ]}
+                  formats={{ locks: "boolean-symbol", deletes: "boolean-symbol" }}
+                  cells={{
+                    relation: (cell) => (
+                      <RecordLink
+                        screen={props}
+                        path={`${statementPath}/relations/${encodeURIComponent(cell.row.table)}`}
+                      >
+                        {cell.row.table}
+                      </RecordLink>
+                    ),
+                    reads: (cell) => (
+                      <RecordLink
+                        screen={props}
+                        path={`${statementPath}/relations/${encodeURIComponent(cell.row.table)}/reads`}
+                      >
+                        {cell.row.reads.length}
+                      </RecordLink>
+                    ),
+                    writes: (cell) => (
+                      <RecordLink
+                        screen={props}
+                        path={`${statementPath}/relations/${encodeURIComponent(cell.row.table)}/writes`}
+                      >
+                        {cell.row.writes.length}
+                      </RecordLink>
+                    ),
+                  }}
+                />
+              </div>
+            </Show>
+            <Show when={props.params.relation && !props.fields}>
+              <Page>
+                <nav aria-label="Relation tables" class="ui-form-actions">
+                  <RecordLink screen={props} path={`${relationPath}/reads`}>
+                    Read fields
+                  </RecordLink>
+                  <RecordLink screen={props} path={`${relationPath}/writes`}>
+                    Write fields
+                  </RecordLink>
+                </nav>
+              </Page>
+            </Show>
+            <Show when={props.fields}>
+              {(fields) => (
+                <div class="platform-table-screen">
+                  <Records
+                    refresh={refresh}
+                    id="relation-fields"
+                    title={fields() === "reads" ? "Read fields" : "Write fields"}
+                    rows={relation()![fields()]}
+                    rowKey={(entry) => entry}
+                    columns={[{ id: "field", header: "Field", accessorFn: (entry) => entry }]}
                   />
                 </div>
               )}
             </Show>
           </Show>
         </Show>
-        <Show when={props.params.operation}>
-          <Show when={profile() || (status() && !status()?.digest)}>
-            <Show
-              when={operation() && (!props.params.reach || reach()) && (!props.params.statement || statement())}
-              fallback={<NotFound />}
-            >
-              <div class="platform-table-screen">
-                <Show
-                  when={props.params.reach}
-                  fallback={
-                    <Records
-                      id="reaches"
-                      title="Reaches"
-                      rows={operation()!.reaches}
-                      rowKey={(entry) => entry.package}
-                      columns={[
-                        { id: "reach", header: "Reach", size: 250 },
-                        {
-                          id: "statements",
-                          header: "Statements",
-                          accessorFn: (entry) => entry.statements.map((statement) => statement.path).join(", "),
-                          size: 650,
-                        },
-                      ]}
-                      cells={{
-                        reach: (cell) => (
-                          <Button
-                            onClick={() =>
-                              props.open(
-                                `${base}/operations/${encodeURIComponent(props.params.operation!)}/reaches/${encodeURIComponent(cell.row.package)}`,
-                              )
-                            }
-                          >
-                            {cell.row.package}: {cell.row.operations.join(", ")}
-                            {cell.row.imprecise ? " (imprecise)" : ""}
-                          </Button>
-                        ),
-                      }}
-                    />
-                  }
-                >
-                  <Show
-                    when={props.params.statement}
-                    fallback={
-                      <Records
-                        id="statements"
-                        title="Statements"
-                        rows={reach()!.statements}
-                        rowKey={(entry) => entry.path}
-                        columns={[
-                          { id: "path", header: "Statement", size: 200 },
-                          {
-                            id: "relations",
-                            header: "Relations",
-                            accessorFn: (entry) => entry.relations.map((relation) => relation.table).join(", "),
-                            size: 450,
-                          },
-                        ]}
-                        cells={{
-                          path: (cell) => (
-                            <Button
-                              onClick={() =>
-                                props.open(
-                                  `${base}/operations/${encodeURIComponent(props.params.operation!)}/reaches/${encodeURIComponent(props.params.reach!)}/statements/${encodeURIComponent(cell.row.path)}`,
-                                )
-                              }
-                            >
-                              {cell.row.path}
-                              {cell.row.refused ? `: ${cell.row.refused}` : ""}
-                            </Button>
-                          ),
-                        }}
-                      />
-                    }
-                  >
-                    <Records
-                      id="relations"
-                      title="Relations"
-                      rows={statement()!.relations}
-                      rowKey={(entry) => entry.table}
-                      columns={[{ id: "relation", header: "Relation", size: 430 }]}
-                      cells={{
-                        relation: (cell) => (
-                          <>
-                            {cell.row.table}: reads {cell.row.reads.join(", ") || "none"}; writes{" "}
-                            {cell.row.writes.join(", ") || "none"}; locks {cell.row.locks ? "yes" : "no"}; deletes{" "}
-                            {cell.row.deletes ? "yes" : "no"}
-                          </>
-                        ),
-                      }}
-                    />
-                  </Show>
-                </Show>
-              </div>
-            </Show>
-          </Show>
-        </Show>
       </Show>
-    </>
+    </Show>
   );
 }

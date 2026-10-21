@@ -21,9 +21,19 @@ export default function Layout(props: {
     props.address.navigate(path);
     close?.();
   };
+  const scroll = () => {
+    const path = props.address.url().pathname.split("/").slice(2).join("/");
+    const route = props.sections
+      .flatMap((section) => [...section.screens, ...(section.routes ?? [])])
+      .find((route) => {
+        const params = matchPath(route.path, path);
+        return params && props.holds(route.operation, params.project);
+      });
+    return route?.scroll ?? "main";
+  };
   const breadcrumbs = () => {
     const root = `/${props.aud}`;
-    const entries = [{ label: props.title, href: root, system: true }];
+    const entries = [{ label: props.title, href: root }];
     const parts = props.address.url().pathname.split("/").slice(2).filter(Boolean);
     const routes = props.sections.flatMap((section) => [...section.screens, ...(section.routes ?? [])]);
     const selected = routes.find((route) => matchPath(route.path, parts.join("/")));
@@ -41,25 +51,25 @@ export default function Layout(props: {
         const section = props.sections.find((section) => section.routes?.includes(route));
         const home = section?.screens[0];
         if (entries.length === 1 && home && home.path !== path && props.holds(home.operation)) {
-          entries.push({ label: section!.label, href: `${root}/${home.path}`, system: true });
+          entries.push({ label: section!.label, href: `${root}/${home.path}` });
         }
         const screenSection = props.sections.find((section) => section.screens.some((screen) => screen === route));
         const label = screenSection?.screens.length === 1 ? screenSection.label : route.label;
         const segment = route.path.split("/").at(-1)!;
         const params = matchPath(route.path, path)!;
         entries.push({
-          label: label ?? (segment === ":principal" ? "User" : (params[segment.slice(1)] ?? parts[index]!)),
+          label: label ?? params[segment.slice(1)] ?? parts[index]!,
           href: `${root}/${path}`,
-          system: label !== undefined || segment === ":principal" || !segment.startsWith(":"),
         });
       } else if (index === parts.length - 1) {
-        entries.push({ label: "No page here", href: `${root}/${path}`, system: true });
+        entries.push({ label: "No page here", href: `${root}/${path}` });
       }
     }
     return entries;
   };
   return (
     <Frame
+      scroll={scroll()}
       header={
         <>
           <Breadcrumbs aria-label="Platform location">
@@ -73,17 +83,11 @@ export default function Layout(props: {
                     <Show
                       when={index() < breadcrumbs().length - 1}
                       fallback={
-                        <Breadcrumbs.Current data-ui-text={entry.system ? "system" : undefined}>
-                          {entry.label}
-                        </Breadcrumbs.Current>
+                        <Breadcrumbs.Current data-ui-text="system">{entry.label.toUpperCase()}</Breadcrumbs.Current>
                       }
                     >
-                      <Breadcrumbs.Link
-                        href={entry.href}
-                        onClick={follow(entry.href)}
-                        data-ui-text={entry.system ? "system" : undefined}
-                      >
-                        {entry.label}
+                      <Breadcrumbs.Link href={entry.href} onClick={follow(entry.href)} data-ui-text="system">
+                        {entry.label.toUpperCase()}
                       </Breadcrumbs.Link>
                     </Show>
                   </Breadcrumbs.Item>
@@ -108,39 +112,43 @@ export default function Layout(props: {
           </div>
         </>
       }
-      navigation={({ close }) => (
-        <div class="ui-dashboard-menu">
-          <For each={props.sections}>
-            {(section) => (
-              <For each={section.screens}>
-                {(item) => (
-                  <a
-                    href={`/${props.aud}/${item.path}`}
-                    data-ui-text="system"
-                    aria-current={
-                      props.address.url().pathname === `/${props.aud}/${item.path}` ||
-                      props.address.url().pathname.startsWith(`/${props.aud}/${item.path}/`) ||
-                      (item === section.screens[0] &&
-                        section.routes?.some((route) => {
-                          const params = matchPath(
-                            route.path,
-                            props.address.url().pathname.split("/").slice(2).join("/"),
-                          );
-                          return params && props.holds(route.operation, params.project);
-                        }))
-                        ? "page"
-                        : undefined
-                    }
-                    onClick={follow(`/${props.aud}/${item.path}`, close)}
-                  >
-                    {section.screens.length === 1 ? section.label : `${section.label}: ${item.label}`}
-                  </a>
-                )}
-              </For>
-            )}
-          </For>
-        </div>
-      )}
+      navigation={
+        props.sections.length
+          ? ({ close }) => (
+              <div class="ui-dashboard-menu">
+                <For each={props.sections}>
+                  {(section) => (
+                    <For each={section.screens}>
+                      {(item) => (
+                        <a
+                          href={`/${props.aud}/${item.path}`}
+                          data-ui-text="system"
+                          aria-current={
+                            props.address.url().pathname === `/${props.aud}/${item.path}` ||
+                            props.address.url().pathname.startsWith(`/${props.aud}/${item.path}/`) ||
+                            (item === section.screens[0] &&
+                              section.routes?.some((route) => {
+                                const params = matchPath(
+                                  route.path,
+                                  props.address.url().pathname.split("/").slice(2).join("/"),
+                                );
+                                return params && props.holds(route.operation, params.project);
+                              }))
+                              ? "page"
+                              : undefined
+                          }
+                          onClick={follow(`/${props.aud}/${item.path}`, close)}
+                        >
+                          {section.screens.length === 1 ? section.label : `${section.label}: ${item.label}`}
+                        </a>
+                      )}
+                    </For>
+                  )}
+                </For>
+              </div>
+            )
+          : undefined
+      }
     >
       {props.children}
     </Frame>

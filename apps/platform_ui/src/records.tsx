@@ -1,7 +1,7 @@
 import { createMemo, createSignal, Show, untrack, type Component } from "solid-js";
 import { createTable, type NativeColumnDef } from "@wfe/components/table";
 import { ValueDisplay } from "@wfe/components";
-import { Button } from "@wfe/components/fields";
+import { Button, FieldError } from "@wfe/components/fields";
 import { TableView, type ColumnPresentation, type CustomCellProps } from "@wfe/generator";
 
 /** Application-owned rows and columns, presented by the shared table. */
@@ -14,7 +14,22 @@ export function Records<Row>(props: {
   formats?: Readonly<Record<string, ColumnPresentation["format"]>>;
   cells?: Readonly<Record<string, Component<{ row: Row }>>>;
   create?: { label: string; run: () => void };
+  refresh: () => void | Promise<void>;
 }) {
+  const [trouble, setTrouble] = createSignal<string>();
+  const [refreshing, setRefreshing] = createSignal(false);
+  const refresh = async () => {
+    if (refreshing()) return;
+    setRefreshing(true);
+    setTrouble(undefined);
+    try {
+      await props.refresh();
+    } catch (error) {
+      setTrouble(String(error));
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const [collapsed, setCollapsed] = createSignal(true);
   const pageSize = 25;
   const [requestedPage, setPage] = createSignal(0);
@@ -57,31 +72,35 @@ export function Records<Row>(props: {
     columns.map((column) => [column.id, { label: String(column.header ?? column.id), renderer: column.id }]),
   );
   return (
-    <TableView
-      description={{
-        id: props.id,
-        title: props.title,
-        columns: presentation,
-        controls: { sorting: false, filtering: false, search: false, grouping: false, columnReordering: false },
-      }}
-      bindings={{
-        table,
-        cells,
-        toolbarActions: ToolbarActions,
-        pagination: {
-          hasPrevious: page() > 0,
-          hasNext: page() + 1 < pageCount(),
-          onPrevious: () => setPage(page() - 1),
-          onNext: () => setPage(page() + 1),
-          status: `Page ${page() + 1} of ${pageCount()}`,
-          totalRows: props.rows.length,
-        },
-        width: columns.some((column) => column.size !== undefined)
-          ? table.getVisibleColumns().reduce((width, column) => width + column.getSize(), 0)
-          : undefined,
-        controlsCollapsed: collapsed(),
-        onControlsCollapsedChange: setCollapsed,
-      }}
-    />
+    <>
+      <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+      <TableView
+        description={{
+          id: props.id,
+          title: props.title,
+          columns: presentation,
+          controls: { sorting: false, filtering: false, search: false, grouping: false, columnReordering: false },
+        }}
+        bindings={{
+          table,
+          onApplyFilters: () => void refresh(),
+          cells,
+          toolbarActions: ToolbarActions,
+          pagination: {
+            hasPrevious: page() > 0,
+            hasNext: page() + 1 < pageCount(),
+            onPrevious: () => setPage(page() - 1),
+            onNext: () => setPage(page() + 1),
+            status: `Page ${page() + 1} of ${pageCount()}`,
+            totalRows: props.rows.length,
+          },
+          width: columns.some((column) => column.size !== undefined)
+            ? table.getVisibleColumns().reduce((width, column) => width + column.getSize(), 0)
+            : undefined,
+          controlsCollapsed: collapsed(),
+          onControlsCollapsedChange: setCollapsed,
+        }}
+      />
+    </>
   );
 }

@@ -752,22 +752,28 @@ The browser opens the new `browser-project` from the table.
 The fixture then calls `provision_project_env` and `reconcile_journey_run_plane` to prepare `browser-project/dev` on the disposable PostgreSQL server.
 It prepares the administration credential through `run_workload_action` and installs its emitted file in the local control host's credential directory.
 
-The browser grants and revokes membership and project-admin for the second user from both User and Project.
+The browser opens separate membership forms from the User and Project table toolbars.
+Each form returns to its owning table after submission.
+Record actions beside the title grant and revoke project-admin access.
+Membership rows provide the Revoke membership action.
 The User screen scopes every write to the principal in its address.
 Each write must update the screen.
 The second user sees only that project. Addresses for `receiving`, Users, and User show no page.
 The project-admin session uses the project names from `control.mine` and never calls `project.list`.
 Project inactivation and activation must each show only the opposite action, including after a page reload.
 
-The browser also opens `receiving/dev` from Project, reads its runtime status and release profile, and toggles its state with a reload.
+The browser opens `receiving/dev` from the Environments table for the project.
+It reads the runtime status and release profile, then toggles the state and reloads the page.
 It follows the Environment links to Workloads, Live releases, Operations, and Roles, then reloads each table screen.
 If identity limits session renewals, the browser waits for its `Retry-After` period before it reloads the same address.
 The test prints its elapsed time and fails if it exceeds 15 minutes.
 
 The browser uses a 1400 by 900 viewport and saves one PNG for each screen in `<results>/platform-ui-screenshots/`.
 The Rust test and browser print that directory.
-Identity files are `sign-in.png`, `invite.png`, `recover.png`, `reset.png`, and `audience-choice.png`.
+Identity files are `sign-in.png`, `invite.png`, `recover.png`, `reset.png`, `no-access.png`, and `audience-choice.png`.
 Administration files are `control-layout.png`, `projects.png`, `project.png`, `environment.png`, `users.png`, and `user.png`.
+Form files are `create-project.png`, `invite-user.png`, `project-grant-membership.png`, `member-grant-membership.png`, and `user-grant-membership.png`.
+Access table files are `project-environments.png`, `project-members.png`, `member-memberships.png`, `user-projects.png`, and `user-memberships.png`.
 Environment table files are `environment-workloads.png`, `environment-live-releases.png`, `environment-operations.png`, and `environment-roles.png`.
 The other files are `receiving-layout.png` and `not-found.png`.
 Recovery and reset captures show their entry forms. The reset capture includes the missing-code message.

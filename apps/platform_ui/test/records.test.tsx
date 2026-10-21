@@ -12,6 +12,7 @@ describe("Records pagination", () => {
     let opened = "";
     render(() => (
       <Records
+        refresh={() => {}}
         id="records"
         title="Records"
         rows={rows()}

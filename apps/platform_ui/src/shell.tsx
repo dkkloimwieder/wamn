@@ -1,7 +1,6 @@
 import { createSignal, For, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { DashboardPanel, EntryPanel } from "@wfe/components/layout";
-import { Button } from "@wfe/components/fields";
+import { DashboardPanel, type DashboardShellProps } from "@wfe/components/layout";
 import { permission } from "@wamn/control-client";
 import { control, environment, member, orgAdmin, project, projectAdmin, release, user } from "@wamn/control-org-client";
 import {
@@ -14,7 +13,7 @@ import {
 import { audienceKind, createAddress, matchPath, queryValues, type Address, type Kind } from "./address";
 import type { Scope } from "./scope";
 import { identityPage, SignInForm } from "./identity";
-import { Frame, Page, NotFound } from "./page";
+import { EntryPage, Frame, MissingPage, NavigationLink, NotFound, NotFoundBoundary, Page } from "./page";
 
 const Layout = lazy(() => import("./layout"));
 
@@ -39,6 +38,7 @@ export interface ShellRoute {
   readonly path: string;
   readonly operation: string;
   readonly component: Component<ScreenProps>;
+  readonly scroll?: DashboardShellProps["scroll"];
   readonly actions?: readonly ShellAction[];
 }
 export interface ShellScreen extends ShellRoute {
@@ -162,27 +162,12 @@ export function Shell(props: ShellProps): JSX.Element {
         when={identityPage(address.url().pathname)}
         keyed
         fallback={
-          <Show
-            when={audience()}
-            keyed
-            fallback={
-              <Frame header={<span>{props.title}</span>}>
-                <NotFound />
-              </Frame>
-            }
-          >
+          <Show when={audience()} keyed fallback={<NotFound />}>
             {(aud) => (
               <Show
                 when={audienceKind(aud, props)}
                 keyed
-                fallback={
-                  <Frame header={<span>{props.title}</span>}>
-                    <Page>
-                      <p>This address names an environment of another org.</p>
-                      <a href="/">sign in</a>
-                    </Page>
-                  </Frame>
-                }
+                fallback={<NotFound message="This address names an environment of another org." />}
               >
                 {(kind) => <Session {...props} aud={aud} kind={kind} options={options} address={address} />}
               </Show>
@@ -249,17 +234,15 @@ function Session(
     <Show
       when={state()?.status === "signedIn"}
       fallback={
-        <Frame header={<span>{props.title}</span>}>
-          <EntryPanel size="container">
-            <Show when={state() !== null}>
-              <SignInForm
-                address={props.address}
-                trouble={failure(state())}
-                submit={(email, password) => keeper.signIn(email, password)}
-              />
-            </Show>
-          </EntryPanel>
-        </Frame>
+        <EntryPage title="Sign in">
+          <Show when={state() !== null}>
+            <SignInForm
+              address={props.address}
+              trouble={failure(state())}
+              submit={(email, password) => keeper.signIn(email, password)}
+            />
+          </Show>
+        </EntryPage>
       }
     >
       <Show
@@ -273,16 +256,18 @@ function Session(
         }
       >
         {(shown) => (
-          <Layout
-            title={props.kind === "control" ? props.org : props.title}
-            aud={props.aud}
-            sections={shown().sections}
-            holds={shown().holds}
-            address={props.address}
-            signOut={() => keeper.signOut()}
-          >
-            <Destination {...props} sections={sections} view={shown()} transport={transport} />
-          </Layout>
+          <NotFoundBoundary home={`/${props.aud}`} path={props.address.url().pathname}>
+            <Layout
+              title={props.kind === "control" ? props.org : props.title}
+              aud={props.aud}
+              sections={shown().sections}
+              holds={shown().holds}
+              address={props.address}
+              signOut={() => keeper.signOut()}
+            >
+              <Destination {...props} sections={sections} view={shown()} transport={transport} />
+            </Layout>
+          </NotFoundBoundary>
         )}
       </Show>
     </Show>
@@ -313,8 +298,18 @@ function Destination(props: {
       when={selected()}
       keyed
       fallback={
-        <Show when={path() !== ""} fallback={<DashboardPanel />}>
-          <NotFound />
+        <Show
+          when={path() !== ""}
+          fallback={
+            <Page title="No screens available">
+              <p>This audience has no available screens.</p>
+              <NavigationLink href="/" navigate={props.address.navigate}>
+                Choose an audience
+              </NavigationLink>
+            </Page>
+          }
+        >
+          <MissingPage />
         </Show>
       }
     >
@@ -331,13 +326,12 @@ function Destination(props: {
           <>
             <For each={(route.actions ?? []).filter((action) => props.view.holds(action.operation))}>
               {(action) => (
-                <Button
-                  onClick={() =>
-                    open(action.path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? "")))
-                  }
+                <NavigationLink
+                  href={`/${props.aud}/${action.path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? ""))}`}
+                  navigate={(path) => props.address.navigate(path, false, true)}
                 >
                   {action.label}
-                </Button>
+                </NavigationLink>
               )}
             </For>
             <route.component

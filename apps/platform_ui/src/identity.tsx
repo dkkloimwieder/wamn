@@ -1,7 +1,6 @@
 import { createSignal, onCleanup, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { FieldError, Input } from "@wfe/components/fields";
-import { EntryPanel } from "@wfe/components/layout";
 import { Records } from "./records";
 import { createForm, type FormContext } from "@wfe/form";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
@@ -17,7 +16,7 @@ import {
 } from "@wamn/web-runtime";
 import type { Address } from "./address";
 import type { Scope } from "./scope";
-import { Frame, Page } from "./page";
+import { EntryPage, Frame, NavigationLink } from "./page";
 
 interface IdentityProps {
   readonly title: string;
@@ -69,11 +68,10 @@ export function SignInForm(props: {
   const description = {
     id: "sign-in",
     fields: [
-      { field: "email", label: "email", control: "custom" },
-      { field: "password", label: "password", control: "custom" },
+      { field: "email", label: "Email", control: "custom" },
+      { field: "password", label: "Password", control: "custom" },
     ],
-    submit: { id: "sign-in", label: "sign in" },
-    actions: [{ id: "recover", label: "forgot password", variant: "ghost" }],
+    submit: { id: "sign-in", label: "Sign in" },
   } as const satisfies FormDescription<Credentials>;
   return (
     <>
@@ -82,9 +80,11 @@ export function SignInForm(props: {
         bindings={{
           form,
           fields: { email: Email, password: Password },
-          actions: { recover: { run: () => props.address.navigate("/recover") } },
         }}
       />
+      <NavigationLink href="/recover" navigate={props.address.navigate}>
+        Forgot password
+      </NavigationLink>
       <Show when={!form.errors.form && props.trouble}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
     </>
   );
@@ -114,60 +114,73 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
     <Show
       when={credentials() === null || reachable().length > 0}
       fallback={
-        <Frame header={<span>No access has been granted.</span>}>
-          <Page />
-        </Frame>
+        <EntryPage title="No access">
+          <p>No access has been granted.</p>
+          <NavigationLink
+            href="/"
+            navigate={(path) => {
+              setCredentials(null);
+              props.address.navigate(path);
+            }}
+          >
+            Return to sign in
+          </NavigationLink>
+        </EntryPage>
       }
     >
-      <Frame header={<span>{props.title}</span>}>
-        <Show
-          when={credentials()}
-          fallback={
-            <EntryPanel size="container">
-              <SignInForm
-                address={props.address}
-                trouble={null}
-                submit={async (email, password, context) => {
-                  const found = await environments(email, password, props.scope, props.options);
-                  if (context.signal.aborted) return;
-                  setReachable(found);
-                  const only = found.length === 1 ? found[0] : undefined;
-                  if (only) await enter(email, password, only.aud, context.signal);
-                  else setCredentials({ email, password });
-                }}
-              />
-            </EntryPanel>
-          }
-        >
-          {(held) => {
-            const Entry = (props: { environment: Environment }) => (
-              <a
-                href={`/${props.environment.aud}`}
-                aria-disabled={entering() ? "true" : undefined}
-                data-ui-text="system"
-                onClick={(event) => {
-                  if (
-                    event.defaultPrevented ||
-                    event.button !== 0 ||
-                    event.ctrlKey ||
-                    event.metaKey ||
-                    event.shiftKey ||
-                    event.altKey
-                  )
-                    return;
-                  event.preventDefault();
-                  if (entering()) return;
-                  void enter(held().email, held().password, props.environment.aud).catch((error: unknown) => {
-                    if (active) setTrouble(signInFailed(error));
-                  });
-                }}
-              >
-                {props.environment.project === undefined ? "Control" : props.environment.env}
-              </a>
-            );
-            return (
+      <Show
+        when={credentials()}
+        fallback={
+          <EntryPage title="Sign in">
+            <SignInForm
+              address={props.address}
+              trouble={null}
+              submit={async (email, password, context) => {
+                const found = await environments(email, password, props.scope, props.options);
+                if (context.signal.aborted) return;
+                setReachable(found);
+                const only = found.length === 1 ? found[0] : undefined;
+                if (only) await enter(email, password, only.aud, context.signal);
+                else setCredentials({ email, password });
+              }}
+            />
+          </EntryPage>
+        }
+      >
+        {(held) => {
+          const Entry = (props: { environment: Environment }) => (
+            <a
+              href={`/${props.environment.aud}`}
+              aria-disabled={entering() ? "true" : undefined}
+              style={{ color: "var(--ui-accent)" }}
+              onClick={(event) => {
+                if (
+                  event.defaultPrevented ||
+                  event.button !== 0 ||
+                  event.ctrlKey ||
+                  event.metaKey ||
+                  event.shiftKey ||
+                  event.altKey
+                )
+                  return;
+                event.preventDefault();
+                if (entering()) return;
+                void enter(held().email, held().password, props.environment.aud).catch((error: unknown) => {
+                  if (active) setTrouble(signInFailed(error));
+                });
+              }}
+            >
+              {props.environment.project === undefined ? "Control" : props.environment.env}
+            </a>
+          );
+          return (
+            <Frame header={<span>Choose an audience</span>} scroll="content">
               <div class="platform-table-screen">
                 <Records
+                  refresh={async () => {
+                    const next = await environments(held().email, held().password, props.scope, props.options);
+                    if (active) setReachable(next);
+                  }}
                   id="audiences"
                   title="Audiences"
                   rows={[...reachable()].sort(
@@ -183,10 +196,10 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
                 />
                 <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
               </div>
-            );
-          }}
-        </Show>
-      </Frame>
+            </Frame>
+          );
+        }}
+      </Show>
     </Show>
   );
 }
@@ -225,27 +238,25 @@ function NewPassword(
   const description = {
     id: props.id,
     fields: [
-      { field: "email", label: "email", control: "custom" },
-      { field: "password", label: "password", control: "custom" },
-      { field: "again", label: "password again", control: "custom" },
+      { field: "email", label: "Email", control: "custom" },
+      { field: "password", label: "Password", control: "custom" },
+      { field: "again", label: "Password again", control: "custom" },
     ],
-    submit: { id: "set-password", label: "set password" },
+    submit: { id: "set-password", label: "Set password" },
   } as const satisfies FormDescription<typeof defaults>;
   return (
-    <Frame header={<span>{props.title}</span>}>
-      <EntryPanel size="container">
-        <Show when={props.missing && !form.errors.form}>
-          <FieldError role="alert">{props.missing}</FieldError>
-        </Show>
-        <FormView
-          description={description}
-          bindings={{
-            form,
-            fields: { email: Email, password: NewPasswordInput, again: NewPasswordInput },
-          }}
-        />
-      </EntryPanel>
-    </Frame>
+    <EntryPage title={props.id === "invite" ? "Accept invitation" : "Reset password"}>
+      <Show when={props.missing && !form.errors.form}>
+        <FieldError role="alert">{props.missing}</FieldError>
+      </Show>
+      <FormView
+        description={description}
+        bindings={{
+          form,
+          fields: { email: Email, password: NewPasswordInput, again: NewPasswordInput },
+        }}
+      />
+    </EntryPage>
   );
 }
 
@@ -295,26 +306,25 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
   });
   const description = {
     id: "recover",
-    fields: [{ field: "email", label: "email", control: "custom" }],
-    submit: { id: "recover", label: "send reset link" },
-    actions: [{ id: "sign-in", label: "sign in", variant: "ghost" }],
+    fields: [{ field: "email", label: "Email", control: "custom" }],
+    submit: { id: "recover", label: "Send reset link" },
   } as const satisfies FormDescription<typeof defaults>;
   return (
-    <Frame header={<span>{props.title}</span>}>
-      <EntryPanel size="container">
-        <FormView
-          description={description}
-          bindings={{
-            form,
-            fields: { email: Email },
-            actions: { "sign-in": { run: () => props.address.navigate("/") } },
-          }}
-        />
-        <Show when={form.phase === "success"}>
-          <p>If this address has an account, a mail with a reset link is on its way.</p>
-        </Show>
-      </EntryPanel>
-    </Frame>
+    <EntryPage title="Recover password">
+      <FormView
+        description={description}
+        bindings={{
+          form,
+          fields: { email: Email },
+        }}
+      />
+      <Show when={form.phase === "success"}>
+        <p>If this address has an account, a mail with a reset link is on its way.</p>
+      </Show>
+      <NavigationLink href="/" navigate={props.address.navigate}>
+        Sign in
+      </NavigationLink>
+    </EntryPage>
   );
 }
 

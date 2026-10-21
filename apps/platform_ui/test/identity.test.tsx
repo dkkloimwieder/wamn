@@ -8,8 +8,20 @@ describe("identity pages", () => {
     "uses EntryPanel without breadcrumbs at %s",
     async (path) => {
       open(path, identity(false).fetch);
-      const email = await screen.findByLabelText("email");
+      const email = await screen.findByLabelText("Email");
       expect(email.closest(".ui-entry-panel")).not.toBeNull();
+      expect(document.querySelector(".ui-dashboard")).toBeNull();
+      expect(screen.getByRole("main").contains(email)).toBe(true);
+      expect(email.closest(".ui-entry-panel")?.getAttribute("data-size")).toBe("viewport");
+      expect(screen.getByRole("heading").textContent).toBe(
+        path === "/invite"
+          ? "Accept invitation"
+          : path === "/reset"
+            ? "Reset password"
+            : path === "/recover"
+              ? "Recover password"
+              : "Sign in",
+      );
       expect(screen.queryByRole("navigation", { name: "Platform location" })).toBeNull();
     },
   );
@@ -20,12 +32,12 @@ describe("identity pages", () => {
       return Promise.resolve(new Response(null, { status: 204 }));
     };
     open("/invite#ccc4533d-a81a-465d-8a44-1414369ae2fd:wamn_inv_0f", fetch as typeof globalThis.fetch);
-    input(await screen.findByLabelText("email"), "someone@wamn.dev");
-    input(screen.getByLabelText("password"), "a long password string");
-    input(screen.getByLabelText("password again"), "a long password string");
+    input(await screen.findByLabelText("Email"), "someone@wamn.dev");
+    input(screen.getByLabelText("Password"), "a long password string");
+    input(screen.getByLabelText("Password again"), "a long password string");
     flush();
-    fireEvent.click(screen.getByText("set password"));
-    expect(await screen.findByText("sign in")).toBeDefined();
+    fireEvent.click(screen.getByText("Set password"));
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe("/"));
     expect(seen).toEqual([
       {
@@ -47,9 +59,9 @@ describe("identity pages", () => {
     };
     open("/", fetch as typeof globalThis.fetch);
     flush();
-    fireEvent.click(await screen.findByText("forgot password"));
-    const send = await screen.findByText("send reset link");
-    input(screen.getByLabelText("email"), "someone@wamn.dev");
+    fireEvent.click(await screen.findByText("Forgot password"));
+    const send = await screen.findByText("Send reset link");
+    input(screen.getByLabelText("Email"), "someone@wamn.dev");
     flush();
     fireEvent.click(send);
     expect(await screen.findByText(/a mail with a reset link is on its way/)).toBeDefined();
@@ -64,12 +76,12 @@ describe("identity pages", () => {
       return Promise.resolve(new Response(null, { status: 200 }));
     };
     open("/reset#wamn_reset_0f", fetch as typeof globalThis.fetch);
-    input(await screen.findByLabelText("email"), "someone@wamn.dev");
-    input(screen.getByLabelText("password"), "a long password string");
-    input(screen.getByLabelText("password again"), "a long password string");
+    input(await screen.findByLabelText("Email"), "someone@wamn.dev");
+    input(screen.getByLabelText("Password"), "a long password string");
+    input(screen.getByLabelText("Password again"), "a long password string");
     flush();
-    fireEvent.click(screen.getByText("set password"));
-    expect(await screen.findByText("sign in")).toBeDefined();
+    fireEvent.click(screen.getByText("Set password"));
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe("/"));
     expect(seen).toEqual([
       {
@@ -98,16 +110,19 @@ describe("identity pages", () => {
         .getAllByRole("link")
         .map((link) => link.textContent),
     ).toEqual(["dev", "prod"]);
-    expect(screen.queryByLabelText("email")).toBeNull();
-    expect(screen.queryByLabelText("password")).toBeNull();
-    expect(screen.queryByRole("button", { name: "sign in" })).toBeNull();
+    expect(screen.queryByLabelText("Email")).toBeNull();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     expect(audiences.closest(".platform-table-screen")).not.toBeNull();
+    expect(audiences.closest(".ui-dashboard")?.getAttribute("data-scroll")).toBe("content");
     expect(screen.queryByRole("navigation", { name: "Platform location" })).toBeNull();
     expect(state.bodies[state.calls.indexOf("/password/environments")]).toEqual({
       email: "someone@wamn.dev",
       password: "a long password string",
       org: "acme",
     });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
+    await waitFor(() => expect(state.calls.filter((path) => path === "/password/environments")).toHaveLength(2));
     flush();
     fireEvent.click(within(audiences).getByRole("link", { name: "prod" }));
     expect(await screen.findByText("pallets screen")).toBeDefined();
@@ -179,6 +194,11 @@ describe("identity pages", () => {
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(state.calls).toEqual(["/password/environments"]);
+    expect(screen.getByRole("heading", { name: "No access" })).toBeTruthy();
+    expect(document.querySelector(".ui-dashboard")).toBeNull();
+    expect(screen.getByRole("link", { name: "Return to sign in" }).getAttribute("href")).toBe("/");
+    fireEvent.click(screen.getByRole("link", { name: "Return to sign in" }));
+    await screen.findByRole("button", { name: "Sign in" });
   });
 
   it("asks for the password on a screen address with no session, and shows that screen after it", async () => {
@@ -196,7 +216,7 @@ describe("identity pages", () => {
     flush();
     fireEvent.keyDown(screen.getByRole("button", { name: "User menu" }), { key: "Enter" });
     fireEvent.keyDown(await screen.findByRole("menuitem", { name: "Sign out" }), { key: "Enter" });
-    expect(await screen.findByLabelText("password")).toBeDefined();
+    expect(await screen.findByLabelText("Password")).toBeDefined();
     expect(screen.queryByText("pallets screen")).toBeNull();
     expect(state.signedIn).toBe(false);
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets`));
@@ -251,7 +271,7 @@ describe("identity refusals", () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     open(path, fetch);
     expect(await screen.findByText(text)).toBeDefined();
-    fireEvent.click(screen.getByText("set password"));
+    fireEvent.click(screen.getByText("Set password"));
     flush();
     await waitFor(() => expect(screen.getByRole("button").hasAttribute("disabled")).toBe(false));
     expect(fetch).not.toHaveBeenCalled();
@@ -260,10 +280,10 @@ describe("identity refusals", () => {
   it.each(["/invite#principal:secret", "/reset#secret"])("refuses unequal passwords at %s", async (path) => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     open(path, fetch);
-    input(await screen.findByLabelText("email"), "someone@wamn.dev");
-    input(screen.getByLabelText("password"), "a long password string");
-    input(screen.getByLabelText("password again"), "a different password");
-    fireEvent.click(screen.getByText("set password"));
+    input(await screen.findByLabelText("Email"), "someone@wamn.dev");
+    input(screen.getByLabelText("Password"), "a long password string");
+    input(screen.getByLabelText("Password again"), "a different password");
+    fireEvent.click(screen.getByText("Set password"));
     expect(await screen.findByText("The two passwords differ.")).toBeDefined();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -277,12 +297,12 @@ describe("identity refusals", () => {
       async () => new Response(JSON.stringify({ error: "code expired" }), { status: 400 }),
     );
     open(path, fetch);
-    input(await screen.findByLabelText("email"), "someone@wamn.dev");
+    input(await screen.findByLabelText("Email"), "someone@wamn.dev");
     if (path !== "/recover") {
-      input(screen.getByLabelText("password"), "a long password string");
-      input(screen.getByLabelText("password again"), "a long password string");
+      input(screen.getByLabelText("Password"), "a long password string");
+      input(screen.getByLabelText("Password again"), "a long password string");
     }
-    fireEvent.click(screen.getByText(path === "/recover" ? "send reset link" : "set password"));
+    fireEvent.click(screen.getByText(path === "/recover" ? "Send reset link" : "Set password"));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", `${prefix}: code expired.`);
     expect(window.location.pathname).toBe(path.split("#")[0]);
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -308,7 +328,7 @@ describe("identity refusals", () => {
       "textContent",
       "The session could not be renewed: Error: /password/renew answered 503.",
     );
-    expect(screen.getByLabelText("password")).toBeDefined();
+    expect(screen.getByLabelText("Password")).toBeDefined();
     expect(window.location.pathname).toBe(`/${AUD}/pallets`);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -322,14 +342,14 @@ describe("identity refusals", () => {
         }),
     );
     open("/reset#secret", fetch);
-    input(await screen.findByLabelText("email"), "someone@wamn.dev");
-    input(screen.getByLabelText("password"), "a long password string");
-    input(screen.getByLabelText("password again"), "a long password string");
-    fireEvent.click(screen.getByText("set password"));
+    input(await screen.findByLabelText("Email"), "someone@wamn.dev");
+    input(screen.getByLabelText("Password"), "a long password string");
+    input(screen.getByLabelText("Password again"), "a long password string");
+    fireEvent.click(screen.getByText("Set password"));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     window.history.pushState({}, "", "/recover");
     window.dispatchEvent(new PopStateEvent("popstate"));
-    await screen.findByText("send reset link");
+    await screen.findByText("Send reset link");
     finish(new Response(null, { status: 204 }));
     await Promise.resolve();
     await Promise.resolve();

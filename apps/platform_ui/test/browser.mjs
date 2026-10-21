@@ -25,7 +25,29 @@ async function capture(page, screen) {
   await page.evaluate(() => document.fonts.ready);
   const root = page.locator("#app > .ui-theme[data-ui]");
   assert.equal(await root.count(), 1, `${screen} has one theme root`);
-  assert.equal(await root.locator(":scope > .ui-dashboard").count(), 1, `${screen} has one dashboard shell`);
+  if (["sign-in", "invite", "recover", "reset", "no-access", "not-found"].includes(screen)) {
+    assert.equal(await page.locator(".ui-dashboard").count(), 0);
+    assert.equal(await root.locator(":scope > main > .ui-entry-panel").count(), 1);
+    assert.equal(await root.locator(".ui-entry-panel").getAttribute("data-size"), "viewport");
+    assert.equal(await root.locator("header, nav").count(), 0);
+    const titles = {
+      "sign-in": "Sign in",
+      invite: "Accept invitation",
+      recover: "Recover password",
+      reset: "Reset password",
+      "no-access": "No access",
+      "not-found": "No page here",
+    };
+    assert.equal(await root.getByRole("heading", { name: titles[screen], exact: true }).count(), 1);
+    if (screen === "not-found") {
+      assert.equal(await root.locator("form").count(), 0);
+      assert.equal(await root.getByRole("heading", { name: "No page here", exact: true }).count(), 1);
+      assert.equal(await root.getByRole("link").count(), 1);
+      assert.equal(await root.getByRole("link", { name: "Go to audience home" }).getAttribute("href"), controlPath);
+    }
+  } else {
+    assert.equal(await root.locator(":scope > .ui-dashboard").count(), 1, `${screen} has one dashboard shell`);
+  }
   assert.equal(await root.getAttribute("data-ui-density"), "compact");
   assert.equal(await root.getAttribute("data-ui-theme"), null);
   assert.ok(
@@ -33,11 +55,49 @@ async function capture(page, screen) {
     `${screen} has a dashboard panel, entry panel, or a full-panel table`,
   );
   assert.equal(await root.evaluate((node) => getComputedStyle(node).getPropertyValue("--ui-accent").trim()), "#1971c2");
-  if (["sign-in", "invite", "recover", "reset"].includes(screen)) {
+  if (["sign-in", "invite", "recover", "reset", "not-found"].includes(screen)) {
     assert.equal(await root.locator(".ui-entry-panel").count(), 1);
     assert.equal(await page.getByRole("navigation", { name: "Platform location" }).count(), 0);
   }
+  if (
+    [
+      "create-project",
+      "invite-user",
+      "project-grant-membership",
+      "member-grant-membership",
+      "user-grant-membership",
+    ].includes(screen)
+  ) {
+    const form = root.locator("form.ui-form");
+    await form.getByRole("button", { name: "Cancel", exact: true }).waitFor();
+    assert.equal(await form.locator("button[type=submit]").count(), 1);
+  }
+  const breadcrumbs = page.getByRole("navigation", { name: "Platform location" });
+  for (const text of await breadcrumbs.locator("a, [aria-current=page]").allTextContents())
+    assert.equal(text, text.toUpperCase());
+  assert.ok((await page.getByRole("table").count()) <= 1, `${screen} has at most one growing table`);
+  for (const group of await root.getByRole("group", { name: "Record actions" }).all()) {
+    assert.equal(await group.locator("..").getByRole("heading", { level: 1 }).count(), 1);
+    for (const button of await group.getByRole("button").all()) {
+      assert.ok(
+        (await button.boundingBox()).width < (await root.locator(".ui-dashboard-main").boundingBox()).width / 2,
+      );
+    }
+  }
   for (const table of await root.locator(".platform-table-screen").all()) {
+    assert.equal(
+      await table.evaluate((node) => {
+        const main = node.closest(".ui-dashboard-main");
+        const style = getComputedStyle(main);
+        return (
+          [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].every(
+            (value) => value === "0px",
+          ) && Math.abs(node.getBoundingClientRect().left - main.getBoundingClientRect().left) < 1
+        );
+      }),
+      true,
+      `${screen} table touches the main edge without main padding`,
+    );
     const pages = table.getByRole("navigation", { name: "Table pages" });
     assert.equal(await pages.count(), 1, `${screen} uses wfe pagination`);
     assert.ok((await table.locator("tbody > tr[data-row]").count()) <= 25);
@@ -55,9 +115,9 @@ const errors = [];
 async function signIn(page, email, address = base) {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(address);
-  await page.getByLabel("email", { exact: true }).fill(email);
-  await page.getByLabel("password", { exact: true }).fill(required("WAMN_BROWSER_PASSWORD"));
-  await page.getByRole("button", { name: "sign in", exact: true }).click();
+  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(required("WAMN_BROWSER_PASSWORD"));
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
 // Address and reload assertions renew the session. Respect identity's Retry-After
 // response when the combined browser journeys fill its source window.
@@ -79,13 +139,13 @@ async function visit(page, address = page.url()) {
 try {
   const page = await browser.newPage({ viewport });
   await page.goto(`${base}/recover`);
-  await page.getByRole("button", { name: "send reset link", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Send reset link", exact: true }).waitFor();
   await capture(page, "recover");
   await page.goto(`${base}/reset`);
-  await page.getByRole("button", { name: "set password", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Set password", exact: true }).waitFor();
   await capture(page, "reset");
   await page.goto(base);
-  await page.getByRole("button", { name: "sign in", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
   await capture(page, "sign-in");
   await signIn(page, required("WAMN_BROWSER_EMAIL"));
   const audiences = page.getByRole("table", { name: "Audiences", exact: true });
@@ -97,9 +157,9 @@ try {
   assert.equal(await audiences.locator("details").count(), 0);
   assert.equal(await page.getByRole("navigation", { name: "Platform location" }).count(), 0);
   assert.equal(await control.getAttribute("href"), controlPath);
-  assert.equal(await page.getByLabel("email", { exact: true }).count(), 0);
-  assert.equal(await page.getByLabel("password", { exact: true }).count(), 0);
-  assert.equal(await page.getByRole("button", { name: "sign in", exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("Email", { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("Password", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Sign in", exact: true }).count(), 0);
   assert.equal(await audiences.getByRole("table").count(), 0);
   assert.equal(await page.locator(".platform-table-screen").getByRole("table", { name: "Audiences" }).count(), 1);
   await capture(page, "audience-choice");
@@ -114,7 +174,7 @@ try {
   assert.equal(await page.locator("#app > [data-ui]").count(), 1);
   assert.equal(await page.locator("#app > [data-ui]").getAttribute("data-ui-density"), "compact");
 
-  await page.getByRole("button", { name: fixture.releaseProject, exact: true }).waitFor();
+  await page.getByRole("link", { name: fixture.releaseProject, exact: true }).waitFor();
   await capture(page, "control-layout");
   await capture(page, "projects");
 
@@ -128,6 +188,7 @@ try {
     .getByRole("button", { name: "Invite user", exact: true })
     .click();
   await page.getByRole("heading", { name: "Invite user", exact: true }).waitFor();
+  await capture(page, "invite-user");
   await page.getByRole("textbox", { name: "Email", exact: true }).fill(fixture.email);
   await page.getByLabel("Display name", { exact: true }).fill("Invited User");
   await page.getByRole("button", { name: "Invite user", exact: true }).click();
@@ -136,7 +197,7 @@ try {
     .getByRole("table", { name: "Users", exact: true })
     .getByRole("row")
     .filter({ has: page.getByRole("cell", { name: fixture.email, exact: true }) });
-  await invited.getByText("User state: active", { exact: true }).waitFor();
+  await invited.getByRole("cell", { name: "active", exact: true }).waitFor();
   await capture(page, "users");
   console.log("invitation-created");
   const { code } = JSON.parse((await messages.next()).value);
@@ -146,32 +207,34 @@ try {
     const enrollment = await invitedContext.newPage();
     enrollment.on("pageerror", (error) => errors.push(error.message));
     await enrollment.goto(`${base}/invite#${code}`);
-    await enrollment.getByLabel("email", { exact: true }).waitFor();
+    await enrollment.getByLabel("Email", { exact: true }).waitFor();
     await capture(enrollment, "invite");
-    await enrollment.getByLabel("email", { exact: true }).fill(fixture.email);
-    await enrollment.getByLabel("password", { exact: true }).fill(required("WAMN_BROWSER_PASSWORD"));
-    await enrollment.getByLabel("password again", { exact: true }).fill(required("WAMN_BROWSER_PASSWORD"));
-    await enrollment.getByRole("button", { name: "set password", exact: true }).click();
-    await enrollment.getByRole("button", { name: "sign in", exact: true }).waitFor();
+    await enrollment.getByLabel("Email", { exact: true }).fill(fixture.email);
+    await enrollment.getByLabel("Password", { exact: true }).fill(required("WAMN_BROWSER_PASSWORD"));
+    await enrollment.getByLabel("Password again", { exact: true }).fill(required("WAMN_BROWSER_PASSWORD"));
+    await enrollment.getByRole("button", { name: "Set password", exact: true }).click();
+    await enrollment.getByRole("button", { name: "Sign in", exact: true }).waitFor();
     assert.equal(new URL(enrollment.url()).hash, "");
-    await invited.getByRole("button", { name: "Deactivate user", exact: true }).click();
-    await invited.getByText("User state: inactive", { exact: true }).waitFor();
-    assert.equal(await invited.getByRole("button", { name: "Deactivate user", exact: true }).count(), 0);
+    await signIn(enrollment, fixture.email);
+    await enrollment.getByRole("heading", { name: "No access", exact: true }).waitFor();
+    await capture(enrollment, "no-access");
+    await invited.getByRole("link", { name: "Invited User", exact: true }).click();
+    await page.getByRole("heading", { name: "Invited User", exact: true }).waitFor();
+    await capture(page, "user");
+    await page.getByRole("button", { name: "Inactivate user", exact: true }).click();
+    await page.getByText("State: inactive", { exact: true }).waitFor();
     await visit(page);
-    await invited.getByRole("button", { name: "Activate user", exact: true }).click();
-    await invited.getByText("User state: active", { exact: true }).waitFor();
-    assert.equal(await invited.getByRole("button", { name: "Activate user", exact: true }).count(), 0);
-    await invited.getByRole("button", { name: "Grant org admin", exact: true }).click();
-    await invited.getByText("Org admin", { exact: true }).waitFor();
-    assert.equal(await invited.getByRole("button", { name: "Grant org admin", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "Activate user", exact: true }).click();
+    await page.getByText("State: active", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Grant org admin", exact: true }).click();
+    await page.getByRole("button", { name: "Revoke org admin", exact: true }).waitFor();
     await signIn(enrollment, fixture.email, `${base}${controlPath}`);
     await enrollment.getByRole("table", { name: "Projects", exact: true }).waitFor();
     await visit(page);
-    await invited.getByRole("button", { name: "Revoke org admin", exact: true }).click();
-    await invited.getByText("User", { exact: true }).waitFor();
-    assert.equal(await invited.getByRole("button", { name: "Revoke org admin", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "Revoke org admin", exact: true }).click();
+    await page.getByRole("button", { name: "Grant org admin", exact: true }).waitFor();
     await visit(page);
-    await invited.getByRole("button", { name: "Grant org admin", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Grant org admin", exact: true }).waitFor();
   } finally {
     await invitedContext.close();
   }
@@ -181,78 +244,93 @@ try {
     .getByRole("button", { name: "Create project", exact: true })
     .click();
   await page.getByRole("heading", { name: "Create project", exact: true }).waitFor();
+  await capture(page, "create-project");
   await page.getByLabel("Project name", { exact: true }).fill(fixture.project);
   await page.getByRole("button", { name: "Create project", exact: true }).click();
   await page.getByText("Project created.", { exact: true }).waitFor();
-  await page.getByRole("button", { name: fixture.project, exact: true }).click();
+  await page.getByRole("link", { name: fixture.project, exact: true }).click();
   await page.getByRole("heading", { name: fixture.project, exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.project}`);
-  assert.equal(
-    await page
-      .getByRole("table", { name: "Environments", exact: true })
-      .locator(":scope > tbody > tr[data-row]")
-      .count(),
-    0,
-  );
-  // The Rust fixture provisions this project's environment through platform verbs.
+  await capture(page, "project");
+  await page.getByRole("link", { name: "Environments", exact: true }).click();
+  const environments = page.getByRole("table", { name: "Environments", exact: true });
+  await environments.waitFor();
+  assert.equal(await environments.locator("tbody tr[data-row]").count(), 0);
   console.log("project-created");
   assert.equal((await messages.next()).value, "environment-ready");
-  await visit(page);
+  const reloadEnvironments = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/api/wamn_control/environment/list"),
+  );
+  await page.getByRole("button", { name: "Refresh results", exact: true }).click();
+  assert.equal((await reloadEnvironments).status(), 200);
+  await environments.getByRole("link", { name: fixture.env, exact: true }).waitFor();
+  await capture(page, "project-environments");
+
+  const userAddress = `${base}${controlPath}/users/${fixture.principalId}`;
+  await visit(page, userAddress);
+  await page.getByRole("link", { name: "Memberships", exact: true }).click();
+  await page.getByRole("table", { name: "Memberships", exact: true }).waitFor();
   await page
-    .getByRole("table", { name: "Environments", exact: true })
-    .getByText(fixture.env, { exact: true })
-    .waitFor();
-  await capture(page, "project");
-  await visit(page, `${base}${controlPath}/users/${fixture.principalId}`);
-  await page.getByRole("heading", { name: "Invited User", exact: true }).waitFor();
-  await page.getByRole("button").and(page.locator('[aria-label="Project"]')).click();
+    .locator(".table-workspace-header-actions")
+    .getByRole("button", { name: "Grant membership", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Grant membership", exact: true }).waitFor();
+  await capture(page, "user-grant-membership");
+  await page.getByRole("button", { name: "Project", exact: true }).click();
   await page.getByRole("option", { name: fixture.project, exact: true }).click();
-  await page.getByRole("button").and(page.locator('[aria-label="Environment"]')).click();
+  await page.getByRole("button", { name: "Environment", exact: true }).click();
   await page.getByRole("option", { name: fixture.env, exact: true }).click();
   await page.getByRole("button", { name: "Grant membership", exact: true }).click();
-  const access = page
-    .getByRole("table", { name: "Project access", exact: true })
-    .locator(`:scope > tbody > tr[data-row="${fixture.project}"]`);
-  const userMemberships = page.getByRole("table", { name: "Memberships", exact: true });
-  await userMemberships
-    .getByRole("button", { name: `Revoke membership in ${fixture.project}/${fixture.env}`, exact: true })
-    .waitFor();
-  await capture(page, "user");
-  await visit(page);
-  await access.getByRole("button", { name: "Grant project admin", exact: true }).click();
-  await access.getByText("Project admin", { exact: true }).waitFor();
-  await access.getByRole("button", { name: "Revoke project admin", exact: true }).click();
-  await access.getByText("User", { exact: true }).waitFor();
-  await userMemberships
-    .getByRole("button", { name: `Revoke membership in ${fixture.project}/${fixture.env}`, exact: true })
-    .click();
-  await userMemberships
-    .getByRole("button", { name: `Revoke membership in ${fixture.project}/${fixture.env}`, exact: true })
-    .waitFor({ state: "detached" });
+  const userMemberships = page
+    .getByRole("table", { name: "Memberships", exact: true })
+    .getByRole("row")
+    .filter({ has: page.getByRole("cell", { name: fixture.project, exact: true }) })
+    .filter({ has: page.getByRole("cell", { name: fixture.env, exact: true }) });
+  await userMemberships.getByRole("button", { name: "Revoke membership", exact: true }).waitFor();
+  await capture(page, "user-memberships");
+  await visit(page, userAddress);
+  await page.getByRole("link", { name: "Project access", exact: true }).click();
+  const access = page.getByRole("table", { name: "Project access", exact: true });
+  await access.getByRole("link", { name: fixture.project, exact: true }).waitFor();
+  await capture(page, "user-projects");
+  await access.getByRole("link", { name: fixture.project, exact: true }).click();
+  await page.getByRole("button", { name: "Grant project admin", exact: true }).click();
+  await page.getByRole("button", { name: "Revoke project admin", exact: true }).click();
+  await page.getByRole("button", { name: "Grant project admin", exact: true }).waitFor();
+  await userMemberships.getByRole("button", { name: "Revoke membership", exact: true }).click();
+  await userMemberships.getByRole("button", { name: "Revoke membership", exact: true }).waitFor({ state: "detached" });
   console.log(
     "PASS: Users invite, browser enrollment and sign-in, activate/deactivate, org-admin grant/revoke; User membership and project-admin grant/revoke, reload state",
   );
-  await visit(page, `${base}${controlPath}/projects/${fixture.project}`);
+
+  const projectAddress = `${base}${controlPath}/projects/${fixture.project}`;
+  await visit(page, `${projectAddress}/members`);
+  await page.getByRole("table", { name: "Members", exact: true }).waitFor();
+  await page
+    .locator(".table-workspace-header-actions")
+    .getByRole("button", { name: "Grant membership", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Grant membership", exact: true }).waitFor();
+  await capture(page, "project-grant-membership");
   await page.getByRole("textbox", { name: "User ID", exact: true }).fill(fixture.principalId);
-  await page.getByRole("button").and(page.locator('[aria-label="Environment"]')).click();
+  await page.getByRole("button", { name: "Environment", exact: true }).click();
   await page.getByRole("option", { name: fixture.env, exact: true }).click();
   await page.getByRole("button", { name: "Grant membership", exact: true }).click();
-  const person = page.locator(`tr[data-row="${fixture.principalId}"]`);
-  await person.getByText("Member", { exact: true }).waitFor();
-  await person.getByRole("button", { name: "Invited User", exact: true }).click();
+  const person = page
+    .getByRole("table", { name: "Members", exact: true })
+    .locator(`tr[data-row="${fixture.principalId}"]`);
+  await person.getByRole("link", { name: "Invited User", exact: true }).waitFor();
+  await capture(page, "project-members");
+  await person.getByRole("link", { name: "Invited User", exact: true }).click();
   const memberEnvironments = page.getByRole("table", { name: `Memberships for ${fixture.email}`, exact: true });
-  await memberEnvironments.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).waitFor();
+  await memberEnvironments.getByRole("button", { name: "Revoke membership", exact: true }).waitFor();
+  await capture(page, "member-memberships");
   assert.equal(
     new URL(page.url()).pathname,
     `${controlPath}/projects/${fixture.project}/members/${fixture.principalId}`,
   );
-  assert.equal(await page.locator("table table").count(), 0);
-  await page
-    .getByRole("navigation", { name: "Platform location" })
-    .getByRole("link", { name: fixture.project, exact: true })
-    .click();
-  await person.getByRole("button", { name: "Grant project admin", exact: true }).click();
-  await person.getByText("Project admin", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Grant project admin", exact: true }).click();
+  await page.getByRole("button", { name: "Revoke project admin", exact: true }).waitFor();
 
   const secondContext = await browser.newContext({ viewport });
   const projectAdminStarted = performance.now();
@@ -264,13 +342,13 @@ try {
     });
     await signIn(second, fixture.email, `${base}${controlPath}`);
     await second.getByRole("table", { name: "Projects", exact: true }).waitFor();
-    await second.getByRole("button", { name: fixture.project, exact: true }).waitFor();
+    await second.getByRole("link", { name: fixture.project, exact: true }).waitFor();
     assert.deepEqual(
-      await second.getByRole("table", { name: "Projects", exact: true }).locator("tbody button").allTextContents(),
+      await second.getByRole("table", { name: "Projects", exact: true }).locator("tbody a").allTextContents(),
       [fixture.project],
     );
     assert.equal(await second.getByRole("button", { name: "Create project", exact: true }).count(), 0);
-    await second.getByRole("button", { name: fixture.project, exact: true }).click();
+    await second.getByRole("link", { name: fixture.project, exact: true }).click();
     await second.getByRole("heading", { name: fixture.project, exact: true }).waitFor();
     assert.equal(await second.getByRole("button", { name: /^(Activate|Inactivate) project$/ }).count(), 0);
     await visit(second, `${base}${controlPath}/projects/receiving`);
@@ -289,23 +367,31 @@ try {
     await secondContext.close();
   }
 
-  await person.getByRole("button", { name: "Revoke project admin", exact: true }).click();
-  await person.getByText("Member", { exact: true }).waitFor();
-  await person.getByRole("button", { name: "Invited User", exact: true }).click();
-  await memberEnvironments.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).click();
-  await page
-    .getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true })
+  await page.getByRole("button", { name: "Revoke project admin", exact: true }).click();
+  await page.getByRole("button", { name: "Grant project admin", exact: true }).waitFor();
+  await memberEnvironments.getByRole("button", { name: "Revoke membership", exact: true }).click();
+  await memberEnvironments
+    .getByRole("button", { name: "Revoke membership", exact: true })
     .waitFor({ state: "detached" });
-  await page.getByRole("button").and(page.locator('[aria-label="Environment"]')).click();
+  await page.getByRole("table", { name: "Members", exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.project}/members`);
+  await page
+    .locator(".table-workspace-header-actions")
+    .getByRole("button", { name: "Grant membership", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Grant membership", exact: true }).waitFor();
+  await capture(page, "member-grant-membership");
+  assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.project}/members/grant`);
+  await page.getByRole("textbox", { name: "User ID", exact: true }).fill(fixture.principalId);
+  await page.getByRole("button", { name: "Environment", exact: true }).click();
   await page.getByRole("option", { name: fixture.env, exact: true }).click();
   await page.getByRole("button", { name: "Grant membership", exact: true }).click();
-  await memberEnvironments.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).waitFor();
+  await person.getByRole("link", { name: "Invited User", exact: true }).click();
+  await memberEnvironments.getByRole("button", { name: "Revoke membership", exact: true }).waitFor();
   await page
     .getByRole("navigation", { name: "Platform location" })
-    .getByRole("link", { name: fixture.project, exact: true })
+    .getByRole("link", { name: fixture.project.toUpperCase(), exact: true })
     .click();
-  await person.getByText("Member", { exact: true }).waitFor();
-
   await page.getByRole("button", { name: "Inactivate project", exact: true }).click();
   await page.getByRole("button", { name: "Activate project", exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Inactivate project", exact: true }).count(), 0);
@@ -317,9 +403,10 @@ try {
   await page.getByRole("button", { name: "Inactivate project", exact: true }).waitFor();
   await visit(page, `${base}${controlPath}/projects/${fixture.releaseProject}`);
   await page.getByRole("heading", { name: fixture.releaseProject, exact: true }).waitFor();
+  await page.getByRole("link", { name: "Environments", exact: true }).click();
   await page
     .getByRole("table", { name: "Environments", exact: true })
-    .getByRole("button", { name: fixture.releaseEnv, exact: true })
+    .getByRole("link", { name: fixture.releaseEnv, exact: true })
     .click();
   assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.releaseProject}/${fixture.releaseEnv}`);
   await page.getByRole("heading", { name: `${fixture.releaseProject}/${fixture.releaseEnv}`, exact: true }).waitFor();
@@ -351,11 +438,11 @@ try {
     assert.equal(await page.getByRole("table").count(), 1);
     assert.equal(
       await page.getByRole("navigation", { name: "Platform location" }).locator('[aria-current="page"]').textContent(),
-      label,
+      label.toUpperCase(),
     );
     await capture(page, `environment-${path}`);
     if (path === "workloads" || path === "operations") {
-      await table.locator("tbody button").first().click();
+      await table.locator("tbody a").first().click();
       await page
         .getByRole("table", { name: path === "workloads" ? /^Conditions for / : "Reaches", exact: true })
         .waitFor();
@@ -363,7 +450,7 @@ try {
       assert.equal(await page.locator("table table").count(), 0);
       await page
         .getByRole("navigation", { name: "Platform location" })
-        .getByRole("link", { name: label, exact: true })
+        .getByRole("link", { name: label.toUpperCase(), exact: true })
         .click();
       await table.waitFor();
     }
@@ -371,16 +458,16 @@ try {
     await table.waitFor();
     await page
       .getByRole("navigation", { name: "Platform location" })
-      .getByRole("link", { name: fixture.releaseEnv, exact: true })
+      .getByRole("link", { name: fixture.releaseEnv.toUpperCase(), exact: true })
       .click();
     assert.equal(page.url(), environmentAddress);
   }
   await page.getByRole("button", { name: "Inactivate environment", exact: true }).click();
-  await page.getByText("Environment state: inactive", { exact: true }).waitFor();
+  await page.getByText("State: inactive", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Inactivate environment", exact: true }).count(), 0);
   await visit(page);
   await page.getByRole("button", { name: "Activate environment", exact: true }).click();
-  await page.getByText("Environment state: active", { exact: true }).waitFor();
+  await page.getByText("State: active", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Activate environment", exact: true }).count(), 0);
   await visit(page);
   await page.getByRole("button", { name: "Inactivate environment", exact: true }).waitFor();
@@ -410,6 +497,12 @@ try {
   await receiving.getByRole("menuitem", { name: "Sign out", exact: true }).waitFor();
   await receiving.keyboard.press("Escape");
   assert.equal(new URL(receiving.url()).pathname, environmentPath);
+  await receiving.getByRole("heading", { name: "No screens available", exact: true }).waitFor();
+  assert.equal(await receiving.getByRole("navigation", { name: "Primary navigation" }).count(), 0);
+  assert.equal(
+    await receiving.getByRole("link", { name: "Choose an audience", exact: true }).getAttribute("href"),
+    "/",
+  );
   await capture(receiving, "receiving-layout");
   await receiving.close();
   console.log(
@@ -423,6 +516,17 @@ try {
       "recover",
       "reset",
       "audience-choice",
+      "no-access",
+      "create-project",
+      "invite-user",
+      "project-environments",
+      "project-members",
+      "project-grant-membership",
+      "member-memberships",
+      "member-grant-membership",
+      "user-projects",
+      "user-memberships",
+      "user-grant-membership",
       "control-layout",
       "projects",
       "project",

@@ -218,10 +218,10 @@ export function open(path: string, fetch: typeof globalThis.fetch) {
 
 /** Signs in once the form shows, which is after the renewal answers. */
 export async function signIn() {
-  input(await screen.findByLabelText("email"), "someone@wamn.dev");
-  input(screen.getByLabelText("password"), "a long password string");
+  input(await screen.findByLabelText("Email"), "someone@wamn.dev");
+  input(screen.getByLabelText("Password"), "a long password string");
   flush();
-  fireEvent.click(screen.getByText("sign in"));
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 }
 
 beforeEach(() => {
