@@ -30,12 +30,21 @@ cat /out/secret.json && rm /out/secret.json
 "#;
 
 /// A failure reported by an install Job's status.
-#[derive(Debug, thiserror::Error)]
-#[error("install Job {name} failed")]
+#[derive(Debug)]
 pub(super) struct JobError {
     pub kind: JobErrorKind,
     pub name: String,
 }
+
+impl std::fmt::Display for JobError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            JobErrorKind::JobFailed => write!(f, "install Job {} failed", self.name),
+        }
+    }
+}
+
+impl std::error::Error for JobError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum JobErrorKind {
