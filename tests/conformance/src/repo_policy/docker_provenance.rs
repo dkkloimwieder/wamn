@@ -44,14 +44,6 @@ fn stage<'a>(source: &'a str, name: &str, problems: &mut Problems) -> Option<&'a
     )
 }
 
-fn selected_packages(contents: &str) -> Vec<&str> {
-    let words: Vec<_> = contents.split_ascii_whitespace().collect();
-    words
-        .windows(2)
-        .filter_map(|pair| (pair[0] == "-p").then_some(pair[1]))
-        .collect()
-}
-
 /// One shared native target cache, and the download caches shared.
 ///
 /// The native stage uses one locked target cache across checkouts
@@ -211,22 +203,22 @@ fn native_images_share_one_build_stage(dockerfile: &str, problems: &mut Problems
         || "one build-native stage must build from the one source stage".to_owned(),
     );
     if let Some(build) = stage(dockerfile, "build-native", problems) {
-        let selected = selected_packages(build);
-        problems.require(selected == packages, || {
-            format!("build-native must compile {packages:?} once, got {selected:?}")
-        });
         let invocation = format!(
-            "cargo build --locked --release -p {} --features wamn-ctl/ops",
+            "cargo build --locked --release -p {}",
             packages.join(" -p ")
         );
+        // The ops feature reaches shared code, so the shipped wamn-ctl builds
+        // without it and only wamn-ctl-ops gets a second invocation
+        // (services/ctl/src/main.rs).
+        let ops = "cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops";
         let commands = build.replace("\\\n", " ");
         let cargo_commands: Vec<_> = commands
             .split("&&")
             .map(str::trim)
             .filter(|command| command.starts_with("cargo "))
             .collect();
-        problems.require(cargo_commands == [invocation.as_str()], || {
-            format!("build-native must use one invocation: {invocation}")
+        problems.require(cargo_commands == [invocation.as_str(), ops], || {
+            format!("build-native must run `{invocation}`, then `{ops}`")
         });
         for required in ["ARG WAMN_CHECKOUT_KEY", "test -n \"$WAMN_CHECKOUT_KEY\""] {
             problems.require(build.contains(required), || {

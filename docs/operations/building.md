@@ -287,6 +287,7 @@ Keep one Cargo process per target directory.
 
 Docker target cache is one per machine; host target dirs stay per checkout.
 The six native images use one `build-native` stage, which compiles every native package in one `cargo build`, so features unify once.
+A second invocation in the same stage builds only `wamn-ctl-ops` with the `ops` feature, because that feature reaches shared code and the shipped `wamn-ctl` builds without it.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
 [`tools/lane-start`](../../tools/lane-start) sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` and exports the key as `WAMN_CHECKOUT_KEY`.
 Pass that key as Docker's `WAMN_CHECKOUT_KEY` build argument.

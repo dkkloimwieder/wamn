@@ -62,7 +62,8 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-identity -p wamn-gates --features wamn-ctl/ops \
+ && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-identity -p wamn-gates \
+ && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
