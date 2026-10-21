@@ -53,6 +53,10 @@ pub(super) enum JobErrorKind {
 
 /// Inputs to one install Job. Arguments contain no credentials.
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent property of one Job"
+)]
 pub struct JobRequest {
     pub name: String,
     pub image: String,
@@ -82,6 +86,9 @@ pub struct JobRequest {
     pub setup: Option<JobContainer>,
     /// One native sidecar from the same runner image.
     pub sidecar: Option<JobContainer>,
+    /// The command refuses a second run, so a completed Job never reruns for
+    /// a new image (wamn-xjna8).
+    pub once: bool,
 }
 
 /// A read-only projection of an existing Secret. Values stay in the cluster.
@@ -586,20 +593,16 @@ fn owned_secret(secret: &JobSecret, owner: &Metadata) -> anyhow::Result<Secret> 
     })
 }
 
-/// Run a Job, retain its log, remove its temporary objects, and record completion.
-///
-/// # Errors
-///
-/// Returns the first execution error. Cleanup errors also refuse completion.
-pub async fn run(
-    target: &Target,
-    work_directory: &Path,
-    request: &JobRequest,
-    inputs: &Value,
-    secrets: &[JobSecret],
-) -> anyhow::Result<bool> {
+/// The completion digest of a Job. A `once` Job leaves its image out, so a new
+/// image does not rerun it.
+fn completion_digest(request: &JobRequest, inputs: &Value) -> anyhow::Result<String> {
+    let image = if request.once {
+        ""
+    } else {
+        request.image.as_str()
+    };
     let mut digest_inputs = json!({
-        "inputs": inputs, "image": request.image, "arguments": request.arguments,
+        "inputs": inputs, "image": image, "arguments": request.arguments,
         "environment": request.environment, "files": request.files,
         "binary_files": request.binary_files,
         "permissions": request.permissions, "command": request.command,
@@ -615,7 +618,22 @@ pub async fn run(
     if let Some(account) = &request.service_account {
         digest_inputs["service_account"] = account.clone().into();
     }
-    let digest = input_digest(&digest_inputs);
+    Ok(input_digest(&digest_inputs))
+}
+
+/// Run a Job, retain its log, remove its temporary objects, and record completion.
+///
+/// # Errors
+///
+/// Returns the first execution error. Cleanup errors also refuse completion.
+pub async fn run(
+    target: &Target,
+    work_directory: &Path,
+    request: &JobRequest,
+    inputs: &Value,
+    secrets: &[JobSecret],
+) -> anyhow::Result<bool> {
+    let digest = completion_digest(request, inputs)?;
     let marker = format!("wamn-install-{}", request.name);
     let completed = kubectl::get(
         &target.kubeconfig,
@@ -1016,6 +1034,29 @@ mod tests {
             json!({"name":"wamn-system-admin","key":"url"})
         );
         assert!(!job.to_string().contains("private"));
+    }
+
+    #[test]
+    fn a_once_job_keeps_its_completion_across_a_new_image() {
+        let mut first = request();
+        let mut second = request();
+        second.image = "other/runner@sha256:def".into();
+        let inputs = json!({});
+        assert_ne!(
+            completion_digest(&first, &inputs).unwrap(),
+            completion_digest(&second, &inputs).unwrap()
+        );
+        first.once = true;
+        second.once = true;
+        assert_eq!(
+            completion_digest(&first, &inputs).unwrap(),
+            completion_digest(&second, &inputs).unwrap()
+        );
+        second.arguments.push("--other".into());
+        assert_ne!(
+            completion_digest(&first, &inputs).unwrap(),
+            completion_digest(&second, &inputs).unwrap()
+        );
     }
 
     #[test]

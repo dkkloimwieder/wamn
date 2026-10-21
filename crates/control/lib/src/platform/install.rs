@@ -66,17 +66,7 @@ pub async fn apply(
                 )
                 .await?
             }
-            "4.7" => {
-                provisioning(
-                    &target,
-                    document,
-                    platform_version,
-                    repository,
-                    work_directory,
-                    &step,
-                )
-                .await?
-            }
+            "4.7" => provisioning(&target, document, repository, work_directory, &step).await?,
             "4.8" => broker(&target, document, repository, environments, &step).await?,
             "4.9" => platform_inputs(&target, document, repository).await?,
             "4.11" => {
@@ -285,6 +275,7 @@ fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest; 3]
         arguments: arguments.into_iter().map(str::to_owned).collect(),
         calls_kubernetes: false,
         emits_secret,
+        once: true,
         ..JobRequest::default()
     })
 }
@@ -314,7 +305,6 @@ fn identity_ca(secret: &SecretData) -> anyhow::Result<[CaConfigMap; 2]> {
 async fn provisioning(
     target: &Target,
     document: &ClusterDocument,
-    version: &str,
     repository: &Path,
     directory: &Path,
     step: &InstallStep,
@@ -330,7 +320,9 @@ async fn provisioning(
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
     let secrets = [administrator(&secret)?];
-    let inputs = json!({"document": document, "chart_version": version});
+    // Each Job creates its records once. Its arguments are its only input, so
+    // a new version, image or registry does not rerun it (wamn-xjna8).
+    let inputs = json!({});
     let mut changed = false;
     for request in provisioning_jobs(document, &image) {
         changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
