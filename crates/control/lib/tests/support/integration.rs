@@ -98,9 +98,7 @@ pub async fn exercise(
     )?;
     let server = start_broker(run, &broker).await?;
     event_broker::write_binding(&broker, &server, &source)?;
-    let host_group = event_host_group(run, platform, &broker, &server).await?;
     let mut platform = platform.clone();
-    platform.host_group = Some(host_group);
     platform.events = Some(environment::EventBroker {
         nats_url: server.clone(),
         nats_username: broker.provisioning.username.clone(),
@@ -112,7 +110,7 @@ pub async fn exercise(
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENVIRONMENT.into(),
-        release: DeclaredRelease::Digest(digest.clone()),
+        release: DeclaredRelease::None,
         route_host: "integration.orders.example".into(),
         policy: POLICY.into(),
         connections: BTreeMap::new(),
@@ -149,6 +147,8 @@ pub async fn exercise(
     .await?;
     let file = run.work.join("integration.k");
     std::fs::write(&file, document.to_kcl())?;
+    // Platform install provisions with release=none before it renders the
+    // session audience from the environment's allocated instance suffix.
     environment::apply(&platform, &file).await?;
 
     let (system, system_task) = connect(&platform.system_database_url).await?;
@@ -156,6 +156,11 @@ pub async fn exercise(
         "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
         &[&ORG, &PROJECT, &ENVIRONMENT],
     ).await?.get(0);
+    let issuer = super::session_issuer::deploy(run, repository, &platform).await?;
+    platform.host_group =
+        Some(event_host_group(run, &platform, &broker, &server, &issuer, &suffix).await?);
+    document.release = DeclaredRelease::Digest(digest.clone());
+    super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
     let mut project_url = url::Url::parse(admin_url)?;
     project_url.set_path(&format!(
         "/{}",
@@ -394,6 +399,8 @@ async fn event_host_group(
     platform: &Platform,
     broker: &event_broker::EventBroker,
     server: &str,
+    issuer: &str,
+    suffix: &str,
 ) -> anyhow::Result<PathBuf> {
     let secret = run.work.join("integration-events.json");
     std::fs::write(
@@ -413,6 +420,9 @@ async fn event_host_group(
         .context("host environment")?
         .extend(
             [
+                ("WAMN_SESSION_ISSUER", issuer),
+                ("WAMN_SESSION_JWKS_CA", "/integration-session/ca.crt"),
+                ("WAMN_SESSION_INSTANCE_SUFFIX", suffix),
                 ("WAMN_EVT_NATS_URL", server),
                 ("WAMN_EVT_NATS_USERNAME", &broker.runtime.username),
                 (
@@ -434,13 +444,17 @@ async fn event_host_group(
     group["volumes"]
         .as_array_mut()
         .context("host volumes")?
-        .push(json!({"name":"integration-events","secret":{"secretName":"integration-events"}}));
+        .extend([
+            json!({"name":"integration-events","secret":{"secretName":"integration-events"}}),
+            json!({"name":"integration-session","configMap":{"name":"integration-session-ca"}}),
+        ]);
     group["volumeMounts"]
         .as_array_mut()
         .context("host mounts")?
-        .push(
+        .extend([
             json!({"name":"integration-events","mountPath":"/integration-events","readOnly":true}),
-        );
+            json!({"name":"integration-session","mountPath":"/integration-session","readOnly":true}),
+        ]);
     let file = run.work.join("integration-host-group.yaml");
     std::fs::write(&file, serde_yaml::to_string(&group)?)?;
     Ok(file)

@@ -127,6 +127,8 @@ mod http_connection;
 mod integration;
 #[path = "support/platform_images.rs"]
 mod platform_images;
+#[path = "support/session_issuer.rs"]
+mod session_issuer;
 
 const NAMESPACE: &str = "wamn-system";
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
@@ -154,9 +156,8 @@ const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"comp
 const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"modes":["none"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"@OPERATION@","package-id":"edge_device","type":"http"}},"components":[null],"format-version":10,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[{"component":"device","operation":"@OPERATION@","package-id":"edge_device","type":"get"}],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"edge_device"}]}}"#;
 /// The route guest's refusal of a path the release does not serve.
 const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
-/// When a rollout's diagnostics are taken: a minute before the `dev` policy's
-/// 600 s readiness budget, which is Helm's `--timeout`, ends.
-const ROLLOUT_SNAPSHOT: Duration = Duration::from_secs(540);
+/// Capture crash logs during rollout, before Helm can remove the pods.
+const ROLLOUT_SNAPSHOT: Duration = Duration::from_secs(30);
 /// A role image no WorkloadDeployment pulls: no fixture release has a
 /// registration, so no materializer renders.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
@@ -368,6 +369,7 @@ impl Run {
                 "image",
                 "rm",
                 &format!("{}-http-fixture:debug", self.cluster),
+                &format!("{}-identity:debug", self.cluster),
             ])
             .output()
             .await;
@@ -427,7 +429,14 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
     )?;
     run.remove().await;
     // The key material and credentials go with the cluster; the evidence stays.
-    for secret in ["ca.key", "tls.key", "htpasswd", "auth.json", "kubeconfig"] {
+    for secret in [
+        "ca.key",
+        "tls.key",
+        "htpasswd",
+        "auth.json",
+        "kubeconfig",
+        "integration-session-db.json",
+    ] {
         let _ = std::fs::remove_file(run.work.join(secret));
     }
     let mut kept = std::fs::read_dir(&run.work)?
@@ -1007,36 +1016,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         connections: std::collections::BTreeMap::new(),
         floors: std::collections::BTreeMap::new(),
     };
-    // A failed rollout is uninstalled by `--rollback-on-failure`, its pods
-    // with it, so its diagnostics are taken before the readiness budget ends
-    // and kept for the report when the apply fails.
     let apply = async |document: &EnvironmentDocument, name: &str| -> anyhow::Result<()> {
-        let file = work.join(format!("{name}.k"));
-        std::fs::write(&file, document.to_kcl())?;
-        let mut applying = Box::pin(environment::apply(&platform, &file));
-        let mut snapshot = None;
-        let applied = tokio::select! {
-            applied = &mut applying => applied,
-            () = tokio::time::sleep(ROLLOUT_SNAPSHOT) => {
-                snapshot = Some(diagnostics(&work.join("kubeconfig")).await);
-                applying.await
-            }
-        };
-        match applied {
-            Ok(plan) => {
-                println!("{name}: {:?}", plan.plan);
-                Ok(())
-            }
-            Err(error) => {
-                if let Some(snapshot) = snapshot {
-                    std::fs::write(
-                        work.join(format!("rollout-{name}.json")),
-                        serde_json::to_vec_pretty(&snapshot)?,
-                    )?;
-                }
-                Err(error)
-            }
-        }
+        apply_with_diagnostics(&work, &platform, document, name).await
     };
     let name = release_name(ORG, PROJECT, "dev")?;
 
@@ -2000,6 +1981,41 @@ fn containerd_name(name: &str) -> String {
         name.to_owned()
     } else {
         format!("docker.io/library/{name}")
+    }
+}
+
+async fn apply_with_diagnostics(
+    work: &Path,
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    name: &str,
+) -> anyhow::Result<()> {
+    let file = work.join(format!("{name}.k"));
+    std::fs::write(&file, document.to_kcl())?;
+    let mut applying = Box::pin(environment::apply(platform, &file));
+    let mut crash_logs = serde_json::Map::new();
+    loop {
+        tokio::select! {
+            applied = &mut applying => {
+                let plan = applied?;
+                println!("{name}: {:?}", plan.plan);
+                return Ok(());
+            }
+            () = tokio::time::sleep(ROLLOUT_SNAPSHOT) => {
+                let mut snapshot = diagnostics(&work.join("kubeconfig")).await;
+                let logs = snapshot["logs"].as_object_mut().expect("diagnostic logs are a map");
+                crash_logs.extend(logs.iter()
+                    .filter(|(_, log)| log.get("previous").is_some())
+                    .map(|(name, log)| (name.clone(), log.clone())));
+                // Persist while the pods exist. Later snapshots after
+                // rollback retain the logs of pods that no longer exist.
+                logs.extend(crash_logs.clone());
+                std::fs::write(
+                    work.join(format!("rollout-{name}.json")),
+                    serde_json::to_vec_pretty(&snapshot)?,
+                )?;
+            }
+        }
     }
 }
 
