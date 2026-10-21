@@ -697,12 +697,11 @@ async fn serving_chart(
         )
         .await?;
     }
-    // The runner keeps its reference: the install Jobs of the first apply ran
-    // it, and containerd reaches it through the mirror.
     for image in [
         &mut images.host,
         &mut images.http,
         &mut images.materializer,
+        &mut qualification.runner,
         &mut qualification.gates,
         &mut qualification.identity,
     ] {
