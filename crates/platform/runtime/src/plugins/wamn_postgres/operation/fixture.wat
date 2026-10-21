@@ -48,7 +48,7 @@
   (import "wamn:flow-http-routing/routing@0.1.0" (instance $routing
     (export "authenticated-caller" (type $caller (sub resource)))))
   (alias export $routing "authenticated-caller" (type $caller))
-  (import "wamn:postgres/operation@0.4.0" (instance $operation
+  (import "wamn:operation/operation@0.1.0" (instance $operation
     (type $id' string)
     (export "sealed-operation-id" (type $id (eq $id')))
     (type $refusal' (variant (case "uncertain") (case "resolved") (case "conflict")

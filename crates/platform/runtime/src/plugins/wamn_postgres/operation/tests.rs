@@ -240,7 +240,7 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
                 host_interfaces: vec![
                     WitInterface::from("wamn:postgres/types@0.4.0"),
                     WitInterface::from("wamn:postgres/statements@0.4.0"),
-                    WitInterface::from("wamn:postgres/operation@0.4.0"),
+                    WitInterface::from("wamn:operation/operation@0.1.0"),
                     WitInterface::from("wamn:flow-http-routing/routing@0.1.0"),
                 ],
                 annotations: HashMap::new(),

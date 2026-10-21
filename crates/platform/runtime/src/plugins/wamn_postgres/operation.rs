@@ -10,7 +10,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource, ResourceTable};
 
-use super::bindings::wamn::postgres::operation::{self as wit, Begun, Refusal};
+use super::bindings::wamn::operation::operation::{self as wit, Begun, Refusal};
 use super::write_log::OpaqueBegun;
 use super::{
     CommitFailure, OperationTransaction, PreparedStatementMembers, PreparedStatementSet,

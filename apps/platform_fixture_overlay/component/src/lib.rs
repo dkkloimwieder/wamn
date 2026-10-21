@@ -35,7 +35,6 @@ wit_bindgen::generate!({
     world: "platform-fixture-overlay:component/fixture-overlay@0.1.0",
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
         "../../target/wamn/platform_fixture_overlay/wit",
         "wit",

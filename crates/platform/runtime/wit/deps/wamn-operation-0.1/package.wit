@@ -1,0 +1,43 @@
+package wamn:operation@0.1.0;
+
+/// Entry-owned operation boundary. Package members can import `statements`
+/// without receiving this interface.
+interface operation {
+  use wamn:postgres/types@0.4.0.{pg-error};
+  use wamn:flow-http-routing/routing@0.1.0.{authenticated-caller};
+
+  /// The existing operation id text, checked against the loaded release.
+  type sealed-operation-id = string;
+
+  variant refusal {
+    uncertain,
+    resolved,
+    conflict,
+    unknown-operation,
+    grant-denied,
+    invalid-caller,
+    not-begun,
+    already-begun,
+    postgres(pg-error),
+  }
+
+  variant begun {
+    new,
+    /// The stored result text. The entry returns it and runs no work.
+    finished(string),
+  }
+
+  /// Check the host-issued caller and its grant, mint the delivery id, and
+  /// claim the key inside a new transaction. The host stores the request
+  /// hash unchanged. Only one operation can be open per Store.
+  /// A begin while one is open returns already-begun and leaves it open.
+  /// Commit (ok or refusal) clears the open operation.
+  /// Finished leaves no operation open. Another begin is then allowed,
+  /// with its own transaction and delivery id.
+  /// Dropping the Store rolls back its open operation.
+  begin-operation: async func(caller: borrow<authenticated-caller>, operation: sealed-operation-id, idempotency-key: string, request-hash: list<u8>) -> result<begun, refusal>;
+
+  /// Store the application's result JSON as text without inspecting it, emit
+  /// the causation message, and commit. Without a new begin, this refuses.
+  commit: async func(%result: string) -> result<_, refusal>;
+}

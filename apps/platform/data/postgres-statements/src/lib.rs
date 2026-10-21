@@ -8,7 +8,6 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:postgres-statements/postgres-statements@0.3.0",
         path: [
-            "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
             "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
             "wit",
         ],

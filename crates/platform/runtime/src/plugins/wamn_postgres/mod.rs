@@ -370,8 +370,8 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         let has_client = interfaces.contains("wamn", "postgres", &["client"]);
         let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
-        if interfaces.contains("wamn", "postgres", &["operation"]) {
-            bindings::wamn::postgres::operation::add_to_linker::<_, SharedCtx>(
+        if interfaces.contains("wamn", "operation", &["operation"]) {
+            bindings::wamn::operation::operation::add_to_linker::<_, SharedCtx>(
                 linker,
                 extract_active_ctx,
             )?;
@@ -479,7 +479,7 @@ impl HostPlugin for WamnPostgres {
                 WitInterface::from("wamn:postgres/types@0.4.0"),
                 WitInterface::from("wamn:postgres/client@0.4.0"),
                 WitInterface::from("wamn:postgres/statements@0.4.0"),
-                WitInterface::from("wamn:postgres/operation@0.4.0"),
+                WitInterface::from("wamn:operation/operation@0.1.0"),
             ]),
             exports: HashSet::new(),
         }

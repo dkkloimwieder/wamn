@@ -26,8 +26,8 @@ package wamn:postgres@0.4.0;
 ///   change).
 ///
 /// STATUS: every declaration of 0.1.0, unchanged, plus `statements.run-stream`
-/// and `statements.operation-transaction`. The separate `operation` interface
-/// adds entry-owned begin and commit without changing the package version.
+/// and `statements.operation-transaction`. The separate `wamn:operation` package
+/// provides entry-owned begin and commit.
 interface types {
   /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
   /// strings to preserve exactness (plan 3.3: material quantities are
@@ -88,48 +88,6 @@ interface types {
     /// Anything else: sqlstate + message.
     query-error(tuple<string, string>),
   }
-}
-
-/// Entry-owned operation boundary. Package members can import `statements`
-/// without receiving this interface.
-interface operation {
-  use types.{pg-error};
-  use wamn:flow-http-routing/routing@0.1.0.{authenticated-caller};
-
-  /// The existing operation id text, checked against the loaded release.
-  type sealed-operation-id = string;
-
-  variant refusal {
-    uncertain,
-    resolved,
-    conflict,
-    unknown-operation,
-    grant-denied,
-    invalid-caller,
-    not-begun,
-    already-begun,
-    postgres(pg-error),
-  }
-
-  variant begun {
-    new,
-    /// The stored result text. The entry returns it and runs no work.
-    finished(string),
-  }
-
-  /// Check the host-issued caller and its grant, mint the delivery id, and
-  /// claim the key inside a new transaction. The host stores the request
-  /// hash unchanged. Only one operation can be open per Store.
-  /// A begin while one is open returns already-begun and leaves it open.
-  /// Commit (ok or refusal) clears the open operation.
-  /// Finished leaves no operation open. Another begin is then allowed,
-  /// with its own transaction and delivery id.
-  /// Dropping the Store rolls back its open operation.
-  begin-operation: async func(caller: borrow<authenticated-caller>, operation: sealed-operation-id, idempotency-key: string, request-hash: list<u8>) -> result<begun, refusal>;
-
-  /// Store the application's result JSON as text without inspecting it, emit
-  /// the causation message, and commit. Without a new begin, this refuses.
-  commit: async func(%result: string) -> result<_, refusal>;
 }
 
 interface client {

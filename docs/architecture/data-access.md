@@ -364,10 +364,12 @@ A retry that answers a stored result commits nothing, so no event publishes a se
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 
-The host also provides `wamn:postgres/operation@0.4.0` for an application entry.
+The host also provides `wamn:operation/operation@0.1.0` for the composed application entry.
 The current Receiving path does not call this interface.
 The host binds its workload to a component in the loaded release before serving calls.
-Package members can receive `statements` without receiving `operation`.
+Only the composed entry imports `wamn:operation`.
+Package members that import `wamn:postgres/statements` need only the PostgreSQL WIT package path.
+The `wamn:postgres@0.4.0` package has no dependency on `wamn:flow-http-routing`.
 
 `begin-operation` takes the opaque caller handle from `authenticate`, the sealed operation id, an idempotency key, and request hash bytes.
 The host checks the handle, release facts, and caller grant, then mints a delivery id.
