@@ -223,7 +223,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.14", title: "Publish releases",
             runs: Runner::Job("platform/platform-release-<org>--<project>--<env>"),
-            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("tenants", tenants.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("operator certificate", format!("identity/operator-{org}")), ("wiring gate", "refuses wirings until wamn-wgpm9.4".into()), ("packages and wirings", "from environment documents and package artifacts".into())],
+            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("tenants", tenants.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("operator certificate", format!("identity/operator-{org}")), ("wiring gate", "identity Job: publish-wired-release with scenario-worker serve as a native sidecar".into()), ("gate database logins", "Job-owned identity-reader, control-author and management-admitter Secrets".into()), ("skip inputs", "package artifact digests, wiring document digests and database path".into()), ("packages and wirings", "from environment documents and package artifacts".into())],
             owner_inputs: vec![registry_owner.clone()],
         },
         InstallStep {

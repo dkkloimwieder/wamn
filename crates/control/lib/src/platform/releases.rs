@@ -1,4 +1,4 @@
-//! Publish releases without wirings and return the lines the owner commits.
+//! Publish releases through cluster Jobs and return the lines the owner commits.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,6 @@ pub(super) async fn apply(
 ) -> anyhow::Result<Published> {
     let image = runner_image(directory)?;
     let mut prepared = Vec::new();
-    // Refuse every wiring before starting any publication Job.
     for (path, environment) in super::broker::documents(environments)? {
         let tenant = format!(
             "{}--{}--{}",
@@ -60,6 +59,7 @@ pub(super) async fn apply(
             ..JobRequest::default()
         };
         let mut artifacts = Vec::new();
+        let mut wirings = Vec::new();
         for package in packages::read(repository, &path)? {
             let identity = &package.manifest.package;
             let opened = open_package_source(PackageSource::Artifact {
@@ -71,13 +71,8 @@ pub(super) async fn apply(
                 root: opened.root().to_owned(),
                 manifest: wamn_schema_generator::PackageManifest::from_slice(&opened.manifest()?)?,
             };
-            if let Some(wiring) = load_wirings(&[input])?.first() {
-                anyhow::bail!(
-                    "release for {} names wiring {}::{}; wamn-wgpm9.4 must supply the in-cluster wiring gate before step 4.14",
-                    path.display(),
-                    wiring.package_id,
-                    wiring.wiring.wiring_id
-                );
+            for wiring in load_wirings(&[input])? {
+                wirings.push(job::input_digest(&wiring.document));
             }
             artifacts.push(opened.package_root().artifact_digest);
             request.arguments.extend([
@@ -95,24 +90,42 @@ pub(super) async fn apply(
             "WAMN_RELEASE_ARTIFACT_BASE".into(),
             packages::artifact_base(registry, "releases")?,
         );
-        prepared.push((path, environment, request, artifacts));
+        if !wirings.is_empty() {
+            request.arguments[0] = "publish-wired-release".into();
+            // The joined verb reads administrator URLs directly from its environment.
+            request.arguments.drain(1..5);
+            let principal = request
+                .arguments
+                .iter()
+                .position(|arg| arg == "--verified-publisher-principal")
+                .expect("publication arguments name the publisher");
+            request.arguments.drain(principal..principal + 2);
+            request
+                .arguments
+                .extend(["--project".into(), environment.project.clone()]);
+            request.environment.insert(
+                "WAMN_PACKAGE_ARTIFACT_BASE".into(),
+                registry.artifact_base.clone(),
+            );
+        }
+        prepared.push((path, environment, request, artifacts, wirings));
     }
     let mut published = Published {
         changed: false,
         releases: Vec::new(),
     };
-    for (path, environment, request, artifacts) in prepared {
+    for (path, environment, mut request, artifacts, wirings) in prepared {
         let secrets = packages::credentials(target, &environment).await?;
         let database = url::Url::parse(&secrets[1].value)
             .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
-        published.changed |= job::run(
-            target,
-            directory,
-            &request,
-            &json!({"artifacts": artifacts, "database": database.path()}),
-            &secrets,
-        )
-        .await?;
+        let mut job_target = target.clone();
+        let mut inputs = json!({"artifacts": artifacts, "database": database.path()});
+        if !wirings.is_empty() {
+            job_target.namespace = "identity".into();
+            super::wiring_job::configure(&mut request, &environment, &secrets);
+            inputs["wirings"] = json!(wirings);
+        }
+        published.changed |= job::run(&job_target, directory, &request, &inputs, &secrets).await?;
         let output = job::output(target, &request).await?;
         let digest = output.trim();
         let release: DeclaredRelease = serde_json::from_value(json!(digest))

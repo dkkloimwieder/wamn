@@ -258,8 +258,8 @@ It prepares session targets as Jobs, then installs the identity chart with value
 Jobs read the active session key, publish and activate a key when none is active, and request the public keys over TLS.
 The public Job results stay with their completion digests so a retry can reuse a published key.
 Step 4.13 pushes missing packages and applies them as Jobs.
-Step 4.14 publishes releases without wirings.
-A wiring refuses before publication and names `wamn-wgpm9.4`.
+Step 4.14 publishes each release through a Job.
+For a wired release, one pod runs the gate, authorship, and publication with an in-memory PAT.
 The verb prints release lines for the owner to commit, then resumes at 4.17 on a rerun.
 Qualification stays on the build machine in section 4.15.
 Run sections 4.18 onward by hand with the commands below.
@@ -694,8 +694,19 @@ target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url 
 ### 4.14 Releases
 
 `platform apply` runs `publish-release` as a Job for each environment without a wiring.
-Before any publication Job, it refuses a wiring and names `wamn-wgpm9.4`, which owns the cluster gate.
-Publication skips when the Job's completed input digest matches.
+For a wired release, it creates one Job pod in namespace `identity`.
+A setup container runs `provision-project-env` to prepare the identity reader, control author, and management admitter database logins.
+It uses cluster service DNS names and creates Secrets owned by that Job.
+The native sidecar runs `wamn-scenario-worker serve` on the pod's loopback address.
+The main container runs `wamn-ctl publish-wired-release`.
+It mints the management-author PAT in memory, waits for the sidecar, and posts each wiring with the PAT as a bearer header.
+It requires a completed gate outcome, calls the `author-wiring` and `publish-release` library functions, and prints one release digest.
+The PAT never enters a file or a Secret.
+The Job mounts `operator-<org>` and `identity-tls` read-only, so the operator certificate stays in the cluster.
+The runner saves all container logs before deleting the Job and its owned Secrets.
+
+Publication skips when the completed input digest matches the package artifact digests, wiring document digests, database path, and Job inputs.
+The manual commands below remain an alternative to `platform apply`.
 
 `publish-release` prints the digest of the release manifest. Publish Receiving, which has no wiring:
 
