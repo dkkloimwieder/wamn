@@ -31,7 +31,7 @@ interface operation {
   /// claim the key inside a new transaction. The host stores the request
   /// hash unchanged. Only one operation can be open per Store.
   /// A begin while one is open returns already-begun and leaves it open.
-  /// Commit (ok or refusal) clears the open operation.
+  /// Commit or rollback (ok or refusal) clears the open operation.
   /// Finished leaves no operation open. Another begin is then allowed,
   /// with its own transaction and delivery id.
   /// Dropping the Store rolls back its open operation.
@@ -40,4 +40,8 @@ interface operation {
   /// Store the application's result JSON as text without inspecting it, emit
   /// the causation message, and commit. Without a new begin, this refuses.
   commit: async func(%result: string) -> result<_, refusal>;
+
+  /// Roll back the open transaction and release its claim without a result.
+  /// The key is unclaimed again. No open operation returns not-begun.
+  rollback: func() -> result<_, refusal>;
 }

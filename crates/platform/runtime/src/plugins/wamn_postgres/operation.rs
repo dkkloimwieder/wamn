@@ -209,7 +209,27 @@ fn binding_error(kind: OperationErrorKind, scope: &str, source: anyhow::Error) -
     Refusal::Postgres(super::PgError::PermissionDenied)
 }
 
-impl wit::Host for ActiveCtx<'_> {}
+impl wit::Host for ActiveCtx<'_> {
+    async fn rollback(&mut self) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
+        let Some(store) = state(self.table).cloned() else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        let mut current = store.open.lock().await;
+        let Some(open) = current.take() else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        let rolled_back = open
+            .transaction
+            .as_ref()
+            .expect("new begin owns a transaction")
+            .rollback()
+            .await
+            .map_err(Refusal::Postgres);
+        drop(open);
+        self.component_id = Arc::clone(&store.workload);
+        Ok(rolled_back)
+    }
+}
 
 impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
     async fn begin_operation(

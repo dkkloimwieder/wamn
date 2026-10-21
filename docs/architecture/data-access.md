@@ -388,6 +388,9 @@ The host stores the hash bytes unchanged and returns stored result text unchange
 The entry returns that text and runs no work. `finished` leaves no operation open, so another begin is allowed immediately.
 
 `commit(result)` stores the application's JSON text without parsing it, emits the causation message, and commits the transaction.
+`rollback()` rolls back the open transaction, drops its claim, and stores no result.
+The key is unclaimed again, so a retry runs the operation.
+Rollback clears the open operation on success or refusal. Rollback without an open operation returns `not-begun`.
 Dropping the Store rolls back unfinished work and clears its authority.
 Only one operation can be open per Store.
 A begin while one is open returns `already-begun` and leaves that operation open.

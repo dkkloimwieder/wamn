@@ -60,7 +60,8 @@
     (export "begin-operation" (func async (param "caller" (borrow $caller))
       (param "operation" $id) (param "idempotency-key" string) (param "request-hash" (list u8))
       (result (result $begun (error $refusal)))))
-    (export "commit" (func async (param "result" string) (result (result (error $refusal)))))))
+    (export "commit" (func async (param "result" string) (result (result (error $refusal)))))
+    (export "rollback" (func (result (result (error $refusal)))))))
   (core module $memory
     (memory (export "memory") 1)
     (data (i32.const 512) "base:widget/update@1.0.0")
@@ -79,6 +80,8 @@
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $commit (canon lower (func $operation "commit")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $rollback (canon lower (func $operation "rollback")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $transaction (canon lower (func $statements "operation-transaction")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $run (canon lower (func $statements "[method]transaction.run")
@@ -88,6 +91,7 @@
     (import "memory" "memory" (memory 1))
     (import "host" "begin" (func $begin (param i32 i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "commit" (func $commit (param i32 i32 i32)))
+    (import "host" "rollback" (func $rollback (param i32)))
     (import "host" "transaction" (func $transaction (param i32)))
     (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32)))
     (import "host" "return" (func $return (param i32)))
@@ -107,6 +111,30 @@
       i32.const 72 i32.load8_u local.get $tag i32.ne if unreachable end)
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
     (func (export "run") (param $caller i32) (param $mode i32) (result i32)
+      local.get $mode i32.const 13 i32.eq if
+        i32.const 64 call $rollback i32.const 6 call $refused
+        i32.const 1 call $return i32.const 0 return
+      end
+      local.get $mode i32.const 14 i32.ge_u if
+        local.get $caller call $begin-call
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 72 i32.load8_u if unreachable end
+        call $run-statement
+        i32.const 64 call $rollback
+        i32.const 64 i32.load8_u if unreachable end
+        ;; Rollback clears the operation, including its claim and authority.
+        call $commit-call i32.const 6 call $refused
+        local.get $mode i32.const 15 i32.eq if
+          ;; The same key begins new work, not a replay.
+          local.get $caller call $begin-call
+          i32.const 64 i32.load8_u if unreachable end
+          i32.const 72 i32.load8_u if unreachable end
+          call $run-statement
+          call $commit-call
+          i32.const 64 i32.load8_u if unreachable end
+        end
+        i32.const 1 call $return i32.const 0 return
+      end
       ;; Continue the same Store after the host observes the first delivery id.
       local.get $mode i32.const 9 i32.eq if
         call $commit-call
@@ -190,6 +218,7 @@
   (core instance $main (instantiate $main
     (with "memory" (instance $memory))
     (with "host" (instance (export "begin" (func $begin)) (export "commit" (func $commit))
+      (export "rollback" (func $rollback))
       (export "transaction" (func $transaction)) (export "run" (func $run))
       (export "return" (func $return))))))
   (func (export "run") async (param "caller" (own $caller)) (param "mode" u32) (result bool)

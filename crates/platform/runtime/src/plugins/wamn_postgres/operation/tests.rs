@@ -311,6 +311,45 @@ async fn value(database: &wamn_test_postgres::Database) -> i32 {
 }
 
 #[tokio::test]
+async fn rollback_without_begin_refuses() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 13).await;
+    assert_eq!(value(&database).await, 1);
+}
+
+#[tokio::test]
+async fn rollback_removes_the_claim_and_statement_effects() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(Arc::clone(&postgres), release, 14).await;
+    assert_eq!(value(&database).await, 1);
+    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+    let count: i64 = connect(&database)
+        .await
+        .query_one("SELECT count(*) FROM app_system.write_log", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn rollback_then_begin_on_the_same_store_runs_the_unclaimed_key() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 15).await;
+    assert_eq!(value(&database).await, 2);
+    let result: String = connect(&database)
+        .await
+        .query_one("SELECT result FROM app_system.write_log", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(result, RESULT);
+}
+
+#[tokio::test]
 async fn commit_without_begin_refuses() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture().await;
