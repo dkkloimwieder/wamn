@@ -12,7 +12,7 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
         return;
     };
     embedded_components_come_from_the_locked_builder(&dockerfile, &dockerignore, problems);
-    native_images_have_package_scoped_build_stages(&dockerfile, problems);
+    native_images_share_one_build_stage(&dockerfile, problems);
     build_graph_has_one_source_stage_and_no_retired_leg(&dockerfile, problems);
     if let (Some(root_manifest), Some(apps_manifest)) = (
         read(root, "Cargo.toml", problems),
@@ -54,7 +54,7 @@ fn selected_packages(contents: &str) -> Vec<&str> {
 
 /// One shared native target cache, and the download caches shared.
 ///
-/// The six native stages share one locked target cache across checkouts
+/// The native stage uses one locked target cache across checkouts
 /// (wamn-i6h97). Edge and cases keep their own per-checkout target caches.
 fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Problems) {
     let mounts: Vec<_> = contents
@@ -64,7 +64,10 @@ fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Pr
     problems.require(mounts.len() == 3, || {
         format!("{owner} must mount exactly three caches")
     });
-    for id in ["id=wamn-root-cargo-registry", "id=wamn-root-cargo-git"] {
+    for id in [
+        "id=wamn-root-cargo-registry,target=/usr/local/cargo/registry",
+        "id=wamn-root-cargo-git,target=/usr/local/cargo/git",
+    ] {
         problems.require(
             mounts
                 .iter()
@@ -176,87 +179,105 @@ fn embedded_components_come_from_the_locked_builder(
     );
 }
 
-fn native_images_have_package_scoped_build_stages(dockerfile: &str, problems: &mut Problems) {
+fn native_images_share_one_build_stage(dockerfile: &str, problems: &mut Problems) {
     let packages = [
-        // The host image also carries the Docker credential helper, a binary
-        // of wamn-runtime (docs/plan/component-pull.md, wamn-i87m).
-        (
-            "host",
-            &["wamn-host", "wamn-runtime"][..],
-            "host",
-            &["wamn-host", "docker-credential-wamn"][..],
-        ),
-        (
-            "identity",
-            &["wamn-identity"][..],
-            "identity",
-            &["wamn-identity"][..],
-        ),
-        (
-            "scenario-worker",
-            &["wamn-scenario-worker"][..],
-            "scenario-worker",
-            &["wamn-scenario-worker"][..],
-        ),
-        (
-            "ctl",
-            &["wamn-ctl"][..],
-            "ctl",
-            &["wamn-ctl", "wamn-ctl-ops"][..],
-        ),
-        (
-            "cdc-reader",
-            &["wamn-cdc-reader"][..],
-            "cdc-reader",
-            &["wamn-cdc-reader"][..],
-        ),
+        "wamn-host",
+        "wamn-runtime",
+        "wamn-ctl",
+        "wamn-scenario-worker",
+        "wamn-cdc-reader",
+        "wamn-identity",
+        "wamn-gates",
     ];
-
+    let outputs = [
+        "wamn-host",
+        "docker-credential-wamn",
+        "wamn-ctl",
+        "wamn-ctl-ops",
+        "wamn",
+        "wamn-scenario-worker",
+        "wamn-cdc-reader",
+        "wamn-identity",
+        "wamn-gates",
+    ];
     problems.require(!dockerfile.contains("cargo chef"), || {
         "a cook stage writes its output into the cache mount its build stage \
          already reads, so it cached nothing and only took the shared lock"
             .to_owned()
     });
-
-    for (stage_name, allowed, image_stage, outputs) in packages {
-        let build_name = format!("build-{stage_name}");
-        problems.require(
-            dockerfile.contains(&format!("FROM root-source AS {build_name}")),
-            || format!("{build_name} must build from the one source stage"),
+    problems.require(
+        dockerfile.matches(" AS build-native\n").count() == 1
+            && dockerfile.contains("FROM root-source AS build-native\n"),
+        || "one build-native stage must build from the one source stage".to_owned(),
+    );
+    if let Some(build) = stage(dockerfile, "build-native", problems) {
+        let selected = selected_packages(build);
+        problems.require(selected == packages, || {
+            format!("build-native must compile {packages:?} once, got {selected:?}")
+        });
+        let invocation = format!(
+            "cargo build --locked --release -p {} --features wamn-ctl/ops",
+            packages.join(" -p ")
         );
-        if let Some(build) = stage(dockerfile, &build_name, problems) {
-            let selected = selected_packages(build);
-            problems.require(
-                allowed.iter().all(|package| selected.contains(package))
-                    && selected.iter().all(|selected| allowed.contains(selected)),
-                || format!("{build_name} may compile only {allowed:?}, got {selected:?}"),
-            );
-            stage_caches(build, &build_name, stage_name, problems);
+        let commands = build.replace("\\\n", " ");
+        let cargo_commands: Vec<_> = commands
+            .split("&&")
+            .map(str::trim)
+            .filter(|command| command.starts_with("cargo "))
+            .collect();
+        problems.require(cargo_commands == [invocation.as_str()], || {
+            format!("build-native must use one invocation: {invocation}")
+        });
+        for required in ["ARG WAMN_CHECKOUT_KEY", "test -n \"$WAMN_CHECKOUT_KEY\""] {
+            problems.require(build.contains(required), || {
+                format!("build-native lost `{required}`")
+            });
         }
+        stage_caches(build, "build-native", "native", problems);
+        for output in outputs {
+            problems.require(
+                build.contains(&format!(
+                    "install -D -m 0755 target/release/{output} /native-output/{output}"
+                )),
+                || format!("build-native must install {output} into /native-output"),
+            );
+        }
+    }
 
+    for (image_stage, outputs) in [
+        ("host", &["wamn-host", "docker-credential-wamn"][..]),
+        ("identity", &["wamn-identity"][..]),
+        ("scenario-worker", &["wamn-scenario-worker"][..]),
+        (
+            "ctl",
+            &["wamn-ctl", "wamn-ctl-ops", "wamn-scenario-worker"][..],
+        ),
+        ("cdc-reader", &["wamn-cdc-reader"][..]),
+        (
+            "gates",
+            &["wamn-gates", "wamn-ctl", "wamn-ctl-ops", "wamn-cdc-reader"][..],
+        ),
+    ] {
+        problems.require(
+            !dockerfile.contains(&format!(" AS build-{image_stage}\n")),
+            || format!("retired build-{image_stage} stage must use build-native"),
+        );
         let Some(image) = stage(dockerfile, image_stage, problems) else {
             continue;
         };
-        if image_stage == "ctl" {
-            problems.require(
-                image.contains("COPY --from=build-scenario-worker /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker"),
-                || "ctl must carry the scenario worker from its own build stage".to_owned(),
-            );
-        }
         let native_copies: Vec<_> = image
             .lines()
             .filter(|line| line.contains("/native-output/"))
             .collect();
-        let extra_copies = usize::from(image_stage == "ctl");
-        problems.require(native_copies.len() == outputs.len() + extra_copies, || {
+        problems.require(native_copies.len() == outputs.len(), || {
             format!("{image_stage} native output list drifted: {native_copies:?}")
         });
         for output in outputs {
             problems.require(
                 image.contains(&format!(
-                    "COPY --from={build_name} /native-output/{output} /usr/local/bin/{output}"
+                    "COPY --from=build-native /native-output/{output} /usr/local/bin/{output}"
                 )),
-                || format!("{image_stage} must copy {output} only from {build_name}"),
+                || format!("{image_stage} must copy {output} only from build-native"),
             );
         }
     }
@@ -284,15 +305,7 @@ fn build_graph_has_one_source_stage_and_no_retired_leg(dockerfile: &str, problem
         || "the component build lost its own target cache".to_owned(),
     );
 
-    if let Some(gates) = stage(dockerfile, "build-gates", problems) {
-        let selected = selected_packages(gates);
-        problems.require(selected == ["wamn-gates"], || {
-            format!("build-gates may compile only wamn-gates, got {selected:?}")
-        });
-        stage_caches(gates, "build-gates", "gates", problems);
-    }
-
-    // Six stages share the native target; edge and cases stay per checkout.
+    // Native builds share one stage; edge and cases stay per checkout.
     // No stage keeps the retired shared root target cache.
     problems.require(!dockerfile.contains("id=wamn-root-target,"), || {
         "a stage still mounts the shared root target cache".to_owned()

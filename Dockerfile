@@ -11,8 +11,8 @@
 # `wamn-ctl build-platform` builds host, runner, gates, identity and roles, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches with locks
-# that prevent concurrent writes, and one locked target cache per checkout and
-# build stage. Each retained native image builds only its top-level package. The
+# that prevent concurrent writes, and one shared locked native target cache.
+# One build-native stage compiles all native packages in one invocation. The
 # host artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
 # IDENTICAL host stage so Jobs exercise the same host lib code they verify.
@@ -28,7 +28,7 @@ WORKDIR /build
 # build into the SAME cache mount its build stage reads, not into a layer, so
 # it cached nothing that survived the stage; it only took the one lock every
 # other stage waited on, and deleted the workspace rlibs a neighbour had just
-# written. One target cache per build stage replaces all of it (wamn-szr0).
+# written. The native builds now share one stage and target cache.
 FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
@@ -56,63 +56,21 @@ COPY deploy ./deploy
 # rust-toolchain.toml is deliberately absent: the base image already ships the
 # pinned Rust line, and copying it would force a rustup download in the image.
 
-FROM root-source AS build-host
+FROM root-source AS build-native
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-host -p wamn-runtime --bin wamn-host --bin docker-credential-wamn \
+ && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-identity -p wamn-gates --features wamn-ctl/ops \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
- && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn
-
-FROM root-source AS build-scenario-worker
-ARG WAMN_CHECKOUT_KEY
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
-    test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-scenario-worker \
- && install -D -m 0755 target/release/wamn-scenario-worker /native-output/wamn-scenario-worker
-
-FROM root-source AS build-ctl
-ARG WAMN_CHECKOUT_KEY
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
-    test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-ctl \
- && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
+ && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
- && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops
-
-FROM root-source AS build-cdc-reader
-ARG WAMN_CHECKOUT_KEY
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
-    test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-cdc-reader \
- && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
-
-FROM root-source AS build-identity
-ARG WAMN_CHECKOUT_KEY
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
-    test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-identity \
- && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
-
-# The test image is outside the retained MVP image set. It remains a
-# separate, package-scoped build with the shared native target cache.
-FROM root-source AS build-gates
-ARG WAMN_CHECKOUT_KEY
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
-    test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-gates \
+ && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops \
+ && install -D -m 0755 target/release/wamn /native-output/wamn \
+ && install -D -m 0755 target/release/wamn-scenario-worker /native-output/wamn-scenario-worker \
+ && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader \
+ && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity \
  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
 
 # ---- edge box binary: aarch64 release, cross-compiled ----------------------
@@ -178,20 +136,20 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
 # ---- combined HTTP and durable-queue host image ----------------------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-host /native-output/wamn-host /usr/local/bin/wamn-host
+COPY --from=build-native /native-output/wamn-host /usr/local/bin/wamn-host
 # The Docker credential helper wash-runtime runs for a registry that the
 # mounted config.json names under credHelpers (docs/plan/component-pull.md).
-COPY --from=build-host /native-output/docker-credential-wamn /usr/local/bin/docker-credential-wamn
+COPY --from=build-native /native-output/docker-credential-wamn /usr/local/bin/docker-credential-wamn
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-ctl /native-output/wamn-ctl /usr/local/bin/wamn-ctl
-COPY --from=build-ctl /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
+COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
+COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 # The ctl image carries the wiring gate program beside the verbs (wamn-zua8.3).
-COPY --from=build-scenario-worker /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
+COPY --from=build-native /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 # `wamn-ctl env` applies manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.
 ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7 https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl /usr/local/bin/kubectl
@@ -201,35 +159,35 @@ ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 # ---- scenario-worker image: authoring management service -------------------
 FROM debian:trixie-slim AS scenario-worker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-scenario-worker /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
+COPY --from=build-native /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
 
 # ---- cdc-reader image: the CDC event reader service (SR9) -------------------
 FROM debian:trixie-slim AS cdc-reader
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-cdc-reader /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+COPY --from=build-native /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-cdc-reader"]
 
 # ---- identity image: separate signing authority and public JWKS ------------
 FROM debian:trixie-slim AS identity
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-identity /native-output/wamn-identity /usr/local/bin/wamn-identity
+COPY --from=build-native /native-output/wamn-identity /usr/local/bin/wamn-identity
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-identity"]
 
 # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
 FROM host AS gates
-COPY --from=build-gates /native-output/wamn-gates /usr/local/bin/wamn-gates
+COPY --from=build-native /native-output/wamn-gates /usr/local/bin/wamn-gates
 # Control-plane integration tests drive the deployable ctl artifact through its
 # executable boundary; the test packages do not link the service crate.
-COPY --from=build-ctl /native-output/wamn-ctl /usr/local/bin/wamn-ctl
+COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 # Operations-only impact analysis crosses its own executable boundary.
-COPY --from=build-ctl /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
+COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 # Reader-inclusive gates exercise the native CDC service through its executable
 # boundary; the gates package does not link the service crate.
-COPY --from=build-cdc-reader /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+COPY --from=build-native /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 # Test fixtures baked in so the retained gates run with no volume plumbing.
 COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
