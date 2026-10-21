@@ -461,8 +461,12 @@ impl ConnectionHttp {
             .vault
             .lookup(&self.project, handle)
             .ok_or(ConnectionError::CredentialUnavailable)?;
-        let credential_headers =
-            credential_headers(&secret, request.body.as_deref().unwrap_or_default())?;
+        let credential_headers = credential_headers(
+            &secret,
+            &request.method,
+            &decision.logical_url,
+            request.body.as_deref().unwrap_or_default(),
+        )?;
         let scope = ClientScope {
             connection: ConnectionScope {
                 tenant: self.tenant.clone(),
@@ -756,7 +760,19 @@ struct HmacCredential {
 
 fn credential_headers(
     secret: &str,
+    method: &str,
+    url: &str,
     body: &[u8],
+) -> Result<HashMap<String, String>, ConnectionError> {
+    credential_headers_with(secret, method, url, body, oauth1_request_values)
+}
+
+fn credential_headers_with(
+    secret: &str,
+    method: &str,
+    url: &str,
+    body: &[u8],
+    request_values: fn() -> Result<(String, u64), ConnectionError>,
 ) -> Result<HashMap<String, String>, ConnectionError> {
     let value: serde_json::Value =
         serde_json::from_str(secret).map_err(|_| ConnectionError::CredentialUnavailable)?;
@@ -765,6 +781,24 @@ fn credential_headers(
         .ok_or(ConnectionError::CredentialUnavailable)?;
     if object.len() != 1 {
         return Err(ConnectionError::CredentialUnavailable);
+    }
+    if let Some(oauth1) = object.get("oauth1") {
+        let credential: Oauth1Credential = serde_json::from_value(oauth1.clone())
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        if [
+            &credential.consumer_key,
+            &credential.consumer_secret,
+            &credential.token,
+            &credential.token_secret,
+        ]
+        .iter()
+        .any(|value| value.is_empty())
+        {
+            return Err(ConnectionError::CredentialUnavailable);
+        }
+        let (nonce, timestamp) = request_values()?;
+        let header = oauth1_header(&credential, method, url, &nonce, timestamp)?;
+        return Ok([("authorization".to_string(), header)].into());
     }
     if let Some(hmac) = object.get("hmac") {
         use hmac::{Hmac, KeyInit as _, Mac as _};
@@ -804,6 +838,122 @@ fn credential_headers(
             Ok((name.clone(), value.to_string()))
         })
         .collect()
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct Oauth1Credential {
+    consumer_key: String,
+    consumer_secret: String,
+    token: String,
+    token_secret: String,
+    realm: Option<String>,
+}
+
+fn oauth1_request_values() -> Result<(String, u64), ConnectionError> {
+    use ring::rand::SecureRandom as _;
+
+    // A fresh 128-bit nonce for every dispatch, including retries.
+    let mut nonce = [0u8; 16];
+    ring::rand::SystemRandom::new()
+        .fill(&mut nonce)
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| ConnectionError::CredentialUnavailable)?
+        .as_secs();
+    Ok((hex::encode(nonce), timestamp))
+}
+
+fn oauth1_encode(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 15)]));
+        }
+    }
+    encoded
+}
+
+fn oauth1_base_string(method: &str, url: &url::Url, params: &[(&str, &str)]) -> String {
+    let mut params: Vec<_> = url
+        .query_pairs()
+        .map(|(name, value)| (oauth1_encode(&name), oauth1_encode(&value)))
+        .chain(
+            params
+                .iter()
+                .map(|(name, value)| (oauth1_encode(name), oauth1_encode(value))),
+        )
+        .filter(|(name, _)| name != "oauth_signature")
+        .collect();
+    params.sort_unstable();
+    let normalized = params
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    // Url normalizes the scheme, host, default port and empty HTTP path.
+    let base_uri = &url[url::Position::BeforeScheme..url::Position::AfterPath];
+    format!(
+        "{}&{}&{}",
+        oauth1_encode(&method.to_ascii_uppercase()),
+        oauth1_encode(base_uri),
+        oauth1_encode(&normalized)
+    )
+}
+
+fn oauth1_signature(credential: &Oauth1Credential, base: &str) -> String {
+    use base64::Engine as _;
+
+    let key = format!(
+        "{}&{}",
+        oauth1_encode(&credential.consumer_secret),
+        oauth1_encode(&credential.token_secret)
+    );
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes());
+    base64::engine::general_purpose::STANDARD.encode(ring::hmac::sign(&key, base.as_bytes()))
+}
+
+fn oauth1_header(
+    credential: &Oauth1Credential,
+    method: &str,
+    url: &str,
+    nonce: &str,
+    timestamp: u64,
+) -> Result<String, ConnectionError> {
+    let url = url::Url::parse(url).map_err(|_| ConnectionError::Incompatible)?;
+    let timestamp = timestamp.to_string();
+    let mut params = vec![
+        ("oauth_consumer_key", credential.consumer_key.as_str()),
+        ("oauth_token", credential.token.as_str()),
+        ("oauth_signature_method", "HMAC-SHA256"),
+        ("oauth_timestamp", timestamp.as_str()),
+        ("oauth_nonce", nonce),
+        ("oauth_version", "1.0"),
+    ];
+    let base = oauth1_base_string(method, &url, &params);
+    let signature = oauth1_signature(credential, &base);
+    params.push(("oauth_signature", &signature));
+    let mut fields = Vec::new();
+    if let Some(realm) = &credential.realm {
+        // NetSuite expects the realm verbatim, with HTTP quoted-string escaping.
+        let realm = realm.replace('\\', "\\\\").replace('"', "\\\"");
+        fields.push(format!("realm=\"{realm}\""));
+    }
+    fields.extend(
+        params
+            .iter()
+            .map(|(name, value)| format!("{}=\"{}\"", oauth1_encode(name), oauth1_encode(value))),
+    );
+    let header = format!("OAuth {}", fields.join(", "));
+    reqwest::header::HeaderValue::from_str(&header)
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    Ok(header)
 }
 
 fn reserved_header(name: &reqwest::header::HeaderName) -> bool {
@@ -1577,17 +1727,24 @@ mod tests {
         // RFC 4231 test case 2: the expected value is independent of this signer.
         let secret = r#"{"hmac":{"algorithm":"sha256","secret":"Jefe","header":"x-signature"}}"#;
         let body = b"what do ya want for nothing?";
-        let credentials = credential_headers(secret, body).expect("HMAC credential");
+        let credentials = credential_headers(secret, "POST", "https://example.com/notify", body)
+            .expect("HMAC credential");
         assert_eq!(
             credentials["x-signature"],
             "sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
         );
         assert_ne!(
             credentials,
-            credential_headers(secret, b"what do ya want for nothing?\n").unwrap()
+            credential_headers(
+                secret,
+                "POST",
+                "https://example.com/notify",
+                b"what do ya want for nothing?\n"
+            )
+            .unwrap()
         );
         assert_eq!(
-            credential_headers(secret, b"").unwrap()["x-signature"],
+            credential_headers(secret, "POST", "https://example.com/notify", b"").unwrap()["x-signature"],
             "sha256=923598ca6d64af2a5dba79dcd021a8a0fe5c5f557519adaaf0ad532d4506dd30"
         );
         let request = Request {
@@ -1601,6 +1758,193 @@ mod tests {
             "the guest supplied no credential"
         );
         assert_eq!(request.body.as_deref(), Some(body.as_slice()));
+    }
+
+    const OAUTH1_SECRET: &str = r#"{"oauth1":{"consumer-key":"consumer","consumer-secret":"consumer/secret&","token":"token","token-secret":"token secret+","realm":"123456"}}"#;
+    const OAUTH1_URL: &str =
+        "https://123456.suitetalk.api.netsuite.com/services/rest/record/v1/customer?limit=5";
+
+    fn independent_oauth1_signature(key: &str, base: &str) -> String {
+        use base64::Engine as _;
+        use hmac::{Hmac, KeyInit as _, Mac as _};
+
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key.as_bytes()).unwrap();
+        mac.update(base.as_bytes());
+        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+    }
+
+    fn oauth1_header_param(header: &str, name: &str) -> String {
+        let prefix = format!("{name}=\"");
+        let value = header
+            .strip_prefix("OAuth ")
+            .unwrap()
+            .split(", ")
+            .find_map(|field| field.strip_prefix(&prefix))
+            .unwrap()
+            .strip_suffix('"')
+            .unwrap();
+        url::form_urlencoded::parse(format!("value={value}").as_bytes())
+            .next()
+            .unwrap()
+            .1
+            .into_owned()
+    }
+
+    #[test]
+    fn oauth1_rfc_5849_base_string_and_sha256_signature() {
+        let url = url::Url::parse("http://EXAMPLE.COM:80/request?b5=%3D%253D&a3=a&c%40=&a2=r%20b")
+            .unwrap();
+        // RFC 5849 section 3.4.1.1 includes these decoded form fields and
+        // omits oauth_version. Exercise its exact normalization vector here;
+        // the production signer excludes the body and includes oauth_version.
+        let params = [
+            ("c2", ""),
+            ("a3", "2 q"),
+            ("oauth_consumer_key", "9djdj82h48djs9d2"),
+            ("oauth_token", "kkk9d7dh3k39sjv7"),
+            ("oauth_signature_method", "HMAC-SHA256"),
+            ("oauth_timestamp", "137131201"),
+            ("oauth_nonce", "7d8f3e4a"),
+        ];
+        let expected = concat!(
+            "POST&http%3A%2F%2Fexample.com%2Frequest&a2%3Dr%2520b%26a3%3D2%2520q",
+            "%26a3%3Da%26b5%3D%253D%25253D%26c%2540%3D%26c2%3D%26oauth_consumer_",
+            "key%3D9djdj82h48djs9d2%26oauth_nonce%3D7d8f3e4a%26oauth_signature_m",
+            "ethod%3DHMAC-SHA256%26oauth_timestamp%3D137131201%26oauth_token%3Dkkk",
+            "9d7dh3k39sjv7"
+        );
+        let base = oauth1_base_string("POST", &url, &params);
+        assert_eq!(base.as_bytes(), expected.as_bytes());
+        let credential = Oauth1Credential {
+            consumer_key: "9djdj82h48djs9d2".into(),
+            consumer_secret: "j49sk3j29djd".into(),
+            token: "kkk9d7dh3k39sjv7".into(),
+            token_secret: "dh893hdasih9".into(),
+            realm: None,
+        };
+        assert_eq!(
+            oauth1_signature(&credential, &base),
+            independent_oauth1_signature("j49sk3j29djd&dh893hdasih9", expected)
+        );
+    }
+
+    #[test]
+    fn oauth1_netsuite_header_signs_query_and_excludes_body() {
+        let sign = |body: &[u8]| {
+            credential_headers_with(OAUTH1_SECRET, "GET", OAUTH1_URL, body, || {
+                Ok(("fixed-nonce".into(), 1_700_000_000))
+            })
+            .unwrap()
+        };
+        let credentials = sign(b"c2&a3=2+q");
+        assert_eq!(credentials, sign(b"different body"));
+        let header = &credentials["authorization"];
+        assert!(header.starts_with("OAuth realm=\"123456\", oauth_consumer_key=\"consumer\", "));
+        assert!(header.contains("oauth_signature_method=\"HMAC-SHA256\""));
+        assert_eq!(oauth1_header_param(header, "oauth_version"), "1.0");
+        let expected = concat!(
+            "GET&https%3A%2F%2F123456.suitetalk.api.netsuite.com%2Fservices%2Frest%2Frecord%2Fv1%2Fcustomer&",
+            "limit%3D5%26oauth_consumer_key%3Dconsumer%26oauth_nonce%3Dfixed-nonce",
+            "%26oauth_signature_method%3DHMAC-SHA256%26oauth_timestamp%3D1700000000",
+            "%26oauth_token%3Dtoken%26oauth_version%3D1.0"
+        );
+        assert_eq!(
+            oauth1_header_param(header, "oauth_signature"),
+            independent_oauth1_signature("consumer%2Fsecret%26&token%20secret%2B", expected)
+        );
+    }
+
+    #[test]
+    fn oauth1_repeated_requests_get_fresh_nonces() {
+        let first = credential_headers(OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
+        let second = credential_headers(OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
+        assert_ne!(
+            oauth1_header_param(&first["authorization"], "oauth_nonce"),
+            oauth1_header_param(&second["authorization"], "oauth_nonce")
+        );
+    }
+
+    #[test]
+    fn oauth1_overrides_guest_authorization_without_changing_guest_request() {
+        let request = effect_request(vec![
+            Header {
+                name: "Authorization".into(),
+                value: b"guest-token".to_vec(),
+            },
+            Header {
+                name: "authorization".into(),
+                value: b"second-guest-token".to_vec(),
+            },
+        ]);
+        let credentials = credential_headers(OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
+        let signed = credentials["authorization"].clone();
+        let headers = outbound_headers(&request, credentials).unwrap();
+        assert_eq!(headers["authorization"], signed);
+        assert_eq!(headers.get_all("authorization").iter().count(), 1);
+        assert_eq!(request.headers[0].value, b"guest-token");
+        assert_eq!(request.headers[1].value, b"second-guest-token");
+        assert!(!signed.contains("consumer/secret&"));
+        assert!(!signed.contains("token secret+"));
+    }
+
+    #[test]
+    fn oauth1_realm_is_optional_and_quoted_without_percent_encoding() {
+        let mut secret: serde_json::Value = serde_json::from_str(OAUTH1_SECRET).unwrap();
+        secret["oauth1"].as_object_mut().unwrap().remove("realm");
+        let without = credential_headers_with(&secret.to_string(), "GET", OAUTH1_URL, b"", || {
+            Ok(("fixed-nonce".into(), 1_700_000_000))
+        })
+        .unwrap();
+        assert!(without["authorization"].starts_with("OAuth oauth_consumer_key="));
+        secret["oauth1"]["realm"] = serde_json::json!("account /\"\\");
+        let with = credential_headers_with(&secret.to_string(), "GET", OAUTH1_URL, b"", || {
+            Ok(("fixed-nonce".into(), 1_700_000_000))
+        })
+        .unwrap();
+        assert!(with["authorization"].starts_with("OAuth realm=\"account /\\\"\\\\\", "));
+        assert_eq!(
+            oauth1_header_param(&with["authorization"], "oauth_signature"),
+            oauth1_header_param(&without["authorization"], "oauth_signature")
+        );
+    }
+
+    #[test]
+    fn oauth1_malformed_and_multiple_credential_arms_are_refused() {
+        let valid: serde_json::Value = serde_json::from_str(OAUTH1_SECRET).unwrap();
+        let refuses = |secret: serde_json::Value| {
+            assert!(matches!(
+                credential_headers(&secret.to_string(), "GET", OAUTH1_URL, b""),
+                Err(ConnectionError::CredentialUnavailable)
+            ));
+        };
+        for field in ["consumer-key", "consumer-secret", "token", "token-secret"] {
+            let mut missing = valid.clone();
+            missing["oauth1"].as_object_mut().unwrap().remove(field);
+            refuses(missing);
+            for value in [
+                serde_json::json!(""),
+                serde_json::json!(123),
+                serde_json::Value::Null,
+            ] {
+                let mut malformed = valid.clone();
+                malformed["oauth1"][field] = value;
+                refuses(malformed);
+            }
+        }
+        for arm in ["headers", "hmac"] {
+            let mut two = valid.clone();
+            two[arm] = serde_json::json!({});
+            refuses(two);
+        }
+        refuses(serde_json::json!({"oauth1": null}));
+        let mut extra = valid.clone();
+        extra["oauth1"]["algorithm"] = serde_json::json!("HMAC-SHA1");
+        refuses(extra);
+        for realm in [serde_json::json!(123), serde_json::json!("bad\r\nrealm")] {
+            let mut malformed = valid.clone();
+            malformed["oauth1"]["realm"] = realm;
+            refuses(malformed);
+        }
     }
 
     #[test]
@@ -1631,7 +1975,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    credential_headers(secret, b"body"),
+                    credential_headers(secret, "POST", "https://example.com/notify", b"body"),
                     Err(ConnectionError::CredentialUnavailable)
                 ),
                 "accepted malformed credential: {secret}"
@@ -1646,14 +1990,22 @@ mod tests {
             name: "Authorization".into(),
             value: b"guest-token".to_vec(),
         }]);
-        let headers =
-            outbound_headers(&request, credential_headers(secret, b"body").unwrap()).unwrap();
+        let headers = outbound_headers(
+            &request,
+            credential_headers(secret, "POST", "https://example.com/notify", b"body").unwrap(),
+        )
+        .unwrap();
         assert_eq!(headers["authorization"], "Bearer host-token");
         assert_eq!(headers.get_all("authorization").iter().count(), 1);
         assert!(
-            credential_headers(r#"{"headers":{}}"#, b"")
-                .unwrap()
-                .is_empty()
+            credential_headers(
+                r#"{"headers":{}}"#,
+                "POST",
+                "https://example.com/notify",
+                b""
+            )
+            .unwrap()
+            .is_empty()
         );
     }
 

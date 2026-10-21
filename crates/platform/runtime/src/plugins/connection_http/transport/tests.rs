@@ -377,6 +377,8 @@ async fn the_host_signature_reaches_the_peer_without_changing_the_guest_request(
     };
     let credentials = credential_headers(
         r#"{"hmac":{"algorithm":"sha256","secret":"Jefe","header":"x-signature"}}"#,
+        &request.method,
+        &server.decision().logical_url,
         request.body.as_deref().unwrap(),
     )
     .unwrap();
