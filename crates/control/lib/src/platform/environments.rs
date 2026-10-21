@@ -378,7 +378,7 @@ fn permissions() -> Vec<Access> {
             namespace: "platform".into(),
             rules: vec![PolicyRule {
                 api_groups: vec!["postgresql.cnpg.io".into()],
-                resources: vec!["clusters".into(), "databases".into()],
+                resources: vec!["clusters".into(), "databases".into(), "publications".into()],
                 verbs: ["get", "list", "watch", "create", "patch"]
                     .map(str::to_owned)
                     .into(),
