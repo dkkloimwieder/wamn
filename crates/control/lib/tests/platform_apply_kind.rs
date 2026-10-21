@@ -439,8 +439,8 @@ cluster.Cluster {{
         "a PAT reached the install progress or Job logs"
     );
     ensure!(
-        !logs.contains("postgresql://") && !logs.contains("postgres://"),
-        "a database URL reached the install progress or Job logs"
+        !database_userinfo(&logs),
+        "a database URL with credentials reached the install progress or Job logs"
     );
     for (_, secret) in &secrets {
         for (key, encoded) in secret["data"].as_object().context("Secret has no data")? {
@@ -533,6 +533,17 @@ fn private_values(value: &Value, values: &mut Vec<String>) {
         Value::Array(array) => array.iter().for_each(|value| private_values(value, values)),
         _ => {}
     }
+}
+
+// The gate sidecar logs its sanitized endpoint, so only a URL with userinfo is a leak.
+fn database_userinfo(logs: &str) -> bool {
+    ["postgresql://", "postgres://"].iter().any(|scheme| {
+        logs.split(scheme).skip(1).any(|rest| {
+            rest.split(|c: char| c == '/' || c.is_whitespace())
+                .next()
+                .is_some_and(|authority| authority.contains('@'))
+        })
+    })
 }
 
 fn private_url_password(value: &str, values: &mut Vec<String>) {

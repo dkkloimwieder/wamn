@@ -107,6 +107,10 @@ pub(super) async fn apply(
                 "WAMN_PACKAGE_ARTIFACT_BASE".into(),
                 registry.artifact_base.clone(),
             );
+            // Reading a package wiring compiles its wamn.k.
+            request
+                .environment
+                .insert("WAMN_KCL".into(), "/usr/local/bin/kcl".into());
         }
         prepared.push((path, environment, request, artifacts, wirings));
     }
