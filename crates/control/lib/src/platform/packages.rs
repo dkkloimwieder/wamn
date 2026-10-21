@@ -87,13 +87,16 @@ pub(super) fn registry_inputs(
             std::fs::read_to_string(path).context("read registry CA")?,
         );
     }
-    let paths = paths.join(":");
-    request
-        .environment
-        .insert("WAMN_OCI_CA_PATHS".into(), paths.clone());
-    request
-        .environment
-        .insert("WASH_OCI_CA_PATHS".into(), paths.replace(':', ","));
+    // An empty CA list sets no variable, because an empty value names one empty path.
+    if !paths.is_empty() {
+        let paths = paths.join(":");
+        request
+            .environment
+            .insert("WAMN_OCI_CA_PATHS".into(), paths.clone());
+        request
+            .environment
+            .insert("WASH_OCI_CA_PATHS".into(), paths.replace(':', ","));
+    }
     Ok(())
 }
 
@@ -187,6 +190,8 @@ pub(super) async fn apply(
                     tag,
                     "--artifact-base".into(),
                     registry.artifact_base.clone(),
+                    "--registry-auth-file".into(),
+                    "/inputs/registry.json".into(),
                     "--tenant".into(),
                     tenant.clone(),
                 ],
@@ -236,6 +241,8 @@ pub(super) async fn apply(
                     "reconcile-package-data-access".into(),
                     "--artifact-base".into(),
                     registry.artifact_base.clone(),
+                    "--registry-auth-file".into(),
+                    "/inputs/registry.json".into(),
                     "--tenant".into(),
                     tenant,
                 ],
