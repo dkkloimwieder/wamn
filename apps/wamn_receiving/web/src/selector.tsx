@@ -1,8 +1,10 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Button, Combobox } from "@wfe/components";
 import type { CustomFieldProps } from "@wfe/generator";
-import type { OperationRoute, Transport } from "@wamn/web-runtime";
+import type { Transport } from "@wamn/web-runtime";
+import type { ReferencePresentation } from "@wamn/receiving-client/components/index.js";
 import { invoke, rowsOf, type RecordValue, type Rows } from "./data";
+import { referenceLabels, referenceRoute } from "./references";
 
 type Choice = { value: string; label: string };
 
@@ -11,11 +13,8 @@ export function Selector(
   props: Omit<CustomFieldProps<{ value: string | undefined }, "value">, "onValueChange"> & {
     onValueChange: (value: string) => void;
     transport: Transport;
-    route: OperationRoute;
-    keyField: string;
-    displayField: string;
+    reference: ReferencePresentation;
     label: string;
-    searchField?: string;
     input?: RecordValue;
     unavailable?: boolean;
   },
@@ -25,6 +24,9 @@ export function Selector(
   const [cursor, setCursor] = createSignal<string>();
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
+  const [held, setHeld] = createSignal<Choice | null>(null);
+  const label = referenceLabels(props.transport);
+  let heldGeneration = 0;
   let generation = 0;
   let active = true;
   onCleanup(() => {
@@ -40,15 +42,19 @@ export function Selector(
       setCursor(undefined);
     }
     try {
-      const result = await invoke<Rows>(props.transport, props.route, {
+      const reference = props.reference;
+      const result = await invoke<Rows>(props.transport, referenceRoute(reference.operation), {
         ...input,
-        ...(props.searchField && search ? { filter: { [props.searchField]: [search] } } : {}),
-        ...(next && cursor() ? { cursor: cursor()! } : {}),
+        ...(reference.searchField && search ? { filter: { [reference.searchField]: [search] } } : {}),
+        ...(next && cursor() && reference.cursorInput ? { [reference.cursorInput]: cursor()! } : {}),
       });
       if (!active || current !== generation) return;
       const options = rowsOf(result)
-        .filter((row) => row[props.keyField] !== null)
-        .map((row) => ({ value: String(row[props.keyField]), label: String(row[props.displayField]) }));
+        .filter((row) => row[reference.keyField] != null)
+        .map((row) => ({
+          value: String(row[reference.keyField]),
+          label: String(row[reference.displayField] ?? "Unavailable"),
+        }));
       setChoices(next ? [...choices(), ...options] : options);
       setCursor(result.next_cursor ?? undefined);
     } catch (error) {
@@ -58,7 +64,11 @@ export function Selector(
     }
   };
   createEffect(
-    () => ({ input: props.input ?? {}, unavailable: props.unavailable, search: props.searchField ? search() : "" }),
+    () => ({
+      input: props.input ?? {},
+      unavailable: props.unavailable,
+      search: props.reference.searchField ? search() : "",
+    }),
     ({ input, unavailable, search }) => {
       if (unavailable) {
         generation += 1;
@@ -68,9 +78,21 @@ export function Selector(
       } else void load(input, search);
     },
   );
+  createEffect(
+    () => ({ value: props.value, input: props.input ?? {}, unavailable: props.unavailable }),
+    ({ value, input, unavailable }) => {
+      const current = ++heldGeneration;
+      setHeld(null);
+      if (!value || unavailable) return;
+      void label(props.reference, value, input)
+        .catch(() => "Unavailable")
+        .then((text) => {
+          if (active && current === heldGeneration) setHeld({ value, label: text });
+        });
+    },
+  );
   const selected = () =>
-    choices().find((choice) => choice.value === props.value) ??
-    (props.value ? { value: props.value, label: props.value } : null);
+    choices().find((choice) => choice.value === props.value) ?? (held()?.value === props.value ? held() : null);
   return (
     <Combobox<Choice>
       options={choices()}

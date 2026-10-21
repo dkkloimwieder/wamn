@@ -106,6 +106,7 @@ fn tables_and_details_keep_paths_authored_labels_and_matching_formats() {
     let response = &mut get.route.as_mut().unwrap().response.fields;
     for (field, ty) in response.iter_mut().zip(["boolean", "timestamptz", "int32"]) {
         field.type_name = ty.to_owned();
+        field.visible = Some(true);
     }
     let files = emit(&ir);
     let detail = description(&files, "widget", "WidgetGetDetail");
@@ -184,6 +185,52 @@ fn populated_references_use_custom_controls_in_scalar_and_repeated_fields() {
             .find(|field| field["field"] == "widget_id")
             .unwrap()["control"],
         "custom"
+    );
+}
+
+#[test]
+fn descriptions_carry_reference_display_fields_and_label_navigation() {
+    let mut ir = fixture::client_release();
+    // A supplier-like model can offer a list without a single-record read.
+    let maker = ir
+        .models
+        .iter_mut()
+        .find(|model| model.name == "widget_maker")
+        .unwrap();
+    maker
+        .operations
+        .iter_mut()
+        .find(|op| op.name == "get")
+        .unwrap()
+        .route = None;
+    let files = emit(&ir);
+    let table = description(&files, "widget", "WidgetQueryTable");
+    assert_eq!(table["presentation"]["displayField"], "code");
+    for name in ["WidgetQueryTable", "WidgetGetDetail"] {
+        let value = description(&files, "widget", name);
+        let reference = &value["presentation"]["references"]["maker_id"];
+        assert_eq!(
+            reference["operation"],
+            "platform-fixture:widget-maker/query@2.1.0"
+        );
+        assert_eq!(reference["keyField"], "id");
+        assert_eq!(reference["displayField"], "name");
+        assert_eq!(reference["cursorInput"], "cursor");
+        assert!(reference.get("read").is_none());
+    }
+    let form = description(&files, "widget", "WidgetRecordBatchForm");
+    assert_eq!(
+        form["presentation"]["references"]["value.maker_id"]["displayField"],
+        "name"
+    );
+    assert_eq!(
+        form["presentation"]["references"]["value.line[].widget_id"]["displayField"],
+        "code"
+    );
+    assert!(
+        form["presentation"]["references"]["value.line[].widget_id"]
+            .get("searchField")
+            .is_none()
     );
 }
 
@@ -362,4 +409,139 @@ fn declared_group_labels_reach_published_response_groups() {
 fn emitted_descriptions_type_check_against_wfe() {
     typescript::check_descriptions(&fixture::client_release())
         .expect("the emitted descriptions satisfy the pinned wfe types");
+}
+
+#[test]
+fn visibility_survives_contracts_and_selects_tables_and_details() {
+    let mut manifest = fixture::manifest();
+    manifest["models"]["widget"]["field_text"]["maker_id"] =
+        json!({"label": "Maker", "visible": true});
+    manifest["models"]["widget"]["field_text"]["code"]["visible"] = json!(false);
+    manifest["custom_operations"]["widget.list"]["result"]["fields"][3]["visible"] = json!(true);
+    let generated = fixture::generate_with(&fixture::catalog(), &manifest);
+    let ir = fixture::client_release_of(&generated);
+    let widget = ir
+        .models
+        .iter()
+        .find(|model| model.name == "widget")
+        .unwrap();
+    assert_eq!(
+        widget
+            .fields
+            .iter()
+            .find(|field| field.path == "maker_id")
+            .unwrap()
+            .visible,
+        Some(true)
+    );
+    let files = emit(&ir);
+    let custom = description(&files, "widget", "WidgetListTable");
+    assert_eq!(
+        custom["columns"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["attributes"],
+    );
+    let table = description(&files, "widget", "WidgetQueryTable");
+    assert_eq!(table["columns"], json!({"maker_id": {"label": "Maker"}}));
+    let detail = description(&files, "widget", "WidgetGetDetail");
+    assert_eq!(
+        detail["fields"],
+        json!([{"field": "maker_id", "label": "Maker"}])
+    );
+    // The selected reference retains its human display metadata.
+    assert_eq!(
+        table["presentation"]["references"]["maker_id"]["displayField"],
+        "name"
+    );
+}
+
+#[test]
+fn unmarked_screens_hide_keys_ids_audit_fields_and_timestamps() {
+    let mut ir = fixture::client_release();
+    let widget = ir
+        .models
+        .iter_mut()
+        .find(|model| model.name == "widget")
+        .unwrap();
+    for op in &mut widget.operations {
+        if !matches!(op.name.as_str(), "query" | "get") {
+            continue;
+        }
+        let fields = &mut op.route.as_mut().unwrap().response.fields;
+        let template = fields[0].clone();
+        *fields = [
+            ("id", "text"),
+            ("maker_id", "int32"),
+            ("opaque_identity", "uuid"),
+            ("created_by", "text"),
+            ("updated_by", "text"),
+            ("created_at", "text"),
+            ("updated_at", "text"),
+            ("occurred_at", "timestamptz"),
+            ("code", "text"),
+            ("edit_version", "int32"),
+            ("hidden", "text"),
+        ]
+        .into_iter()
+        .map(|(path, ty)| FieldIr {
+            path: path.into(),
+            type_name: ty.into(),
+            children: Vec::new(),
+            visible: (path == "hidden").then_some(false),
+            ..template.clone()
+        })
+        .collect();
+        if let Some(lists) = &mut op.lists {
+            lists.key_field = vec!["code".into()];
+        }
+    }
+    let files = emit(&ir);
+    let table = description(&files, "widget", "WidgetQueryTable");
+    assert_eq!(
+        table["columns"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["edit_version"]
+    );
+    let detail = description(&files, "widget", "WidgetGetDetail");
+    assert_eq!(
+        detail["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["field"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["code", "edit_version"]
+    );
+}
+
+#[test]
+fn explicit_visibility_can_show_keys_and_timestamps() {
+    let mut ir = fixture::client_release();
+    let op = ir
+        .models
+        .iter_mut()
+        .find(|model| model.name == "widget")
+        .unwrap()
+        .operations
+        .iter_mut()
+        .find(|op| op.name == "query")
+        .unwrap();
+    for field in &mut op.route.as_mut().unwrap().response.fields {
+        field.visible = Some(matches!(field.path.as_str(), "id" | "created_at"));
+    }
+    let table = description(&emit(&ir), "widget", "WidgetQueryTable");
+    assert_eq!(
+        table["columns"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["created_at", "id"]
+    );
 }

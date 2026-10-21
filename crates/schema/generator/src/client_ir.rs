@@ -246,6 +246,9 @@ pub struct FieldIr {
     /// Authored text, or the exact field path when no label is declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Authored selection for generated table and detail fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible: Option<bool>,
     /// Authored text for an author, which reaches a comment and no screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -298,10 +301,10 @@ pub struct ListIr {
 
 impl FieldIr {
     /// Carry the declared facts of `source` onto every node of `fields` that
-    /// states the same path: the authored text and the record it names.
+    /// states the same path: text, screen visibility, and the record it names.
     ///
     /// A served response reads its fields from the published route schema,
-    /// which carries neither by decision. The declared contract of the
+    /// which omits these facts. The declared contract of the
     /// responding terminal does, so the two join here rather than in the
     /// publication, and no attachment digest moves.
     pub fn carry_declared(fields: &mut [Self], source: &[Self]) {
@@ -310,6 +313,9 @@ impl FieldIr {
                 if let Some(source) = declared.get(field.path.as_str()) {
                     if field.label.is_none() {
                         field.label.clone_from(&source.label);
+                    }
+                    if field.visible.is_none() {
+                        field.visible = source.visible;
                     }
                     if field.description.is_none() {
                         field.description.clone_from(&source.description);
@@ -1102,6 +1108,9 @@ fn build_model(
                 existing.required &= field.required;
                 if existing.label.is_none() {
                     existing.label.clone_from(&field.label);
+                }
+                if existing.visible.is_none() {
+                    existing.visible = field.visible;
                 }
                 // A closed domain stated anywhere is the model's domain; two
                 // different closed domains for one path union rather than one

@@ -36,6 +36,7 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
                     maximum: None,
                     values: Vec::new(),
                     label: None,
+                    visible: None,
                     description: None,
                     references: None,
                     column: None,

@@ -85,6 +85,7 @@ pub fn emit_ts_components(
     let mut index = String::from(header);
     let mut labels = String::from(header);
     index.push_str("export * from \"./labels.js\";\n");
+    index.push_str("export type * from \"./presentation.js\";\n");
     for model in &plan.models {
         let mut body = String::new();
         let mut imports = BTreeSet::new();
@@ -110,11 +111,11 @@ pub fn emit_ts_components(
             writeln!(labels, "export const {name}Label = {};", quote(title)).expect("write");
             imports.insert(format!("{role}Description"));
             let mut description = json!({"id": screen.contract.operation, "title": title});
+            let columns = visible_columns(screen);
             let type_name = match screen.role {
                 Role::Table => {
                     description["columns"] = Value::Object(
-                        screen
-                            .columns
+                        columns
                             .iter()
                             .map(|field| (field.path.clone(), presentation(field)))
                             .collect(),
@@ -123,8 +124,7 @@ pub fn emit_ts_components(
                 }
                 Role::Detail => {
                     description["fields"] = Value::Array(
-                        screen
-                            .columns
+                        columns
                             .iter()
                             .map(|field| {
                                 let mut value = presentation(field);
@@ -133,8 +133,7 @@ pub fn emit_ts_components(
                             })
                             .collect(),
                     );
-                    let keys = screen
-                        .columns
+                    let keys = columns
                         .iter()
                         .map(|field| quote(&field.path))
                         .collect::<Vec<_>>();
@@ -160,9 +159,16 @@ pub fn emit_ts_components(
                 }
                 Role::Unsupported(_) => unreachable!("only supported roles are selected"),
             };
+            let presentation_type =
+                if matches!(screen.role, Role::Table | Role::Detail | Role::Form) {
+                    description["presentation"] = screen_presentation(screen, plan);
+                    " & { readonly presentation: ScreenPresentation }"
+                } else {
+                    ""
+                };
             writeln!(
                 body,
-                "\nexport const {name} = {} as const satisfies {type_name};",
+                "\nexport const {name} = {} as const satisfies {type_name}{presentation_type};",
                 serde_json::to_string_pretty(&description).expect("description serializes")
             )
             .expect("write");
@@ -170,8 +176,13 @@ pub fn emit_ts_components(
         if body.is_empty() {
             continue;
         }
+        let presentation_import = if imports.iter().any(|role| role != "DeleteDescription") {
+            "import type { ScreenPresentation } from \"./presentation.js\";\n"
+        } else {
+            ""
+        };
         let source = format!(
-            "{header}import type {{ {} }} from \"@wfe/generator\";\n{body}",
+            "{header}import type {{ {} }} from \"@wfe/generator\";\n{presentation_import}{body}",
             imports.into_iter().collect::<Vec<_>>().join(", ")
         );
         files.push(GeneratedFile::new(
@@ -192,11 +203,138 @@ pub fn emit_ts_components(
             source.into_bytes().into_boxed_slice(),
         ));
     }
+    files.push(GeneratedFile::new(
+        format!("{COMPONENT_DIRECTORY}/presentation.ts").into_boxed_str(),
+        format!(
+            "{header}\
+export interface ReferencePresentation {{
+  readonly operation: string;
+  readonly keyField: string;
+  readonly displayField: string;
+  readonly searchField?: string;
+  readonly cursorInput?: string;
+  readonly read?: {{ readonly operation: string; readonly keyInput: string }};
+}}
+export interface ScreenPresentation {{
+  readonly displayField?: string;
+  readonly references: Readonly<Record<string, ReferencePresentation>>;
+}}
+"
+        )
+        .into_bytes()
+        .into_boxed_slice(),
+    ));
     Ok(files)
+}
+
+fn screen_presentation(screen: &ScreenPlan<'_>, plan: &ClientPlan<'_>) -> Value {
+    let mut references = serde_json::Map::new();
+    if screen.role == Role::Form {
+        for input in &screen.population {
+            let mut reference = json!({
+                "operation": input.list_operation,
+                "keyField": input.key_field,
+                "displayField": input.display_field,
+            });
+            if let Some(path) = input
+                .search_input
+                .and_then(|path| path.strip_prefix("filter."))
+            {
+                reference["searchField"] = json!(path);
+            }
+            if let Some(cursor) = input.cursor_input {
+                reference["cursorInput"] = json!(cursor);
+            }
+            if let Some(read) = input.read {
+                reference["read"] =
+                    json!({"operation": read.operation, "keyInput": read.key_input});
+            }
+            references.insert(input.input.to_owned(), reference);
+        }
+    } else {
+        for field in &screen.columns {
+            let Some(target) = &field.references else {
+                continue;
+            };
+            let Some(list) = plan.screens().find(|candidate| {
+                candidate.role == Role::Table
+                    && candidate.contract.route.is_some()
+                    && candidate.contract.lists.as_ref().is_some_and(|list| {
+                        list.model.as_deref() == Some(&target.model) && list.key_field.len() == 1
+                    })
+            }) else {
+                continue;
+            };
+            let lists = list.contract.lists.as_ref().expect("selected a list");
+            let mut reference = json!({
+                "operation": list.contract.operation,
+                "keyField": lists.key_field[0],
+                "displayField": lists.display_field.as_ref().unwrap_or(&lists.key_field[0]),
+            });
+            if let Some(cursor) = list.paging.as_ref().and_then(|paging| paging.cursor_input) {
+                reference["cursorInput"] = json!(cursor);
+            }
+            if let Some(read) = screen
+                .resolved_columns
+                .iter()
+                .find(|resolved| resolved.column == field.path)
+            {
+                reference["read"] =
+                    json!({"operation": read.read_operation, "keyInput": read.key_input});
+            }
+            references.insert(field.path.clone(), reference);
+        }
+    }
+    let mut value = json!({"references": references});
+    if let Some(display) = screen
+        .contract
+        .lists
+        .as_ref()
+        .and_then(|list| list.display_field.as_ref())
+    {
+        value["displayField"] = json!(display);
+    }
+    value
 }
 
 fn quote(value: &str) -> String {
     serde_json::to_string(value).expect("text serializes")
+}
+
+// Explicit selection wins. Unmarked screens retain their human fields.
+fn visible_columns<'a>(screen: &ScreenPlan<'a>) -> Vec<&'a FieldIr> {
+    let marked = screen
+        .columns
+        .iter()
+        .any(|field| field.visible == Some(true));
+    screen
+        .columns
+        .iter()
+        .copied()
+        .filter(|field| {
+            if marked {
+                return field.visible == Some(true);
+            }
+            let name = field.path.rsplit('.').next().unwrap_or(&field.path);
+            field.visible != Some(false)
+                && field.type_name != "uuid"
+                && field.type_name != "timestamptz"
+                && name != "id"
+                && !name.ends_with("_id")
+                && !matches!(
+                    name,
+                    "created_by" | "updated_by" | "created_at" | "updated_at"
+                )
+                && screen
+                    .record
+                    .is_none_or(|record| record.key_field != field.path)
+                && screen
+                    .contract
+                    .lists
+                    .as_ref()
+                    .is_none_or(|lists| !lists.key_field.contains(&field.path))
+        })
+        .collect()
 }
 
 fn presentation(field: &FieldIr) -> Value {

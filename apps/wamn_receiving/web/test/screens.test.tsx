@@ -12,10 +12,18 @@ import {
 import { SUPPLIER_CREATE_ROUTE, SUPPLIER_QUERY_ROUTE } from "@wamn/receiving-client/supplier.js";
 import {
   PurchaseOrderQueryTable,
+  PurchaseOrderGetDetail,
+  ReceiptGetDetail,
+  SupplierQueryTable,
+  LocationListTable,
   PurchaseOrderUpdateForm,
   SupplierCreateForm,
 } from "@wamn/receiving-client/components/index.js";
 import { Records } from "../src/table";
+import { SECTIONS } from "../src/routes";
+import { Selector } from "../src/selector";
+import { ReceiptQueryTable, ReceivingRecordReceiptForm } from "@wamn/receiving-client/components/index.js";
+import { RECEIPT_GET_ROUTE, RECEIPT_QUERY_ROUTE } from "@wamn/receiving-client/receipt.js";
 import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "../src/forms";
 
 beforeEach(() => {
@@ -41,6 +49,232 @@ function props(invoke: Transport["invoke"]): ScreenProps {
 }
 
 describe("Receiving descriptions and bindings", () => {
+  it("selects human fields from the generated descriptions", () => {
+    expect(Object.keys(PurchaseOrderQueryTable.columns).sort()).toEqual([
+      "purchase_order_number",
+      "row_version",
+      "status",
+      "supplier_id",
+    ]);
+    expect(PurchaseOrderGetDetail.fields.map((field) => field.field).sort()).toEqual(
+      Object.keys(PurchaseOrderQueryTable.columns).sort(),
+    );
+    expect(Object.keys(ReceiptQueryTable.columns).sort()).toEqual([
+      "occurred_at",
+      "purchase_order_id",
+      "receipt_reference",
+    ]);
+    expect(ReceiptGetDetail.fields.map((field) => field.field).sort()).toEqual(
+      Object.keys(ReceiptQueryTable.columns).sort(),
+    );
+    expect(Object.keys(SupplierQueryTable.columns)).toEqual(["name"]);
+    expect(Object.keys(LocationListTable.columns)).toEqual(["location_code"]);
+  });
+
+  it("shows supplier names in order rows and details, with label links and receipt buttons", async () => {
+    const supplierId = "00000000-0000-0000-0000-000000000401";
+    const order = { id: "order-id", purchase_order_number: "PO-HUMAN", supplier_id: supplierId };
+    const invoke = vi.fn<Transport["invoke"]>(async (request): ReturnType<Transport["invoke"]> => {
+      if (request.operation === PURCHASE_ORDER_QUERY_ROUTE.operation)
+        return {
+          status: "completed",
+          value: { rows: [order, { ...order, id: "order-two", purchase_order_number: "PO-TWO" }] },
+        };
+      if (request.operation === PURCHASE_ORDER_GET_ROUTE.operation) return { status: "completed", value: order };
+      if (request.operation === SUPPLIER_QUERY_ROUTE.operation) {
+        const input = request.items[0] as Record<string, JsonValue>;
+        return {
+          status: "completed",
+          value: input.cursor
+            ? { rows: [{ id: supplierId, name: "Human supplier" }], next_cursor: null }
+            : { rows: [{ id: "another", name: "Another supplier" }], next_cursor: "suppliers-two" },
+        };
+      }
+      throw new Error(`Unexpected operation: ${request.operation}`);
+    });
+    const view = { ...props(invoke), params: { id: order.id, aud: "receiving" } };
+    const Table = SECTIONS[0]!.screens[0]!.component;
+    render(() => <Table {...view} />);
+    const link = await screen.findByRole("link", { name: "PO-HUMAN" });
+    const row = link.closest("tr")!;
+    expect(within(row).getByText("Human supplier")).toBeDefined();
+    expect(row.textContent).not.toContain(supplierId);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
+    for (const label of ["Order number", "Supplier", "Status", "Revision"])
+      expect(screen.getByRole("columnheader", { name: new RegExp(`^${label} `) })).toBeDefined();
+    expect(screen.queryByRole("columnheader", { name: /^Purchase order Drag/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change the supplier" })).toBeNull();
+    expect(screen.getAllByRole("columnheader", { name: /^Actions / })).toHaveLength(1);
+    fireEvent.click(within(row).getByRole("button", { name: "Record a receipt" }));
+    expect(view.open).toHaveBeenLastCalledWith(expect.stringContaining("receipts/new?"));
+    expect(view.open).toHaveBeenLastCalledWith(expect.stringContaining("order-id"));
+    expect(invoke.mock.calls.filter(([request]) => request.operation === SUPPLIER_QUERY_ROUTE.operation)).toHaveLength(
+      2,
+    );
+    cleanup();
+    const Detail = SECTIONS[0]!.routes!.find((route) => route.path === "purchase-orders/:id")!.component;
+    render(() => <Detail {...view} />);
+    await screen.findByText("Human supplier");
+    expect(document.body.textContent).not.toContain(supplierId);
+    expect(
+      Array.from(document.querySelectorAll("[data-generator-field]"), (node) =>
+        node.getAttribute("data-generator-field"),
+      ).sort(),
+    ).toEqual(["purchase_order_number", "row_version", "status", "supplier_id"]);
+    fireEvent.click(screen.getByRole("button", { name: "Record a receipt" }));
+    expect(view.open).toHaveBeenLastCalledWith(expect.stringContaining("order-id"));
+    fireEvent.click(screen.getByRole("button", { name: "Change the supplier" }));
+    expect(view.open).toHaveBeenLastCalledWith("purchase-orders/order-id/update");
+    expect(screen.getByRole("link", { name: "Receiving screen" })).toBeDefined();
+  });
+
+  it("shows the purchase order number in receipt rows and details and links the receipt label", async () => {
+    const orderId = "00000000-0000-0000-0000-000000000501";
+    const receipt = { id: "receipt-id", receipt_reference: "RECEIPT-HUMAN", purchase_order_id: orderId };
+    const invoke = vi.fn<Transport["invoke"]>(async (request): ReturnType<Transport["invoke"]> => {
+      if (request.operation === RECEIPT_QUERY_ROUTE.operation)
+        return { status: "completed", value: { rows: [receipt] } };
+      if (request.operation === RECEIPT_GET_ROUTE.operation) return { status: "completed", value: receipt };
+      if (request.operation === PURCHASE_ORDER_GET_ROUTE.operation)
+        return { status: "completed", value: { id: orderId, purchase_order_number: "PO-HUMAN" } };
+      if (request.operation === PURCHASE_ORDER_QUERY_ROUTE.operation)
+        return { status: "completed", value: { rows: [{ id: orderId, purchase_order_number: "PO-HUMAN" }] } };
+      throw new Error(`Unexpected operation: ${request.operation}`);
+    });
+    const view = { ...props(invoke), params: { id: receipt.id, aud: "receiving" } };
+    const Table = SECTIONS[1]!.screens[0]!.component;
+    render(() => <Table {...view} />);
+    const table = await screen.findByRole("table", { name: ReceiptQueryTable.title });
+    const link = await within(table).findByRole("link", { name: "RECEIPT-HUMAN" });
+    expect(within(table).getByText("PO-HUMAN")).toBeDefined();
+    expect(table.textContent).not.toContain(orderId);
+    expect(within(table).queryByRole("columnheader", { name: /^Receipt Drag/ })).toBeNull();
+    fireEvent.click(link);
+    expect(view.open).toHaveBeenLastCalledWith("receipts/receipt-id");
+    cleanup();
+    const Detail = SECTIONS[1]!.routes!.find((route) => route.path === "receipts/:id")!.component;
+    render(() => <Detail {...view} />);
+    await screen.findByText("PO-HUMAN");
+    expect(document.body.textContent).not.toContain(orderId);
+  });
+
+  it("keeps multiple row operations in one action cell and honors operation grants", async () => {
+    const invoke: Transport["invoke"] = async () => ({
+      status: "completed",
+      value: { rows: [{ id: "order", purchase_order_number: "PO-1" }] },
+    });
+    const view = { ...props(invoke), holds: (operation: string) => operation !== "hidden" };
+    render(() => (
+      <Records
+        screen={view}
+        description={PurchaseOrderQueryTable}
+        route={PURCHASE_ORDER_QUERY_ROUTE}
+        rowActions={[
+          { description: { id: "first", title: "First action" }, path: () => "first" },
+          { description: { id: "second", title: "Second action" }, path: () => "second" },
+          { description: { id: "hidden", title: "Hidden action" }, path: () => "hidden" },
+        ]}
+      />
+    ));
+    const first = await screen.findByRole("button", { name: "First action" });
+    expect(first.closest("td")).toBe(screen.getByRole("button", { name: "Second action" }).closest("td"));
+    expect(screen.getAllByRole("columnheader", { name: /^Actions / })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Hidden action" })).toBeNull();
+  });
+
+  it("resolves a held selector value beyond the first page without displaying its UUID", async () => {
+    const id = "00000000-0000-0000-0000-000000000401";
+    let release: (() => void) | undefined;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const invoke: Transport["invoke"] = async (request): ReturnType<Transport["invoke"]> => {
+      const input = request.items[0] as Record<string, JsonValue>;
+      if (input.cursor) {
+        await waiting;
+        return { status: "completed", value: { rows: [{ id, name: "Later supplier" }], next_cursor: null } };
+      }
+      return { status: "completed", value: { rows: [{ id: "first", name: "First supplier" }], next_cursor: "next" } };
+    };
+    render(() => (
+      <Selector
+        disabled={false}
+        readOnly={false}
+        id="supplier"
+        field="value"
+        value={id}
+        onValueChange={() => undefined}
+        transport={{ invoke }}
+        reference={PurchaseOrderUpdateForm.presentation.references["change.supplier_id"]}
+        label="Supplier"
+      />
+    ));
+    const input = screen.getByRole<HTMLInputElement>("combobox", { name: "Supplier" });
+    expect(input.value).not.toContain(id);
+    release!();
+    await waitFor(() => expect(input.value).toBe("Later supplier"));
+  });
+
+  it("uses the generated item label for a narrowed order-line selector", async () => {
+    const invoke = vi.fn<Transport["invoke"]>(async () => ({
+      status: "completed",
+      value: {
+        rows: [{ line_id: "line-id", line_number: 42, item_number: "ITEM-HUMAN" }],
+      },
+    }));
+    render(() => (
+      <Selector
+        disabled={false}
+        readOnly={false}
+        id="line"
+        field="value"
+        value="line-id"
+        onValueChange={() => undefined}
+        transport={{ invoke }}
+        reference={ReceivingRecordReceiptForm.presentation.references["value.line[].purchase_order_line_id"]}
+        input={{ purchase_order_id: "order-id" }}
+        label="Order line"
+      />
+    ));
+    const input = screen.getByRole<HTMLInputElement>("combobox", { name: "Order line" });
+    await waitFor(() => expect(input.value).toBe("ITEM-HUMAN"));
+    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ items: [{ purchase_order_id: "order-id" }] }));
+  });
+
+  it("does not expose reference keys when lookups fail", async () => {
+    const id = "00000000-0000-0000-0000-000000000401";
+    const invoke: Transport["invoke"] = async (request): ReturnType<Transport["invoke"]> => {
+      if (request.operation === PURCHASE_ORDER_QUERY_ROUTE.operation)
+        return {
+          status: "completed",
+          value: { rows: [{ id: "order", purchase_order_number: "PO-1", supplier_id: id }] },
+        };
+      throw new Error("Disconnected");
+    };
+    render(() => (
+      <Records screen={props(invoke)} description={PurchaseOrderQueryTable} route={PURCHASE_ORDER_QUERY_ROUTE} />
+    ));
+    await screen.findByText("Unavailable");
+    expect(document.body.textContent).not.toContain(id);
+    cleanup();
+    render(() => (
+      <Selector
+        disabled={false}
+        readOnly={false}
+        id="supplier"
+        field="value"
+        value={id}
+        onValueChange={() => undefined}
+        transport={{ invoke }}
+        reference={PurchaseOrderUpdateForm.presentation.references["change.supplier_id"]}
+        label="Supplier"
+      />
+    ));
+    const input = screen.getByRole<HTMLInputElement>("combobox", { name: "Supplier" });
+    await waitFor(() => expect(input.value).toBe("Unavailable"));
+    expect(input.value).not.toContain(id);
+  });
+
   it("shows and selects a supplier from the query page in the emitted purchase order form", async () => {
     const supplierId = "00000000-0000-0000-0000-000000000401";
     const orderId = "00000000-0000-0000-0000-000000000501";
@@ -104,15 +338,15 @@ describe("Receiving descriptions and bindings", () => {
         }}
         description={PurchaseOrderQueryTable}
         route={PURCHASE_ORDER_QUERY_ROUTE}
-        rowActions={[{ description: { id: "get", title: "Open order" }, path: (row) => `purchase-orders/${row?.id}` }]}
+        recordLink={{ description: { id: "get", title: "Open order" }, path: (row) => `purchase-orders/${row?.id}` }}
       />
     ));
     const table = await screen.findByRole("table", { name: PurchaseOrderQueryTable.title });
     await within(table).findByText("PO-1");
     expect(
-      screen.getByRole("link", { name: SupplierCreateForm.title }).closest(".table-workspace-header"),
+      screen.getByRole("button", { name: SupplierCreateForm.title }).closest(".table-workspace-header"),
     ).not.toBeNull();
-    const open = within(table).getAllByRole("link", { name: "Open order" })[0]!;
+    const open = within(table).getByRole("link", { name: "PO-1" });
     expect(open.getAttribute("href")).toBe("/receiving/purchase-orders/1");
     fireEvent.click(open);
     expect(view.open).toHaveBeenCalledWith("purchase-orders/1");
@@ -148,7 +382,7 @@ describe("Receiving descriptions and bindings", () => {
   });
 
   it("validates the described supplier form and returns to its table only after the write", async () => {
-    const invoke = vi.fn<Transport["invoke"]>(async (request) => {
+    const invoke = vi.fn<Transport["invoke"]>(async (request): ReturnType<Transport["invoke"]> => {
       const input = request.items[0] as Record<string, JsonValue>;
       if (!input.idempotency_key)
         return { status: "refused", code: "invalid_input", detail: { field: "idempotency_key" } };
@@ -198,7 +432,7 @@ describe("Receiving descriptions and bindings", () => {
   });
   it("keeps the receipt intent on retry and replaces it when the operator changes the draft", async () => {
     const writes: JsonValue[] = [];
-    const invoke: Transport["invoke"] = async (request) => {
+    const invoke: Transport["invoke"] = async (request): ReturnType<Transport["invoke"]> => {
       if (request.operation !== RECEIVING_RECORD_RECEIPT_ROUTE.operation)
         return { status: "completed", value: { rows: [] } };
       writes.push(request.items[0]!);

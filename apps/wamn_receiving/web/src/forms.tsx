@@ -8,7 +8,6 @@ import { newIdempotencyKey, newRequestId, occurredAt } from "@wamn/web-runtime";
 import * as purchase from "@wamn/receiving-client/purchase_order.js";
 import * as supplier from "@wamn/receiving-client/supplier.js";
 import * as receiving from "@wamn/receiving-client/receiving.js";
-import * as location from "@wamn/receiving-client/location.js";
 import { PurchaseOrderUpdateForm } from "@wamn/receiving-client/components/purchase_order.js";
 import { SupplierCreateForm } from "@wamn/receiving-client/components/supplier.js";
 import {
@@ -116,9 +115,7 @@ function PurchaseOrderEditor(props: ScreenProps & { record: RecordValue }) {
               {...field}
               field="value"
               transport={props.transport}
-              route={supplier.SUPPLIER_QUERY_ROUTE}
-              keyField="id"
-              displayField="name"
+              reference={PurchaseOrderUpdateForm.presentation.references["change.supplier_id"]}
               label={PurchaseOrderUpdateForm.fields[0].label}
             />
           ),
@@ -232,10 +229,7 @@ export function ReceiptForm(props: ScreenProps) {
                 {...field}
                 field="value"
                 transport={props.transport}
-                route={purchase.PURCHASE_ORDER_QUERY_ROUTE}
-                keyField="id"
-                displayField="purchase_order_number"
-                searchField="purchase_order_number"
+                reference={ReceivingRecordReceiptForm.presentation.references["value.purchase_order_id"]}
                 label={ReceivingRecordReceiptForm.fields[0].label}
               />
             ),
@@ -250,9 +244,7 @@ export function ReceiptForm(props: ScreenProps) {
                     {...field}
                     field="value"
                     transport={props.transport}
-                    route={location.LOCATION_LIST_ROUTE}
-                    keyField="id"
-                    displayField="location_code"
+                    reference={ReceivingRecordReceiptForm.presentation.references["value.line[].location_id"]}
                     label={ReceivingRecordReceiptForm.fields[2].fields[0].label}
                   />
                 ),
@@ -261,9 +253,9 @@ export function ReceiptForm(props: ScreenProps) {
                     {...field}
                     field="value"
                     transport={props.transport}
-                    route={receiving.RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE}
-                    keyField="line_id"
-                    displayField="line_number"
+                    reference={
+                      ReceivingRecordReceiptForm.presentation.references["value.line[].purchase_order_line_id"]
+                    }
                     label={ReceivingRecordReceiptForm.fields[2].fields[1].label}
                     unavailable={!values()["value.purchase_order_id"]}
                     input={{ purchase_order_id: values()["value.purchase_order_id"] }}

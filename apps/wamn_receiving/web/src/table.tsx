@@ -1,33 +1,36 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { Field, Input, Label, ValueDisplay } from "@wfe/components";
+import { Button, Field, Input, Label, ValueDisplay } from "@wfe/components";
 import { createTable } from "@wfe/components/table";
-import { TableView, type ColumnPresentation, type CustomCellProps, type TableDescription } from "@wfe/generator";
+import { TableView, type CustomCellProps, type TableDescription } from "@wfe/generator";
 import type { OperationRoute } from "@wamn/web-runtime";
 import { RecordLink, type ScreenProps } from "@wamn/platform-ui";
+import type { ScreenPresentation } from "@wamn/receiving-client/components/index.js";
 import { invoke, rowsOf, type RecordValue, type Rows } from "./data";
+import { displayRecord, referenceLabels } from "./references";
 
 export interface NavigationAction {
   readonly description: { readonly id: string; readonly title: string };
   readonly path: (row?: RecordValue) => string;
+  readonly navigation?: boolean;
 }
 
 export function Actions(props: { screen: ScreenProps; actions?: readonly NavigationAction[]; row?: RecordValue }) {
   return (
     <div class="ui-form-actions">
       <For each={props.actions?.filter((action) => props.screen.holds(action.description.id))}>
-        {(action) => (
-          <RecordLink screen={props.screen} path={action.path(props.row)}>
-            {action.description.title}
-          </RecordLink>
-        )}
+        {(action) =>
+          action.navigation ? (
+            <RecordLink screen={props.screen} path={action.path(props.row)}>
+              {action.description.title}
+            </RecordLink>
+          ) : (
+            <Button onClick={() => props.screen.open(action.path(props.row))}>{action.description.title}</Button>
+          )
+        }
       </For>
       <For each={props.screen.actions}>
-        {(action) => (
-          <RecordLink screen={props.screen} path={action.path}>
-            {action.label}
-          </RecordLink>
-        )}
+        {(action) => <Button onClick={() => props.screen.open(action.path)}>{action.label}</Button>}
       </For>
     </div>
   );
@@ -35,7 +38,7 @@ export function Actions(props: { screen: ScreenProps; actions?: readonly Navigat
 
 export function Records(props: {
   screen: ScreenProps;
-  description: TableDescription;
+  description: TableDescription & { readonly presentation: ScreenPresentation };
   route: OperationRoute;
   input?: RecordValue;
   filters?: readonly string[];
@@ -43,9 +46,11 @@ export function Records(props: {
   history?: boolean;
   actions?: readonly NavigationAction[];
   rowActions?: readonly NavigationAction[];
+  recordLink?: NavigationAction;
 }): JSX.Element {
   const pageSize = 25;
   const [rows, setRows] = createSignal<readonly RecordValue[]>([]);
+  const [displayRows, setDisplayRows] = createSignal(new Map<RecordValue, RecordValue>());
   const [error, setError] = createSignal<string>();
   const [loading, setLoading] = createSignal(false);
   const [cursor, setCursor] = createSignal<string>();
@@ -89,6 +94,14 @@ export function Records(props: {
       if (!active || current !== generation) return;
       acceptedInput = input;
       const received = rowsOf(result);
+      const label = referenceLabels(props.screen.transport);
+      const displayed = await Promise.all(
+        received.map(
+          async (row) => [row, await displayRecord(row, props.description.presentation.references, label)] as const,
+        ),
+      );
+      if (!active || current !== generation) return;
+      setDisplayRows(new Map([...(next ? displayRows() : []), ...displayed]));
       setRows(next ? [...rows(), ...received] : received);
       setPage(next && received.length ? page() + 1 : next ? page() : 0);
       setCursor(
@@ -105,19 +118,13 @@ export function Records(props: {
     }
   };
   const actions = props.rowActions?.filter((action) => props.screen.holds(action.description.id)) ?? [];
-  const actionColumns: Record<string, ColumnPresentation & { renderer: string }> = Object.fromEntries(
-    actions.map((action) => [
-      action.description.id,
-      { label: action.description.title, renderer: action.description.id },
-    ]),
-  );
   const description = {
     ...props.description,
     columns: {
       ...Object.fromEntries(
         Object.entries(props.description.columns).map(([id, column]) => [id, { ...column, renderer: id }]),
       ),
-      ...actionColumns,
+      ...(actions.length ? { actions: { label: "Actions", renderer: "actions" } } : {}),
     },
     controls: { filtering: false, search: false, grouping: false },
   };
@@ -138,31 +145,32 @@ export function Records(props: {
     ...Object.fromEntries(
       Object.entries(props.description.columns).map(([id, column]) => [
         id,
-        (cell: CustomCellProps<RecordValue, unknown>) =>
-          column.format ? (
-            <ValueDisplay value={cell.value} format={column.format} />
+        (cell: CustomCellProps<RecordValue, unknown>) => {
+          const value = () => displayRows().get(cell.row.original!)?.[id];
+          const text = () =>
+            column.format ? (
+              <ValueDisplay value={value()} format={column.format} />
+            ) : typeof value() === "object" && value() !== null ? (
+              JSON.stringify(value())
+            ) : (
+              String(value() ?? "")
+            );
+          return props.recordLink &&
+            id === props.description.presentation.displayField &&
+            props.screen.holds(props.recordLink.description.id) ? (
+            <RecordLink screen={props.screen} path={props.recordLink.path(cell.row.original)}>
+              {text()}
+            </RecordLink>
           ) : (
-            <>
-              {typeof cell.value === "object" && cell.value !== null
-                ? JSON.stringify(cell.value)
-                : String(cell.value ?? "")}
-            </>
-          ),
+            text()
+          );
+        },
       ]),
     ),
-    ...Object.fromEntries(
-      actions.map((action) => [
-        action.description.id,
-        (cell: CustomCellProps<RecordValue, unknown>) => (
-          <Show when={cell.row.original}>
-            {(row) => (
-              <RecordLink screen={props.screen} path={action.path(row())}>
-                {action.description.title}
-              </RecordLink>
-            )}
-          </Show>
-        ),
-      ]),
+    actions: (cell: CustomCellProps<RecordValue, unknown>) => (
+      <Show when={cell.row.original}>
+        {(row) => <Actions screen={{ ...props.screen, actions: undefined }} actions={actions} row={row()} />}
+      </Show>
     ),
   };
   const ToolbarActions = () => <Actions screen={props.screen} actions={props.actions} />;

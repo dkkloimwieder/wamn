@@ -2,6 +2,9 @@
 
 The Receiving web app renders generator-emitted wfe descriptions through the [platform UI shell](../../platform_ui/README.md).
 Descriptions supply operation and field labels from the client contract.
+Fields with `visible = True` in `wamn.k` appear in generated tables and details.
+If a screen has no marked fields, it shows fields other than keys, IDs, audit fields, and timestamps.
+They also name the display fields and lookup operations for references to other records.
 Application bindings own requests, reference selectors, validation, and navigation.
 This directory is owned code, and the generator never writes it.
 [`src/routes.tsx`](src/routes.tsx) is the route table.
@@ -18,7 +21,10 @@ The receiving screen fills the order and line. A location row fills the location
 Tables use wfe header actions and pagination, with 25 rows per page.
 Query tables request server pages. Locations and receiving lines page the returned rows locally.
 Forms use separate screens and return to their tables after submission or cancellation.
-Record navigation uses links. The shell shows literal uppercase breadcrumbs after sign-in.
+Record navigation uses links on order numbers and receipt references.
+Actions use buttons and share one cell per row. The purchase order screen also offers the supplier change action.
+Tables, details, and selectors show reference display text. A failed reference lookup shows `Unavailable`.
+The shell shows literal uppercase breadcrumbs after sign-in.
 
 ## Run it
 

@@ -80,6 +80,8 @@ schema Field:
     revision?: Revision
     values?: [str]
     label?: str
+    # Select this field for generated tables and details.
+    visible?: bool
     description?: str
     references?: Ref
 
@@ -296,6 +298,8 @@ schema AuditLog:
 
 schema TextOfField:
     label?: str
+    # Select this field for generated tables and details.
+    visible?: bool
     description?: str
 
 schema Model[name: str, schema_name: str]:

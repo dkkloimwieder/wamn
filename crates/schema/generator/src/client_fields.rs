@@ -16,6 +16,7 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         minimum: None,
         maximum: None,
         label: None,
+        visible: None,
         description: None,
         references: None,
         column: None,
@@ -136,6 +137,7 @@ pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
             .and_then(|revision| serde_json::from_value(revision.clone()).ok())
             .unwrap_or_default();
         (leaf.label, leaf.description) = text(declared);
+        leaf.visible = declared.get("visible").and_then(Value::as_bool);
         leaf.references = reference(declared);
         insert(&mut tree, leaf, &path.split('.').collect::<Vec<_>>(), "");
     }
@@ -189,6 +191,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 .and_then(|revision| serde_json::from_value(revision.clone()).ok())
                 .unwrap_or_default();
             (declared.label, declared.description) = text(member);
+            declared.visible = member.get("visible").and_then(Value::as_bool);
             declared.references = reference(member);
             tree.push(declared);
         }
@@ -219,6 +222,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
         );
         declared.values = values(writable.get("values"));
         (declared.label, declared.description) = text(writable);
+        declared.visible = writable.get("visible").and_then(Value::as_bool);
         declared.references = reference(writable);
         declared.column = writable
             .get("field")
@@ -255,6 +259,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 let mut repeated = field(path.clone(), "array".into(), false, false);
                 let mut item = field(path.clone(), type_name.into(), true, false);
                 (item.label, item.description) = text(filter);
+                item.visible = filter.get("visible").and_then(Value::as_bool);
                 repeated.children.push(item);
                 (path, repeated)
             }
@@ -262,6 +267,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 let path = format!("filter.{name}");
                 let mut range = field(path.clone(), "object".into(), sent, false);
                 (range.label, range.description) = text(filter);
+                range.visible = filter.get("visible").and_then(Value::as_bool);
                 for bound in ["max", "min"] {
                     range.children.push(field(
                         format!("{path}.{bound}"),
@@ -276,6 +282,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 let path = format!("filter.{name}");
                 let mut empty = field(path.clone(), "boolean".into(), false, false);
                 (empty.label, empty.description) = text(filter);
+                empty.visible = filter.get("visible").and_then(Value::as_bool);
                 (path, empty)
             }
             _ => continue,
@@ -398,6 +405,7 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
             result.maximum = schema.get("maxItems").and_then(Value::as_u64);
             if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
                 result.label.clone_from(&hint.label);
+                result.visible = hint.visible;
                 result.description.clone_from(&hint.description);
             }
             if let Some(item) = schema.get("items") {
@@ -433,6 +441,7 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
                 result.nullable &= hint.nullable;
                 result.revision.clone_from(&hint.revision);
                 result.label.clone_from(&hint.label);
+                result.visible = hint.visible;
                 result.description.clone_from(&hint.description);
                 result.references.clone_from(&hint.references);
                 result.column.clone_from(&hint.column);

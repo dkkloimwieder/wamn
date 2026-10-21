@@ -13,6 +13,7 @@ import * as descriptions from "@wamn/receiving-client/components/index.js";
 import { Actions, Records, type NavigationAction } from "./table";
 import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "./forms";
 import { invoke, type RecordValue } from "./data";
+import { displayRecord, referenceLabels } from "./references";
 
 const recordPath = (base: string, row?: RecordValue) => `${base}/${encodeURIComponent(String(row?.id ?? ""))}`;
 const receiptAction = (fill: (row?: RecordValue) => object): NavigationAction => ({
@@ -22,7 +23,7 @@ const receiptAction = (fill: (row?: RecordValue) => object): NavigationAction =>
 
 function Detail(props: {
   screen: ScreenProps;
-  description: DetailDescription<RecordValue>;
+  description: DetailDescription<RecordValue> & { readonly presentation: descriptions.ScreenPresentation };
   route: OperationRoute;
   actions?: readonly NavigationAction[];
 }) {
@@ -32,14 +33,18 @@ function Detail(props: {
   onCleanup(() => {
     active = false;
   });
-  void invoke<RecordValue>(props.screen.transport, props.route, { id: props.screen.params.id! }).then(
-    (record) => {
-      if (active) setRecord(record);
-    },
-    (error) => {
-      if (active) setError(String(error));
-    },
-  );
+  void invoke<RecordValue>(props.screen.transport, props.route, { id: props.screen.params.id! })
+    .then((row) =>
+      displayRecord(row, props.description.presentation.references, referenceLabels(props.screen.transport)),
+    )
+    .then(
+      (record) => {
+        if (active) setRecord(record);
+      },
+      (error) => {
+        if (active) setError(String(error));
+      },
+    );
   return (
     <Page title={props.description.title} actions={<Actions screen={props.screen} actions={props.actions} />}>
       <Show when={error()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
@@ -67,11 +72,8 @@ export const SECTIONS: readonly ShellSection[] = [
             route={purchase.PURCHASE_ORDER_QUERY_ROUTE}
             filters={["purchase_order_number", "status", "supplier_id"]}
             sortable={["created_at", "purchase_order_number", "status"]}
-            rowActions={[
-              { description: d.PurchaseOrderGetDetail, path: (row) => recordPath("purchase-orders", row) },
-              receiptAction((row) => ({ value: { purchaseOrderId: row?.id } })),
-              { description: d.PurchaseOrderUpdateForm, path: (row) => `${recordPath("purchase-orders", row)}/update` },
-            ]}
+            recordLink={{ description: d.PurchaseOrderGetDetail, path: (row) => recordPath("purchase-orders", row) }}
+            rowActions={[receiptAction((row) => ({ value: { purchaseOrderId: row?.id } }))]}
           />
         ),
       },
@@ -90,10 +92,12 @@ export const SECTIONS: readonly ShellSection[] = [
               receiptAction(() => ({ value: { purchaseOrderId: props.params.id } })),
               {
                 description: d.ReceivingLoadReceiptScreenTable,
+                navigation: true,
                 path: () => `purchase-orders/${props.params.id}/receiving`,
               },
               {
                 description: d.ReceivingLoadPurchaseOrderHistoryTable,
+                navigation: true,
                 path: () => `purchase-orders/${props.params.id}/history`,
               },
               { description: d.PurchaseOrderUpdateForm, path: () => `purchase-orders/${props.params.id}/update` },
@@ -166,7 +170,7 @@ export const SECTIONS: readonly ShellSection[] = [
             screen={props}
             description={d.ReceiptQueryTable}
             route={receipt.RECEIPT_QUERY_ROUTE}
-            rowActions={[{ description: d.ReceiptGetDetail, path: (row) => recordPath("receipts", row) }]}
+            recordLink={{ description: d.ReceiptGetDetail, path: (row) => recordPath("receipts", row) }}
           />
         ),
       },

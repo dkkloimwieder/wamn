@@ -23,6 +23,12 @@ let step = "sign-in";
 try {
   page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   page.on("pageerror", (error) => errors.push(error.message));
+  const columns = async (title, labels) => {
+    const headers = page.getByRole("table", { name: title, exact: true }).getByRole("columnheader");
+    assert.equal(await headers.count(), labels.length);
+    for (const label of labels)
+      assert.equal(await headers.filter({ hasText: new RegExp(`^${label}(?:\\s|$)`) }).count(), 1);
+  };
   const capture = async (name, table = false) => {
     if (name === "purchase-order" || name === "receipt") await page.locator("[data-generator-detail]").waitFor();
     await page.evaluate(() => document.fonts.ready);
@@ -89,13 +95,52 @@ try {
   assert.deepEqual(await table("Purchase orders").locator("tbody > tr[data-row]").allTextContents(), firstPage);
   const orderRow = table("Purchase orders").locator("tbody > tr[data-row]").first();
   step = "purchase-order";
-  await orderRow.getByRole("link", { name: "Purchase order", exact: true }).click();
+  const orderLink = orderRow.getByRole("link", { name: /^PO-BROWSER-/ });
+  const orderNumber = await orderLink.textContent();
+  await orderRow.getByText("SUPPLIER-BROWSER", { exact: true }).waitFor();
+  await columns("Purchase orders", ["Order number", "Supplier", "Status", "Revision", "Actions"]);
+  assert.equal(
+    await table("Purchase orders")
+      .getByRole("columnheader", { name: /^Purchase order Drag/ })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await table("Purchase orders")
+      .getByRole("columnheader", { name: /^Actions / })
+      .count(),
+    1,
+  );
+  assert.equal(await orderRow.getByRole("button", { name: "Change the supplier", exact: true }).count(), 0);
+  await orderRow.getByRole("button", { name: "Record a receipt", exact: true }).click();
+  await page.getByRole("combobox", { name: "Purchase order", exact: true }).waitFor();
+  await page.waitForFunction(
+    (number) => document.querySelector('input[role="combobox"]')?.value === number,
+    orderNumber,
+  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await menu("Purchase orders");
+  await table("Purchase orders").getByRole("link", { name: orderNumber, exact: true }).click();
   await page.getByRole("heading", { name: "Purchase order", exact: true }).waitFor();
+  await page.locator('[data-generator-field="supplier_id"]').getByText("SUPPLIER-BROWSER", { exact: true }).waitFor();
   await capture("purchase-order");
+  await page.getByRole("button", { name: "Record a receipt", exact: true }).click();
+  await page.getByRole("combobox", { name: "Purchase order", exact: true }).waitFor();
+  await page.waitForFunction(
+    (number) => document.querySelector('input[role="combobox"]')?.value === number,
+    orderNumber,
+  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await menu("Purchase orders");
+  await table("Purchase orders").getByRole("link", { name: orderNumber, exact: true }).click();
+  await page.getByRole("heading", { name: "Purchase order", exact: true }).waitFor();
   const orderPath = new URL(page.url()).pathname;
   step = "change-supplier";
-  await page.getByRole("link", { name: "Change the supplier", exact: true }).click();
+  await page.getByRole("button", { name: "Change the supplier", exact: true }).click();
   await page.getByRole("button", { name: "Change the supplier", exact: true }).waitFor();
+  await page.waitForFunction(
+    () => document.querySelector('input[aria-label="Supplier"]')?.value === "SUPPLIER-BROWSER",
+  );
   await capture("change-supplier");
   await choose("Supplier", "SUPPLIER-BROWSER");
   await page.getByRole("button", { name: "Change the supplier", exact: true }).click();
@@ -112,8 +157,9 @@ try {
   await table("Receiving screen").getByText("ITEM-BROWSER", { exact: true }).waitFor();
   await capture("receiving", true);
   step = "record-receipt";
-  await table("Receiving screen").getByRole("link", { name: "Record a receipt", exact: true }).click();
+  await table("Receiving screen").getByRole("button", { name: "Record a receipt", exact: true }).click();
   await page.getByRole("button", { name: "Record a receipt", exact: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('input[aria-label="Order line"]')?.value === "ITEM-BROWSER");
   await choose("Location", "DOCK-BROWSER");
   await page.getByLabel("Receipt reference", { exact: true }).fill("BROWSER-RECEIPT");
   await page.getByLabel("Quantity", { exact: true }).fill("1");
@@ -122,20 +168,23 @@ try {
   await table("Receipts").getByText("BROWSER-RECEIPT", { exact: true }).waitFor();
   assert.ok(new URL(page.url()).pathname.endsWith("/receipts"));
   step = "receipts";
-  const createReceipt = page.getByRole("link", { name: "Record a receipt", exact: true });
+  const createReceipt = page.getByRole("button", { name: "Record a receipt", exact: true });
   assert.ok(
     await createReceipt.evaluate((node) => !!node.closest(".table-workspace-header")),
     "receipt action belongs in the table header",
   );
+  await columns("Receipts", ["Receipt reference", "Purchase order", "Received at"]);
   await capture("receipts", true);
   step = "receipt";
-  await table("Receipts").getByRole("link", { name: "Receipt", exact: true }).click();
+  await table("Receipts").getByText(orderNumber, { exact: true }).waitFor();
+  await table("Receipts").getByRole("link", { name: "BROWSER-RECEIPT", exact: true }).click();
   await page.getByRole("heading", { name: "Receipt", exact: true }).waitFor();
+  await page.locator('[data-generator-field="purchase_order_id"]').getByText(orderNumber, { exact: true }).waitFor();
   await capture("receipt");
   step = "create-supplier";
   await menu("Suppliers");
   await table("Suppliers").getByText("SUPPLIER-BROWSER", { exact: true }).waitFor();
-  const createSupplier = page.getByRole("link", { name: "Add a supplier", exact: true });
+  const createSupplier = page.getByRole("button", { name: "Add a supplier", exact: true });
   assert.ok(
     await createSupplier.evaluate((node) => !!node.closest(".table-workspace-header")),
     "supplier action belongs in the table header",
@@ -147,13 +196,15 @@ try {
   await table("Suppliers").getByText("BROWSER-NEW-SUPPLIER", { exact: true }).waitFor();
   assert.ok(new URL(page.url()).pathname.endsWith("/suppliers"));
   step = "suppliers";
+  await columns("Suppliers", ["Supplier name"]);
   await capture("suppliers", true);
   step = "locations";
   await menu("Locations");
   await table("Locations").getByText("DOCK-BROWSER", { exact: true }).waitFor();
+  await columns("Locations", ["Location code", "Actions"]);
   await capture("locations", true);
   step = "cancel-receipt";
-  await table("Locations").getByRole("link", { name: "Record a receipt", exact: true }).click();
+  await table("Locations").getByRole("button", { name: "Record a receipt", exact: true }).click();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await table("Receipts").waitFor();
   assert.equal(captured.size, 13);

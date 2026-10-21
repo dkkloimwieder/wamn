@@ -428,3 +428,52 @@ fn a_compiled_file_keeps_its_derived_relations_until_wamn_k_changes() {
         serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("JSON");
     assert_eq!(written, package.compile());
 }
+
+#[test]
+fn field_visibility_is_optional_and_boolean_for_models_and_custom_results() {
+    let original = source("", "");
+    let authored = source(
+        r#"            field_text = {id = {visible = False}, code = {label = "Code", visible = True}}"#,
+        "",
+    ).replace(
+        r#"result = {class = "one", fields = [{path = "id", type = "uuid"}]}"#,
+        r#"result = {class = "one", fields = [{path = "id", type = "uuid", visible = True}]}"#,
+    );
+    let compiled = Package::new(&authored).compile();
+    assert_eq!(
+        compiled["models"]["widget"]["field_text"]["code"]["visible"],
+        true
+    );
+    assert_eq!(
+        compiled["models"]["widget"]["field_text"]["id"]["visible"],
+        false
+    );
+    assert_eq!(
+        compiled["custom_operations"]["widget.archive"]["result"]["fields"][0]["visible"],
+        true
+    );
+    let typed =
+        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&compiled).unwrap())
+            .unwrap();
+    assert_eq!(
+        typed.models["widget"].field_text["code"].visible,
+        Some(true)
+    );
+    assert_eq!(
+        typed.custom_operations["widget.archive"]
+            .result
+            .as_ref()
+            .unwrap()
+            .fields[0]
+            .visible,
+        Some(true)
+    );
+    let omitted = Package::new(&original).compile();
+    assert!(
+        omitted["custom_operations"]["widget.archive"]["result"]["fields"][0]
+            .get("visible")
+            .is_none()
+    );
+    let invalid = authored.replace("visible = True", r#"visible = "yes""#);
+    assert!(Package::new(&invalid).refusal().contains("visible"));
+}

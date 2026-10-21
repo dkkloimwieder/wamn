@@ -777,6 +777,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         maximum: None,
         values: Vec::new(),
         label: None,
+        visible: None,
         description: None,
         references: None,
         column: None,

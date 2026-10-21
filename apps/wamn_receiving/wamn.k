@@ -16,7 +16,7 @@ manifest.Package {
             table = "item"
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
-            field_text = {item_number = {label = "Item number"}}
+            field_text = {item_number = {label = "Item number", visible = True}}
             audit_log = {columns = []}
             operations = {}
         }
@@ -24,7 +24,7 @@ manifest.Package {
             table = "location"
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
-            field_text = {location_code = {label = "Location code"}}
+            field_text = {location_code = {label = "Location code", visible = True}}
             audit_log = {columns = []}
             operations = {}
         }
@@ -34,10 +34,10 @@ manifest.Package {
             client_field_extensible = True
             server_owned_fields = ["id", "purchase_order_number", "status", "row_version"]
             field_text = {
-                purchase_order_number = {label = "Order number"}
-                supplier_id = {label = "Supplier"}
-                status = {label = "Status"}
-                row_version = {label = "Revision"}
+                purchase_order_number = {label = "Order number", visible = True}
+                supplier_id = {label = "Supplier", visible = True}
+                status = {label = "Status", visible = True}
+                row_version = {label = "Revision", visible = True}
                 created_at = {label = "Created"}
                 created_by = {label = "Created by"}
                 updated_at = {label = "Updated"}
@@ -74,10 +74,10 @@ manifest.Package {
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
             field_text = {
-                line_number = {label = "Line"}
-                item_id = {label = "Item"}
-                ordered_quantity = {label = "Ordered"}
-                received_quantity = {label = "Received"}
+                line_number = {label = "Line", visible = True}
+                item_id = {label = "Item", visible = True}
+                ordered_quantity = {label = "Ordered", visible = True}
+                received_quantity = {label = "Received", visible = True}
             }
             audit_log = {columns = [], retention = "P30D"}
             operations = {}
@@ -87,9 +87,9 @@ manifest.Package {
             owner = "wamn_receiving"
             server_owned_fields = ["id", "purchase_order_id", "receipt_reference", "occurred_at"]
             field_text = {
-                receipt_reference = {label = "Receipt reference"}
-                purchase_order_id = {label = "Purchase order"}
-                occurred_at = {label = "Received at"}
+                receipt_reference = {label = "Receipt reference", visible = True}
+                purchase_order_id = {label = "Purchase order", visible = True}
+                occurred_at = {label = "Received at", visible = True}
                 created_at = {label = "Recorded"}
                 created_by = {label = "Recorded by"}
             }
@@ -104,9 +104,9 @@ manifest.Package {
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
             field_text = {
-                quantity = {label = "Quantity"}
-                location_id = {label = "Location"}
-                purchase_order_line_id = {label = "Order line"}
+                quantity = {label = "Quantity", visible = True}
+                location_id = {label = "Location", visible = True}
+                purchase_order_line_id = {label = "Order line", visible = True}
             }
             audit_log = {columns = []}
             operations = {}
@@ -116,7 +116,7 @@ manifest.Package {
             owner = "wamn_receiving"
             min_lengths = {name = 1}
             server_owned_fields = ["id"]
-            field_text = {name = {label = "Supplier name"}, created_at = {label = "Added"}}
+            field_text = {name = {label = "Supplier name", visible = True}, created_at = {label = "Added"}}
             audit_log = {columns = ["created_at"]}
             operations: {
                 create: {writable_fields = ["name"], label = "Add a supplier", result = "one"}
@@ -172,8 +172,8 @@ manifest.Package {
                 fields = [
                     {path = "receipt_id", type = "uuid", label = "Receipt"}
                     {path = "purchase_order_id", type = "uuid", label = "Purchase order"}
-                    {path = "purchase_order_status", type = "text", values = ["open", "complete"], label = "Status"}
-                    {path = "row_version", type = "int32", revision = True, label = "Revision"}
+                    {path = "purchase_order_status", type = "text", values = ["open", "complete"], label = "Status", visible = True}
+                    {path = "row_version", type = "int32", revision = True, label = "Revision", visible = True}
                 ]
             }
             canonicalization = {
@@ -246,22 +246,22 @@ manifest.Package {
                 class = "bounded_list"
                 fields = [
                     {path = "purchase_order_id", type = "uuid"}
-                    {path = "purchase_order_number", type = "text", label = "Order number"}
+                    {path = "purchase_order_number", type = "text", label = "Order number", visible = True}
                     {
                         path = "purchase_order_status"
                         type = "text"
                         values = ["open", "complete", "cancelled"]
-                        label = "Status"
+                        label = "Status", visible = True
                     }
                     {path = "supplier_id", type = "uuid", label = "Supplier"}
-                    {path = "row_version", type = "int32", revision = True, label = "Revision"}
+                    {path = "row_version", type = "int32", revision = True, label = "Revision", visible = True}
                     {path = "line_id", type = "uuid", nullable = True}
-                    {path = "line_number", type = "int32", nullable = True, label = "Line"}
+                    {path = "line_number", type = "int32", nullable = True, label = "Line", visible = True}
                     {path = "item_id", type = "uuid", nullable = True}
-                    {path = "item_number", type = "text", nullable = True, label = "Item"}
-                    {path = "ordered_quantity", type = "numeric", nullable = True, label = "Ordered"}
-                    {path = "received_quantity", type = "numeric", nullable = True, label = "Received"}
-                    {path = "remaining_quantity", type = "numeric", nullable = True, label = "Remaining"}
+                    {path = "item_number", type = "text", nullable = True, label = "Item", visible = True}
+                    {path = "ordered_quantity", type = "numeric", nullable = True, label = "Ordered", visible = True}
+                    {path = "received_quantity", type = "numeric", nullable = True, label = "Received", visible = True}
+                    {path = "remaining_quantity", type = "numeric", nullable = True, label = "Remaining", visible = True}
                 ]
             }
             errors = ["invalid_input", "not_found", *_errors_after_input]
@@ -306,14 +306,14 @@ manifest.Package {
                 class = "bounded_list"
                 fields = [
                     {path = "id", type = "uuid", label = "Entry"}
-                    {path = "cursor", type = "text", label = "Position"}
-                    {path = "type", type = "text", values = ["insert", "update", "delete"], label = "Change"}
-                    {path = "operation", type = "text", label = "Operation"}
+                    {path = "cursor", type = "text", label = "Position", visible = True}
+                    {path = "type", type = "text", values = ["insert", "update", "delete"], label = "Change", visible = True}
+                    {path = "operation", type = "text", label = "Operation", visible = True}
                     {path = "changed_by", type = "uuid", label = "Changed by"}
-                    {path = "changed_at", type = "timestamptz", label = "Changed at"}
-                    {path = "before", type = "text", label = "Before"}
-                    {path = "after", type = "text", label = "After"}
-                    {path = "current", type = "text", label = "Current"}
+                    {path = "changed_at", type = "timestamptz", label = "Changed at", visible = True}
+                    {path = "before", type = "text", label = "Before", visible = True}
+                    {path = "after", type = "text", label = "After", visible = True}
+                    {path = "current", type = "text", label = "Current", visible = True}
                 ]
             }
             errors = ["invalid_input", *_errors_after_input]
@@ -343,7 +343,7 @@ manifest.Package {
                 class = "bounded_list"
                 fields = [
                     {path = "id", type = "uuid"}
-                    {path = "location_code", type = "text", label = "Location code"}
+                    {path = "location_code", type = "text", label = "Location code", visible = True}
                 ]
             }
             errors = ["invalid_input", *_errors_after_input]
