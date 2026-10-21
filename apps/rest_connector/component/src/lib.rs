@@ -8,6 +8,7 @@ wit_bindgen::generate!({
     world: "rest-connector:component/rest-connector@0.1.0",
     path: [
         "../../../crates/execution/workflow/router/wit",
+        "../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
         "../../target/wamn/rest_connector/wit",
         "wit",
