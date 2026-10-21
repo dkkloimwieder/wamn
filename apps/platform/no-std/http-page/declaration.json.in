@@ -117,6 +117,13 @@
           "schema": {
             "type": "string"
           }
+        },
+        {
+          "name": "carry-input-pointer",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
         }
       ]
     }

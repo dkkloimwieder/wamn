@@ -1,4 +1,1 @@
-CREATE TABLE rest_connector.item (
-    key text CONSTRAINT item_key_pkey PRIMARY KEY,
-    name text NOT NULL
-);
+-- Integration state belongs to the composed wamn_integration package.

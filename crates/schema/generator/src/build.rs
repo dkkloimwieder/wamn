@@ -82,11 +82,10 @@ impl BuildRequest {
 }
 
 /// The default output root of the package at `package_root`:
-/// `<package_root>/../target/wamn`, that is `apps/target/wamn` for an
-/// application.
+/// `apps/target/wamn` for both applications and nested platform packages.
 #[must_use]
 pub fn default_output_root(package_root: &Path) -> PathBuf {
-    package_root.join("../target/wamn")
+    crate::output::package_workspace(package_root).join("target/wamn")
 }
 
 /// The build output directory of `package` below `output_root`.
@@ -150,7 +149,10 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
         }
         // Generation writes a receipt before component compilation. Do not
         // accept that intermediate result after a failed component build.
-        if request.package_root.join("../Cargo.toml").is_file() {
+        if crate::output::package_workspace(&request.package_root)
+            .join("Cargo.toml")
+            .is_file()
+        {
             let manifest =
                 PackageManifest::from_slice(&fs::read(output.join(COMPILED_MANIFEST_NAME))?)?;
             if !manifest.components.keys().all(|name| {
@@ -598,17 +600,18 @@ async fn migrate(
     package_root: &Path,
     manifest: &PackageManifest,
 ) -> Result<()> {
-    let schemas = application_schemas(manifest).context("resolve application schemas")?;
-    let mut directories = manifest
-        .base_dependencies
-        .values()
-        .map(|dependency| {
-            package_root
-                .join("..")
-                .join(&dependency.package)
-                .join("migrations")
-        })
-        .collect::<Vec<_>>();
+    let mut schemas = application_schemas(manifest).context("resolve application schemas")?;
+    let mut directories = Vec::new();
+    for dependency in manifest.base_dependencies.values() {
+        let root = crate::output::dependency_root(package_root, &dependency.package);
+        let authored: Value = serde_json::from_slice(&authored_manifest(&root)?)?;
+        let base =
+            PackageManifest::from_slice(&serde_json::to_vec(&with_placeholder_types(&authored))?)?;
+        schemas.extend(application_schemas(&base)?);
+        directories.push(root.join("migrations"));
+    }
+    schemas.sort();
+    schemas.dedup();
     directories.push(package_root.join("migrations"));
 
     let (client, connection) = tokio_postgres::connect(database_url, NoTls)

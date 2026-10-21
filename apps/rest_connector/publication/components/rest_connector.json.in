@@ -6,7 +6,7 @@
   "component": "rest_connector",
   "interface-version": "0.1.0",
   "operations": {
-    "rest-connector:item/record": {
+    "rest-connector:sync/finish": {
       "input-ports": [
         {
           "name": "input",
@@ -21,6 +21,40 @@
           "schema": {
             "type": "array"
           }
+        }
+      ],
+      "parameters": []
+    },
+    "rest-connector:sync/pushed": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
+    },
+    "wamn:node/async-handler@0.1.0": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {}
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {}
         }
       ],
       "parameters": []

@@ -1001,6 +1001,18 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rest-connector"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "jsonata-core",
+ "serde",
+ "serde_json",
+ "uuid",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "rest-consumer-fixture"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
  "uuid",
@@ -1488,6 +1500,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "wamn-integration"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wamn-postgres-statements",
+ "wit-bindgen",
 ]
 
 [[package]]

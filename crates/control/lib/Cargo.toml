@@ -21,6 +21,14 @@ required-features = ["ops"]
 name = "rest_connector_publication"
 path = "../../../apps/rest_connector/tests/publication.rs"
 
+[[test]]
+name = "rest_consumer_fixture_publication"
+path = "../../../apps/rest_consumer_fixture/tests/publication.rs"
+
+[[test]]
+name = "wamn_integration_live"
+path = "../../../apps/platform/wamn_integration/tests/operations_live.rs"
+
 [dependencies]
 futures-util = { workspace = true }
 rcgen = { workspace = true }

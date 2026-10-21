@@ -44,10 +44,11 @@ struct Component;
 
 impl Guest for Component {
     async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        serde_json::from_str::<serde_json::Value>(&input)
+        let input = serde_json::from_str::<serde_json::Value>(&input)
             .map_err(|error| invalid_input(format!("input is not JSON: {error}")))?;
         let config = serde_json::from_str::<serde_json::Value>(&context.config)
             .map_err(|error| terminal("invalid-config", format!("config is not JSON: {error}")))?;
+        let carry = carried_input(&config, &input)?;
         let mut headers = configured_headers(&config)?;
         if let Some(traceparent) = context.traceparent {
             push_header_unless_present(&mut headers, "traceparent", traceparent.into_bytes());
@@ -62,9 +63,40 @@ impl Guest for Component {
         })
         .await?;
         Ok(Emission {
-            payload: serde_json::Value::Array(items).to_string(),
+            payload: page_output(items, carry).to_string(),
             port: None,
         })
+    }
+}
+
+fn carried_input(
+    config: &serde_json::Value,
+    input: &serde_json::Value,
+) -> Result<Option<serde_json::Value>, NodeError> {
+    let Some(pointer) = config.get("carry-input-pointer") else {
+        return Ok(None);
+    };
+    let pointer = pointer.as_str().ok_or_else(|| {
+        terminal(
+            "invalid-config",
+            "carry-input-pointer must be a JSON pointer string",
+        )
+    })?;
+    input.pointer(pointer).cloned().map(Some).ok_or_else(|| {
+        terminal(
+            "invalid-input-pointer",
+            "carry-input-pointer has no target in the input",
+        )
+    })
+}
+
+fn page_output(
+    items: Vec<serde_json::Value>,
+    carry: Option<serde_json::Value>,
+) -> serde_json::Value {
+    match carry {
+        Some(carry) => serde_json::json!({"items": items, "carry": carry}),
+        None => serde_json::Value::Array(items),
     }
 }
 

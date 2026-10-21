@@ -1,0 +1,29 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "rest_item_pushed",
+  "version": 1,
+  "entry": "row",
+  "nodes": {
+    "row": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "[{\"request_id\": new.key, \"value\": {\"record_id\": new.key}}]",
+        "port": "items"
+      }
+    },
+    "append": {
+      "component": "rest_connector",
+      "interface-version": "0.1.0",
+      "operation": "rest-connector:sync/pushed"
+    }
+  },
+  "edges": [
+    {
+      "from": "row",
+      "from-port": "items",
+      "to": "append"
+    }
+  ]
+}

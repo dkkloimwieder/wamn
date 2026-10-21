@@ -16,9 +16,8 @@
 //! component is copied to `components/<name>.wasm` in the package's build
 //! output, and `outputs.components` of `build.json` names it with its digest.
 //!
-//! A package that lies outside a Cargo workspace, that is with no
-//! `../Cargo.toml`, has no component to compile, and its `outputs.components`
-//! stays empty.
+//! A package outside the application workspace has no component to compile.
+//! Top-level applications and nested platform packages share that workspace.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -91,7 +90,7 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     )
     .context("parse the built wamn.json")?;
     let mut receipt = receipt::read(&output)?;
-    let workspace = package_root.join("..");
+    let workspace = crate::output::package_workspace(package_root);
     if !workspace.join("Cargo.toml").is_file() {
         return Ok(receipt);
     }
@@ -526,6 +525,9 @@ fn wiring_components(package_root: &Path) -> Result<BTreeSet<String>> {
             .into_iter()
             .flat_map(|nodes| nodes.values())
         {
+            if node.get("operation-dependency").is_some() {
+                continue;
+            }
             let component = node["component"]
                 .as_str()
                 .with_context(|| format!("a node of {} names no component", path.display()))?;
@@ -590,6 +592,23 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create the scratch directory");
         Scratch(root)
+    }
+
+    #[test]
+    fn wiring_discovery_leaves_cross_package_nodes_to_the_release() {
+        let scratch = scratch("dependency");
+        let directory = scratch.0.join("publication/wirings");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("pull.json"), r#"{
+            "nodes": {
+                "page": {"component": "http-page"},
+                "consumer": {"component": "consumer", "operation-dependency": {"alias": "consumer", "operation": "item.record"}}
+            }
+        }"#).unwrap();
+        assert_eq!(
+            wiring_components(&scratch.0).unwrap(),
+            BTreeSet::from(["http-page".into()])
+        );
     }
 
     #[test]

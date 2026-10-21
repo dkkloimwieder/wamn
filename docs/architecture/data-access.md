@@ -665,6 +665,17 @@ It changes nothing in a database that has no role.
 The provisioning grant verifier reads `pg_trigger` in each database with the query that the verb runs.
 It refuses any other grant, a grant on an `unlimited` history table, and a grant in a reserved schema or `app_system`.
 
+### Integration state
+
+The [integration base](../../apps/platform/wamn_integration/README.md) owns `setting` and `log` in the `wamn_integration` schema.
+Its private operations own their SQL and generated application grants.
+An integration composes those operations and keeps domain records in the consumer application.
+The [REST connector](../../apps/rest_connector/README.md) calls the consumer's registered `item.record` command through a pinned workflow dependency.
+
+Its schedule uses the application principal and requires the consumer command permission.
+Its event workflow reads consumer item inserts and records delivery outcomes in the base log.
+Only the consumer schema requires CDC capture.
+
 ### Actors
 
 The actor is the `app_system.users` id of the executing principal, never the credential.

@@ -157,3 +157,33 @@ fn invalid_items_and_missing_limit_are_terminal() {
     cfg["path-and-query"] = json!("/items?size=0");
     assert!(matches!(run(&cfg, vec![]).0, Err(NodeError::Terminal(_))));
 }
+
+#[test]
+fn carry_preserves_the_selected_input_and_empty_pages() {
+    let input = json!({"due": "2026-10-21T12:00:00Z"});
+    let config = json!({"carry-input-pointer": "/due"});
+    let carry = super::carried_input(&config, &input).unwrap();
+    assert_eq!(
+        super::page_output(vec![json!({"id": "1"})], carry.clone()),
+        json!({"items": [{"id": "1"}], "carry": input["due"]})
+    );
+    assert_eq!(
+        super::page_output(vec![], carry),
+        json!({"items": [], "carry": input["due"]})
+    );
+    assert_eq!(
+        super::page_output(
+            vec![json!(1)],
+            super::carried_input(&json!({}), &input).unwrap()
+        ),
+        json!([1])
+    );
+    assert!(matches!(
+        super::carried_input(&json!({"carry-input-pointer": "/absent"}), &input),
+        Err(NodeError::Terminal(_))
+    ));
+    assert_eq!(
+        super::carried_input(&config, &json!({"due": null})).unwrap(),
+        Some(serde_json::Value::Null)
+    );
+}

@@ -2,7 +2,7 @@
   "format-version": "0.1",
   "wiring-id": "rest_item",
   "version": 1,
-  "entry": "page",
+  "entry": "begin",
   "nodes": {
     "page": {
       "component": "http-page",
@@ -16,7 +16,8 @@
           "limit": "limit",
           "offset": "offset"
         },
-        "items": "/items"
+        "items": "/items",
+        "carry-input-pointer": "/due"
       }
     },
     "rows": {
@@ -24,17 +25,35 @@
       "interface-version": "0.1.0",
       "operation": "wamn:node/handler@0.1.0",
       "params": {
-        "expression": "[$.{\"request_id\": id, \"value\": {\"idempotency_key\": id, \"key\": id, \"name\": name}}]",
+        "expression": "[{\"request_id\": carry, \"value\": {\"idempotency_key\": carry, \"items\": [items.{\"key\": id, \"name\": name}]}}]",
         "port": "items"
       }
     },
     "record": {
+      "component": "rest_consumer_fixture",
+      "interface-version": "0.1.0",
+      "operation": "rest-consumer-fixture:item/record",
+      "operation-dependency": {
+        "alias": "consumer",
+        "operation": "item.record"
+      }
+    },
+    "begin": {
       "component": "rest_connector",
       "interface-version": "0.1.0",
-      "operation": "rest-connector:item/record"
+      "operation": "wamn:node/async-handler@0.1.0"
+    },
+    "finish": {
+      "component": "rest_connector",
+      "interface-version": "0.1.0",
+      "operation": "rest-connector:sync/finish"
     }
   },
   "edges": [
+    {
+      "from": "begin",
+      "to": "page"
+    },
     {
       "from": "page",
       "to": "rows"
@@ -43,6 +62,10 @@
       "from": "rows",
       "from-port": "items",
       "to": "record"
+    },
+    {
+      "from": "record",
+      "to": "finish"
     }
   ]
 }

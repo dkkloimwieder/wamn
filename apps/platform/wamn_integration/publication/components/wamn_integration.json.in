@@ -1,0 +1,68 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "wamn_integration"
+  },
+  "component": "wamn_integration",
+  "interface-version": "0.1.0",
+  "operations": {
+    "wamn-integration:setting/read": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
+    },
+    "wamn-integration:setting/write": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
+    },
+    "wamn-integration:log/append": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
+    }
+  },
+  "connections": []
+}

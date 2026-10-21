@@ -96,7 +96,11 @@ The host resolves the admitted requirement and confines the request to that conn
 
 The `http-request` palette node sends one request through this contract.
 The `http-page` node sends GET requests and emits one array on `main` after it collects all pages.
-Its parameters are `requirement`, `path-and-query`, optional `headers`, `page`, and `items`.
+Its parameters are `requirement`, `path-and-query`, optional `headers`, `page`, `items`, and optional `carry-input-pointer`.
+When `carry-input-pointer` is set, the output is `{"items":[…],"carry":<value>}`.
+The JSON pointer selects the carried value from the node input, including for an empty item array.
+A missing target returns a terminal error.
+Without that parameter, the output remains the plain item array.
 The `items` parameter is a JSON pointer to each response's item array.
 Offset paging uses `page = {"style":"offset","limit":"limit","offset":"offset"}` and reads the positive limit from `path-and-query`.
 A short page ends offset paging.
@@ -105,7 +109,8 @@ Link paging uses `{"style":"link-header"}` and follows relative links with `rel=
 Absolute next links return a terminal error, because the guest does not see the binding's origin (`wamn-62h0t`).
 A 429 returns `rate-limited` with numeric `Retry-After` seconds converted to milliseconds.
 A 5xx returns `retryable`. Other 4xx responses, including 408, return `terminal`.
-The [REST connector template](../../apps/rest_connector/README.md) maps the array with JSONata and stores items once by key.
+The [REST connector](../../apps/rest_connector/README.md) carries the schedule due time and maps items with JSONata.
+It calls the registered command of the separate consumer application, then advances its checkpoint after success.
 
 The credential secret holds exactly one top-level key: `headers`, `hmac`, `oauth1`, or `oauth2`.
 Static headers use `{"headers":{…}}`.

@@ -13,6 +13,8 @@ members = [
     "edge_samples/component",
     "platform_fixture/component",
     "rest_connector/component",
+    "rest_consumer_fixture/component",
+    "platform/wamn_integration/component",
     "platform_fixture_overlay/component",
     "wamn_receiving/component",
     "wamn_wms/component",

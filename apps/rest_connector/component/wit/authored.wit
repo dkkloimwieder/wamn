@@ -1,5 +1,8 @@
 package rest-connector:component@0.1.0;
-
 world rest-connector {
-  include rest-connector:generated/generated;
+    include rest-connector:generated/generated;
+    export wamn:node/async-handler@0.1.0;
+    import wamn-integration:setting/read@0.1.0;
+    import wamn-integration:setting/write@0.1.0;
+    import wamn-integration:log/append@0.1.0;
 }

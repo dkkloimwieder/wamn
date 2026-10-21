@@ -315,3 +315,41 @@ async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
     );
     fs::remove_dir_all(&output_root).expect("remove the output copy");
 }
+
+/// Nested bases retain their generated identity and supply overlay migrations.
+#[tokio::test(flavor = "current_thread")]
+async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
+    let workspace = Workspace::new("nested-base");
+    let database = wamn_test_postgres::database();
+    let output = workspace.root.join("target/wamn");
+    let first = wamn_schema_generator::build::generate_package(&BuildRequest::new(
+        &workspace.package(),
+        &output,
+        database.url(),
+    ))
+    .await
+    .unwrap();
+    fs::create_dir(workspace.root.join("platform")).unwrap();
+    let nested = workspace
+        .root
+        .join("platform")
+        .join(wamn_fixture_package::PACKAGE_ID);
+    fs::rename(workspace.package(), &nested).unwrap();
+    let second = wamn_schema_generator::build::generate_package(&BuildRequest::new(
+        &nested,
+        &output,
+        database.url(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(first.inputs, second.inputs);
+    assert_eq!(first.outputs.manifest, second.outputs.manifest);
+    assert_eq!(first.outputs.files, second.outputs.files);
+    wamn_schema_generator::build::generate_package(&BuildRequest::new(
+        &workspace.overlay(),
+        &output,
+        database.url(),
+    ))
+    .await
+    .expect("the top-level overlay migrates its nested base");
+}

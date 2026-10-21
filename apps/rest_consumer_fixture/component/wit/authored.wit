@@ -1,0 +1,5 @@
+package rest-consumer-fixture:component@0.1.0;
+
+world rest-consumer-fixture {
+  include rest-consumer-fixture:generated/generated;
+}

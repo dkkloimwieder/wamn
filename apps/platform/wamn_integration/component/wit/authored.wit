@@ -1,0 +1,4 @@
+package wamn-integration:component@0.1.0;
+world wamn-integration {
+    include wamn-integration:generated/generated;
+}

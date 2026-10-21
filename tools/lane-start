@@ -48,14 +48,14 @@ cargo build --locked -p wamn-scenario-worker >&2
 printf 'lane-start: install web dependencies\n' >&2
 pnpm install --frozen-lockfile >&2
 
-# These are the bases of the repository's two overlays. The CLI requires
-# bases first. Discover all other packages, including the overlays, below.
-packages=(apps/platform_fixture apps/wamn_receiving)
+# Build pinned dependencies before their applications. Discover the remaining
+# top-level packages below.
+packages=(apps/platform_fixture apps/wamn_receiving apps/platform/wamn_integration apps/rest_consumer_fixture)
 for manifest in apps/*/wamn.k; do
   [[ -f "$manifest" ]] || continue
   package=${manifest%/wamn.k}
   case "$package" in
-    apps/platform_fixture|apps/wamn_receiving) ;;
+    apps/platform_fixture|apps/wamn_receiving|apps/rest_consumer_fixture) ;;
     *) packages+=("$package") ;;
   esac
 done

@@ -1,0 +1,31 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "rest_consumer_fixture"
+  },
+  "component": "rest_consumer_fixture",
+  "interface-version": "0.1.0",
+  "operations": {
+    "rest-consumer-fixture:item/record": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": [],
+      "registered-operation": "rest-consumer-fixture:item/record"
+    }
+  },
+  "connections": []
+}
