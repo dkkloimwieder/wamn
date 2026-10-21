@@ -61,6 +61,27 @@ Publication uses WAMN-owned OCI media types and retains the component configurat
 The host compares bytes and artifact layout with the admitted facts before native loading.
 A generic component pull cannot discard that configuration and still satisfy the publication contract.
 
+## Application HTTP composition
+
+`publish_release::compose_application` builds an HTTP component from an admitted application and pinned platform route bytes.
+The application can already contain its admitted bases.
+The function refuses route bytes that differ from the supplied digest.
+Package admission refuses any member that imports the `wamn:operation` package, with any interface or version.
+It also refuses any member that exports `wasi:http/handler`.
+Both rules include nested members and labelled imports.
+Only the platform route layer supplies the HTTP handler.
+
+The composer embeds both inputs unchanged and connects matching route imports to application exports.
+The result exports `wasi:http/handler@0.3.0` and the application's exports.
+It preserves each named SQL import and its original member digest.
+An application with one direct statements import receives a named instance of its own.
+The result's SHA-256 digest covers both inputs, and two compositions of identical inputs produce identical bytes.
+
+This API builds an artifact without changing the served release manifest or publishing it to a registry.
+The current `http-route` guest still calls host delivery when embedded.
+The host still serves the separate HTTP workload and original operation components.
+The serving work in `wamn-l5sus.3` owns selection and dispatch of the composed application.
+
 ## Guest build identity
 
 `apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml` own guest membership and feature resolution.

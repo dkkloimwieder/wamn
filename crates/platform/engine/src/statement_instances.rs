@@ -10,7 +10,9 @@
 //! reads the composed component's instantiation graph and accepts the record
 //! only when each named import is the statements argument of exactly the
 //! member whose digest the record names (`docs/plan/trx-pkg-plan.md`,
-//! Per-member import instances). Admission refuses a component that fails it,
+//! Per-member import instances). A route wrapper can forward an import through
+//! a nested application's verified record to that same member.
+//! Admission refuses a component that fails it,
 //! and the host binds each import to that member's statements.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,7 +29,10 @@ use crate::component_admission::component_digest;
 
 /// One component index: a nested member and its digest, or anything else.
 enum ComponentEntry {
-    Member(String),
+    Member {
+        digest: String,
+        statements: BTreeMap<String, String>,
+    },
     Other,
 }
 
@@ -72,7 +77,11 @@ pub fn statement_instances(component_bytes: &[u8]) -> anyhow::Result<BTreeMap<St
                     let member = component_bytes
                         .get(start..end)
                         .context("a nested component section is out of range")?;
-                    components.push(ComponentEntry::Member(component_digest(member)));
+                    components.push(ComponentEntry::Member {
+                        digest: component_digest(member),
+                        statements: statement_instances(member)
+                            .context("validate nested member statement instances")?,
+                    });
                 }
                 depth += 1;
             }
@@ -186,8 +195,8 @@ pub fn statement_instances(component_bytes: &[u8]) -> anyhow::Result<BTreeMap<St
     );
     let mut wired = BTreeSet::new();
     for (component_index, args) in instantiations {
-        let digest = match components.get(usize::try_from(component_index)?) {
-            Some(ComponentEntry::Member(digest)) => Some(digest),
+        let member = match components.get(usize::try_from(component_index)?) {
+            Some(ComponentEntry::Member { digest, statements }) => Some((digest, statements)),
             Some(ComponentEntry::Other) => None,
             None => bail!("an instantiation names component {component_index}, which is undefined"),
         };
@@ -197,21 +206,28 @@ pub fn statement_instances(component_bytes: &[u8]) -> anyhow::Result<BTreeMap<St
             })?;
             let InstanceEntry::Statements(import) = entry else {
                 ensure!(
-                    arg != STATEMENTS_INTERFACE,
+                    arg != STATEMENTS_INTERFACE
+                        && !member.is_some_and(|(_, statements)| statements.contains_key(&arg)),
                     "a member receives {STATEMENTS_INTERFACE} from no named import"
                 );
                 continue;
             };
-            ensure!(
-                arg == STATEMENTS_INTERFACE,
-                "statements import {import:?} reaches a member as {arg:?}"
-            );
-            let member = digest.with_context(|| {
+            let (digest, statements) = member.with_context(|| {
                 format!("statements import {import:?} reaches a component that is not a member")
             })?;
+            // A wrapper forwards a named import through the already verified
+            // record of its nested application. The final owner remains the
+            // leaf member, not the wrapper's digest.
+            let owner = if arg == STATEMENTS_INTERFACE {
+                digest
+            } else {
+                statements.get(&arg).with_context(|| {
+                    format!("statements import {import:?} reaches a member as {arg:?}")
+                })?
+            };
             ensure!(
-                record.get(import) == Some(member),
-                "statements import {import:?} reaches member {member}, but the record names {:?}",
+                record.get(import) == Some(owner),
+                "statements import {import:?} reaches member {owner}, but the record names {:?}",
                 record.get(import)
             );
             ensure!(

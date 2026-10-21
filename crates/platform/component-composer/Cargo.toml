@@ -12,9 +12,9 @@ serde_json.workspace = true
 sha2.workspace = true
 wac-graph.workspace = true
 wamn-component-policy.workspace = true
+wasmparser.workspace = true
 
 [dev-dependencies]
-wasmparser.workspace = true
 wat = "=1.254.2"
 
 [lints]

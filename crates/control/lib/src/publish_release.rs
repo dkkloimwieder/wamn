@@ -399,6 +399,51 @@ pub async fn publish_local(
     Ok((assembled.published, assembled.facts))
 }
 
+/// Built application bytes with the platform route layer, not yet selected for serving.
+#[derive(Debug)]
+pub struct ComposedApplication {
+    bytes: Box<[u8]>,
+    digest: String,
+}
+
+impl ComposedApplication {
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
+
+/// Build an HTTP application from an admitted member and pinned platform route bytes.
+///
+/// The member can already contain its admitted bases. The pin must identify
+/// the supplied route layer exactly. This builds an artifact only: the current
+/// release manifest and loaders still select the original operation component.
+pub fn compose_application(
+    application: &crate::component_admission::ComponentAdmission,
+    route_bytes: &[u8],
+    route_digest: &str,
+) -> anyhow::Result<ComposedApplication> {
+    ensure!(
+        wamn_engine::component_admission::component_digest(route_bytes) == route_digest,
+        "route layer bytes differ from pinned digest {route_digest}"
+    );
+    let bytes = wamn_component_composer::compose_application(
+        route_bytes.to_vec(),
+        application.bytes().to_vec(),
+    )
+    .context("compose the route layer with the admitted application")?;
+    wamn_engine::statement_instances::statement_instances(&bytes)
+        .context("validate composed application statement ownership")?;
+    let digest = wamn_engine::component_admission::component_digest(&bytes);
+    Ok(ComposedApplication {
+        bytes: bytes.into_boxed_slice(),
+        digest,
+    })
+}
+
 /// A local release assembled from its package files and admitted components.
 #[derive(Debug)]
 pub struct AssembledLocalRelease {

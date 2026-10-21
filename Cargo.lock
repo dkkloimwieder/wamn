@@ -5528,6 +5528,7 @@ dependencies = [
  "url",
  "wamn-authoring-model",
  "wamn-catalog",
+ "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-engine",
@@ -5550,6 +5551,7 @@ dependencies = [
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
+ "wat",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
 ]

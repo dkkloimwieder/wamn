@@ -129,6 +129,14 @@ WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
+The publish composition tests also use the debug `http-route` guest from the build above.
+They inspect composed bytes and SQL ownership without serving requests or starting a database:
+
+```bash
+WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_route.wasm" \
+  cargo test --offline -p wamn-control --test application_composition -- --include-ignored
+```
+
 The generated clients of the host routes run against the same HTTP shell.
 `control_client_live` serves each set and runs `web/components/test/control-client.live.test.ts` and `control-org-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
 

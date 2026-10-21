@@ -49,6 +49,7 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_
 tracing = { workspace = true }
 url = { workspace = true }
 wamn-catalog = { workspace = true }
+wamn-component-composer = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
@@ -85,6 +86,7 @@ wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { version = "=0.254.2", features = ["dummy-module"] }
 wit-parser = "=0.254.2"
+wat = "=1.254.2"
 
 [lints]
 workspace = true
