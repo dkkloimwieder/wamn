@@ -358,12 +358,12 @@ fn next_link(headers: &[Header]) -> Result<Option<String>, NodeError> {
     Ok(None)
 }
 
-// The guest cannot see the binding's origin or base path. The owner must decide
-// how an absolute next URL proves that boundary without changing the contract.
+// The guest cannot see the binding's origin or base path, so it cannot prove an
+// absolute next URL stays inside the binding (follow-up wamn-62h0t).
 fn absolute_next(_url: &str) -> Result<String, NodeError> {
     Err(terminal(
         "invalid-page",
-        "absolute next URLs await the binding policy",
+        "absolute next URLs are not followed",
     ))
 }
 

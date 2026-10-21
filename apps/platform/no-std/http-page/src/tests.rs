@@ -92,7 +92,7 @@ fn relative_link_is_sent_unchanged() {
     assert_eq!(paths[1], "/items?p=2");
 }
 #[test]
-fn absolute_links_are_terminal_pending_owner_answer() {
+fn absolute_links_are_terminal() {
     for target in [
         "http://http-fixture:8080/items?p=2",
         "https://foreign.invalid/items?p=2",

@@ -62,6 +62,29 @@ fn scheduled_rest_template_admits_and_connects_the_array_command() {
         }
         let bytes = std::fs::read(output.join(format!("components/{name}.wasm")))
             .expect("run wamn build apps/rest_connector before the publication test");
+        if name == "rest_connector" {
+            // The full admission also binds the manifest's statements: a private
+            // command must not declare a registered operation.
+            let rendered = std::env::temp_dir().join(format!(
+                "rest-connector-declaration-{}.json",
+                std::process::id()
+            ));
+            std::fs::write(&rendered, serde_json::to_vec(&declaration).unwrap()).unwrap();
+            let admitted = wamn_control::component_admission::admit_component(
+                wamn_control::component_admission::AdmitComponentRequest {
+                    package: package.clone(),
+                    component_bytes: output.join("components/rest_connector.wasm"),
+                    declaration: rendered.clone(),
+                    admitted_platform_packages: vec![
+                        "wamn:node".to_owned(),
+                        "wamn:postgres".to_owned(),
+                    ],
+                    base_digests: BTreeSet::new(),
+                },
+            );
+            std::fs::remove_file(&rendered).unwrap();
+            admitted.unwrap_or_else(|error| panic!("admit the rest_connector package: {error:#}"));
+        }
         let admitted = wamn_engine::component_admission::validate_component_admission(
             &engine,
             &bytes,

@@ -81,7 +81,7 @@ Offset paging uses `page = {"style":"offset","limit":"limit","offset":"offset"}`
 A short page ends offset paging.
 Cursor paging uses `{"style":"cursor","pointer":"/next","param":"cursor"}` and stops on an absent, null, or empty cursor.
 Link paging uses `{"style":"link-header"}` and follows relative links with `rel="next"` unchanged.
-Absolute next links currently return a terminal error pending the binding policy.
+Absolute next links return a terminal error, because the guest does not see the binding's origin (`wamn-62h0t`).
 A 429 returns `rate-limited` with numeric `Retry-After` seconds converted to milliseconds.
 A 5xx returns `retryable`. Other 4xx responses, including 408, return `terminal`.
 The [REST connector template](../../apps/rest_connector/README.md) maps the array with JSONata and stores items once by key.

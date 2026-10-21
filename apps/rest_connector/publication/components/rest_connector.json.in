@@ -7,7 +7,6 @@
   "interface-version": "0.1.0",
   "operations": {
     "rest-connector:item/record": {
-      "registered-operation": "rest-connector:item/record",
       "input-ports": [
         {
           "name": "input",
