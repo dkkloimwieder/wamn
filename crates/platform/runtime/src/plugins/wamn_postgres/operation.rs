@@ -230,12 +230,13 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         })?;
         // Serialize lifecycle calls without marking an unfinished begin as open.
         let mut current = store.open.lock().await;
+        // The open operation and its scope stay as they are.
+        if current.is_some() {
+            return Ok(Err(Refusal::AlreadyBegun));
+        }
         accessor.with(|mut access| {
             access.get().component_id = Arc::clone(&store.workload);
         });
-        if current.take().is_some() {
-            return Ok(Err(Refusal::AlreadyBegun));
-        }
         let input = accessor.with(|mut access| {
             let ctx = access.get();
             let Ok(caller) = ctx.table.get(&caller).cloned() else {

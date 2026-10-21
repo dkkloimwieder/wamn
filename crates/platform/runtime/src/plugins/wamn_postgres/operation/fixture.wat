@@ -154,8 +154,11 @@
                 local.get $mode i32.const 1 i32.eq if
                   call $run-statement
                   local.get $caller call $begin-call i32.const 7 call $refused
-                  call $commit-call i32.const 6 call $refused
-                  ;; The refused begin rolled back the prior work and claim.
+                  ;; The refused begin left the open operation untouched.
+                  call $run-statement
+                  call $commit-call
+                  i32.const 64 i32.load8_u if unreachable end
+                  i32.const 544 i32.const 110 i32.store8
                   local.get $caller call $begin-call
                   i32.const 64 i32.load8_u if unreachable end
                   i32.const 72 i32.load8_u if unreachable end

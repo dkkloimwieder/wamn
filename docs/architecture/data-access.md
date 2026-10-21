@@ -378,8 +378,8 @@ The entry returns that text and runs no work. `finished` leaves no operation ope
 `commit(result)` stores the application's JSON text without parsing it, emits the causation message, and commits the transaction.
 Dropping the Store rolls back unfinished work and clears its authority.
 Only one operation can be open per Store.
-A begin while one is open returns `already-begun` and rolls back that open operation.
-Commit clears the open operation on success or refusal. A refused begin also clears it.
+A begin while one is open returns `already-begun` and leaves that operation open.
+Commit clears the open operation on success or refusal. Any other refused begin leaves nothing open.
 The next begin on the same Store is allowed, with its own transaction and delivery id.
 Commit without a new open operation returns `not-begun`.
 Member statement handles borrow the same transaction, while `run`, `run-stream`, and guest transaction creation remain refused inside it.

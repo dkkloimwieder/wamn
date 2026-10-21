@@ -318,11 +318,11 @@ async fn commit_without_begin_refuses() {
 }
 
 #[tokio::test]
-async fn begin_while_open_refuses_and_allows_a_new_begin() {
+async fn begin_while_open_refuses_and_leaves_the_open_operation() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture().await;
     run_guest(postgres, release, 1).await;
-    assert_eq!(value(&database).await, 2);
+    assert_eq!(value(&database).await, 4);
 }
 
 #[tokio::test]
