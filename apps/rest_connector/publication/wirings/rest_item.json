@@ -1,0 +1,48 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "rest_item",
+  "version": 1,
+  "entry": "page",
+  "nodes": {
+    "page": {
+      "component": "http-page",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
+      "params": {
+        "requirement": "upstream",
+        "path-and-query": "/pages?limit=2",
+        "page": {
+          "style": "offset",
+          "limit": "limit",
+          "offset": "offset"
+        },
+        "items": "/items"
+      }
+    },
+    "rows": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "[$.{\"request_id\": id, \"value\": {\"idempotency_key\": id, \"key\": id, \"name\": name}}]",
+        "port": "items"
+      }
+    },
+    "record": {
+      "component": "rest_connector",
+      "interface-version": "0.1.0",
+      "operation": "rest-connector:item/record"
+    }
+  },
+  "edges": [
+    {
+      "from": "page",
+      "to": "rows"
+    },
+    {
+      "from": "rows",
+      "from-port": "items",
+      "to": "record"
+    }
+  ]
+}

@@ -18,7 +18,7 @@
 //!    connection's generation. The fixture's components declare no store
 //!    alias, so there is no binding to change.
 //! 4. `env show` output applied again writes nothing.
-//!    A separate HTTP environment binds two requirements, reproduces its
+//!    A separate HTTP environment binds HTTP requirements, reproduces its
 //!    document through show, and preserves its rows and Helm revision on reapply.
 //!    One POST through transform -> http-request reaches its recording server.
 //!    The server sees one bearer header and the guest returns status 200.
@@ -26,6 +26,8 @@
 //!    Wrong and missing signatures return 401 with an empty body and no fixture request.
 //!    Two minute ticks each leave one completed schedule run without a principal.
 //!    A second wiring sends a POST that the fixture verifies with its HMAC secret.
+//!    OAuth2 reuses one token for two sends, and the fixture verifies OAuth1 signatures.
+//!    The REST schedule retries page two after 429 and stores each item once.
 //! 5. A12: two environments in one namespace; every object and Secret name
 //!    differs and derives from the coordinate, and each host mounts only its
 //!    own Secrets.
@@ -808,10 +810,19 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let manifest_b = release(MANIFEST_B, &version, None)?;
     let manifest_h = release(MANIFEST_H, &version, Some(&device))?;
     let transform =
-        http_connection::component(run, repository, &local, &version, "transform").await?;
+        http_connection::component(run, repository, &local, &version, PACKAGE, "transform").await?;
     let request =
-        http_connection::component(run, repository, &local, &version, "http-request").await?;
+        http_connection::component(run, repository, &local, &version, PACKAGE, "http-request")
+            .await?;
     let manifest_http = http_connection::release(&manifest_h, &version, vec![transform, request])?;
+    let manifest_http = http_connection::with_rest_package(
+        run,
+        repository,
+        &local,
+        &package_registry,
+        &manifest_http,
+    )
+    .await?;
     http_connection::deploy(run, repository).await?;
 
     // The http role image: the chart's route guest, copied into the registry.
@@ -1211,13 +1222,19 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .to_owned();
     let mut http = document("http", "http.orders.example");
     http.release = DeclaredRelease::Digest(http_digest.clone());
-    for handle in ["upstream", http_connection::OUTBOUND_HANDLE] {
+    for handle in [
+        "upstream",
+        http_connection::OUTBOUND_HANDLE,
+        http_connection::OAUTH2_HANDLE,
+        http_connection::OAUTH1_HANDLE,
+    ] {
         http.connections.insert(
             handle.to_owned(),
             ConnectionDefinition {
                 requirement_type: wamn_catalog::RequirementType::Http,
                 definition: json!({
-                    "primary-authority": format!("{}/", http_connection::ORIGIN),
+                    "primary-authority": format!("{}/{}", http_connection::ORIGIN,
+                        if handle == http_connection::OAUTH2_HANDLE { "oauth/" } else { "" }),
                     "tls-verification": "disabled"
                 }),
             },
@@ -1245,7 +1262,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         http_connection::wiring()?,
         http_connection::signed_wiring()?,
         http_connection::scheduled_wiring()?,
-    ] {
+    ]
+    .into_iter()
+    .chain(http_connection::oauth_wirings()?)
+    {
         http_project
             .execute(
                 "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
@@ -1262,6 +1282,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             )
             .await?;
     }
+    let rest_wiring = http_connection::rest_wiring(repository)?;
+    http_project.execute(
+        "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash) \
+         VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) ON CONFLICT DO NOTHING",
+        &[&http_tenant, &http_connection::REST_PACKAGE, &http_connection::REST_VERSION,
+          &rest_wiring.wiring_id, &1_i32, &serde_json::to_string(&rest_wiring)?, &rest_wiring.wiring_hash().as_str()],
+    ).await?;
     let http_rows = async || -> anyhow::Result<Value> {
         Ok(http_project
             .query_one(
@@ -2150,13 +2177,20 @@ fn the_fixture_releases_are_canonical_manifests() {
                 http_connection::scheduled_wiring().expect("the scheduled HTTP wiring"),
             )
         ]
-        .into()
+        .into_iter()
+        .chain(
+            http_connection::oauth_wirings()
+                .unwrap()
+                .into_iter()
+                .map(|graph| wamn_catalog::ServingWiring::new(PACKAGE, graph))
+        )
+        .collect()
     );
     assert_eq!(
         http.workflow.attachments["http-send"].wiring_id,
         "http-send"
     );
-    assert_eq!(http.workflow.attachments.len(), 3);
+    assert_eq!(http.workflow.attachments.len(), 5);
     assert_eq!(
         http.workflow.attachments["http-signed"].auth_policy,
         json!({
@@ -2186,7 +2220,7 @@ fn the_fixture_releases_are_canonical_manifests() {
         .iter()
         .find(|component| component.descriptor.component == "http-request")
         .unwrap();
-    assert_eq!(request.descriptor.connections.len(), 2);
+    assert_eq!(request.descriptor.connections.len(), 4);
     let signed = serde_json::to_value(http_connection::signed_wiring().unwrap()).unwrap();
     assert_eq!(
         signed["nodes"]["send"]["params"],

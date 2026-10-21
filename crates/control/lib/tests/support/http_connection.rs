@@ -23,6 +23,10 @@ pub const INBOUND_SECRET: &str = "fixture-inbound-key";
 pub const OUTBOUND_HANDLE: &str = "signed-upstream";
 pub const OUTBOUND_SECRET: &str = "fixture-outbound-key";
 pub const SCHEDULE: &str = "http-minute";
+pub const OAUTH2_HANDLE: &str = "oauth2-upstream";
+pub const OAUTH1_HANDLE: &str = "oauth1-upstream";
+pub const REST_PACKAGE: &str = "rest_connector";
+pub const REST_VERSION: &str = "0.1.0";
 pub const BODY: &str = "{ \"id\" : 1 }";
 
 pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
@@ -57,6 +61,14 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                             "upstream": json!({
                                 "headers": {"authorization": "Bearer fixture-token"}
                             }).to_string(),
+                            OAUTH2_HANDLE: json!({"oauth2": {
+                                "token-url": format!("{ORIGIN}/oauth/token"),
+                                "client-id": "fixture-client", "client-secret": "fixture-client-secret"
+                            }}).to_string(),
+                            OAUTH1_HANDLE: json!({"oauth1": {
+                                "consumer-key": "fixture-consumer", "consumer-secret": "fixture-consumer-secret",
+                                "token": "fixture-token", "token-secret": "fixture-token-secret"
+                            }}).to_string(),
                             INBOUND_HANDLE: json!({"hmac": {
                                 "algorithm": "sha256", "secret": INBOUND_SECRET
                             }}).to_string(),
@@ -112,6 +124,7 @@ pub async fn component(
     repository: &Path,
     registry: &str,
     version: &str,
+    package: &str,
     name: &str,
 ) -> anyhow::Result<ComponentDescriptor> {
     use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, Config, ImageLayer};
@@ -155,7 +168,7 @@ pub async fn component(
                 "__TENANT_ID__",
                 &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
             )
-            .replace("__PACKAGE_ID__", PACKAGE)
+            .replace("__PACKAGE_ID__", package)
             .replace("__PACKAGE_VERSION__", version),
     )?)?;
     let engine = wamn_engine::build_engine(&[])?;
@@ -210,16 +223,16 @@ pub async fn component(
     ))
 }
 
-/// Declare both handles before admission, so the fixture uses ordinary binding.
+/// Declare the outbound handles before admission for ordinary binding.
 pub fn declaration(template: &str) -> anyhow::Result<Value> {
     let mut declaration: Value = serde_json::from_str(template)?;
     if declaration["component"] == "http-request" {
-        declaration["connections"]
-            .as_array_mut()
-            .expect("HTTP requirements")
-            .push(json!({
-                "store-alias": OUTBOUND_HANDLE, "requirement-type": "http"
-            }));
+        for handle in [OUTBOUND_HANDLE, OAUTH2_HANDLE, OAUTH1_HANDLE] {
+            declaration["connections"]
+                .as_array_mut()
+                .expect("HTTP requirements")
+                .push(json!({"store-alias": handle, "requirement-type": "http"}));
+        }
     }
     Ok(declaration)
 }
@@ -246,6 +259,27 @@ pub fn signed_wiring() -> anyhow::Result<WiringDocument> {
     graph["nodes"]["send"]["params"]["requirement"] = json!(OUTBOUND_HANDLE);
     graph["nodes"]["send"]["params"]["path-and-query"] = json!("/signed");
     Ok(serde_json::from_value(graph)?)
+}
+
+pub fn oauth_wirings() -> anyhow::Result<Vec<WiringDocument>> {
+    [
+        ("http-oauth2", OAUTH2_HANDLE, "/items"),
+        (
+            "http-oauth1",
+            OAUTH1_HANDLE,
+            "/oauth1?z=a%2Bb&x=hello%20world&x=two",
+        ),
+    ]
+    .into_iter()
+    .map(|(id, handle, path)| {
+        let mut graph = serde_json::to_value(wiring()?)?;
+        graph["wiring-id"] = json!(id);
+        graph["nodes"]["send"]["params"] = json!({
+            "requirement":handle, "method":"GET", "path-and-query":path
+        });
+        Ok(serde_json::from_value(graph)?)
+    })
+    .collect()
 }
 
 pub fn scheduled_wiring() -> anyhow::Result<WiringDocument> {
@@ -277,7 +311,11 @@ pub fn release(
     let wiring = wiring()?;
     let signed_wiring = signed_wiring()?;
     let scheduled_wiring = scheduled_wiring()?;
-    for graph in [&wiring, &signed_wiring, &scheduled_wiring] {
+    let oauth_wirings = oauth_wirings()?;
+    for graph in [&wiring, &signed_wiring, &scheduled_wiring]
+        .into_iter()
+        .chain(&oauth_wirings)
+    {
         wamn_control::author_wiring::gate_wiring_document(graph, &scope, &facts)?;
     }
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
@@ -301,6 +339,18 @@ pub fn release(
             json!({
                 "modes": ["signature"], "header": "x-hub-signature-256", "credential": INBOUND_HANDLE
             }),
+        ),
+        (
+            "http-oauth2",
+            "/http/oauth2",
+            "http-oauth2",
+            json!({"modes":["none"]}),
+        ),
+        (
+            "http-oauth1",
+            "/http/oauth1",
+            "http-oauth1",
+            json!({"modes":["none"]}),
         ),
         (
             "http-signed-send",
@@ -350,6 +400,11 @@ pub fn release(
         .into(),
         ..WorkflowSection::default()
     };
+    manifest.workflow.wirings.extend(
+        oauth_wirings
+            .into_iter()
+            .map(|graph| ServingWiring::new(PACKAGE, graph)),
+    );
     let bytes = manifest.canonical_bytes();
     ServingManifest::from_canonical_bytes(&bytes)?;
     Ok(bytes)
@@ -417,9 +472,10 @@ fn route_requests(log: &str) -> anyhow::Result<Vec<Value>> {
         .into_iter()
         .filter(|record| {
             // The schedule has its own target, so its traffic cannot count as a route request.
-            !record["head"]
-                .as_str()
-                .is_some_and(|head| head.starts_with("POST /scheduled HTTP/1.1\r\n"))
+            record["head"].as_str().is_some_and(|head| {
+                head.starts_with("POST /reuse HTTP/1.1\r\n")
+                    || head.starts_with("POST /signed HTTP/1.1\r\n")
+            })
         })
         .collect())
 }
@@ -433,28 +489,39 @@ pub fn inbound_signature(body: &[u8]) -> String {
 }
 
 pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, digest: &str) -> bool {
-    ["instances", "generations", "bindings"]
+    ["instances", "generations", "bindings"].iter().all(|name| {
+        rows[name]
+            .as_array()
+            .is_some_and(|rows| rows.len() == if *name == "bindings" { 5 } else { 4 })
+    }) && ["upstream", OUTBOUND_HANDLE, OAUTH2_HANDLE, OAUTH1_HANDLE]
         .iter()
-        .all(|name| rows[name].as_array().is_some_and(|rows| rows.len() == 2))
-        && ["upstream", OUTBOUND_HANDLE].iter().all(|handle| {
+        .all(|handle| {
             let find = |table: &str| {
                 rows[table]
                     .as_array()
                     .and_then(|rows| rows.iter().find(|row| row["instance_id"] == *handle))
             };
-            let (Some(instance), Some(generation), Some(binding)) =
-                (find("instances"), find("generations"), find("bindings"))
+            let (Some(instance), Some(generation)) = (find("instances"), find("generations"))
             else {
                 return false;
             };
+            let bindings: Vec<_> = rows["bindings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["instance_id"] == *handle)
+                .collect();
             instance["requirement_type"] == "http"
                 && instance["active_generation"] == 1
                 && generation["definition_json"] == document.connections[*handle].definition
                 && generation["credential_set_handle"] == *handle
-                && binding["manifest_digest"] == digest
-                && binding["store_alias"] == *handle
-                && binding["binding_status"] == "active"
-                && binding["validation_status"] == "valid"
+                && bindings.len() == if *handle == "upstream" { 2 } else { 1 }
+                && bindings.iter().all(|binding| {
+                    binding["manifest_digest"] == digest
+                        && binding["store_alias"] == *handle
+                        && binding["binding_status"] == "active"
+                        && binding["validation_status"] == "valid"
+                })
         })
 }
 
@@ -569,6 +636,10 @@ pub async fn assert_triggers(
         "the fixture did not verify one signed outbound request"
     );
 
+    assert_oauth(run, &base, route_host).await?;
+    tokio::time::timeout(Duration::from_secs(90), assert_paged(run, database))
+        .await
+        .context("REST schedule did not store the fixture items")??;
     let result =
         tokio::time::timeout(Duration::from_secs(150), scheduled_runs(database, tenant)).await;
     let result = result
@@ -579,6 +650,8 @@ pub async fn assert_triggers(
         json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
         result.is_ok());
     result?;
+    // Those two later schedule moments also rerun the REST workflow.
+    assert_paged(run, database).await?;
     Ok(())
 }
 
@@ -636,6 +709,185 @@ async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyh
         }
         if runs.len() == 2 && runs.iter().all(|row| row["status"] == "completed") {
             return Ok(rows);
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// Push the template package and add its scheduled workflow to the fixture release.
+pub async fn with_rest_package(
+    run: &Run,
+    repository: &Path,
+    registry: &str,
+    package_registry: &wamn_control::package_artifact::PackageRegistry,
+    http: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    use wamn_control::package_artifact::{PushPackageRequest, push_package};
+    let package = repository.join("apps/rest_connector");
+    push_package(&PushPackageRequest {
+        package: package.clone(),
+        registry: package_registry.clone(),
+        component_artifact_base: format!("{registry}/wamn/components"),
+    })
+    .await?;
+    let page = component(
+        run,
+        repository,
+        registry,
+        REST_VERSION,
+        REST_PACKAGE,
+        "http-page",
+    )
+    .await?;
+    let mut descriptors =
+        wamn_package_artifact::read_descriptors(package_registry, REST_PACKAGE, REST_VERSION)
+            .await?;
+    descriptors.retain(|descriptor| descriptor.component != "http-page");
+    descriptors.push(page);
+    let scope = ComponentPackageScope {
+        tenant_id: wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
+        package_id: REST_PACKAGE.to_owned(),
+        package_version: REST_VERSION.to_owned(),
+    };
+    let facts: Vec<_> = descriptors
+        .iter()
+        .cloned()
+        .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
+        .collect();
+    let graph = rest_wiring(repository)?;
+    wamn_control::author_wiring::gate_wiring_document(&graph, &scope, &facts)?;
+    let (mut manifest, _) = ServingManifest::from_canonical_bytes(http)?;
+    manifest
+        .release
+        .packages
+        .insert(wamn_catalog::PackageCoordinate::new(
+            REST_PACKAGE,
+            REST_VERSION,
+        )?);
+    for (descriptor, fact) in descriptors.into_iter().zip(&facts) {
+        manifest
+            .components
+            .insert(ServingComponent::project(fact, descriptor.connections)?);
+    }
+    manifest
+        .workflow
+        .wirings
+        .insert(ServingWiring::new(REST_PACKAGE, graph.clone()));
+    manifest.workflow.schedules.insert(
+        format!("{REST_PACKAGE}::item"),
+        ServingSchedule {
+            package_id: REST_PACKAGE.to_owned(),
+            workflow_id: "item".to_owned(),
+            wiring_id: graph.wiring_id,
+            wiring_version: graph.version,
+            schedule: "* * * * *".to_owned(),
+        },
+    );
+    let bytes = manifest.canonical_bytes();
+    ServingManifest::from_canonical_bytes(&bytes)?;
+    Ok(bytes)
+}
+
+pub fn rest_wiring(repository: &Path) -> anyhow::Result<WiringDocument> {
+    use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
+    let graph = read_authored_document(
+        &repository.join("apps/rest_connector/publication/wirings/rest_item.json"),
+        AuthoredDocument::Wiring,
+    )?;
+    Ok(serde_json::from_value(graph)?)
+}
+
+async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Result<()> {
+    for route in ["oauth2", "oauth2", "oauth1", "oauth1"] {
+        let (status, body) =
+            super::route_probe_post(run, &format!("{base}/http/{route}"), route_host).await?;
+        ensure!(
+            status == 200 && serde_json::from_str::<Value>(&body)?["status"] == 200,
+            "{route} refused: {status}: {body}"
+        );
+    }
+    let records = request_records(&request_log(run).await?)?;
+    let matching = |prefix: &str| {
+        records
+            .iter()
+            .filter(|record| {
+                record["head"]
+                    .as_str()
+                    .is_some_and(|head| head.starts_with(prefix))
+            })
+            .collect::<Vec<_>>()
+    };
+    let tokens = matching("POST /oauth/token ");
+    let bearer = matching("GET /oauth/items ");
+    let oauth1 = matching("GET /oauth1?");
+    let passed = tokens.len() == 1
+        && tokens[0]["token_verified"] == true
+        && bearer.len() == 2
+        && bearer
+            .iter()
+            .all(|record| record["bearer_verified"] == true && record["token_fetches"] == 1)
+        && oauth1.len() == 2
+        && oauth1
+            .iter()
+            .all(|record| record["oauth1_verified"] == true)
+        && oauth1[0]["oauth_nonce"]
+            .as_str()
+            .is_some_and(|nonce| !nonce.is_empty())
+        && oauth1[0]["oauth_nonce"] != oauth1[1]["oauth_nonce"];
+    run.pass(
+        "OAuth2 reuses its issued bearer and OAuth1 signatures verify",
+        "POST /http/oauth2 twice; POST /http/oauth1 twice; kubectl logs deployment/http-fixture",
+        json!({"tokens":tokens,"bearer":bearer,"oauth1":oauth1}),
+        passed,
+    );
+    ensure!(
+        passed,
+        "OAuth fixture evidence differs from the credential contract"
+    );
+    Ok(())
+}
+
+async fn assert_paged(run: &mut Run, database: &tokio_postgres::Client) -> anyhow::Result<()> {
+    loop {
+        let rows: Value = database.query_one(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object('id', key, 'name', name) ORDER BY key), '[]'::jsonb) FROM rest_connector.item", &[],
+        ).await?.get(0);
+        if rows.as_array().is_some_and(|rows| rows.len() == 5) {
+            let records = request_records(&request_log(run).await?)?;
+            // Stop at the first completed traversal. Later schedule moments repeat the reads.
+            let mut pages = Vec::new();
+            for record in records
+                .into_iter()
+                .filter(|record| record["page"].is_number())
+            {
+                let last = record["page"] == 3;
+                pages.push(record);
+                if last {
+                    break;
+                }
+            }
+            let mut items: Vec<_> = pages
+                .iter()
+                .filter(|record| record["status"] == "200 OK")
+                .filter_map(|record| record["items"].as_array())
+                .flatten()
+                .cloned()
+                .collect();
+            items.sort_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
+            items.dedup();
+            let second: Vec<_> = pages.iter().filter(|record| record["page"] == 2).collect();
+            let passed = rows == json!(items)
+                && second.len() == 2
+                && second[0]["status"] == "429 Too Many Requests"
+                && second[1]["status"] == "200 OK";
+            run.pass(
+                "REST paging retries page two and stores each fixture item once",
+                "SELECT key, name FROM rest_connector.item; kubectl logs deployment/http-fixture",
+                json!({"rows":rows,"pages":pages}),
+                passed,
+            );
+            ensure!(passed, "REST fixture rows or page-two retry differ");
+            return Ok(());
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

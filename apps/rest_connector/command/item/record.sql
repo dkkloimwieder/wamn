@@ -1,0 +1,2 @@
+INSERT INTO item (key, name) VALUES ($1, $2)
+ON CONFLICT (key) DO NOTHING RETURNING key;

@@ -17,6 +17,10 @@ name = "create_user_live"
 path = "tests/create_user_live.rs"
 required-features = ["ops"]
 
+[[test]]
+name = "rest_connector_publication"
+path = "../../../apps/rest_connector/tests/publication.rs"
+
 [dependencies]
 futures-util = { workspace = true }
 rcgen = { workspace = true }

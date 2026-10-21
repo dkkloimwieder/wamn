@@ -1,0 +1,6 @@
+package wamn:http-page@0.1.0;
+
+world http-page {
+  import wamn:connection/http@0.1.0;
+  export wamn:node/async-handler@0.1.0;
+}

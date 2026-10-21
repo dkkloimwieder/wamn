@@ -15,6 +15,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/client_acme_receiving](apps/client_acme_receiving/README.md) | Acme Receiving overlay and its tests |
 | [apps/edge_device](apps/edge_device/README.md) | The application with no SQL that an edge box runs on each device frame |
 | [apps/edge_samples](apps/edge_samples/README.md) | The platform application that receives edge samples |
+| [apps/rest_connector](apps/rest_connector/README.md) | Scheduled REST pagination template and item command |
 | [apps/platform](apps/platform/) | Shared platform guests and guest libraries |
 | [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |
 | [crates](crates/) | Platform libraries, grouped by responsibility |

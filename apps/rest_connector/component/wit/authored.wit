@@ -1,0 +1,5 @@
+package rest-connector:component@0.1.0;
+
+world rest-connector {
+  include rest-connector:generated/generated;
+}

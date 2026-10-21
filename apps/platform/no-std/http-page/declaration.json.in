@@ -1,0 +1,130 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "__PACKAGE_ID__",
+    "package-version": "__PACKAGE_VERSION__"
+  },
+  "component": "http-page",
+  "interface-version": "0.1.0",
+  "operations": {
+    "wamn:node/async-handler@0.1.0": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {}
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {}
+        }
+      ],
+      "parameters": [
+        {
+          "name": "requirement",
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required": true
+        },
+        {
+          "name": "path-and-query",
+          "schema": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "required": true
+        },
+        {
+          "name": "headers",
+          "schema": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "required": false
+        },
+        {
+          "name": "page",
+          "required": true,
+          "schema": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "style",
+                  "limit",
+                  "offset"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "style": {
+                    "const": "offset"
+                  },
+                  "limit": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "offset": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "style",
+                  "pointer",
+                  "param"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "style": {
+                    "const": "cursor"
+                  },
+                  "pointer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "param": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "style"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "style": {
+                    "const": "link-header"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "items",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  },
+  "connections": [
+    {
+      "store-alias": "upstream",
+      "requirement-type": "http"
+    }
+  ]
+}

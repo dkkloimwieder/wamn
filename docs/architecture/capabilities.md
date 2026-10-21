@@ -73,6 +73,19 @@ A request names a requirement, method, relative path and query, headers, optiona
 The guest does not supply an endpoint or credential.
 The host resolves the admitted requirement and confines the request to that connection.
 
+The `http-request` palette node sends one request through this contract.
+The `http-page` node sends GET requests and emits one array on `main` after it collects all pages.
+Its parameters are `requirement`, `path-and-query`, optional `headers`, `page`, and `items`.
+The `items` parameter is a JSON pointer to each response's item array.
+Offset paging uses `page = {"style":"offset","limit":"limit","offset":"offset"}` and reads the positive limit from `path-and-query`.
+A short page ends offset paging.
+Cursor paging uses `{"style":"cursor","pointer":"/next","param":"cursor"}` and stops on an absent, null, or empty cursor.
+Link paging uses `{"style":"link-header"}` and follows relative links with `rel="next"` unchanged.
+Absolute next links currently return a terminal error pending the binding policy.
+A 429 returns `rate-limited` with numeric `Retry-After` seconds converted to milliseconds.
+A 5xx returns `retryable`. Other 4xx responses, including 408, return `terminal`.
+The [REST connector template](../../apps/rest_connector/README.md) maps the array with JSONata and stores items once by key.
+
 The credential secret holds exactly one top-level key: `headers`, `hmac`, `oauth1`, or `oauth2`.
 Static headers use `{"headers":{…}}`.
 HMAC credentials use `{"hmac":{"algorithm":"sha256","secret":"…","header":"…"}}`.

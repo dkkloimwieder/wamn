@@ -1,0 +1,21 @@
+[package]
+name = "rest-connector"
+version.workspace = true
+edition.workspace = true
+description = "REST connector item command"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid.workspace = true
+wamn-postgres-statements = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+bench = false
+
+[lints]
+workspace = true
