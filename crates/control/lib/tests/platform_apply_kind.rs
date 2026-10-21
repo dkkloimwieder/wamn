@@ -506,9 +506,8 @@ cluster.Cluster {{
     let mut serving = document.clone();
     serving.registry = artifacts
         .artifact_base
-        .split('/')
-        .next()
-        .context("fixture package registry host")?
+        .strip_suffix("/packages")
+        .context("fixture package registry suffix")?
         .to_owned();
     serving_chart(&document, &serving, &work, &artifacts).await?;
     serving_credentials(&kubeconfig, &context, &directory, &host_group, &artifacts).await?;
@@ -697,6 +696,26 @@ async fn serving_chart(
         )
         .await?;
     }
+    // The serving registry has a path, as cluster.k's does. The HTTP mirror
+    // serves containerd the native images under that path too.
+    let (_, path) = serving
+        .registry
+        .split_once('/')
+        .context("fixture serving registry path")?;
+    for image in [
+        &images.host,
+        &qualification.runner,
+        &qualification.gates,
+        &qualification.identity,
+    ] {
+        let tagged = image.split('@').next().unwrap_or(image);
+        let rest = tagged
+            .strip_prefix(&source.registry)
+            .context("fixture image is outside its source registry")?;
+        let mirrored = format!("{}/{path}{rest}", source.registry);
+        docker(&["tag", tagged, &mirrored])?;
+        docker(&["push", &mirrored])?;
+    }
     for image in [
         &mut images.host,
         &mut images.http,
@@ -722,7 +741,13 @@ async fn serving_chart(
     std::fs::rename(&chart, &saved)?;
     release_chart::stamp(&saved, &images, Some(&qualification), &chart)?;
     let mirrors = work.join(format!("{}.registry", source.cluster_name));
-    let destination = mirrors.join(&serving.registry);
+    let destination = mirrors.join(
+        serving
+            .registry
+            .split('/')
+            .next()
+            .context("fixture serving registry host")?,
+    );
     std::fs::create_dir(&destination)?;
     std::fs::copy(
         mirrors.join(&source.registry).join("hosts.toml"),
@@ -777,7 +802,8 @@ async fn copy_role(
         "role manifest digest mismatch"
     );
     let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
-    let target = Reference::with_digest(to.into(), format!("wamn/{role}"), digest);
+    let (host, path) = to.split_once('/').context("serving registry path")?;
+    let target = Reference::with_digest(host.into(), format!("{path}/wamn/{role}"), digest);
     client
         .auth(&target, &RegistryAuth::Anonymous, RegistryOperation::Push)
         .await?;
