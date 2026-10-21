@@ -135,6 +135,56 @@ pub struct BuildPlatformRequest {
     pub cluster: Option<crate::platform::document::ClusterDocument>,
 }
 
+/// Where a build can run given other build processes and today's spend.
+#[derive(Debug, PartialEq)]
+enum BuildLocation {
+    Local,
+    Cloud,
+    Refused { spend_usd: f64, cap_usd: f64 },
+}
+
+fn build_location(
+    processes: &[(u32, Vec<String>)],
+    pid: u32,
+    spend_usd: f64,
+    cap_usd: f64,
+) -> BuildLocation {
+    let busy = processes
+        .iter()
+        .any(|(other_pid, args)| *other_pid != pid && builds_platform(args));
+    if !busy {
+        BuildLocation::Local
+    } else if spend_usd < cap_usd {
+        BuildLocation::Cloud
+    } else {
+        BuildLocation::Refused { spend_usd, cap_usd }
+    }
+}
+
+fn builds_platform(args: &[String]) -> bool {
+    let Some(program) = args.first() else {
+        return false;
+    };
+    if Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some("wamn-ctl")
+    {
+        return false;
+    }
+    // Skip the CLI's global log option before finding its subcommand.
+    let mut arguments = args[1..].iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--log-level" {
+            arguments.next();
+        } else if !argument.starts_with("--log-level=") {
+            return argument == "build-platform"
+                && !arguments.any(|argument| argument == "--stamp-only");
+        }
+    }
+    false
+}
+
 /// Build every platform image and role component, then push them, then stamp
 /// them into a copy of the release chart at `request.out`. A failed build
 /// pushes nothing. Every image is tagged with the chart version and pinned by
@@ -448,6 +498,40 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_location_uses_other_builds_and_the_daily_counter() {
+        fn process(pid: u32, args: &[&str]) -> (u32, Vec<String>) {
+            (pid, args.iter().map(|arg| (*arg).to_owned()).collect())
+        }
+        let mut processes = vec![
+            process(10, &["/bin/wamn-ctl", "build-platform"]),
+            process(11, &["wamn-ctl", "build-platform", "--stamp-only"]),
+            process(12, &["sh", "-c", "wamn-ctl build-platform"]),
+            process(13, &["wamn-ctl", "env", "build-platform"]),
+        ];
+        assert_eq!(
+            build_location(&processes, 10, 3.0, 3.0),
+            BuildLocation::Local
+        );
+        processes.push(process(
+            14,
+            &["wamn-ctl", "--log-level=info", "build-platform"],
+        ));
+        assert_eq!(
+            build_location(&processes, 10, 2.0, 3.0),
+            BuildLocation::Cloud
+        );
+        for spend_usd in [3.0, 3.1] {
+            assert_eq!(
+                build_location(&processes, 10, spend_usd, 3.0),
+                BuildLocation::Refused {
+                    spend_usd,
+                    cap_usd: 3.0
+                }
+            );
+        }
+    }
 
     #[test]
     fn checkout_key_matches_the_shell_hash_of_a_canonical_path() {
