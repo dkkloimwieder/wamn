@@ -69,6 +69,36 @@ The owner supplies these inputs. The install stops at the first step that reads 
    gcloud storage buckets update gs://wamn-dev-tofu-state --project wamn-dev --versioning
    ```
 
+8. Cloud Build submission permission for `wamn-agent@wamn-dev.iam.gserviceaccount.com` on `wamn-dev`. If the grant is missing, the owner runs:
+
+   ```bash
+   gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/cloudbuild.builds.editor
+   ```
+
+9. Artifact Registry writer permission for the default Cloud Build service account on `us-central1-docker.pkg.dev/wamn-dev/wamn`. The command reads the account that Cloud Build uses in `us-central1`. If the grant is missing, the owner runs:
+
+   ```bash
+   gcloud artifacts repositories add-iam-policy-binding wamn --project=wamn-dev --location=us-central1 --member="serviceAccount:$(gcloud builds get-default-service-account --project=wamn-dev --region=us-central1)" --role=roles/artifactregistry.writer
+   ```
+
+10. A monthly USD 30 budget for Cloud Build in `wamn-dev`, with alerts at 10%, 50%, and 90%. The billing account is the account recorded in [install history](../history/gcp-install-history.md). The [Cloud Build billing service](https://cloud.google.com/skus/sku-groups/deprecate-global-skus) is `8B5D-EF7D-EB12`. If the budget is missing, the owner runs:
+
+    ```bash
+    gcloud billing budgets create --billing-account=01E392-13CC0D-277806 --billing-project=wamn-dev --display-name=wamn-dev-cloud-build --budget-amount=30USD --calendar-period=month --filter-projects=projects/wamn-dev --filter-services=services/8B5D-EF7D-EB12 --threshold-rule=percent=0.10 --threshold-rule=percent=0.50 --threshold-rule=percent=0.90
+    ```
+
+    The [budget command](https://cloud.google.com/sdk/gcloud/reference/billing/budgets/create) sends alerts to the default billing recipients. The budget does not stop builds. The daily cap in [building](building.md#cloud-platform-builds) controls new submissions.
+
+11. Storage access for the agent to read, create, and replace the daily counter objects. The counter uses the application default credentials under `CLOUDSDK_CONFIG`. If the agent lacks this access, the owner runs:
+
+    ```bash
+    gcloud storage buckets add-iam-policy-binding gs://wamn-dev-tofu-state --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/storage.objectUser --condition='expression=resource.name.startsWith("projects/_/buckets/wamn-dev-tofu-state/objects/build/"),title=wamn-build-counter'
+    ```
+
+    The condition limits the grant to `build/`. It gives no access to the OpenTofu state objects.
+
+`build-platform` uses these owner inputs and never creates their grants or budget. Missing access causes the cloud operation to fail.
+
 ## 2. Project resources
 
 The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:

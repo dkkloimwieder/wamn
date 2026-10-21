@@ -112,6 +112,48 @@ If the dist is absent, it refuses and names `pnpm --filter @wamn/platform-ui bui
 It creates no OCI artifact for the static bundle.
 Keep the local dist with the stamped chart until [upload](deployment.md#platform-ui-files).
 
+## Cloud platform builds
+
+Before a Docker build starts, `build-platform` reads the process list.
+If another `wamn-ctl build-platform` process builds images, the command uses Google Cloud Build.
+It ignores its own process and processes with `--stamp-only`.
+When no other build runs, it uses the local Docker build path.
+
+The cloud path requires `--cluster <cluster.k>`.
+It reads the project and `build_cloud_cap_usd` from that document.
+The cap defaults to USD 3 per UTC day.
+All existing flags keep their meaning, including the destination `--registry`.
+
+```bash
+wamn-ctl build-platform --cluster deploy/gcp/cluster.k --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out /var/tmp/wamn-release-chart
+```
+
+The command submits the same Dockerfile targets with `gcloud builds submit` in `us-central1`, on `E2_HIGHCPU_8`.
+The generated configuration finishes every build before it pushes the four images and two role components under the same registry tags.
+The command waits for Cloud Build, then reads the pushed digests and stamps the chart.
+The local UI build and its recorded digest follow the local path.
+The `cloud-submit` stage prints start and end lines, including elapsed time.
+
+The root `.gcloudignore` excludes the `.dockerignore` paths and every target directory.
+The command copies only `apps/target/wamn` into a temporary source directory for the runner input, then removes that directory after submission.
+It does not upload Cargo target caches.
+
+Before submission, the command reads `gs://wamn-dev-tofu-state/build/<YYYY-MM-DD>.json` for the UTC submission day.
+An absent object means zero spend.
+At or above the cap, it refuses the cloud build and prints the spend and cap.
+The local path does not use the cloud cap.
+
+After a successful or failed cloud build, the command calculates elapsed minutes from its start and finish times, rounded up.
+Each minute adds USD 0.0156, the [e2-highcpu-8 default-pool rate for US regions](https://cloud.google.com/build/pricing), read on 2026-10-20.
+The counter records `cloud_minutes` and `spend_usd` against the submission day, including builds that finish after midnight.
+A generation precondition requires the object version read by the writer.
+If another writer changes it, the command reads the new value and retries the addition.
+
+The cap controls submissions, and it does not cancel a running build or reserve spend for one.
+Builds that run at the same time can take the total above the cap.
+The counter covers build minutes, not storage or network charges.
+The [owner inputs](gcp.md#1-owner-inputs) supply access and the separate monthly budget.
+
 ## Package manifests
 
 A package that holds `wamn.k` authors its manifest in KCL.
