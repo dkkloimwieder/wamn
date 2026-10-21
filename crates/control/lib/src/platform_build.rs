@@ -203,7 +203,7 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
     );
     let processes = process_list()?;
     if build_location(&processes, std::process::id(), 0.0, 3.0) != BuildLocation::Local {
-        return cloud_build(request).await;
+        return cloud_build(request, &processes).await;
     }
     let roles = std::env::temp_dir().join(format!("wamn-roles-{}", std::process::id()));
     let pushed = build_then_push(request, &roles, output).await;
@@ -527,6 +527,121 @@ fn copy_package_output(from: &Path, to: &Path) -> anyhow::Result<()> {
 struct CloudBuild {
     id: String,
     status: String,
+    start_time: Option<chrono::DateTime<Utc>>,
+    finish_time: Option<chrono::DateTime<Utc>>,
+}
+
+/// e2-highcpu-8, default pool, US regions, USD per build-minute.
+/// https://cloud.google.com/build/pricing (read 2026-10-20).
+const E2_HIGHCPU_8_USD_PER_MINUTE: f64 = 0.0156;
+const BUILD_COUNTER_BUCKET: &str = "wamn-dev-tofu-state";
+
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct DailyCounter {
+    cloud_minutes: u64,
+    spend_usd: f64,
+}
+
+fn agent_configuration() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("CLOUDSDK_CONFIG") {
+        return Ok(path.into());
+    }
+    Ok(
+        PathBuf::from(std::env::var_os("HOME").context("HOME is absent")?)
+            .join(".config/gcloud-wamn-agent"),
+    )
+}
+
+fn counter_store() -> anyhow::Result<object_store::gcp::GoogleCloudStorage> {
+    object_store::gcp::GoogleCloudStorageBuilder::new()
+        .with_bucket_name(BUILD_COUNTER_BUCKET)
+        .with_application_credentials(
+            agent_configuration()?
+                .join("application_default_credentials.json")
+                .to_string_lossy(),
+        )
+        .build()
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "configure the build counter with the agent's application default credentials"
+            )
+        })
+}
+
+async fn read_counter(
+    store: &dyn object_store::ObjectStore,
+    path: &object_store::path::Path,
+) -> anyhow::Result<(DailyCounter, object_store::PutMode)> {
+    use object_store::ObjectStoreExt as _;
+    let object = match store.get(path).await {
+        Ok(object) => object,
+        Err(object_store::Error::NotFound { .. }) => {
+            return Ok((DailyCounter::default(), object_store::PutMode::Create));
+        }
+        Err(_) => anyhow::bail!(
+            "read gs://{BUILD_COUNTER_BUCKET}/{path}; check the agent's storage access"
+        ),
+    };
+    let mode = object_store::PutMode::Update(object_store::UpdateVersion {
+        e_tag: object.meta.e_tag.clone(),
+        version: object.meta.version.clone(),
+    });
+    let bytes = object
+        .bytes()
+        .await
+        .map_err(|_| anyhow::anyhow!("read the build counter bytes"))?;
+    let counter: DailyCounter =
+        serde_json::from_slice(&bytes).context("decode the daily build counter")?;
+    ensure!(
+        counter.spend_usd.is_finite() && counter.spend_usd >= 0.0,
+        "the daily build counter has an invalid spend"
+    );
+    Ok((counter, mode))
+}
+
+async fn add_cloud_minutes(
+    store: &dyn object_store::ObjectStore,
+    path: &object_store::path::Path,
+    minutes: u32,
+) -> anyhow::Result<()> {
+    loop {
+        let (mut counter, mode) = read_counter(store, path).await?;
+        counter.cloud_minutes = counter
+            .cloud_minutes
+            .checked_add(u64::from(minutes))
+            .context("cloud build minutes overflow")?;
+        counter.spend_usd += f64::from(minutes) * E2_HIGHCPU_8_USD_PER_MINUTE;
+        let payload = serde_json::to_vec(&counter)?.into();
+        match store.put_opts(path, payload, mode.into()).await {
+            Ok(_) => return Ok(()),
+            Err(
+                object_store::Error::Precondition { .. }
+                | object_store::Error::AlreadyExists { .. },
+            ) => {}
+            Err(_) => anyhow::bail!(
+                "write gs://{BUILD_COUNTER_BUCKET}/{path}; the cloud build's {minutes} minutes remain unrecorded"
+            ),
+        }
+    }
+}
+
+fn cloud_minutes(build: &CloudBuild) -> anyhow::Result<u32> {
+    match (build.start_time, build.finish_time) {
+        (Some(start), Some(finish)) => {
+            let nanos = (finish - start)
+                .num_nanoseconds()
+                .context("cloud build duration is too large")?;
+            let nanos = u64::try_from(nanos).context("cloud build finished before it started")?;
+            u32::try_from(nanos.div_ceil(60_000_000_000)).context("cloud build minutes overflow")
+        }
+        // No start means no worker ran, including a failure before execution.
+        (None, _) => Ok(0),
+        _ => anyhow::bail!(
+            "Cloud Build {} lacks start or finish times; its spend cannot be recorded",
+            build.id
+        ),
+    }
 }
 
 /// Cloud command diagnostics exclude both arguments and captured output.
@@ -545,13 +660,24 @@ async fn cloud_output(command: &mut Command) -> anyhow::Result<String> {
     String::from_utf8(result.stdout).context("gcloud returned non-UTF-8 output")
 }
 
-fn gcloud(project: &str) -> Command {
+fn gcloud(project: &str) -> anyhow::Result<Command> {
     let mut command = Command::new("gcloud");
     command.args(["--quiet", "--project", project]);
-    command
+    command.env("CLOUDSDK_CONFIG", agent_configuration()?);
+    if std::env::var_os("KUBECONFIG").is_none() {
+        command.env(
+            "KUBECONFIG",
+            PathBuf::from(std::env::var_os("HOME").context("HOME is absent")?)
+                .join(".kube/wamn-dev"),
+        );
+    }
+    Ok(command)
 }
 
-async fn cloud_build(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
+async fn cloud_build(
+    request: &BuildPlatformRequest,
+    processes: &[(u32, Vec<String>)],
+) -> anyhow::Result<PathBuf> {
     let cluster = request
         .cluster
         .as_ref()
@@ -569,7 +695,24 @@ async fn cloud_build(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> 
         ]))
         .await?;
     }
+    let store = counter_store()?;
+    // Charge the UTC submission day, even when a build finishes after midnight.
+    let day =
+        object_store::path::Path::from(format!("build/{}.json", Utc::now().format("%Y-%m-%d")));
+    let (counter, _) = read_counter(&store, &day).await?;
+    if let BuildLocation::Refused { spend_usd, cap_usd } = build_location(
+        processes,
+        std::process::id(),
+        counter.spend_usd,
+        cluster.build_cloud_cap_usd,
+    ) {
+        anyhow::bail!(
+            "Cloud Build refused: spend USD {spend_usd:.4} is at or above cap USD {cap_usd:.4}"
+        );
+    }
     let build = submit_cloud_build(request, &cluster.project_id).await?;
+    // Record failed builds before reporting their outcome.
+    add_cloud_minutes(&store, &day, cloud_minutes(&build)?).await?;
     ensure!(
         build.status == "SUCCESS",
         "Cloud Build {} finished with {}",
@@ -602,7 +745,7 @@ async fn submit_cloud_build(
     let config_file = source.0.join("cloudbuild.json");
     std::fs::write(&config_file, serde_json::to_vec(&config)?)?;
     let submitted = cloud_output(
-        gcloud(project)
+        gcloud(project)?
             .args([
                 "builds",
                 "submit",
@@ -629,7 +772,7 @@ async fn submit_cloud_build(
             _ => anyhow::bail!("Cloud Build {} returned an unknown status", build.id),
         }
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let described = cloud_output(gcloud(project).args([
+        let described = cloud_output(gcloud(project)?.args([
             "builds",
             "describe",
             &build.id,
@@ -672,12 +815,12 @@ fn cloud_configuration(
     }
     // The token is captured in memory, then written privately to the shared
     // credential volume. Neither the token nor its encoded form is logged.
-    let auth = r#"import base64, json, os, subprocess, sys
+    let auth = r"import base64, json, os, subprocess, sys
 os.umask(0o077)
 token = subprocess.check_output(['gcloud', 'auth', 'print-access-token'], stderr=subprocess.DEVNULL).decode().strip()
 with open('/cloud-auth/config.json', 'w') as output:
     json.dump({'auths': {sys.argv[1]: {'auth': base64.b64encode(('oauth2accesstoken:' + token).encode()).decode()}}}, output)
-"#;
+";
     let volume = json!([{"name": "cloud-auth", "path": "/cloud-auth"}]);
     steps.push(json!({
         "name": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "entrypoint": "python3",
@@ -769,6 +912,49 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[tokio::test]
+    async fn daily_counter_creates_and_accumulates_success_and_failure_minutes() {
+        use object_store::ObjectStore as _;
+        let store = object_store::memory::InMemory::new();
+        let path = object_store::path::Path::from("build/2026-10-20.json");
+        assert_eq!(
+            read_counter(&store, &path).await.unwrap().0,
+            DailyCounter::default()
+        );
+        for (status, finish, expected_minutes) in [
+            ("SUCCESS", "2026-10-20T01:01:00Z", 1),
+            ("FAILURE", "2026-10-20T01:01:00.000000001Z", 2),
+        ] {
+            let build = CloudBuild {
+                id: "test".into(),
+                status: status.into(),
+                start_time: Some("2026-10-20T01:00:00Z".parse().unwrap()),
+                finish_time: Some(finish.parse().unwrap()),
+            };
+            let minutes = cloud_minutes(&build).unwrap();
+            assert_eq!(minutes, expected_minutes);
+            add_cloud_minutes(&store, &path, minutes).await.unwrap();
+        }
+        let (counter, stale) = read_counter(&store, &path).await.unwrap();
+        assert_eq!(counter.cloud_minutes, 3);
+        assert!((counter.spend_usd - 0.0468).abs() < 1e-12);
+        add_cloud_minutes(&store, &path, 1).await.unwrap();
+        assert!(matches!(
+            store
+                .put_opts(
+                    &path,
+                    serde_json::to_vec(&counter).unwrap().into(),
+                    stale.into()
+                )
+                .await,
+            Err(object_store::Error::Precondition { .. })
+        ));
+        assert_eq!(
+            read_counter(&store, &path).await.unwrap().0.cloud_minutes,
+            4
+        );
     }
 
     #[test]
