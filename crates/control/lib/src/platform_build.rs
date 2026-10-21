@@ -852,6 +852,9 @@ async fn submit_cloud_build(
     }
 }
 
+/// The Docker CLI with buildx, the version that the runner image pins.
+const CLOUD_DOCKER_IMAGE: &str = "docker:28.5.1-cli";
+
 fn cloud_configuration(
     request: &BuildPlatformRequest,
     supplement: &str,
@@ -862,7 +865,10 @@ fn cloud_configuration(
     let key = checkout_key(&request.repository)?;
     let base = docker_arguments(&key, "Dockerfile", &format!("{supplement}/apps"));
     for target in ["host", "runner", "gates", "identity", "roles"] {
-        let mut args = base.clone();
+        // --build-context and --provenance are buildx flags, which the
+        // cloud-builders docker CLI rejects; this image ships buildx.
+        let mut args = vec!["buildx".to_owned()];
+        args.extend(base.iter().cloned());
         args.extend(["--target".into(), target.into()]);
         if target == "roles" {
             args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
@@ -875,7 +881,7 @@ fn cloud_configuration(
             ]);
         }
         args.push(".".into());
-        steps.push(json!({"name": "gcr.io/cloud-builders/docker", "args": args, "env": ["DOCKER_BUILDKIT=1"]}));
+        steps.push(json!({"name": CLOUD_DOCKER_IMAGE, "args": args}));
     }
     // Every build finishes before the first push, as on the local path.
     for target in ["host", "runner", "gates", "identity"] {
@@ -906,7 +912,10 @@ with open('/cloud-auth/config.json', 'w') as output:
             "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
         }));
     }
-    Ok(json!({"steps": steps, "options": {"machineType": "E2_HIGHCPU_8"}}))
+    // Cloud Logging is the log store that the agent can read.
+    Ok(
+        json!({"steps": steps, "options": {"machineType": "E2_HIGHCPU_8", "logging": "CLOUD_LOGGING_ONLY"}}),
+    )
 }
 
 fn docker_arguments(key: &str, file: &str, apps: &str) -> Vec<String> {
@@ -1031,6 +1040,24 @@ mod tests {
             },
         };
         (stores, opened)
+    }
+
+    #[test]
+    fn cloud_builds_use_buildx_and_cloud_logging() {
+        let request = BuildPlatformRequest {
+            repository: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
+            registry: "us-central1-docker.pkg.dev/test/wamn".into(),
+            out: PathBuf::from("/nonexistent"),
+            cluster: None,
+            cloud: true,
+        };
+        let config = cloud_configuration(&request, ".supplement", "head").unwrap();
+        assert_eq!(config["options"]["logging"], "CLOUD_LOGGING_ONLY");
+        for step in &config["steps"].as_array().unwrap()[..5] {
+            assert_eq!(step["name"], CLOUD_DOCKER_IMAGE);
+            assert_eq!(step["args"][0], "buildx");
+            assert_eq!(step["args"][1], "build");
+        }
     }
 
     #[test]

@@ -95,6 +95,12 @@ The owner supplies these inputs. The install stops at the first step that reads 
     gcloud storage buckets add-iam-policy-binding gs://wamn-dev-tofu-state --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/storage.legacyBucketReader
     ```
 
+12. Log read access for the agent on `wamn-dev`. Cloud Build writes its build logs to Cloud Logging only, and the agent reads them when a cloud build fails. If the grant is missing, the owner runs:
+
+    ```bash
+    gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/logging.viewer
+    ```
+
 `build-platform` uses these owner inputs and never creates their grants or budget. Missing access causes the cloud operation to fail.
 
 ## 2. Project resources
