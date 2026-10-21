@@ -1,0 +1,15 @@
+/target
+/evidence
+/apps/target
+/apps/platform/no-std/target
+.git
+.dolt
+.beads
+docs
+# deploy/ contains `include_str!` build inputs (including sql/run-state.sql),
+# so it must remain in the build context.
+# All Cargo targets, including nested workspaces.
+**/target/
+# Local tools and web dependencies are not Docker build inputs.
+**/node_modules/
+.tools/

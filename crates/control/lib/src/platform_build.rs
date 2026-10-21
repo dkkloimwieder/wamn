@@ -201,6 +201,10 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         "{} does not exist; run `wamn build` on the apps first",
         apps_target.display()
     );
+    let processes = process_list()?;
+    if build_location(&processes, std::process::id(), 0.0, 3.0) != BuildLocation::Local {
+        return cloud_build(request).await;
+    }
     let roles = std::env::temp_dir().join(format!("wamn-roles-{}", std::process::id()));
     let pushed = build_then_push(request, &roles, output).await;
     let _ = std::fs::remove_dir_all(&roles);
@@ -402,17 +406,11 @@ async fn build_then_push(
 /// named context `apps-target`.
 fn docker(repository: &Path) -> anyhow::Result<Command> {
     let mut command = Command::new("docker");
-    command
-        .args(["build", "--platform=linux/amd64", "--provenance=false"])
-        .arg("--build-arg")
-        .arg(format!("WAMN_CHECKOUT_KEY={}", checkout_key(repository)?))
-        .arg("--build-context")
-        .arg(format!(
-            "apps-target={}",
-            repository.join("apps/target/wamn").display()
-        ))
-        .arg("--file")
-        .arg(repository.join("Dockerfile"));
+    command.args(docker_arguments(
+        &checkout_key(repository)?,
+        &repository.join("Dockerfile").to_string_lossy(),
+        &repository.join("apps/target/wamn").to_string_lossy(),
+    ));
     Ok(command)
 }
 
@@ -472,6 +470,246 @@ async fn push_roles(
     let materializer = pushed.pop().context("the materializer component")?;
     let http = pushed.pop().context("the http component")?;
     Ok((http, materializer))
+}
+
+fn process_list() -> anyhow::Result<Vec<(u32, Vec<String>)>> {
+    let mut processes = Vec::new();
+    for entry in std::fs::read_dir("/proc").context("read the process list")? {
+        let entry = entry?;
+        let Ok(pid) = entry.file_name().to_string_lossy().parse() else {
+            continue;
+        };
+        let bytes = match std::fs::read(entry.path().join("cmdline")) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).context("read process arguments before building"),
+        };
+        let args = bytes
+            .split(|byte| *byte == 0)
+            .filter(|arg| !arg.is_empty())
+            .map(|arg| String::from_utf8_lossy(arg).into_owned())
+            .collect();
+        processes.push((pid, args));
+    }
+    Ok(processes)
+}
+
+/// An owned source supplement: package output is a named Docker context,
+/// not a Cargo target cache. All target directories stay out of the upload.
+struct CloudSource(PathBuf);
+
+impl Drop for CloudSource {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn copy_package_output(from: &Path, to: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let destination = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_package_output(&entry.path(), &destination)?;
+        } else {
+            ensure!(
+                entry.file_type()?.is_file(),
+                "package output must contain regular files"
+            );
+            std::fs::copy(entry.path(), destination)?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudBuild {
+    id: String,
+    status: String,
+}
+
+/// Cloud command diagnostics exclude both arguments and captured output.
+/// In particular, gcloud authentication failures must not echo credentials.
+async fn cloud_output(command: &mut Command) -> anyhow::Result<String> {
+    let result = command
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("start gcloud")?;
+    ensure!(
+        result.status.success(),
+        "gcloud failed with {}",
+        result.status
+    );
+    String::from_utf8(result.stdout).context("gcloud returned non-UTF-8 output")
+}
+
+fn gcloud(project: &str) -> Command {
+    let mut command = Command::new("gcloud");
+    command.args(["--quiet", "--project", project]);
+    command
+}
+
+async fn cloud_build(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
+    let cluster = request
+        .cluster
+        .as_ref()
+        .context("a busy local builder requires --cluster <cluster.k> for Cloud Build")?;
+    ensure!(
+        cluster.provider == crate::platform::document::Provider::Gcp,
+        "Cloud Build requires a GCP --cluster document"
+    );
+    {
+        let _stage = start_stage("ui-build");
+        output(Command::new("pnpm").current_dir(&request.repository).args([
+            "--filter",
+            "@wamn/platform-ui",
+            "build",
+        ]))
+        .await?;
+    }
+    let build = submit_cloud_build(request, &cluster.project_id).await?;
+    ensure!(
+        build.status == "SUCCESS",
+        "Cloud Build {} finished with {}",
+        build.id,
+        build.status
+    );
+    stamp_only(request).await
+}
+
+async fn submit_cloud_build(
+    request: &BuildPlatformRequest,
+    project: &str,
+) -> anyhow::Result<CloudBuild> {
+    let _stage = start_stage("cloud-submit");
+    let supplement = format!(".wamn-cloud-build-{}", std::process::id());
+    let path = request.repository.join(&supplement);
+    std::fs::create_dir(&path).context("create the cloud source supplement")?;
+    let source = CloudSource(path);
+    copy_package_output(
+        &request.repository.join("apps/target/wamn"),
+        &source.0.join("apps"),
+    )?;
+    let head = output(Command::new("git").current_dir(&request.repository).args([
+        "rev-parse",
+        "--verify",
+        "HEAD",
+    ]))
+    .await?;
+    let config = cloud_configuration(request, &supplement, head.trim())?;
+    let config_file = source.0.join("cloudbuild.json");
+    std::fs::write(&config_file, serde_json::to_vec(&config)?)?;
+    let submitted = cloud_output(
+        gcloud(project)
+            .args([
+                "builds",
+                "submit",
+                "--async",
+                "--format=json",
+                "--region=us-central1",
+                "--config",
+            ])
+            .arg(&config_file)
+            .arg("--ignore-file")
+            .arg(request.repository.join(".gcloudignore"))
+            .arg(&request.repository),
+    )
+    .await?;
+    let mut build: CloudBuild =
+        serde_json::from_str(&submitted).context("decode the submitted build")?;
+    drop(source);
+    loop {
+        match build.status.as_str() {
+            "PENDING" | "QUEUED" | "WORKING" => {}
+            "SUCCESS" | "FAILURE" | "INTERNAL_ERROR" | "TIMEOUT" | "CANCELLED" | "EXPIRED" => {
+                return Ok(build);
+            }
+            _ => anyhow::bail!("Cloud Build {} returned an unknown status", build.id),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let described = cloud_output(gcloud(project).args([
+            "builds",
+            "describe",
+            &build.id,
+            "--region=us-central1",
+            "--format=json",
+        ]))
+        .await?;
+        build = serde_json::from_str(&described).context("decode Cloud Build status")?;
+    }
+}
+
+fn cloud_configuration(
+    request: &BuildPlatformRequest,
+    supplement: &str,
+    head: &str,
+) -> anyhow::Result<serde_json::Value> {
+    use serde_json::json;
+    let mut steps = Vec::new();
+    let key = checkout_key(&request.repository)?;
+    let base = docker_arguments(&key, "Dockerfile", &format!("{supplement}/apps"));
+    for target in ["host", "runner", "gates", "identity", "roles"] {
+        let mut args = base.clone();
+        args.extend(["--target".into(), target.into()]);
+        if target == "roles" {
+            args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
+        } else {
+            args.extend([
+                "--tag".into(),
+                format!("{}/wamn-{target}:{CHART_VERSION}", request.registry),
+                format!("--label=wamn.dev/source-head={head}"),
+                "--label=wamn.dev/build-profile=release".into(),
+            ]);
+        }
+        args.push(".".into());
+        steps.push(json!({"name": "gcr.io/cloud-builders/docker", "args": args, "env": ["DOCKER_BUILDKIT=1"]}));
+    }
+    // Every build finishes before the first push, as on the local path.
+    for target in ["host", "runner", "gates", "identity"] {
+        steps.push(json!({"name": "gcr.io/cloud-builders/docker", "args": ["push", format!("{}/wamn-{target}:{CHART_VERSION}", request.registry)]}));
+    }
+    // The token is captured in memory, then written privately to the shared
+    // credential volume. Neither the token nor its encoded form is logged.
+    let auth = r#"import base64, json, os, subprocess, sys
+os.umask(0o077)
+token = subprocess.check_output(['gcloud', 'auth', 'print-access-token'], stderr=subprocess.DEVNULL).decode().strip()
+with open('/cloud-auth/config.json', 'w') as output:
+    json.dump({'auths': {sys.argv[1]: {'auth': base64.b64encode(('oauth2accesstoken:' + token).encode()).decode()}}}, output)
+"#;
+    let volume = json!([{"name": "cloud-auth", "path": "/cloud-auth"}]);
+    steps.push(json!({
+        "name": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "entrypoint": "python3",
+        "args": ["-c", auth, request.registry.split('/').next().context("registry host")?],
+        "volumes": volume,
+    }));
+    for (file, role) in [
+        ("http_route.wasm", "http"),
+        ("materializer.wasm", "materializer"),
+    ] {
+        steps.push(json!({
+            // This release uses the same wash-runtime revision as Cargo.toml.
+            "name": "ghcr.io/wasmcloud/wash:2.10.3", "entrypoint": "/usr/local/bin/wash",
+            "args": ["oci", "push", format!("{}/wamn/{role}:{CHART_VERSION}", request.registry), format!("/workspace/roles/{file}")],
+            "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
+        }));
+    }
+    Ok(json!({"steps": steps, "options": {"machineType": "E2_HIGHCPU_8"}}))
+}
+
+fn docker_arguments(key: &str, file: &str, apps: &str) -> Vec<String> {
+    vec![
+        "build".into(),
+        "--platform=linux/amd64".into(),
+        "--provenance=false".into(),
+        "--build-arg".into(),
+        format!("WAMN_CHECKOUT_KEY={key}"),
+        "--build-context".into(),
+        format!("apps-target={apps}"),
+        "--file".into(),
+        file.into(),
+    ]
 }
 
 /// Run `command` and return its standard output; a failure names its error output.
