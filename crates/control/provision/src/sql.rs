@@ -278,11 +278,9 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
 ///
 /// The host admits an event or schedule run under the authority of the
 /// release that declares the workflow (`wamn_run_state::queue::insert_event_run_sql`).
-/// The list reaches no service principal, binding world, legacy flow, event
-/// ancestry, capture or caller-outcome column, so the run-plane grain check
-/// admits event and schedule runs from this family. Automation admission stays with
-/// project-admin authority.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 13] = [
+/// A schedule carries its application service principal. The list reaches no
+/// binding world, legacy flow, event ancestry, capture or caller-outcome column.
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 14] = [
     "tenant_id",
     "package_id",
     "manifest_digest",
@@ -292,6 +290,7 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 13] = [
     "wiring_hash",
     "trigger_source",
     "registration_id",
+    "service_principal_id",
     "idempotency_key",
     "input_json",
     "status",
@@ -656,7 +655,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   [`EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS`] and
 ///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`], plus `SELECT` on
 ///   `environment_policies`: the host admits event and schedule runs
-///   under the declaring release. These columns admit no caller identity.
+///   under the declaring release. Schedules carry their application identity.
 /// * `effect_attempts`: `SELECT` only. The claim path only asks whether a row
 ///   exists.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
@@ -680,10 +679,10 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
     let schema = quote_ident(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, {schema} TO {role};",
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog, app_system, {schema} TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ExecutorPlatform),
     );
     for relation in EXECUTOR_PLATFORM_CATALOG_RELATIONS {
@@ -707,7 +706,8 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
-         GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role};"
+         GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
+         GRANT SELECT (tenant_id, id, type, status, email) ON TABLE app_system.users TO {role};"
     )
     .expect("writing to a String cannot fail");
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
@@ -1247,13 +1247,13 @@ mod tests {
         let sql = grant_executor_platform_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::ExecutorPlatform, &sql),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, \"wamn_run\" \
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
-             GRANT USAGE ON SCHEMA catalog, \"wamn_run\" TO \"wamn_executor_platform\"; \
+             GRANT USAGE ON SCHEMA catalog, app_system, \"wamn_run\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_executor_platform\"; \
@@ -1272,7 +1272,7 @@ mod tests {
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT INSERT (\"tenant_id\", \"package_id\", \"manifest_digest\", \
              \"environment\", \"wiring_id\", \"wiring_version\", \"wiring_hash\", \
-             \"trigger_source\", \"registration_id\", \"idempotency_key\", \"input_json\", \
+             \"trigger_source\", \"registration_id\", \"service_principal_id\", \"idempotency_key\", \"input_json\", \
              \"status\", \"durability_class\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT SELECT, DELETE ON TABLE \"wamn_run\".\"run_queue\" \
@@ -1284,6 +1284,8 @@ mod tests {
              GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT SELECT (tenant_id, id, type, status, email) ON TABLE app_system.users \
              TO \"wamn_executor_platform\"; \
              GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
              TO \"wamn_executor_platform\";",

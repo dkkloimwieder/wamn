@@ -330,6 +330,7 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 - An authenticated caller of a route binds its principal id.
 - A post-commit registration delivery binds `wamn:materializer`.
 - An automation delivery binds its admitted service principal.
+- A schedule delivery binds the service principal of its application.
 - A legacy queue delivery or management candidate case binds `wamn:executor`.
 
 The same transaction binds the executing operation as `app.operation`.
@@ -386,7 +387,21 @@ Its first due moment is strictly after startup.
 At each due moment, it calls `Workflows::start` with input `{"due":"<due RFC 3339>"}`.
 The key is `<package id>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
 Replicas use the same key, so concurrent starts return one run.
-The executor admits the run with no caller, and a node that requires an operation grant refuses.
+
+Apply creates one service principal per application that declares a schedule, in each environment.
+Its subject is `wamn-app-<org>--<project>--<env>--<package id>`.
+The tenant service row uses `<subject>@<platform-domain>` as its email.
+Repeated applies retain its identity and grants.
+
+Apply assigns no roles or permissions.
+An administrator grants a role through the existing [role administration](../operations/deployment.md).
+The executor resolves the application principal when it admits the schedule run.
+Its database role reads only `tenant_id`, `id`, `type`, `status`, and `email` from `app_system.users`.
+It can insert the principal into a run but cannot change that identity afterward.
+
+The queue reads its current permissions, and the router authorizes each registered consumer command through the existing operation check.
+A missing permission refuses that command.
+
 Missed or refused ticks produce a log entry without catch-up, and host shutdown cancels the task.
 A host with no schedules starts no schedule task.
 

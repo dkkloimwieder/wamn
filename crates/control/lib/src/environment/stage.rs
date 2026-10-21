@@ -131,6 +131,14 @@ pub async fn stage(
     // row seals the migrations of every version it names.
     write_release(project_url, &tenant, digest, manifest).await?;
     materialize_requirements(project_url, &tenant, manifest).await?;
+    materialize_application_principals(
+        &platform.system_database_url,
+        project_url,
+        &tenant,
+        manifest,
+        &platform.auth_changes().await?,
+    )
+    .await?;
 
     // 3. The data access of the packages of the release, when each is the
     // installed version. A release on the tested predecessor keeps the
@@ -159,6 +167,86 @@ pub async fn stage(
         .into_iter()
         .map(|(_, _, _, package_manifest)| package_manifest)
         .collect())
+}
+
+/// Create the service rows of scheduled applications without assigning roles.
+/// Repeated application retains the identity and any administrator-authored grants.
+///
+/// # Errors
+///
+/// Returns an error if an identity is disabled or a database write fails.
+pub async fn materialize_application_principals(
+    system_url: &str,
+    project_url: &str,
+    tenant: &str,
+    manifest: &wamn_catalog::ServingManifest,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+) -> anyhow::Result<()> {
+    use wamn_platform_identity::application::{ApplicationUser, write_service};
+    use wamn_platform_identity::auth_changes::AuthDrops;
+    use wamn_project_state::PlatformComponent;
+
+    let applications: std::collections::BTreeSet<_> = manifest
+        .workflow
+        .schedules
+        .values()
+        .map(|schedule| schedule.package_id.as_str())
+        .collect();
+    if applications.is_empty() {
+        return Ok(());
+    }
+    let mut system = connect(system_url).await?;
+    system.batch_execute("SET ROLE wamn_system").await?;
+    let domain: Option<String> = system
+        .query_one("SELECT platform_domain FROM registry.meta", &[])
+        .await?
+        .get(0);
+    let domain =
+        domain.context("platform-domain-unset: application principals need the platform domain")?;
+    let mut project = connect(project_url).await?;
+    let transaction = project.transaction().await?;
+    transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        ))
+        .await?;
+    let mut drops = AuthDrops::default();
+    for package in applications {
+        let subject = wamn_platform_identity::application_subject(tenant, package)?;
+        let principal = crate::provision_project_env::resolve_or_create_service(
+            &mut system,
+            &subject,
+            &subject,
+        )
+        .await?;
+        ensure!(
+            principal.status() == wamn_platform_identity::PrincipalStatus::Active,
+            "application service principal {subject:?} is disabled"
+        );
+        let exists = transaction
+            .query_opt(
+                "SELECT id FROM app_system.users WHERE tenant_id = $1 AND id = $2::text::uuid",
+                &[&tenant, &principal.id().as_str()],
+            )
+            .await?
+            .is_some();
+        if !exists {
+            write_service(
+                &transaction,
+                tenant,
+                ApplicationUser {
+                    principal_id: principal.id(),
+                    email: &format!("{subject}@{domain}"),
+                    display_name: &subject,
+                },
+                &mut drops,
+            )
+            .await?;
+        }
+    }
+    transaction.commit().await?;
+    changes.publish(drops).await;
+    Ok(())
 }
 
 /// The `upgrade-schema` run of the stage on the project database at

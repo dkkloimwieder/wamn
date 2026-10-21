@@ -419,7 +419,7 @@ CREATE TABLE wamn_run.runs (
     -- explicit IS NOT NULL arms keep PostgreSQL CHECK's NULL truth value from
     -- admitting a half-record. Existing flow rows stay truthful; they are not
     -- backfilled with an identity that was never recorded. The final arms admit
-    -- event and schedule runs with no caller.
+    -- event runs with no caller and schedules under their application principal.
     CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
        AND flow_id <> '' AND flow_version > 0
@@ -454,14 +454,15 @@ CREATE TABLE wamn_run.runs (
       (flow_id IS NULL AND flow_version IS NULL
        AND trigger_source IS NOT DISTINCT FROM 'schedule'
        AND registration_id IS NULL
-       AND service_principal_id IS NULL
+       AND service_principal_id IS NOT NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
        AND wiring_version IS NOT NULL AND wiring_version > 0
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
        AND binding_world_json IS NULL)
     ),
     CONSTRAINT runs_service_principal_check CHECK (
-      (trigger_source IS NOT DISTINCT FROM 'automation') = (service_principal_id IS NOT NULL)
+      (trigger_source IS NOT DISTINCT FROM 'automation' OR trigger_source IS NOT DISTINCT FROM 'schedule')
+      = (service_principal_id IS NOT NULL)
     ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk

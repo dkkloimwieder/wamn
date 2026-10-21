@@ -76,6 +76,7 @@ fn run_state_live() {
     let url = test_database.url().to_owned();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
+    let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .expect("read run-state DDL");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
@@ -173,7 +174,7 @@ fn run_state_live() {
              {app_generation} \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
-             {catalog} {run_state} {run_queue} \
+             {catalog} {run_state} {run_queue} {app_schema} \
              INSERT INTO catalog.packages \
                (tenant_id,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0', \

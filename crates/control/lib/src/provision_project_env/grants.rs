@@ -605,6 +605,20 @@ fn verify_executor_platform_grants(
             "EXECUTE".to_string(),
         ),
     ]);
+    expected.insert((
+        "schema".to_owned(),
+        "app_system".to_owned(),
+        "app_system".to_owned(),
+        "USAGE".to_owned(),
+    ));
+    for column in ["tenant_id", "id", "type", "status", "email"] {
+        expected.insert((
+            "column".to_owned(),
+            "app_system".to_owned(),
+            format!("users.{column}"),
+            "SELECT".to_owned(),
+        ));
+    }
     for relation in sql::EXECUTOR_PLATFORM_CATALOG_RELATIONS {
         expected.insert((
             "relation".to_string(),

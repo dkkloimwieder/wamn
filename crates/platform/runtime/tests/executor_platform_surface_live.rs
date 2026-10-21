@@ -126,6 +126,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog_ddl = wamn_catalog::CATALOG_SCHEMA_SQL;
+    let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
     let run_state_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .context("read run-state DDL")?;
     let run_queue_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
@@ -167,7 +168,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             BEGIN; {catalog_ddl} {run_state_ddl} {run_queue_ddl} COMMIT;"
+             BEGIN; {catalog_ddl} {run_state_ddl} {run_queue_ddl} {app_schema} COMMIT;"
         ))
         .await
         .context("install the run and catalog planes")?;

@@ -146,6 +146,11 @@ pub fn operator_subject(
     canonical_subject(&format!("wamn-operator-{org}--{project}--{environment}"))
 }
 
+/// The service subject of one scheduled application in one environment tenant.
+pub fn application_subject(tenant: &str, package: &str) -> Result<String, IdentityError> {
+    canonical_subject(&format!("wamn-app-{tenant}--{package}"))
+}
+
 /// Random bytes behind the non-secret lookup half of a token.
 const TOKEN_LOOKUP_BYTES: usize = 8;
 
@@ -1242,6 +1247,23 @@ fn database_error(error: &tokio_postgres::Error) -> IdentityError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_subject_is_scoped_to_tenant_and_package() {
+        assert_eq!(
+            application_subject("acme--erp--prod", "integration").unwrap(),
+            "wamn-app-acme--erp--prod--integration"
+        );
+        assert_ne!(
+            application_subject("acme--erp--prod", "integration").unwrap(),
+            application_subject("acme--erp--dev", "integration").unwrap()
+        );
+        assert_ne!(
+            application_subject("acme--erp--prod", "integration").unwrap(),
+            application_subject("acme--erp--prod", "consumer").unwrap()
+        );
+        assert!(application_subject("bad tenant", "integration").is_err());
+    }
 
     #[test]
     fn principal_id_parsing_preserves_uuid_identity_and_rejects_other_spellings() {

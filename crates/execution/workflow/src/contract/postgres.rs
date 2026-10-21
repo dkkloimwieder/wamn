@@ -30,7 +30,7 @@ SELECT canonical_bytes FROM catalog.releases \
 /// The workflow contract over one tenant and environment.
 ///
 /// Automation uses project-admin authority. Schedules use the executor
-/// credential, which reads the release and admits runs with no caller.
+/// credential, which reads the release and admits runs as their application.
 pub struct PostgresWorkflows {
     client: Mutex<Client>,
     /// The run plane schema, for example `wamn_run`.
@@ -235,21 +235,52 @@ impl Workflows for PostgresWorkflows {
         let principal = match &request.trigger {
             Trigger::Automation {
                 service_principal_id,
-            } => Some(
-                queued_service_caller(&transaction, self.tenant(), service_principal_id)
+            } => service_principal_id.clone(),
+            Trigger::Schedule { .. } => {
+                let subject =
+                    wamn_platform_identity::application_subject(self.tenant(), &request.package_id)
+                        .map_err(|error| {
+                            WorkflowError::with_source(
+                                WorkflowErrorType::Refused,
+                                "derive the application service subject",
+                                error,
+                            )
+                        })?;
+                transaction
+                    .query_opt(
+                        "SELECT id::text FROM app_system.users WHERE tenant_id = $1 \
+                     AND type = 'service' AND status = 'active' AND split_part(email, '@', 1) = $2",
+                        &[&self.tenant(), &subject],
+                    )
                     .await
                     .map_err(|error| {
-                        WorkflowError::with_source(
+                        WorkflowError::storage("resolve the application principal", error)
+                    })?
+                    .ok_or_else(|| {
+                        WorkflowError::new(
                             WorkflowErrorType::Refused,
-                            "the service principal does not admit the start",
-                            error,
+                            format!(
+                                "application service principal {subject:?} is absent or inactive"
+                            ),
                         )
                     })?
-                    .principal_id()
-                    .to_owned(),
-            ),
-            Trigger::Schedule { .. } => None,
+                    .try_get(0)
+                    .map_err(|error| {
+                        WorkflowError::storage("read the application principal", error)
+                    })?
+            }
         };
+        if matches!(request.trigger, Trigger::Automation { .. }) {
+            queued_service_caller(&transaction, self.tenant(), &principal)
+                .await
+                .map_err(|error| {
+                    WorkflowError::with_source(
+                        WorkflowErrorType::Refused,
+                        "the service principal does not admit the start",
+                        error,
+                    )
+                })?;
+        }
         let tenant = self.tenant();
         let environment = self.environment();
         let mut binds: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![
@@ -261,9 +292,7 @@ impl Workflows for PostgresWorkflows {
             &version,
             &wiring_hash,
         ];
-        if let Some(principal) = &principal {
-            binds.push(principal);
-        }
+        binds.push(&principal);
         binds.extend([
             &request.idempotency_key as &(dyn tokio_postgres::types::ToSql + Sync),
             &input,

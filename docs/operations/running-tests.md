@@ -986,9 +986,9 @@ Use the application delivery journeys for deployed startup, readiness, authentic
 
 The schedule admission test starts a disposable PostgreSQL 18 server through the shared test fixture.
 It connects two callers with executor credentials, starts one due moment concurrently, and requires exactly one listed run.
-It also requires a node with an operation grant to refuse the run with no caller.
+It also requires a registered operation to refuse the application principal when that principal lacks its permission.
 Run it from the repository root:
 
 ```bash
-TMPDIR=/var/tmp cargo test -p wamn-workflow --lib schedule_replicas_admit_one_run_without_a_caller -- --ignored --nocapture
+TMPDIR=/var/tmp cargo test -p wamn-workflow --lib schedule_replicas_admit_one_run_as_the_application -- --ignored --nocapture
 ```

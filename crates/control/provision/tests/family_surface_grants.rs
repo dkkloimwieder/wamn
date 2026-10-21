@@ -403,6 +403,7 @@ fn expected_executor_grants() -> Vec<String> {
         "manifest_digest",
         "package_id",
         "registration_id",
+        "service_principal_id",
         "status",
         "tenant_id",
         "trigger_source",
@@ -433,6 +434,10 @@ fn expected_executor_grants() -> Vec<String> {
     rows.push("routine|wamn_authority|tenant_key|EXECUTE".to_owned());
     rows.push("schema|catalog|catalog|USAGE".to_owned());
     rows.push("schema|wamn_run|wamn_run|USAGE".to_owned());
+    rows.push("schema|app_system|app_system|USAGE".to_owned());
+    for column in ["tenant_id", "id", "type", "status", "email"] {
+        rows.push(format!("column|app_system|users.{column}|SELECT"));
+    }
     rows.sort();
     rows
 }
@@ -584,7 +589,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     }
     for column in [
         "run_id",
-        "service_principal_id",
         "binding_world_json",
         "flow_id",
         "event_source_run_id",

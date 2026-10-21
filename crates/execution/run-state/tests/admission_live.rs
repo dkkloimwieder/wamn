@@ -59,6 +59,7 @@ fn surviving_authority_matrix_live() {
     let url = test_database.url().to_owned();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
+    let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .expect("read run-state DDL");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
@@ -109,7 +110,7 @@ fn surviving_authority_matrix_live() {
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
+             BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
              {access_floor} \
              {executor_provision} \
              {management_provision}"
@@ -298,7 +299,7 @@ result_json,state_json,status,terminal_reason,updated_at', \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
            ASSERT actual = \
              'durability_class,environment,idempotency_key,input_json,manifest_digest,\
-package_id,registration_id,status,tenant_id,trigger_source,wiring_hash,wiring_id,wiring_version', \
+package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,wiring_hash,wiring_id,wiring_version', \
                   'runs INSERT columns (the event run grain) drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \
@@ -406,6 +407,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
     let url = test_database.url().to_owned();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
+    let app_schema = wamn_control_provision::APP_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .expect("read run-state DDL");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
@@ -422,7 +424,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
                  END IF; \
                END LOOP; \
              END $$; \
-             BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
+             BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
              INSERT INTO catalog.packages \
                (tenant_id,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \

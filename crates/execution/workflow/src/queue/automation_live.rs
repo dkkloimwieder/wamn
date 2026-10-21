@@ -173,7 +173,7 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: PostgreSQL 18 binaries"]
-async fn schedule_replicas_admit_one_run_without_a_caller() -> anyhow::Result<()> {
+async fn schedule_replicas_admit_one_run_as_the_application() -> anyhow::Result<()> {
     run_automation(Mode::Schedule).await
 }
 
@@ -449,6 +449,19 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         },
     };
     if let Mode::Schedule = mode {
+        let subject = wamn_platform_identity::application_subject(TENANT, "automation")?;
+        admin
+            .execute(
+                "UPDATE app_system.users SET email=$1 WHERE id=$2::text::uuid",
+                &[&format!("{subject}@example.invalid"), &SERVICE],
+            )
+            .await?;
+        admin
+            .execute(
+                "DELETE FROM app_system.permissions WHERE tenant_id=$1",
+                &[&TENANT],
+            )
+            .await?;
         let due = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z")?
             .with_timezone(&chrono::Utc);
         request.trigger = Trigger::Schedule {
@@ -470,8 +483,9 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].run_id, run);
         assert_eq!(listed[0].trigger_source.as_deref(), Some("schedule"));
-        let row = admin.query_one("SELECT service_principal_id IS NULL, registration_id IS NULL, invocation_context = '{}'::jsonb FROM wamn_run.runs WHERE run_id = $1", &[&run]).await?;
-        assert!(row.get::<_, bool>(0) && row.get::<_, bool>(1) && row.get::<_, bool>(2));
+        let row = admin.query_one("SELECT service_principal_id::text, registration_id IS NULL, invocation_context = '{}'::jsonb FROM wamn_run.runs WHERE run_id = $1", &[&run]).await?;
+        assert_eq!(row.get::<_, String>(0), SERVICE);
+        assert!(row.get::<_, bool>(1) && row.get::<_, bool>(2));
         let error = drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness)
             .await
             .unwrap_err();

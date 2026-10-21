@@ -212,6 +212,7 @@ const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::ExecutorPlatform,
         relations: &[
+            "app_system.users|SELECT|column",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",

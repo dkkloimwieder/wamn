@@ -798,6 +798,8 @@ Stamps and log entries are correct for writes through the supported platform pat
 On those paths, the triggers exist and every writer binds its executing principal and its operation.
 `env apply` applies `app-schema.sql` to the project database and writes its platform rows.
 It writes a service row for each service principal of the project.
+The release stage also creates one service principal for each application with a scheduled workflow, scoped to that environment.
+The stage writes its tenant service row without assigning a role or permission.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
 It writes the `admin` row of each member who holds `project-admin` in the project.
@@ -838,6 +840,18 @@ The system database has two more limits:
 
 - The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a user caller.
 - The system database keeps stamps only. A delete gets no stamp, so role, membership, and PAT removals stay unattributed. Beads `wamn-emtx.24` is the closed record of the system database log. Its reopen trigger is a need to attribute those removals beyond the stamps, for example a security review that asks for revoke history.
+
+## Event capture
+
+An environment release can hold applications whose models use different schemas.
+Apply resolves each event registration through its `source_package` and model key `entity`.
+It selects only the schemas of those source models, for both workflow and handler registrations.
+
+CDC is change data capture.
+No registration means no CDC setup.
+One registered schema enables capture of that schema.
+Two registered schemas refuse with `one environment captures one schema`.
+A schema whose models have no registration is not captured.
 
 ## Model versions
 

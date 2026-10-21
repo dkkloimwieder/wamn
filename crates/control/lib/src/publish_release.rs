@@ -1899,6 +1899,115 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn two_applications_with_different_model_schemas_publish_and_pass_apply_analysis() {
+        use crate::environment::analyse::{Authorities, Policy, ProjectState, ReleaseFacts};
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_catalog::test_database::tenant();
+        let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let mut manifests = BTreeMap::new();
+        let mut components = ReleaseComponents::default();
+        let mut packages = BTreeSet::new();
+        let mut wirings = BTreeSet::new();
+        let mut digests = BTreeMap::new();
+        for (package, schema, digest_byte) in [
+            ("consumer", "consumer", 'a'),
+            ("integration", "integration", 'b'),
+        ] {
+            let mut manifest = source_manifest();
+            manifest.package.id = package.to_owned();
+            for model in manifest.models.values_mut() {
+                model.schema = schema.to_owned();
+                model.owner = package.to_owned();
+            }
+            manifest.workflows.insert(
+                "hourly".to_owned(),
+                wamn_schema_generator::WorkflowDeclaration {
+                    wiring: "tick".to_owned(),
+                    registration: None,
+                    schedule: Some("0 * * * *".to_owned()),
+                },
+            );
+            let mut component = closure_component("application", None);
+            component.scope.package_id = package.to_owned();
+            component.component_digest = format!("sha256:{}", digest_byte.to_string().repeat(64));
+            let operation = format!("{package}:job/run@1.0.0");
+            let export = component.operations.remove("run").unwrap();
+            component.operations.insert(operation.clone(), export);
+            let graph = WiringDocument::parse(&serde_json::json!({
+                "format-version":"0.1", "wiring-id":"tick", "version":1, "entry":"run",
+                "nodes":{"run":{"component":"application", "interface-version":"0.1.0", "operation":operation}},
+                "edges":[], "cases":[]
+            })).unwrap();
+            client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('tenant-a',$1,'1.0.0',$2)", &[&package, &component.component_digest]).await.unwrap();
+            client.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ('tenant-a',$1,'1.0.0','tick',1,$2::text::jsonb,$3)", &[&package, &serde_json::to_string(&graph).unwrap(), &graph.wiring_hash().as_str()]).await.unwrap();
+            digests.insert(package.to_owned(), component.component_digest.clone());
+            components
+                .insert(component, Vec::new(), BTreeMap::new())
+                .unwrap();
+            packages.insert(PackageCoordinate::new(package, "1.0.0").unwrap());
+            wirings.insert(ReleaseWiringTarget {
+                package_id: package.to_owned(),
+                package_version: "1.0.0".to_owned(),
+                wiring_id: "tick".to_owned(),
+                wiring_version: 1,
+            });
+            manifests.insert(package.to_owned(), manifest);
+        }
+        let published = publish_release_with_package_manifests(
+            &client,
+            &PublishReleaseManifest {
+                tenant_id: "tenant-a",
+                environment: "dev",
+                verified_publisher_principal: "publisher",
+                packages: &packages,
+                wirings: &wirings,
+                attachments: &BTreeMap::new(),
+                environment_is_disposable: false,
+            },
+            &components,
+            &manifests,
+            &digests,
+            &RouteContracts::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(published.manifest.components.len(), 2);
+        let document = crate::environment::document::EnvironmentDocument::from_json(
+            serde_json::json!({"org":"acme", "project":"erp", "env":"dev", "release":published.digest.as_str(),
+                "route_host":"erp.acme.example", "policy":"dev"}).to_string().as_bytes()
+        ).unwrap();
+        let authorities = Authorities {
+            release_name: "acme--erp--dev".to_owned(),
+            connections: BTreeMap::new(),
+            policy: Policy {
+                name: "dev".to_owned(),
+                readiness_budget_seconds: 600,
+                drain_bound_seconds: 300,
+            },
+            row: None,
+            project: Some(ProjectState::default()),
+            release: Some(ReleaseFacts {
+                digest: published.digest.to_string(),
+                manifest: published.manifest,
+                image_set: crate::release_chart::ImageSet {
+                    host: DIGEST.to_owned(),
+                    http: DIGEST.to_owned(),
+                    materializer: DIGEST.to_owned(),
+                },
+                qualification: "fixture".to_owned(),
+                required_connections: BTreeSet::new(),
+            }),
+            revision: None,
+            live: BTreeMap::new(),
+            floor_artifacts: Some(BTreeMap::new()),
+        };
+        assert!(crate::environment::analyse::refusals(&document, &authorities).is_empty());
+    }
+
     #[test]
     fn package_attachment_documents_merge_into_one_release() {
         let base = BTreeMap::from([

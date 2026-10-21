@@ -111,6 +111,7 @@ pub use output::{
     ProvisionedRoute, ensure_distinct_secret_paths, ensure_secret_path, read_json,
     secret_annotation, secret_value, write_secret_json,
 };
+pub(crate) use pat_secrets::resolve_or_create_service;
 pub use pat_secrets::{
     IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
 };

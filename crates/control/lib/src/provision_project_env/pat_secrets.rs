@@ -216,7 +216,7 @@ pub async fn mint_management_author_pat(
     result
 }
 
-async fn resolve_or_create_service(
+pub(crate) async fn resolve_or_create_service(
     client: &mut Client,
     subject: &str,
     display_name: &str,

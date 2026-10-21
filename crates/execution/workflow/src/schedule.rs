@@ -36,6 +36,7 @@ fn next_due(cron: &Cron, after: DateTime<Utc>) -> anyhow::Result<DateTime<Utc>> 
 }
 
 /// Run the schedules of one loaded environment release until host shutdown.
+/// Each start names the package whose service principal the contract resolves.
 /// The first tick is strictly after startup. Failed or missed ticks are not retried.
 pub async fn serve(
     workflows: &dyn Workflows,

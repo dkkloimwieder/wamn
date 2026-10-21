@@ -15,6 +15,7 @@ wamn-execution-contract = { workspace = true }
 # above it, and it never depends on this crate.
 wamn-execution-host = { workspace = true }
 wamn-project-state = { workspace = true }
+wamn-platform-identity = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-router = { workspace = true }
 wamn-runtime = { workspace = true }
