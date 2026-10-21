@@ -847,28 +847,22 @@ Its PostgreSQL server and the fixture's containers stop after the test.
 The results directory keeps `platform-ui-env/control-web.log` for failure diagnosis.
 A local pass is required before this flow goes to GCP.
 
-### Generated components
+### Generated descriptions
 
-A generated component imports SolidJS, TanStack Table, zod, and `@wamn/ui`.
-`web/components` installs those libraries and holds the harness that checks the components.
-The harness resolves `@wamn/ui` from `web/ui`.
+`client_component.rs` emits typed descriptions for `@wfe/generator` from the pinned `web/wfe` package.
+The generator integration test compiles fixture descriptions with TypeScript.
+It covers table, form, repeated group, detail, and delete descriptions.
+Application bindings own requests, validation, and value conversion.
 
-To write the fixture components, type-check them, and run their tests, run:
+Run `pnpm install --offline` at the repository root first.
+The existing manual check uses the same test code:
 
 ```bash
-cargo run --locked --offline -p wamn-schema-generator --example check_client_components
+TMPDIR=/var/tmp cargo run --offline -p wamn-schema-generator --example check_client_components
 ```
 
-The command writes the fixture bindings and components into `web/components/fixture`, which Git ignores.
-It then runs the package's own check and tests.
-If the dependencies are absent, the command refuses and names the directory.
-The one example component test renders the fixture page table with a stub transport and reads the document.
-
-To see the components after that command, run `pnpm run gallery` in `web/components`.
-The gallery shows every `@wamn/ui` export and every fixture screen over the test stubs, with no network.
-Its [README](../../web/components/README.md#gallery) names the port option.
-To compare each gallery section with its reference image in light and dark mode, run `pnpm run test:visual` in `web/components`.
-The [visual test](../../web/components/README.md#visual-test) section says how to accept an intended change.
+The command writes temporary modules and removes them after the check.
+`check_client_ts` checks the unchanged TypeScript bindings separately.
 
 ### App shell
 

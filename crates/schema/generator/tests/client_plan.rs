@@ -612,7 +612,7 @@ fn the_plan_hands_the_authored_text_to_an_emitter() {
             .as_deref()
     };
     assert_eq!(column("get", "code"), Some("Widget code"));
-    assert_eq!(column("get", "id"), None);
+    assert_eq!(column("get", "id"), Some("id"));
 
     let input = |name: &str, path: &str| {
         screen(&plan, name)
@@ -633,7 +633,10 @@ fn the_plan_hands_the_authored_text_to_an_emitter() {
         screen(&plan, "query").contract.label.as_deref(),
         Some("Find widgets")
     );
-    assert_eq!(screen(&plan, "get").contract.label, None);
+    assert_eq!(
+        screen(&plan, "get").contract.label.as_deref(),
+        Some("platform-fixture:widget/get@2.1.0")
+    );
 }
 
 /// EXIT GATE for `wamn-rm14.2`: the plan states which list offers each input

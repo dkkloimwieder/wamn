@@ -243,7 +243,7 @@ pub struct FieldIr {
     /// Closed value domain, when the contract declares one. Empty means open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
-    /// Authored text a screen shows in place of the derived field name.
+    /// Authored text, or the exact field path when no label is declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Authored text for an author, which reaches a comment and no screen.
@@ -297,7 +297,7 @@ pub struct ListIr {
 }
 
 impl FieldIr {
-    /// Carry the declared facts of `source` onto every leaf of `fields` that
+    /// Carry the declared facts of `source` onto every node of `fields` that
     /// states the same path: the authored text and the record it names.
     ///
     /// A served response reads its fields from the published route schema,
@@ -322,7 +322,17 @@ impl FieldIr {
             }
         }
 
-        let declared: BTreeMap<&str, &FieldIr> = leaf_fields(source)
+        fn all_fields(fields: &[FieldIr]) -> Vec<&FieldIr> {
+            fields
+                .iter()
+                .flat_map(|field| {
+                    let mut nodes = vec![field];
+                    nodes.extend(all_fields(&field.children));
+                    nodes
+                })
+                .collect()
+        }
+        let declared: BTreeMap<&str, &FieldIr> = all_fields(source)
             .into_iter()
             .map(|field| (field.path.as_str(), field))
             .collect();
@@ -345,8 +355,7 @@ pub struct OperationIr {
     pub grant: String,
     /// Permission token this operation is authorized by.
     pub permission_token: String,
-    /// Authored name of the screen. A component exports it, and the page that
-    /// places the component decides where the text goes.
+    /// Authored screen label, or the canonical operation identity when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Authored text for an author, which reaches a comment and no screen.
@@ -729,12 +738,34 @@ impl ClientContractIr {
             .map(|(name, operations)| build_model(&name, operations, routes))
             .collect::<Result<Vec<_>, _>>()?;
         bind_served_contracts(&mut models);
+        for model in &mut models {
+            default_field_labels(&mut model.fields);
+            for operation in &mut model.operations {
+                operation
+                    .label
+                    .get_or_insert_with(|| operation.operation.clone());
+                default_field_labels(&mut operation.input_fields);
+                default_field_labels(&mut operation.result_fields);
+                if let Some(route) = &mut operation.route {
+                    default_field_labels(&mut route.response.fields);
+                }
+            }
+        }
         Ok(Self {
             format_version: CLIENT_IR_FORMAT_VERSION,
             package: package.to_owned(),
             cursor,
             models,
         })
+    }
+}
+
+// Apply defaults after the declared and served shapes join, so a default
+// cannot hide an authored label from the terminal operation.
+fn default_field_labels(fields: &mut [FieldIr]) {
+    for field in fields {
+        field.label.get_or_insert_with(|| field.path.clone());
+        default_field_labels(&mut field.children);
     }
 }
 
@@ -1069,6 +1100,9 @@ fn build_model(
             .and_modify(|existing| {
                 existing.nullable |= field.nullable;
                 existing.required &= field.required;
+                if existing.label.is_none() {
+                    existing.label.clone_from(&field.label);
+                }
                 // A closed domain stated anywhere is the model's domain; two
                 // different closed domains for one path union rather than one
                 // silently winning.

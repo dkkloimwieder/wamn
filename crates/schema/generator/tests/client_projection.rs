@@ -706,9 +706,9 @@ fn authored_text_reaches_every_field_the_client_reads() {
         Some("Operator note")
     );
     assert_eq!(
-        leaf(&update.input_fields, "id").label,
-        None,
-        "a column with no authored text carries none"
+        leaf(&update.input_fields, "id").label.as_deref(),
+        Some("id"),
+        "a column with no authored text carries its path"
     );
 
     // A declared input with no published schema, including a leaf inside a
@@ -749,7 +749,10 @@ fn authored_text_reaches_every_field_the_client_reads() {
     assert_eq!(operation("query").label.as_deref(), Some("Find widgets"));
     assert_eq!(batch.label.as_deref(), Some("Record a batch"));
     assert!(batch.description.is_some());
-    assert_eq!(operation("get").label, None);
+    assert_eq!(
+        operation("get").label.as_deref(),
+        Some(operation("get").operation.as_str())
+    );
 }
 
 /// EXIT GATE for `wamn-c2y5.3`: a response whose published schema states its
@@ -808,7 +811,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         Some("Widget code"),
         "the terminal's declared text joins the published shape"
     );
-    assert_eq!(leaf(&response.fields, "id").label, None);
+    assert_eq!(leaf(&response.fields, "id").label.as_deref(), Some("id"));
 }
 
 /// EXIT GATE for `wamn-rm14.1`: a client reads what an input references and

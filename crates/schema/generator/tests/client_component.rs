@@ -1,1582 +1,338 @@
-use std::collections::BTreeSet;
-
+use serde_json::{Value, json};
 use wamn_schema_generator::GeneratedFile;
-use wamn_schema_generator::client_component::{ClientComponentErrorType, emit_ts_components};
-use wamn_schema_generator::client_ir::ClientContractIr;
-use wamn_schema_generator::client_plan::ClientPlan;
+use wamn_schema_generator::client_component::emit_ts_components;
+use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr};
+use wamn_schema_generator::client_plan::{ClientPlan, Role};
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
-
-fn release() -> ClientContractIr {
-    fixture::client_release()
-}
+#[path = "support/client_component_check.rs"]
+mod typescript;
 
 fn emit(ir: &ClientContractIr) -> Vec<GeneratedFile> {
-    emit_ts_components(&ClientPlan::from_ir(ir)).expect("the fixture emits its components")
+    emit_ts_components(&ClientPlan::from_ir(ir)).expect("the fixture emits descriptions")
 }
 
-fn source<'a>(files: &'a [GeneratedFile], path: &str) -> &'a str {
+fn source<'a>(files: &'a [GeneratedFile], name: &str) -> &'a str {
+    let path = format!("generated/client-ts/components/{name}.ts");
     std::str::from_utf8(
         files
             .iter()
             .find(|file| file.path() == path)
-            .unwrap_or_else(|| panic!("emitted {path}"))
+            .unwrap()
             .bytes(),
     )
     .unwrap()
 }
 
-fn widget(files: &[GeneratedFile]) -> &str {
-    source(files, "generated/client-ts/components/widget.tsx")
-}
-
-#[test]
-fn every_table_screen_gets_one_component_and_its_plan_columns() {
-    let files = emit(&release());
-    assert_eq!(
-        files.iter().map(GeneratedFile::path).collect::<Vec<_>>(),
-        [
-            "generated/client-ts/components/widget.tsx",
-            "generated/client-ts/components/widget_maker.tsx",
-            "generated/client-ts/components/labels.ts",
-            "generated/client-ts/components/index.ts",
-        ]
-    );
-    let widget = widget(&files);
-    for stem in ["WidgetQuery", "WidgetList"] {
-        assert!(
-            widget.contains(&format!(
-                "export function {stem}Table(props: {stem}TableProps) {{"
-            )),
-            "{stem} takes the table role"
-        );
-    }
-    assert_eq!(
-        widget.matches("export function ").count(),
-        8,
-        "every screen the plan gives a role has one component"
-    );
-    // The columns are the plan's columns, in contract order, with the type
-    // that the release declared.
-    assert!(widget.contains(concat!(
-        "  columns: [\n",
-        // The fixture authors this column's label, so the label is the
-        // authored text rather than the path. `wamn-c2y5.4` states the rule.
-        "    { field: \"attributes\", label: \"Attributes\", type: \"json\", role: \"value\" },\n",
-        "    { field: \"code\", label: \"code\", type: \"text\", role: \"value\" },\n",
-    )));
-    assert!(
-        widget.contains(
-            "    { field: \"editVersion\", label: \"edit version\", type: \"int64\", role: \"revision\" },"
-        ),
-        "a revision keeps its declared type, so the cell states every digit"
-    );
-}
-
-/// A page table renders the QueryTable over its definition (wamn-sa7d.2).
-/// The declared filters are the table's scope bar, and the table owns the
-/// sort and the cap, so the definition names the input path of each.
-#[test]
-fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let query = widget
-        .split("export function WidgetQueryTable")
+fn description(files: &[GeneratedFile], module: &str, name: &str) -> Value {
+    let source = source(files, module);
+    let body = source
+        .split(&format!("export const {name} = "))
         .nth(1)
-        .and_then(|rest| rest.split("\nexport ").next())
-        .expect("the query table exists");
-    assert!(
-        query.contains(
-            "      <QueryTable<WidgetQueryRow, WidgetQueryResult> definition={WIDGET_QUERY_TABLE} label={WidgetQueryTableLabel} {...props} />\n"
-        ),
-        "the component is the QueryTable over its definition: {query}"
-    );
-    for retired in [
-        "createTableLoad",
-        "writeMember",
-        "switch",
-        "afterWrites",
-        "<form",
-        "ChoiceField",
-    ] {
-        assert!(
-            !query.contains(retired),
-            "the emitter writes data, not table code: {retired}"
-        );
-    }
-    let definition = definition(widget, "WIDGET_QUERY_TABLE");
-    for line in [
-        "  read: { route: WIDGET_QUERY_ROUTE, request: WIDGET_QUERY_REQUEST_FIELDS, result: WIDGET_QUERY_RESULT_FIELDS },\n",
-        "  rows: \"item\",\n",
-        // A scope filter is sent at its declared input path, as a list, and
-        // a filter that does not match exactly states its mode.
-        "  filters: [{ field: \"code\", input: [\"filter\", \"code\"], list: true }, { field: \"makerId\", input: [\"filter\", \"makerId\"], list: false, match: \"is_null\" }, { field: \"note\", input: [\"filter\", \"note\"], list: true, match: \"prefix\" }],\n",
-        "  scopeFilters: [\"code\", \"makerId\", \"note\"],\n",
-        "  limitInput: [\"limit\"],\n",
-        // A header sort sends its field and its direction together (wamn-2ut3).
-        "  sortFieldInput: [\"sort\", \"field\"],\n",
-        "  sortDirectionInput: [\"sort\", \"direction\"],\n",
-    ] {
-        assert!(definition.contains(line), "{line} in {definition}");
-    }
-    // The list a reference field edits through follows its cursor, and the
-    // table's own load follows none.
-    assert!(
-        !definition
-            .lines()
-            .any(|line| line.contains("cursor") && !line.contains("choices:")),
-        "a load follows no cursor: {definition}"
-    );
+        .unwrap();
+    serde_json::from_str(body.split(" as const satisfies ").next().unwrap()).unwrap()
 }
 
-/// A bounded list answers with every row, so its load sends no limit and no
-/// sort, and reads the rows as one page with no cursor (wamn-ir48).
 #[test]
-fn a_bounded_list_loads_every_row_as_one_page() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let list = definition(widget, "WIDGET_LIST_TABLE");
-    for line in [
-        // A bounded list carries its rows under rows, as one page.
-        "  rows: \"rows\",\n",
-        "  rowId: [\"id\"],\n  pageMaximum: null,\n",
-        "  limitInput: null,\n",
-        "  sortFieldInput: null,\n",
-        "  sortDirectionInput: null,\n",
-        "  filters: [],\n",
-    ] {
-        assert!(list.contains(line), "{line} in {list}");
-    }
-}
-
-/// A detail screen shows one record, so it reads on its own and needs no form
-/// machinery.
-#[test]
-fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    assert!(widget.contains(concat!(
-        "export interface WidgetGetDetailProps {\n",
-        "  /** The transport the application supplies. */\n",
-        "  readonly transport: Transport;\n",
-        "  /** The input that names the record. */\n",
-        "  readonly input: WidgetGetDetailInput;\n",
-    )));
-    let detail = widget
-        .split("export function WidgetGetDetail")
-        .nth(1)
-        .expect("the detail exists")
-        .split("\n/**")
-        .next()
-        .expect("the detail ends where the next screen begins");
-    assert!(
-        detail.contains("createResource(\n    () => props.input,"),
-        "it reads on mount and again when the input changes"
-    );
-    assert!(
-        detail.contains("input as WidgetGetRequest,"),
-        "a read sends its input alone"
-    );
-    for (label, member, cell) in [
-        ("id", "[\"id\"]", "uuid"),
-        ("edit version", "[\"editVersion\"]", "int64"),
-        ("created at", "[\"createdAt\"]", "timestamptz"),
-    ] {
-        assert!(
-            detail.contains(&format!(
-                "<DetailItem term={label:?}>{{cellText(readMember(record(), {member}), {cell:?})}}</DetailItem>"
-            )),
-            "{label} is one plan column"
-        );
-    }
-    assert!(
-        !detail.contains("createTable("),
-        "one record needs no table"
-    );
-}
-
-/// A table renders through the UI package, which owns how it looks. Every
-/// table renders the QueryTable over its definition (wamn-sa7d.2).
-#[test]
-fn a_table_renders_through_the_ui_package_and_states_no_class() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let ui = widget
-        .split("} from \"@wamn/ui\";\n")
-        .next()
-        .and_then(|head| head.rsplit("import {\n").next())
-        .expect("the module imports the UI package");
-    for name in ["QueryTable", "TableScreen"] {
-        assert!(
-            ui.contains(&format!("  {name},\n")),
-            "the tables name {name} from the UI package"
-        );
-    }
-    for (stem, constant) in [
-        ("WidgetQuery", "WIDGET_QUERY_TABLE"),
-        ("WidgetList", "WIDGET_LIST_TABLE"),
-    ] {
-        let table = widget
-            .split(&format!("export function {stem}Table"))
-            .nth(1)
-            .and_then(|rest| rest.split("\nexport ").next())
-            .expect("the table exists");
-        assert!(
-            table.contains(&format!("definition={{{constant}}}")),
-            "{stem} renders the QueryTable over its definition"
-        );
-        for markup in [
-            "<table",
-            "<select",
-            "<input",
-            "<button",
-            "class=",
-            "className=",
-        ] {
-            assert!(!table.contains(markup), "the UI package owns {markup}");
+fn every_served_role_emits_a_typed_description_without_components() {
+    let ir = fixture::client_release();
+    let plan = ClientPlan::from_ir(&ir);
+    let files = emit(&ir);
+    for model in &plan.models {
+        for screen in &model.screens {
+            if screen.contract.route.is_none() || !screen.role.is_supported() {
+                continue;
+            }
+            let role = match screen.role {
+                Role::Table => "Table",
+                Role::Detail => "Detail",
+                Role::Form => "Form",
+                Role::Delete => "Delete",
+                Role::Unsupported(_) => unreachable!(),
+            };
+            let stem = wamn_schema_generator::client_ts::type_stem(screen.model, screen.name);
+            let value = description(&files, &model.model.name, &format!("{stem}{role}"));
+            assert_eq!(value["id"], screen.contract.operation);
+            assert_eq!(value["title"], screen.contract.label.as_deref().unwrap());
+            assert!(
+                source(&files, &model.model.name)
+                    .contains(&format!("as const satisfies {role}Description"))
+            );
         }
     }
-    for module in [
-        widget,
-        source(&files, "generated/client-ts/components/widget_maker.tsx"),
-    ] {
-        for retired in ["WindowedTable", "DataGrid", "createTable("] {
+    for file in &files {
+        assert_eq!(std::path::Path::new(file.path()).extension().unwrap(), "ts");
+        let source = std::str::from_utf8(file.bytes()).unwrap();
+        for retired in [
+            "solid-js",
+            "@wamn/ui",
+            "export function",
+            "createSignal",
+            "<form",
+            "Transport",
+        ] {
             assert!(
-                !module.contains(retired),
-                "the DataTable owns its rows: {retired}"
+                !source.contains(retired),
+                "{} contains {retired}",
+                file.path()
             );
         }
     }
 }
 
 #[test]
-fn a_row_link_becomes_one_callback_named_from_its_target() {
-    let files = emit(&release());
-    let widget = widget(&files);
+fn tables_and_details_keep_paths_authored_labels_and_matching_formats() {
+    let files = emit(&fixture::client_release());
+    let table = description(&files, "widget", "WidgetQueryTable");
+    assert_eq!(table["title"], "Find widgets");
+    assert_eq!(table["columns"]["code"]["label"], "Widget code");
+    assert_eq!(table["columns"]["edit_version"]["label"], "edit_version");
+    assert_eq!(table["columns"]["edit_version"]["format"], "number-plain");
+    let detail = description(&files, "widget", "WidgetGetDetail");
+    let fields = detail["fields"].as_array().unwrap();
     assert!(
-        widget.contains(
-            "  readonly onOpen?: { readonly [operation: string]: (row: WidgetQueryRow) => void };"
-        ),
-        "the page names the operations whose record a row opens"
+        fields
+            .iter()
+            .any(|field| field["field"] == "code" && field["label"] == "Widget code")
     );
-    assert!(
-        definition(widget, "WIDGET_QUERY_TABLE").contains(
-            "    { operation: \"platform-fixture:widget/get@2.1.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] },"
-        ),
-        "the plan's row link is an action that opens a record by the row"
-    );
-    for absent in ["href=", "navigate", "router", "<a "] {
-        assert!(!widget.contains(absent), "a link is a callback: {absent}");
-    }
-}
-
-/// A form renders what the operator fills, and the platform supplies the rest.
-#[test]
-fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let create = widget
-        .split("export function WidgetCreateForm")
-        .nth(1)
-        .expect("the create form exists")
-        .split("\n/**")
-        .next()
-        .expect("the form ends");
-
-    assert!(widget.contains(concat!(
-        "const CREATE_INPUT = z.object({\n",
-        "  code: z.enum([\"priority\", \"standard\"]),\n",
-        "  makerId: z.optional(z.nullable(z.string().check(z.regex(UUID_TEXT, \"expected a UUID\")))),\n",
-        "  note: z.optional(z.nullable(z.string())),\n",
-        "});\n",
-    )));
-    assert!(
-        create.contains("const checked = CREATE_INPUT.safeParse(value);"),
-        "the operator's input is checked before the request goes out"
-    );
-    assert!(
-        create.contains("item = writeMember(item, [\"requestId\"], newRequestId());")
-            && create
-                .contains("item = writeMember(item, [\"idempotencyKey\"], newIdempotencyKey());"),
-        "the reserved inputs come from the runtime at submit time"
-    );
-    for reserved in ["requestId", "idempotencyKey"] {
-        assert!(
-            !create.contains(&format!("hold([\"{reserved}\"]")),
-            "the operator never sees {reserved}"
-        );
-    }
-    assert_eq!(
-        create.matches("    hold([").count(),
-        3,
-        "one control for each plan input, and no other"
-    );
-    assert!(
-        create.contains("member: refusedMember(outcome.detail)"),
-        "a refusal that names a member reaches that member"
-    );
-    assert!(
-        create.contains("text: refusalSentence(outcome.code, outcome.text)"),
-        "a refusal reads as its authored text or a sentence, not as its code"
-    );
-    assert!(
-        create.contains("setDone(outcome.status === \"completed\");")
-            && create.contains("<FormDone when={done()} />"),
-        "a completed command shows its result in the form"
-    );
-    assert!(
-        create.contains(
-            "error={refusalMarks(refusal()?.member ?? null, \"code\") ? (refusal()?.text ?? null) : null}"
-        ),
-        "the control states the path it declares, and the runtime decides"
-    );
-
-    // A nested input keeps its shape in the schema and in the field name.
-    assert!(widget.contains(concat!(
-        "const UPDATE_INPUT = z.object({\n",
-        "  change: z.optional(\n",
-        "    z.object({\n",
-        "      code: z.optional(z.enum([\"priority\", \"standard\"])),\n",
-    )));
-    assert!(widget.contains("hold([\"change\", \"code\"], changeCodeValue());"));
-    let update = widget
-        .split("export function WidgetUpdateForm")
-        .nth(1)
-        .expect("the update form exists");
-    assert!(
-        update.contains("error={refusalMarks(refusal()?.member ?? null, \"change.code\") ?"),
-        "a nested control states its whole declared path"
-    );
-}
-
-/// A form renders its controls through the UI package, which owns the label,
-/// the refusal mark and how they look.
-#[test]
-fn a_form_renders_through_the_ui_fields_and_states_no_class() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let batch = widget
-        .split("export function WidgetRecordBatchForm")
-        .nth(1)
-        .and_then(|rest| rest.split("\nexport ").next())
-        .expect("the record batch form exists");
-    assert!(
-        batch.contains("<TextField\n") && batch.contains("label=\"Batch note\""),
-        "a text input is a text field with its label"
-    );
-    assert!(
-        batch.contains("<FieldError>{refusal()?.text}</FieldError>"),
-        "a refusal that names no member reads above the controls"
-    );
-    assert!(
-        batch.contains("<FieldSet>") && batch.contains("<FieldGroup>"),
-        "a repeated group is one field set, with one group for each line"
-    );
-    assert!(
-        batch.contains("                <Button\n                  type=\"button\"\n")
-            && batch.contains(">\n                  remove\n                </Button>")
-            && batch.contains(">\n            add\n          </Button>"),
-        "adding and removing a line are buttons"
-    );
-    assert!(
-        batch.contains(concat!(
-            "      <FormActions>\n",
-            "        <FormDone when={done()} />\n",
-            "        <Button type=\"submit\">submit</Button>\n",
-            "      </FormActions>\n",
-            "    </form>\n",
-        )),
-        "the submit button closes the form in the actions row, beside its result"
-    );
-    assert!(
-        batch.contains(concat!(
-            "    props.onSubmitted?.(outcome);\n",
-            "    announceOutcome(outcome, WidgetRecordBatchFormLabel);\n",
-        )),
-        "every outcome of a submission reaches the operator as a toast"
-    );
-    for markup in [
-        "<input",
-        "<select",
-        "<button",
-        "<fieldset",
-        "<legend",
-        "class=",
-        "className=",
-    ] {
-        assert!(!batch.contains(markup), "the UI package owns {markup}");
-    }
-}
-
-/// A refusal that names a path inside a repeated group marks the control of the
-/// line it names, and of every line when it names none. The runtime holds that
-/// rule, and the control states its declared path and its own index.
-#[test]
-fn a_repeated_control_states_its_declared_path_and_its_index() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let batch = widget
-        .split("export function WidgetRecordBatchForm")
-        .nth(1)
-        .expect("the record batch form exists");
-
-    assert!(
-        batch.contains("<Index each={valueLineValue() ?? []}>"),
-        "the repeated group renders as a list"
-    );
-    assert!(
-        batch.contains(concat!(
-            "error={refusalMarks(refusal()?.member ?? null, ",
-            "\"value.line[].amount\", index) ?"
-        )),
-        "a control inside the group states its declared path and its index"
-    );
-    assert!(
-        batch
-            .contains("<Show when={refusalMarksGroup(refusal()?.member ?? null, \"value.line\")}>"),
-        "the group heading carries a refusal that names no index"
-    );
-    assert!(
-        batch.contains("error={refusalMarks(refusal()?.member ?? null, \"value.note\") ?"),
-        "a control outside the group states no index"
-    );
-}
-
-/// A command sends the revision of the record the form read when it opened,
-/// never one read at submit, because a change another writer makes in between
-/// is what the conflict outcome names (wamn-yzy7).
-#[test]
-fn a_revision_bound_form_sends_the_revision_it_read_when_it_opened() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let form = widget
-        .split("export function WidgetUpdateForm")
-        .nth(1)
-        .expect("the update form exists");
-    let submit = form
-        .split("const submit = async")
-        .nth(1)
-        .expect("the form submits")
-        .split("\n  };")
-        .next()
-        .expect("the submission ends");
-    assert!(
-        widget.contains("  readonly key: WidgetGetDetailInput;"),
-        "the form takes the record it changes"
-    );
-    assert!(
-        form.contains("  const [record, { refetch: readAgain }] = createResource(\n    () => props.key,\n    (key: WidgetGetDetailInput) => get(props.transport, [key]),\n  );"),
-        "it reads that record when it opens"
-    );
-    assert!(
-        !submit.contains("get(props.transport"),
-        "the submission reads nothing: {submit}"
-    );
-    assert!(
-        submit.contains("item = writeMember(item, [\"expectedEditVersion\"], readMember(read.value, [\"editVersion\"]) ?? null);"),
-        "it sends the revision it read when it opened"
-    );
-    assert!(
-        submit.contains("if (read?.status !== \"completed\") {"),
-        "a read that establishes nothing stops the submission"
-    );
-    let props = widget
-        .split("export interface WidgetUpdateFormProps {")
-        .nth(1)
-        .expect("the update props exist")
-        .split('}')
-        .next()
-        .expect("the props end");
-    assert!(
-        !props.contains("readonly expectedEditVersion:"),
-        "a bound revision is not a prop: {props}"
-    );
-    assert!(
-        !widget.contains("readonly expectedEditVersion:"),
-        "no form takes a revision as a prop"
-    );
-}
-
-/// A command sends the revision of the record its revision names: the widget
-/// the operator chooses carries it. A revision that names no record has no
-/// source, so generation refuses the form instead of asking the page
-/// (wamn-x5q4).
-#[test]
-fn a_command_sends_the_revision_of_the_record_it_names() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let form = widget
-        .split("export function WidgetArchiveForm")
-        .nth(1)
-        .expect("the archive form exists")
-        .split("\nexport ")
-        .next()
-        .expect("the form ends");
-    assert!(
-        form.contains("onRow={(row) => setIdRevision(row?.editVersion ?? null)}"),
-        "the chosen widget carries its revision: {form}"
-    );
-    assert!(
-        form.contains("item = writeMember(item, [\"expectedEditVersion\"], idChosen);"),
-        "the form sends that revision"
-    );
-
-    let mut undeclared = fixture::manifest();
-    undeclared["custom_operations"]["widget.archive"]["input"]["fields"]
-        .as_array_mut()
-        .expect("the archive declares its input")
-        .iter_mut()
-        .find(|field| field["path"] == "expected_edit_version")
-        .expect("the archive takes a revision")["revision"] = serde_json::json!(true);
-    let release =
-        fixture::client_release_of(&fixture::generate_with(&fixture::catalog(), &undeclared));
-    let error = emit_ts_components(&ClientPlan::from_ir(&release))
-        .expect_err("a revision that names no record is refused");
-    assert_eq!(
-        error.error_type(),
-        ClientComponentErrorType::UnsuppliedRevision
-    );
-    assert!(
-        error.to_string().contains(
-            "platform-fixture:widget/archive@2.1.0 sends the revision expected_edit_version"
-        ),
-        "{error}"
-    );
-}
-
-/// A removal is not an edit that an operator undoes, so it confirms first. It
-/// sends the revision of the record the page displayed and reads nothing, so a
-/// change another writer made after the page read it refuses (wamn-k2d4).
-#[test]
-fn a_delete_confirms_and_sends_the_revision_the_page_displayed() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    assert!(widget.contains(concat!(
-        "export interface WidgetDeleteDeleteProps {\n",
-        "  /** The transport the application supplies. */\n",
-        "  readonly transport: Transport;\n",
-    )));
-    assert!(
-        widget.contains("  readonly record: Pick<WidgetGetResult, \"editVersion\" | \"id\">;"),
-        "the delete takes the key and the revision of the record the page displayed"
-    );
-    let remove = widget
-        .split("export function WidgetDeleteDelete")
-        .nth(1)
-        .expect("the delete exists")
-        .split("\n/**")
-        .next()
-        .expect("the delete ends");
-    assert!(
-        remove.contains(concat!(
-            "      <ConfirmAction\n",
-            "        trigger=\"delete\"\n",
-            "        question=\"remove this record?\"\n",
-            "        confirm=\"confirm\"\n",
-            "        cancel=\"cancel\"\n",
-            "        onConfirm={() => void remove()}\n",
-            "      />\n",
-        )),
-        "it asks before it acts, and the question states what it removes"
-    );
-    assert!(
-        remove.contains(concat!(
-            "    props.onSubmitted?.(outcome);\n",
-            "    announceOutcome(outcome, WidgetDeleteDeleteLabel);\n",
-        )),
-        "the outcome reaches the caller and the operator"
-    );
-    for markup in ["<button", "<p>", "class=", "className="] {
-        assert!(!remove.contains(markup), "the UI package owns {markup}");
-    }
-    assert!(
-        !remove.contains("get(props.transport"),
-        "the removal reads nothing: {remove}"
-    );
-    assert!(
-        remove.contains(
-            "item = writeMember(item, [\"expectedEditVersion\"], readMember(props.record, [\"editVersion\"]) ?? null);"
-        ),
-        "it sends the revision the page displayed"
-    );
-    assert!(!remove.contains("hold("), "a delete fills no field");
-}
-
-/// A bound command writes its key from the record it read, so a control for
-/// that key would show a value the submission overwrites.
-#[test]
-fn a_bound_key_is_a_prop_and_never_a_control() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let update = widget
-        .split("export function WidgetUpdateForm")
-        .nth(1)
-        .expect("the update form exists")
-        .split("\n/**")
-        .next()
-        .expect("the form ends");
-    assert!(
-        !update.contains("hold([\"id\"]"),
-        "the record key comes from the props"
-    );
-    assert!(
-        update.contains(
-            "item = writeMember(item, [\"id\"], readMember(read.value, [\"id\"]) ?? null);"
-        ),
-        "the submission writes the key from the record it read"
-    );
-    assert!(
-        widget.contains(concat!(
-            "const UPDATE_INPUT = z.object({\n",
-            "  change: z.optional(\n",
-            "    z.object({\n",
-            "      code: z.optional(z.enum([\"priority\", \"standard\"])),\n",
-            "      makerId: z.optional(z.nullable(z.string().check(z.regex(UUID_TEXT, \"expected a UUID\")))),\n",
-            "      note: z.optional(z.nullable(z.string())),\n",
-            "    }),\n",
-            "  ),\n",
-            "});\n",
-        )),
-        "the schema states what the operator fills, and the bound key is absent"
-    );
-}
-
-/// The bytes must not move when nothing in the contract moved.
-#[test]
-fn the_emitted_components_are_byte_stable() {
-    let mut ir = release();
-    let first = emit(&ir);
-    assert_eq!(first, emit(&ir));
-    ir.models[0].operations.reverse();
-    assert_eq!(
-        first,
-        emit(&ir),
-        "the contract's incidental order does not reach the bytes"
-    );
-}
-
-#[test]
-fn the_index_names_every_shape_that_gets_no_component() {
-    let supported = emit(&release());
-    assert!(
-        source(&supported, "generated/client-ts/components/index.ts")
-            .contains("// Every operation of this release has a screen role."),
-        "the fixture gives every operation a role"
-    );
-
-    let mut unsupported = release();
-    unsupported
+    let mut ir = fixture::client_release();
+    let get = ir
         .models
         .iter_mut()
-        .flat_map(|model| model.operations.iter_mut())
-        .find(|operation| operation.name == "archive")
-        .expect("the fixture declares widget.archive")
-        .type_ = "wrangle".to_owned();
-    let index = emit(&unsupported);
-    let index = source(&index, "generated/client-ts/components/index.ts");
-    assert!(
-        index.contains(
-            "// platform-fixture:widget/archive@2.1.0: the operation kind has no screen role"
-        ),
-        "{index}"
-    );
-    assert!(
-        !index.contains("WidgetArchive"),
-        "a shape with no role gets no component"
-    );
-}
-
-#[test]
-fn a_component_states_no_deployment_fact_and_no_supplied_input() {
-    let files = emit(&release());
-    let combined: String = files
-        .iter()
-        .map(|file| std::str::from_utf8(file.bytes()).unwrap())
-        .collect();
-    for absent in [
-        "localhost",
-        "http",
-        "Bearer",
-        "Authorization",
-        "baseUrl",
-        "fetch(",
-    ] {
-        assert!(!combined.contains(absent), "deployment fact {absent}");
+        .flat_map(|model| &mut model.operations)
+        .find(|op| op.name == "get")
+        .unwrap();
+    let response = &mut get.route.as_mut().unwrap().response.fields;
+    for (field, ty) in response.iter_mut().zip(["boolean", "timestamptz", "int32"]) {
+        field.type_name = ty.to_owned();
     }
-    // The plan drops the reserved paths, so a control can never carry one.
-    for reserved in ["idempotency_key", "occurred_at", "expected_edit_version"] {
-        assert!(
-            !combined.contains(reserved),
-            "the operator never sees {reserved}"
-        );
-    }
-}
-
-/// A read carries no `request_id` (`docs/architecture/execution.md`), so
-/// the only request identity a component writes is the one of a write.
-#[test]
-fn a_component_builds_a_read_request_with_no_request_identity() {
-    let files = emit(&release());
-    let combined: String = files
-        .iter()
-        .map(|file| std::str::from_utf8(file.bytes()).unwrap())
-        .collect();
-    // The update of a table is a write, and its definition names the input
-    // the runtime supplies.
-    let identities = combined
-        .lines()
-        .filter(|line| line.contains("requestId"))
-        .map(str::trim)
-        .filter(|line| {
-            !(line.starts_with("update: ")
-                && line.contains("supplied: [{ input: [\"requestId\"], type: \"requestId\" }]"))
-        })
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        identities,
-        BTreeSet::from(["item = writeMember(item, [\"requestId\"], newRequestId());"]),
-        "only a write supplies a request identity"
-    );
-}
-
-/// A caller prefills one member of a nested value, so the initial values state
-/// every level as optional. A supplied field is not part of that type, because
-/// the platform writes it. A repeated group is a list of optional elements, so
-/// a row can fill one element (wamn-yviq).
-#[test]
-fn initial_values_reach_a_nested_member_and_one_element_of_a_group() {
-    let files = emit(&release());
-    let widget = widget(&files);
-
-    assert!(
-        widget.contains(concat!(
-            "export interface WidgetUpdateFormInitial {\n",
-            "  change?: {\n",
-            "    code?: \"priority\" | \"standard\";\n",
-            "    makerId?: Uuid | null;\n",
-            "    note?: string | null;\n",
-            "  };\n",
-            "}\n",
-        )),
-        "a nested member is optional at every level, and it takes the type the \
-         served input states"
-    );
-    assert!(
-        widget.contains(concat!(
-            "export interface WidgetRecordBatchFormInitial {\n",
-            "  value?: {\n",
-            "    grade?: \"first\" | \"second\";\n",
-            "    inspectorId?: Uuid | null;\n",
-            "    line?: {\n",
-            "      amount?: Numeric;\n",
-            "      widgetId?: Uuid;\n",
-            "    }[];\n",
-            "    makerId?: Uuid | null;\n",
-            "    note?: string | null;\n",
-            "  };\n",
-            "}\n",
-        )),
-        "the repeated group is a list of optional elements, and a supplied field is not a member"
-    );
-    assert!(
-        widget.contains(
-            "fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }]"
-        ),
-        "a row fills one element of the repeated group, as a list"
-    );
-    assert!(
-        widget.contains("  readonly initial?: WidgetRecordBatchFormInitial;"),
-        "the prop states that type"
-    );
-    assert!(
-        !widget.contains("readonly initial?: Partial<"),
-        "no form states a shallow partial of its request"
-    );
-}
-
-/// A screen that names a record states the record inputs alone. The request
-/// identity is supplied, so no caller states a value that the component writes
-/// over.
-#[test]
-fn a_record_prop_names_the_record_inputs_and_no_supplied_value() {
-    let files = emit(&release());
-    let widget = widget(&files);
-
-    assert!(
-        widget.contains(concat!(
-            "export interface WidgetGetDetailInput {\n",
-            "  readonly id: Uuid;\n",
-            "}\n",
-        )),
-        "the detail states the record inputs alone"
-    );
-    assert!(
-        widget.contains("  readonly input: WidgetGetDetailInput;"),
-        "the detail prop takes that type"
-    );
-    assert!(
-        widget.contains("  readonly key: WidgetGetDetailInput;"),
-        "a command that binds a read takes the same record"
-    );
-    assert!(
-        !widget.contains("readonly input: WidgetGetRequest;")
-            && !widget.contains("readonly key: WidgetGetRequest;"),
-        "no prop takes the whole request of a read"
-    );
-    assert!(
-        widget.contains("input as WidgetGetRequest,"),
-        "the component sends the detail input as the read request"
-    );
-}
-
-/// EXIT GATE for `wamn-c2y5.4`: every place a component states text for a
-/// person reads the authored label, and a field with none keeps the derived
-/// name.
-///
-/// The screen name is an exported constant and not an element. A component
-/// does not own a heading, because the page that places it does. Owner ruling
-/// of 2026-09-22.
-#[test]
-fn a_component_reads_the_authored_label_everywhere_it_states_text() {
-    let files = emit(&release());
-    let widget = widget(&files);
-
-    // A table column label and a detail term.
-    assert!(
-        widget.contains("    { field: \"attributes\", label: \"Attributes\","),
-        "a table column label reads the authored label"
-    );
-    assert!(
-        widget.contains("        <DetailItem term=\"Widget code\">"),
-        "a detail term reads the authored label"
-    );
-    assert!(
-        widget.contains("        <DetailItem term=\"created at\">"),
-        "a column with no authored label keeps its derived name"
-    );
-
-    // A form control, and one inside a repeated group.
-    assert!(
-        widget.contains("  label=\"Batch note\""),
-        "a form control reads the authored label"
-    );
-    assert!(
-        widget.contains("Quantity received"),
-        "a control inside a repeated group reads its own authored label"
-    );
-    assert!(
-        widget.contains("          <FieldLegend>Batch lines</FieldLegend>"),
-        "a repeated group reads the label its line bound declares"
-    );
-
-    // A scope filter that names a model column: the table's scope bar reads
-    // the label of that column in the definition.
-    assert!(
-        widget.contains("    { field: \"code\", label: \"Widget code\", type: \"text\""),
-        "a scope filter reads the column's authored label"
-    );
-
-    // The screen name, exported once for each component from the labels
-    // module, so a route table names a screen without loading its component.
-    let labels = source(&files, "generated/client-ts/components/labels.ts");
-    assert!(labels.contains("export const WidgetQueryTableLabel = \"Find widgets\";"));
-    assert!(
-        labels.contains("export const WidgetRecordBatchFormLabel = \"Record a batch\";"),
-        "an authored command states its own screen name"
-    );
-    assert!(
-        labels.contains("export const WidgetGetDetailLabel = \"get\";"),
-        "a screen with no authored label takes its operation name"
-    );
-    assert!(
-        !widget.contains("export const Widget"),
-        "a component module exports no label"
-    );
-    let maker = source(&files, "generated/client-ts/components/widget_maker.tsx");
-    assert_eq!(
-        labels.matches("export const ").count(),
-        widget.matches("export function ").count() + maker.matches("export function ").count(),
-        "one exported label for each component"
-    );
-    for heading in ["<h1", "<h2", "<h3"] {
-        assert!(
-            !widget.contains(heading),
-            "no component renders a heading: {heading}"
-        );
-    }
-}
-
-/// EXIT GATE for `wamn-rm14.4`: an input that names a record renders a
-/// selector fed by the list the plan chose, and a plain input does not.
-///
-/// The options carry the key as the value and the display field as the text,
-/// so the operator reads a name and the release receives an identity.
-#[test]
-fn a_populated_input_renders_a_selector_fed_by_its_list() {
-    let files = emit(&release());
-    let widget = widget(&files);
-
-    // The list of another model is imported under an alias, because two
-    // models can both declare a `list`. The table's maker column names the
-    // same model's get by its binding, whose constants carry the model.
-    assert!(
-        widget.contains(concat!(
-            "import {\n",
-            "  WIDGET_MAKER_GET_REQUEST_FIELDS,\n",
-            "  WIDGET_MAKER_GET_RESULT_FIELDS,\n",
-            "  WIDGET_MAKER_GET_ROUTE,\n",
-            "  WIDGET_MAKER_QUERY_REQUEST_FIELDS,\n",
-            "  WIDGET_MAKER_QUERY_RESULT_FIELDS,\n",
-            "  WIDGET_MAKER_QUERY_ROUTE,\n",
-            "  get as widgetMakerGet,\n",
-            "  query as widgetMakerQuery,\n",
-            "  type WidgetMakerGetRequest,\n",
-            "  type WidgetMakerQueryRequest,\n",
-            "  type WidgetMakerQueryRow,\n",
-            "} from \"../widget_maker.js\";\n",
-        )),
-        "{widget}"
-    );
-    assert!(
-        widget.contains("optionValue={(row) => String(row.id)}"),
-        "the option carries the key the plan named"
-    );
-    assert!(
-        widget.contains("optionLabel={(row) => String(row.name)}"),
-        "the generated query's explicit display field reaches the option text"
-    );
-    assert!(
-        widget.contains("optionLabel={(row) => String(row.code)}"),
-        "an authored display field reaches the option text"
-    );
-    assert!(
-        widget.contains("value={makerIdValue() == null ? null : String(makerIdValue())}"),
-        "the selector states the value the form holds, and the UI package \
-         shows the row once the options arrive"
-    );
-
-    // A narrowed selector reads the value the operator already chose, and it
-    // reads again when that value changes.
-    assert!(widget.contains(concat!(
-        "  createEffect(() => {\n",
-        "    setValueLineWidgetIdNarrowed((valueMakerIdValue() as string | null | undefined) ?? null);\n",
-        "    void readValueLineWidgetIdOptions(null);\n",
-        "  });\n",
-    )));
-    assert!(
-        widget.contains("    const request = { makerId: narrowed } as WidgetListRequest;"),
-        "the narrowing value fills the list input the plan named"
-    );
-    assert!(
-        widget.contains(concat!(
-            "    if (narrowed === null || narrowed === \"\") {\n",
-            "      setValueLineWidgetIdOptions(emptyPage<WidgetListRow>());\n",
-            "      return;\n",
-            "    }\n",
-        )),
-        "a narrowed selector offers nothing until the operator chooses the \
-         record it narrows by, instead of calling the list with no value"
-    );
-
-    // A plain control is untouched.
-    let create = widget
-        .split("export function WidgetCreateForm")
-        .nth(1)
-        .expect("the create form exists")
-        .split("\n/**")
-        .next()
-        .expect("the form ends");
-    assert!(
-        create.contains(concat!(
-            "        <TextField\n",
-            "          label=\"Operator note\"\n",
-            "          type=\"text\"\n",
-        )),
-        "an input that names no record stays a text control"
-    );
-    assert!(
-        create.contains("      </Show>\n      <FieldGroup>\n")
-            && create.contains("      </FieldGroup>\n      <FormActions>\n"),
-        "the fields of a form sit in one field group, which spaces them"
-    );
-}
-
-/// EXIT GATE for `wamn-rm14.5`: a row hands its values to the form the plan
-/// named, and the form takes them through the initial-values prop.
-///
-/// The callback carries the declared pairs and nothing else, so the page
-/// decides what opening a row means, which the Epic 4 verdict states.
-#[test]
-fn a_row_hands_its_values_to_the_form_the_plan_named() {
-    let files = emit(&release());
-    let maker = source(&files, "generated/client-ts/components/widget_maker.tsx");
-
-    assert!(
-        maker.contains(
-            "  readonly onFill?: { readonly [operation: string]: (initial: object) => void };"
-        ),
-        "the page names the forms its rows open"
-    );
-    let makers = definition(maker, "WIDGET_MAKER_QUERY_TABLE");
-    assert!(
-        makers.contains(
-            "{ operation: \"platform-fixture:widget/create@2.1.0\", reference: \"platform-fixture:widget/create\", label: \"create\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"makerId\"] }] }"
-        ),
-        "the row writes its key at the declared input path: {makers}"
-    );
-    assert!(
-        makers.contains("fill: [{ field: \"id\", input: [\"change\", \"makerId\"] }]"),
-        "a nested input path is written at its declared members: {makers}"
-    );
-    // The batch form names widget_maker in value.maker_id and
-    // value.inspector_id, so a maker row fills neither (wamn-6jcm).
-    assert!(
-        !makers.contains("record-batch"),
-        "a row offers no form in which two inputs name its model"
-    );
-
-    let widget = widget(&files);
-    assert!(
-        widget.contains("  readonly initial?: WidgetRecordBatchFormInitial;"),
-        "the form takes those values through the prop Epic 5 shaped"
-    );
-    assert!(
-        definition(widget, "WIDGET_QUERY_TABLE").contains(
-            "{ operation: \"platform-fixture:widget/get@2.1.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] }"
-        ),
-        "a record read is not a form, so no row fills it"
-    );
-}
-
-/// EXIT GATE for `wamn-rm14.6`: a repeated group states its authored label,
-/// its declared bounds and the spelling of every value that travels as text.
-///
-/// Three filed defects close here: `wamn-j3yr` for the legend, `wamn-z5vd`
-/// for the bounds, and `wamn-s3kd` for the spellings. All three are input
-/// rules. The browser still trusts the platform for the values inside a
-/// reply, which is the owner ruling of 2026-09-21.
-#[test]
-fn a_repeated_group_states_its_label_its_bounds_and_its_spellings() {
-    let files = emit(&release());
-    let widget = widget(&files);
-
-    // wamn-j3yr: the line bound declares the group, so the legend is authored.
-    assert!(
-        widget.contains("          <FieldLegend>Batch lines</FieldLegend>"),
-        "the group reads the label its line bound declares"
-    );
-
-    // wamn-z5vd: the bounds reach the schema and both controls.
-    assert!(widget.contains("        ).check(z.minLength(1), z.maxLength(10)),\n"));
-    assert!(
-        widget.contains("disabled={!canAdd(valueLineValue() ?? [], 10)}"),
-        "the add control stops at the declared maximum"
-    );
-    assert!(
-        widget.contains("disabled={!canRemove(valueLineValue() ?? [], 1)}"),
-        "the remove control stops at the declared minimum"
-    );
-
-    // wamn-s3kd: a value that travels as text states its spelling once per
-    // module, and every control that needs it names that spelling.
-    assert!(widget.contains(concat!(
-        "/** What the release accepts: one UUID, hyphenated. */\n",
-        "const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}",
-        "-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;\n",
-    )));
-    assert!(widget.contains("z.string().check(z.regex(UUID_TEXT, \"expected a UUID\"))"));
-    assert!(widget.contains("z.string().check(z.regex(NUMERIC_TEXT, \"expected decimal text\"))"));
-    assert!(
-        !widget.contains("const TIMESTAMP_TEXT"),
-        "a module writes no rule it does not apply"
-    );
-}
-
-/// EXIT GATE for `wamn-sxb5.2`: a selector renders the search its list
-/// declares and the next page its list serves, and nothing else from that
-/// list's own screen.
-///
-/// The search asks again from the first page, the next page appends, and both
-/// call the same binding the first read called.
-#[test]
-fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let create = widget
-        .split("export function WidgetCreateForm")
-        .nth(1)
-        .expect("the create form exists")
-        .split("\n/**")
-        .next()
-        .expect("the form ends");
-
-    // The maker list declares the filter on its display field, so the selector
-    // searches by it.
-    assert!(
-        create.contains(concat!(
-            "    if (makerIdSearch() !== \"\") {\n",
-            "      request = writeMember(request, [\"filter\", \"name\"], [makerIdSearch()]) as WidgetMakerQueryRequest;\n",
-            "    }\n",
-        )),
-        "the search sends the declared filter, which takes a list of values"
-    );
-    assert!(
-        create.contains(concat!(
-            "        <RecordSelect\n",
-            "          label=\"maker id\"\n",
-        )) && create.contains(concat!(
-            "          onSearch={(text) => {\n",
-            "            setMakerIdSearch(text);\n",
-            "            void readMakerIdOptions(null);\n",
-            "          }}\n",
-        )),
-        "the selector hands its search to the list it reads"
-    );
-    assert!(
-        create.contains("    void readMakerIdOptions(null);\n"),
-        "a search reads from the first page, because a cursor names a position \
-         in the answer the old value produced"
-    );
-
-    // The same list serves pages, so the selector follows them.
-    assert!(
-        create.contains(concat!(
-            "    if (cursor !== null) {\n",
-            "      request = writeMember(request, [\"cursor\"], cursor) as WidgetMakerQueryRequest;\n",
-            "    }\n",
-        )),
-        "the next page carries the cursor the last reply returned"
-    );
-    assert!(
-        create.contains("        : appendPage(makerIdOptions(), rows, outcome.value.nextCursor),"),
-        "a page appends, as a table does"
-    );
-    assert!(
-        create.contains(concat!(
-            "          hasNextPage={hasNextPage(makerIdOptions())}\n",
-            "          onNextPage={() => void readMakerIdOptions(makerIdOptions().cursor)}\n",
-        )),
-        "the next page control reads the cursor the selector holds"
-    );
-
-    // The widget list declares no filter and serves one page, so its selector
-    // renders neither control, and the index names the gap.
-    let batch = widget
-        .split("export function WidgetRecordBatchForm")
-        .nth(1)
-        .expect("the batch form exists")
-        .split("\n/**")
-        .next()
-        .expect("the form ends");
-    let line = batch
-        .split("label=\"Line\"")
-        .nth(1)
-        .and_then(|rest| rest.split("/>").next())
-        .expect("the line selector exists");
-    assert!(
-        !line.contains("onSearch="),
-        "a list that declares no filter on its display field offers no search"
-    );
-    assert!(
-        !line.contains("onNextPage="),
-        "a bounded list has no next page to offer"
-    );
-    assert!(
-        source(&files, "generated/client-ts/components/index.ts").contains(concat!(
-            "// These selectors read the first page and render no search, because the\n",
-            "// list they read declares no filter on its display field:\n",
-            "// platform-fixture:widget/archive@2.1.0 id: platform-fixture:widget/list@2.1.0\n",
-            "// platform-fixture:widget/record-batch@2.1.0 value.line[].widget_id: platform-fixture:widget/list@2.1.0\n",
-        )),
-        "the generator names the selector, its input and the list it reads"
-    );
-}
-
-#[test]
-fn a_selector_without_a_display_field_renders_the_record_id() {
-    let mut ir = release();
-    ir.models
-        .iter_mut()
-        .find(|model| model.name == "widget_maker")
-        .expect("the maker model")
-        .operations
-        .iter_mut()
-        .find(|operation| operation.name == "query")
-        .expect("the maker query")
-        .lists
-        .as_mut()
-        .expect("the maker list declaration")
-        .display_field = None;
     let files = emit(&ir);
-    let widget = widget(&files);
-    let create = widget
-        .split("export function WidgetCreateForm")
-        .nth(1)
-        .expect("the create form exists")
-        .split("\n/**")
-        .next()
-        .expect("the form ends");
-    assert!(create.contains("optionLabel={(row) => String(row.id)}"));
-    assert!(!create.contains("optionLabel={(row) => String(row.name)}"));
-    assert!(!create.contains("makerIdSearch"));
-    assert!(widget.contains(
-        "field: \"makerId\", label: \"maker id\", type: \"uuid\", role: \"reference\", displayField: \"id\""
-    ));
-}
-
-#[test]
-fn an_operation_the_release_does_not_serve_gets_no_component() {
-    // The emitter wrote a component for every role, and the bindings write no
-    // invoke function for an operation with no route, so the emitted package
-    // imported a name that no module exports. wamn-mf0i.
-    let mut ir = release();
-    ir.models
-        .iter_mut()
-        .flat_map(|model| model.operations.iter_mut())
-        .find(|operation| operation.name == "archive")
-        .expect("the platform fixture declares archive")
-        .route = None;
-
-    let files = emit(&ir);
-    let widget = widget(&files);
-    assert!(
-        !widget.contains("WidgetArchiveForm"),
-        "an unserved operation gets no component"
-    );
-    assert!(
-        !widget.contains("archive as widgetArchive"),
-        "and the module imports no invoke function for it"
-    );
-    assert!(
-        widget.contains("WidgetCreateForm"),
-        "a served operation of the same model keeps its component"
-    );
-    let index = source(&files, "generated/client-ts/components/index.ts");
-    assert!(
-        index.contains(
-            "// These operations get no component, because this release does not serve\n// them over HTTP and the bindings write no invoke function for them:\n// platform-fixture:widget/archive@2.1.0\n"
-        ),
-        "the index names it: {index}"
-    );
-}
-
-/// A create that accepts fewer values than the model declares states them,
-/// and the form offers only those (wamn-wtwn).
-#[test]
-fn a_create_offers_only_the_values_it_declares() {
-    let narrowed = |values: serde_json::Value, action: &str| {
-        let mut manifest = fixture::manifest();
-        manifest["models"]["widget"]["operations"][action]["values"] = values;
-        fixture::try_generate_with(&fixture::catalog(), &manifest)
-    };
-    let package = narrowed(serde_json::json!({"code": ["standard"]}), "create")
-        .expect("a create narrows a writable enum field");
-    let files = emit(&fixture::client_release_of(&package));
-    let create = widget(&files)
-        .split("export function WidgetCreateForm")
-        .next()
-        .and_then(|before| before.rsplit("const CREATE_INPUT").next())
-        .expect("the create form states its input schema");
-    assert!(
-        create.contains("  code: z.enum([\"standard\"]),\n"),
-        "the create checks the one value it accepts: {create}"
-    );
-    assert!(create.contains("  code?: \"standard\";\n"));
-    assert!(
-        !create.contains("priority"),
-        "a value the create refuses is never offered"
-    );
-
-    for (values, action) in [
-        (serde_json::json!({"code": ["standard"]}), "update"),
-        (serde_json::json!({"note": ["standard"]}), "create"),
-        (serde_json::json!({"code": ["urgent"]}), "create"),
-        (serde_json::json!({"code": []}), "create"),
-    ] {
-        let error = narrowed(values.clone(), action).expect_err("an invalid narrowing is refused");
-        assert!(
-            error.to_string().contains("values for"),
-            "{values} on {action}: {error}"
-        );
+    let detail = description(&files, "widget", "WidgetGetDetail");
+    let formats: Vec<_> = detail["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|field| field["format"].as_str())
+        .collect();
+    for format in ["boolean-symbol", "datetime", "number-plain"] {
+        assert!(formats.contains(&format));
     }
 }
 
-/// The batch names `widget_maker` twice and its revision names the inspector,
-/// so the form sends the revision of the inspector row the operator chose
-/// (wamn-nv87). No page prop carries it.
 #[test]
-fn a_form_sends_the_record_revision_its_revision_names() {
+fn forms_keep_repeated_groups_domains_and_reserved_input_exclusion() {
     let files = emit(&fixture::client_release());
-    let widget = widget(&files);
+    let form = description(&files, "widget", "WidgetRecordBatchForm");
+    let fields = form["fields"].as_array().unwrap();
+    let group = fields
+        .iter()
+        .find(|field| field["control"] == "repeat")
+        .unwrap();
+    assert_eq!(group["field"], "value.line[]");
+    assert_eq!(group["label"], "Batch lines");
+    let rows = group["fields"].as_array().unwrap();
+    let amount = rows
+        .iter()
+        .find(|field| field["field"] == "amount")
+        .unwrap();
+    assert_eq!(amount["label"], "Quantity received");
+    assert_eq!(amount["control"], "text");
     assert!(
-        !widget.contains("readonly valueExpectedEditVersion"),
-        "no prop carries a revision that a chosen row supplies"
+        fields
+            .iter()
+            .any(|field| field["field"] == "value.grade" && field["control"] == "select")
     );
-    assert!(widget.contains(
-        "  const [valueInspectorIdRevision, setValueInspectorIdRevision] = createSignal<WidgetMakerQueryRow[\"editVersion\"] | null>(null);\n"
-    ));
-    // The revision follows the row that carries the held key, which a filled
-    // key reaches without a pick (wamn-fuda).
-    assert!(widget.contains(concat!(
-        "            onChange={(value) => setValueInspectorIdValue(value ?? \"\")}\n",
-        "            onRow={(row) => setValueInspectorIdRevision(row?.editVersion ?? null)}\n",
-    )));
-    assert!(widget.contains(concat!(
-        "    const valueInspectorIdChosen = valueInspectorIdRevision();\n",
-        "    if (valueInspectorIdChosen === null) {\n",
-        "      setRefusal({ text: \"Choose the record from its list.\", member: \"value.inspector_id\" });\n",
-        "      return;\n",
-        "    }\n",
-        "    item = writeMember(item, [\"value\", \"expectedEditVersion\"], valueInspectorIdChosen);\n",
-    )));
-    assert!(
-        !widget.contains("valueMakerIdRevision"),
-        "the other input of the same model supplies no revision"
-    );
-}
-
-#[test]
-fn a_table_screen_gets_a_table_definition_beside_its_component() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let component = widget
-        .find("export function WidgetQueryTable(")
-        .expect("the widget query gets a component");
-    let start = widget
-        .find("export const WIDGET_QUERY_TABLE = {")
-        .expect("the widget query gets a table definition");
-    assert!(start > component, "the definition follows its screen");
-    let end = start + widget[start..].find("} as const;").unwrap();
-    let definition = &widget[start..end];
-    for line in [
-        "  read: { route: WIDGET_QUERY_ROUTE, request: WIDGET_QUERY_REQUEST_FIELDS, result: WIDGET_QUERY_RESULT_FIELDS },",
-        "  rowId: [\"id\"],",
-        "  pageMaximum: 100,",
-        "  scopeFilters: [\"code\", \"makerId\", \"note\"],",
-        "  sortFields: [{ field: \"createdAt\", wire: \"created_at\" }],",
-        "  sortDirections: [\"ascending\", \"descending\"],",
-        "  sortMaxFields: 1,",
-        "    { field: \"code\", label: \"Widget code\", type: \"text\", role: \"value\" },",
-        "    { field: \"editVersion\", label: \"edit version\", type: \"int64\", role: \"revision\" },",
-        "    { field: \"id\", label: \"id\", type: \"uuid\", role: \"key\" },",
-        "    { field: \"makerId\", label: \"maker id\", type: \"uuid\", role: \"reference\", displayField: \"name\", recordRead: { read: { route: WIDGET_MAKER_GET_ROUTE, request: WIDGET_MAKER_GET_REQUEST_FIELDS, result: WIDGET_MAKER_GET_RESULT_FIELDS }, keyInput: [\"id\"] } },",
-    ] {
-        assert!(definition.contains(line), "{line} in {definition}");
+    for field in fields {
+        assert!(
+            ![
+                "request_id",
+                "value.idempotency_key",
+                "value.expected_edit_version"
+            ]
+            .contains(&field["field"].as_str().unwrap())
+        );
     }
-    // No manifest declares a mode or a cap, so the definition states neither.
-    assert!(!definition.contains("mode") && !definition.contains("cap"));
+    assert_eq!(
+        form["submit"],
+        json!({"id":"platform-fixture:widget/record-batch@2.1.0", "label":"Record a batch"})
+    );
+    assert!(source(&files, "widget").contains("\"value.line[]\": {"));
 }
 
-/// Every table gets a definition that the generator derives from its contract
-/// (wamn-ir48). A read that states no `lists` names no key, so the table numbers
-/// its rows by position.
 #[test]
-fn every_table_read_names_its_rows_by_a_key_and_generation_refuses_one_without() {
-    let files = emit(&release());
-    assert!(
-        source(&files, "generated/client-ts/components/widget_maker.tsx").contains(concat!(
-            "export const WIDGET_MAKER_LIST_TABLE = {\n",
-            "  name: \"widget-maker\",\n",
-            "  read: { route: WIDGET_MAKER_LIST_ROUTE, request: WIDGET_MAKER_LIST_REQUEST_FIELDS, result: WIDGET_MAKER_LIST_RESULT_FIELDS },\n",
-            "  rows: \"rows\",\n",
-            "  rowId: [\"id\"],\n",
-            "  pageMaximum: null,\n",
-        ))
-    );
-    let index = source(&files, "generated/client-ts/components/index.ts");
-    assert!(!index.contains("table definition"), "{index}");
-
-    // A bounded list with no key is refused, and so is a key that is not a
-    // field of the result.
-    let mut unkeyed = fixture::manifest();
-    unkeyed["custom_operations"]["widget_maker.list"]
-        .as_object_mut()
-        .expect("the maker list")
-        .remove("lists");
-    let error = fixture::try_generate_with(&fixture::catalog(), &unkeyed)
-        .expect_err("a bounded list with no key is refused");
-    assert!(
-        error
-            .to_string()
-            .contains("widget_maker.list answers a list of rows and states no `lists` key"),
-        "{error}"
-    );
-    let mut stray = fixture::manifest();
-    stray["custom_operations"]["widget_maker.list"]["lists"]["key_field"] =
-        serde_json::json!(["id", "code"]);
-    let error = fixture::try_generate_with(&fixture::catalog(), &stray)
-        .expect_err("a key field outside the result is refused");
-    assert!(
-        error.to_string().contains(
-            "widget_maker.list keys its rows on code, which is not a field of its result"
-        ),
-        "{error}"
-    );
-}
-
-/// The table definition named `constant` in one emitted module.
-fn definition<'a>(module: &'a str, constant: &str) -> &'a str {
-    let start = module
-        .find(&format!("export const {constant} = {{"))
-        .unwrap_or_else(|| panic!("{constant} is emitted"));
-    &module[start..start + module[start..].find("} as const;").unwrap()]
-}
-
-fn operation_mut<'a>(
-    ir: &'a mut ClientContractIr,
-    model: &str,
-    name: &str,
-) -> &'a mut wamn_schema_generator::client_ir::OperationIr {
+fn optional_and_nullable_controls_obey_wfe_scalar_types() {
+    let mut ir = fixture::client_release();
+    let op = ir
+        .models
+        .iter_mut()
+        .flat_map(|model| &mut model.operations)
+        .find(|op| op.name == "create")
+        .unwrap();
+    let mut field = op.input_fields[0].clone();
+    field.path = "number".into();
+    field.children.clear();
+    field.values.clear();
+    field.type_name = "int32".into();
+    field.required = false;
+    field.nullable = true;
+    op.input_fields = vec![field.clone()];
+    let files = emit(&ir);
+    let form = description(&files, "widget", "WidgetCreateForm");
+    assert_eq!(form["fields"][0]["control"], "number");
+    assert_eq!(form["fields"][0]["empty"], "undefined");
+    field.type_name = "text".into();
     ir.models
         .iter_mut()
-        .filter(|candidate| candidate.name == model)
-        .flat_map(|model| model.operations.iter_mut())
-        .find(|operation| operation.name == name)
-        .unwrap_or_else(|| panic!("the fixture declares {model}/{name}"))
-}
-
-#[test]
-fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
-    let files = emit(&release());
-    let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
-    for line in [
-        // The update writes these columns, and the plan supplies none of them.
-        "  update: { operation: \"platform-fixture:widget/update@2.1.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], type: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"], choices: { read: { route: WIDGET_MAKER_QUERY_ROUTE, request: WIDGET_MAKER_QUERY_REQUEST_FIELDS, result: WIDGET_MAKER_QUERY_RESULT_FIELDS }, rows: \"item\", keyField: \"id\", displayField: \"name\", searchInput: [\"filter\", \"name\"], cursorInput: [\"cursor\"] } },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
-        // A command that runs each outer input on its own takes many rows.
-        "  actions: [\n    { operation: \"platform-fixture:widget/get@2.1.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/archive@2.1.0\", reference: \"platform-fixture:widget/archive\", label: \"archive\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"id\"] }], revision: { field: \"editVersion\", input: [\"expectedEditVersion\"] } },\n    { operation: \"platform-fixture:widget/record-batch@2.1.0\", reference: \"platform-fixture:widget/record-batch\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }], form: async () => ({ default: WidgetRecordBatchForm }) },\n  ],\n",
-        "  childTables: [],\n",
-    ] {
-        assert!(widgets.contains(line), "{line} in {widgets}");
-    }
-    let makers = definition(
-        source(&files, "generated/client-ts/components/widget_maker.tsx"),
-        "WIDGET_MAKER_QUERY_TABLE",
-    );
-    assert!(
-        !makers.contains("update:"),
-        "the maker model serves no update: {makers}"
-    );
-    assert!(
-        makers.contains("    { operation: \"platform-fixture:widget/create@2.1.0\", reference: \"platform-fixture:widget/create\", label: \"create\", many: false, opens: \"form\","),
-        "a create takes one row: {makers}"
+        .flat_map(|model| &mut model.operations)
+        .find(|op| op.name == "create")
+        .unwrap()
+        .input_fields = vec![field];
+    let files = emit(&ir);
+    assert_eq!(
+        description(&files, "widget", "WidgetCreateForm")["fields"][0]["control"],
+        "custom"
     );
 }
 
 #[test]
-fn a_table_whose_filter_narrows_a_reference_is_a_child_of_that_model() {
-    let mut ir = release();
-    // The fixture filters maker_id by whether it is empty. A child table needs
-    // a list of keys, so this query takes one instead.
-    let query = operation_mut(&mut ir, "widget", "query");
-    let filters = &mut query
-        .paging
-        .as_mut()
-        .expect("the widget query pages")
-        .filters;
-    filters.retain(|filter| filter.field != "maker_id");
-    filters.push(wamn_schema_generator::client_ir::FilterIr {
-        field: "maker_id".to_owned(),
-        binding: "json_array".to_owned(),
-        ..Default::default()
-    });
-    let maker = query
-        .input_fields
+fn delete_has_confirmation_and_uses_the_operation_label() {
+    let mut ir = fixture::client_release();
+    let op = ir
+        .models
         .iter_mut()
-        .find(|field| field.path == "filter")
-        .and_then(|filter| {
-            filter
-                .children
-                .iter_mut()
-                .find(|field| field.path == "filter.maker_id")
+        .flat_map(|model| &mut model.operations)
+        .find(|op| op.name == "delete")
+        .unwrap();
+    op.label = Some("Remove widget".into());
+    let files = emit(&ir);
+    assert_eq!(
+        description(&files, "widget", "WidgetDeleteDelete"),
+        json!({
+            "id":"platform-fixture:widget/delete@2.1.0", "title":"Remove widget", "confirmation":"Confirm Remove widget?"
         })
-        .expect("the fixture sends filter.maker_id");
-    let mut item = maker.clone();
-    item.path = "filter.maker_id[]".to_owned();
-    item.type_name = "uuid".to_owned();
-    item.required = true;
-    maker.path = "filter.maker_id[]".to_owned();
-    maker.type_name = "array".to_owned();
-    maker.children = vec![item];
-    let files = emit(&ir);
-    let makers = definition(
-        source(&files, "generated/client-ts/components/widget_maker.tsx"),
-        "WIDGET_MAKER_QUERY_TABLE",
-    );
-    assert!(
-        makers.contains(
-            "  childTables: [\n    { label: \"widget\", table: () => WIDGET_QUERY_TABLE, scopeFilter: \"makerId\" },\n  ],\n"
-        ),
-        "{makers}"
-    );
-    // The child's definition lives in its own model's module.
-    assert!(
-        source(&files, "generated/client-ts/components/widget_maker.tsx")
-            .contains("  WIDGET_QUERY_TABLE,\n} from \"./widget.js\";\n"),
-        "the parent imports the child's definition"
-    );
-    // A filter on a value names no record, so the widget has no child.
-    assert!(definition(widget(&files), "WIDGET_QUERY_TABLE").contains("  childTables: [],\n"));
-}
-
-#[test]
-fn an_unserved_update_edits_nothing_and_a_shared_transaction_takes_one_row() {
-    let mut ir = release();
-    operation_mut(&mut ir, "widget", "update").route = None;
-    operation_mut(&mut ir, "widget", "record_batch").transaction = None;
-    let files = emit(&ir);
-    let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
-    assert!(!widgets.contains("update:"), "{widgets}");
-    assert!(
-        widgets.contains("label: \"record-batch\", many: false, opens: \"form\""),
-        "{widgets}"
-    );
-    let makers = definition(
-        source(&files, "generated/client-ts/components/widget_maker.tsx"),
-        "WIDGET_MAKER_QUERY_TABLE",
-    );
-    assert!(
-        !makers.contains("widget/update"),
-        "an unserved update is no action: {makers}"
     );
 }
 
-/// A form whose operation takes many outer inputs runs a bulk action
-/// (wamn-sa7d.3). Given the values of each selected row, one submission
-/// sends one input for each row in one call, and the form hides the inputs
-/// the rows fill. A form bound to one record takes no rows.
 #[test]
-fn a_form_that_takes_many_rows_sends_one_input_for_each_row_in_one_call() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    let props = |form: &str| {
-        widget
-            .split(&format!("export interface {form}FormProps {{"))
-            .nth(1)
-            .and_then(|rest| rest.split("\n}\n").next())
-            .unwrap_or_else(|| panic!("{form} states its props"))
-            .to_owned()
-    };
-    let batch = props("WidgetRecordBatch");
+fn unserved_operations_emit_no_description_and_generation_is_stable() {
+    let mut ir = fixture::client_release();
+    let op = ir
+        .models
+        .iter_mut()
+        .flat_map(|model| &mut model.operations)
+        .find(|op| op.name == "create")
+        .unwrap();
+    op.route = None;
+    let first = emit(&ir);
+    let second = emit(&ir);
+    assert!(!source(&first, "widget").contains("export const WidgetCreateForm"));
     assert!(
-        batch.contains("  readonly rows?: readonly object[];")
-            && batch.contains(
-                "  readonly onEach?: (outcomes: readonly Outcome<WidgetRecordBatchResult>[]) => void;"
-            ),
-        "{batch}"
+        source(&first, "index").contains("platform-fixture:widget/create@2.1.0: no HTTP route")
     );
-    for line in [
-        "        const each = mergeMembers(value, row);\n",
-        // A revision the row carries is the row's own.
-        "        if (readMember(item, [\"value\", \"expectedEditVersion\"]) === undefined) {\n",
-        "        await callEach<WidgetRecordBatchResult>(\n",
-        "        <Show when={!rowsFill([\"value\", \"grade\"])}>\n",
-    ] {
-        assert!(widget.contains(line), "{line}");
+    assert_eq!(
+        first
+            .iter()
+            .map(|file| (file.path(), file.bytes()))
+            .collect::<Vec<_>>(),
+        second
+            .iter()
+            .map(|file| (file.path(), file.bytes()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn every_ir_field_has_an_authored_label_or_its_exact_path() {
+    fn visit(fields: &[FieldIr]) {
+        for field in fields {
+            assert!(field.label.is_some(), "{} has no label", field.path);
+            visit(&field.children);
+        }
     }
-    let update = props("WidgetUpdate");
-    assert!(
-        !update.contains("rows?"),
-        "a form bound to one record takes no rows: {update}"
-    );
+    let ir = fixture::client_release();
+    for model in &ir.models {
+        visit(&model.fields);
+        for op in &model.operations {
+            assert!(op.label.is_some());
+            visit(&op.input_fields);
+            visit(&op.result_fields);
+            if let Some(route) = &op.route {
+                visit(&route.response.fields);
+            }
+        }
+    }
+}
+
+#[test]
+fn omitted_labels_default_after_projection_for_every_operation_and_field() {
+    fn remove_labels(value: &mut Value) {
+        match value {
+            Value::Object(members) => {
+                members.remove("label");
+                for value in members.values_mut() {
+                    remove_labels(value);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    remove_labels(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn defaults(fields: &[FieldIr]) {
+        for field in fields {
+            assert_eq!(field.label.as_deref(), Some(field.path.as_str()));
+            defaults(&field.children);
+        }
+    }
+    let mut contracts = fixture::contracts(&fixture::generate_fixture());
+    for bytes in contracts.values_mut() {
+        let mut value: Value = serde_json::from_slice(bytes).unwrap();
+        remove_labels(&mut value);
+        *bytes = serde_json::to_vec(&value).unwrap();
+    }
+    let ir = ClientContractIr::from_release_contracts(
+        "platform_fixture",
+        &contracts,
+        &std::collections::BTreeMap::default(),
+    )
+    .unwrap();
+    for model in &ir.models {
+        defaults(&model.fields);
+        for op in &model.operations {
+            assert_eq!(op.label.as_deref(), Some(op.operation.as_str()));
+            defaults(&op.input_fields);
+            defaults(&op.result_fields);
+        }
+    }
+}
+
+#[test]
+fn declared_group_labels_reach_published_response_groups() {
+    fn clear(fields: &mut [FieldIr]) {
+        for field in fields {
+            field.label = None;
+            clear(&mut field.children);
+        }
+    }
+    let ir = fixture::client_release();
+    let op = ir
+        .models
+        .iter()
+        .flat_map(|model| &model.operations)
+        .find(|op| op.name == "record_batch")
+        .unwrap();
+    let mut served = op.input_fields.clone();
+    clear(&mut served);
+    FieldIr::carry_declared(&mut served, &op.input_fields);
+    assert_eq!(served, op.input_fields);
+}
+
+#[test]
+fn emitted_descriptions_type_check_against_wfe() {
+    typescript::check_descriptions(&fixture::client_release())
+        .expect("the emitted descriptions satisfy the pinned wfe types");
 }

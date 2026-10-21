@@ -170,9 +170,9 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
     assert_eq!(files, snapshot(&output_second));
     let bindings = std::str::from_utf8(&files[Path::new("client-ts/widget.ts")]).unwrap();
     let components =
-        std::str::from_utf8(&files[Path::new("client-ts/components/widget.tsx")]).unwrap();
+        std::str::from_utf8(&files[Path::new("client-ts/components/widget.ts")]).unwrap();
     assert!(bindings.contains("export async function archive("));
-    assert!(components.contains("export function WidgetArchiveForm("));
+    assert!(components.contains("export const WidgetArchiveForm ="));
     assert_eq!(receipt_first, receipt_second);
     assert_eq!(receipt_first, receipt::read(&output_first).unwrap());
     assert!(
