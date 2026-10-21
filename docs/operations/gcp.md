@@ -204,7 +204,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 ### 4.3 cert-manager and the edge certificate
 
 From the repository root, run `wamn-ctl platform apply <cluster.k>`.
-The verb runs sections 4.3 through 4.12 in order.
+The verb runs sections 4.3 through 4.13 in order.
 It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
 On GCP, it requests the production certificate directly.
 It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
@@ -618,6 +618,13 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
 ```
 
 ### 4.13 Packages
+
+`platform apply` reads package roots from each environment's adjacent JSON file and versions from their built manifests.
+It reads registry credentials from `WAMN_REGISTRY_AUTH_FILE` and optional CA files from `WAMN_OCI_CA_PATHS`.
+It pushes a package only when its registry tag is absent.
+It runs `apply-package` and `reconcile-package-data-access` as Jobs, then runs `reconcile-replica-identity` for WMS.
+The Jobs skip when their completed input digests match.
+The commands below describe the manual equivalent.
 
 The package artifacts `wamn_receiving-2.2.3` and `wamn_wms-2.1.2` are in the registry. If a tag is missing, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
 

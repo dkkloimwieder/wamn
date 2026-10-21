@@ -234,6 +234,13 @@ struct Volume {
 struct SecretVolume {
     secret_name: String,
     default_mode: u32,
+    items: Vec<SecretItem>,
+}
+
+#[derive(Debug, Serialize)]
+struct SecretItem {
+    key: String,
+    path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -361,6 +368,15 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
             secret: Some(SecretVolume {
                 secret_name: format!("{}-files", request.name),
                 default_mode: 0o400,
+                items: request
+                    .files
+                    .keys()
+                    .enumerate()
+                    .map(|(index, path)| SecretItem {
+                        key: format!("file-{index}"),
+                        path: path.clone(),
+                    })
+                    .collect(),
             }),
         });
         volume_mounts.push(VolumeMount {
@@ -561,7 +577,12 @@ pub async fn run(
                 api_version: "v1".into(),
                 kind: "Secret".into(),
                 metadata: owned_metadata(&format!("{}-files", request.name), &created.metadata)?,
-                string_data: request.files.clone(),
+                string_data: request
+                    .files
+                    .values()
+                    .enumerate()
+                    .map(|(index, value)| (format!("file-{index}"), value.clone()))
+                    .collect(),
                 data: BTreeMap::new(),
                 content_type: "Opaque".into(),
             };
@@ -869,7 +890,8 @@ mod tests {
         assert!(!format!("{request:?}").contains("private-mounted-key"));
         assert_eq!(
             job["spec"]["template"]["spec"]["volumes"][0]["secret"],
-            json!({"secretName":"platform-system-files","defaultMode":256})
+            json!({"secretName":"platform-system-files","defaultMode":256,
+                "items":[{"key":"file-0","path":"tls.key"}]})
         );
         assert_eq!(
             job["spec"]["template"]["spec"]["containers"][0]["env"][0],

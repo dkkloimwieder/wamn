@@ -9,6 +9,7 @@ pub mod install;
 pub mod job;
 pub mod lock;
 pub mod manifests;
+mod packages;
 pub mod project;
 pub mod provider;
 pub mod steps;
