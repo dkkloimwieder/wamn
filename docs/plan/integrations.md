@@ -89,6 +89,7 @@ Rows marked *done* or *dropped* stay for the record.
 | C35 | OTLP to a vendor | collector config | a vendor | S |
 | C36 | Prometheus `/metrics` | host | — | M |
 | C37 | Alerting (Slack, PagerDuty) | package over C20 | C4 | S |
+| C38 | Cross-package reads: one package reads another package's model | platform | owner ruling | — |
 | C1 | Native driver sidecar: `wamn:connection/driver` + declared container | plugin + deploy | — | L |
 
 ### Edge
@@ -120,9 +121,21 @@ Rows marked *done* or *dropped* stay for the record.
 
 None of E4–E6 needs the sidecar: pure-Rust clients exist. C1 serves C23 and other closed drivers only.
 
+## 3a. Integration shape
+
+Owner rulings of 2026-10-21. Each ruling holds for every integration from Epic 4 on.
+
+| Ruling | Invariant |
+| --- | --- |
+| A sync integration (NetSuite, Dynamics, QuickBooks, Shopify and the like) never serves the request path. It is its own application, with one release for every org, project and environment. An environment enables it by naming its release in `environment.k`. | No consumer route calls an integration synchronously. A consumer starts the integration's workflows, and the integration pushes into consumer commands by workflow. |
+| A compute service returns a value in request time. It is an outbound call inside a consumer operation, made by a thin package composed into the consumer. | The compute package declares no model where it can avoid one. |
+| An integration is stateless. It has no domain models and no staging tables. | Every domain table belongs to the consumer. The integration reaches it only through the consumer's commands and events. A consumer never reads from an integration. |
+| Standard state is one platform package, `wamn_integration`, composed into every integration application. Model `setting` holds per-environment key and value pairs that an admin edits: account ids, mappings, enabled targets and `last_synced_at`. Model `log` holds one row per run outcome worth keeping beyond `runs`: records pushed and vendor refusals, by record id. It is delivered like the platform nodes. | No new WIT. An integration keeps no state outside `setting`, `log` and the catalog. |
+| Connection, credential, schedule, runs and grants stay in the catalog. An org-scoped connection and credential are declared once, and `env apply` materializes them into each enabled environment. | Two environments that name one org connection resolve one secret. |
+
 ## 4. Epic order
 
-Each epic names a goal and an exit condition. Only Epic 3 has issues. The order after Epic 3 is expected, not fixed; the owner re-orders at each review.
+Each epic names a goal and an exit condition. Only Epic 4 has issues. The order after Epic 4 is expected, not fixed; the owner re-orders at each review.
 
 ### Cloud
 
@@ -130,9 +143,9 @@ Each epic names a goal and an exit condition. Only Epic 3 has issues. The order 
 | --- | --- | --- |
 | 1 (done at `05f7659d`, `wamn-jstjf`) | C0. An HTTP connection is bound in a deployed environment and a guest sends through it. | Met. |
 | 2 (done at `030ce57c`, `wamn-5i3v9`) | C9, C4, C10. Webhook in, schedule, webhook out. | Met. |
-| **3 (scoped, `wamn-7e39m`)** | C2, C3, C20. OAuth credential types; the REST connector package. | §5. |
-| 4 | C21, C22. NetSuite REST and RESTlet over C20. | A record read and a SuiteQL query against the owner's account from a deployed package. |
-| 5 | C27, C29, C31, C37. Packages over C20. | Each sends once from a run. |
+| 3 (done at `afba25a3f`, `wamn-7e39m`) | C2, C3, C20. OAuth credential types; the REST connector package. | Met. |
+| **4 (scoped)** | Org-scoped connection, `wamn_integration`, C21. NetSuite REST over C20 in the §3a shape. | §5. |
+| 5 | C22, C27, C29, C31, C37. NetSuite RESTlet and packages over C20. | Each sends once from a run. |
 | 6 | C1, C23. Sidecar and ODBC. | A sidecar opens the Oracle ODBC driver, streams one query to a guest, holds no credential. |
 | later | C24–C26, C17, C30, C7/C8, C11–C14, C16, C18, C28, C5, C6, C36 | Picked by need. |
 | deferred | C15, C32, C33, C34, C35 | Owner rulings or a user. |
@@ -152,35 +165,25 @@ Each epic names a goal and an exit condition. Only Epic 3 has issues. The order 
 
 Edge Epic A may run in parallel with cloud Epic 1: they share no files.
 
-## 5. Epic 3 — OAuth2, OAuth1, REST connector (scoped)
+## 5. Epic 4 (`wamn-lcaxg`) — org connection, `wamn_integration`, NetSuite (scoped)
 
 ### Goal
 
-One OAuth2 and one OAuth1 connection send through `connection_http` with a credential that only the host holds. A scheduled wiring pages a fixture API and writes one row per item. Branch `work/integrations` from `030ce57c`. No UI, no Secret Manager, no NetSuite calls (Epic 4), no new WIT, and no node parameters beyond those named here.
+An org declares a connection once, and each environment that names it binds the same secret. Every integration application carries `wamn_integration` for its state. `apps/netsuite` pulls and pushes NetSuite records over SuiteTalk REST with `oauth1` in the §3a shape. Branch `work/integrations` from `695963e3b`.
 
-### Rulings
-
-| Ruling | Invariant to measure |
-| --- | --- |
-| C2. OAuth2 client credentials. The secret is `{"oauth2":{"token-url":"…","client-id":"…","client-secret":"…","scope":"…"}}`, and `scope` is optional. `connection_http.rs::credential_headers` handles it beside `headers` and `hmac`, and a secret holds exactly one of the three. The host fetches the token by the client-credentials grant through the transport and address policy of the request. The token URL's authority is checked like `primary-authority`: it stays inside the bound authority and base path, and a separate token origin is a second connection, not this epic. The cache key is (project, handle, generation), where the generation is the selected catalog generation of the instance, with no new column. An entry lives until expiry minus 60 s. A 401 causes one refresh, and a second 401 returns to the guest. If the refresh fails, the first 401 returns to the guest. The host injects `Authorization: Bearer`. No refresh tokens and no authorization-code flow. | A guest request carries the bearer that the fixture issued. Two requests inside expiry fetch one token. The guest never sees the client id or secret. |
-| C3. OAuth 1.0a. The secret is `{"oauth1":{"consumer-key","consumer-secret","token","token-secret","realm"}}`, and `realm` is optional. The RFC 5849 signature base covers method, URL and query, and excludes the body. HMAC-SHA256 only (NetSuite TBA). Each request gets its own nonce and timestamp. The header is `Authorization: OAuth …`. | The fixture verifies the signature with the same secrets. A repeated request uses a new nonce. |
-| C20. REST connector. One platform node `http-page` in `apps/platform/no-std` beside `http-request`. Its parameters are `requirement`, `path-and-query`, `headers`, `page` and `items`. `page` is `{"style":"offset"\|"cursor"\|"link-header", …}`: offset names the `limit` and `offset` query parameters and stops on a page with fewer items than `limit`. Cursor names a JSON pointer to the next cursor and its query parameter. Link-header follows a relative `rel="next"` link unchanged. An absolute next URL is `terminal` in this epic, because the guest does not see the binding's origin. `wamn-62h0t` holds the follow-up. `items` is a JSON pointer to the item array. The node collects every page in one call, stops when a page has no next, and emits one array on `main` at the end. No WIT change. A retry repeats reads, never rows. A 429 returns `node-error.rate-limited` so that the router backs off, a 5xx is `retryable`, and a 4xx, 408 included, is `terminal`. The template package `apps/rest_connector` holds a scheduled wiring `http-page → jsonata → <command>` against a fixture, as the copy point for Epic 4. `jsonata` feeds the command, which declares the input `{"type":"array"}`. Admission does not change. | The kind case proves OAuth2, OAuth1 and paging with one 429 on page 2. The fixture sees page 2 twice, which is one router node retry. The run emits each item once in one array. "Written once" rests on the `rest_connector` publication test and the `http-page` unit tests for one emission. The kind case does not deploy `rest_connector` because it has no CDC reader. |
+Out of this epic: no UI, no Secret Manager, no RESTlet (C22, Epic 5), no ODBC (C23), and no cross-package reads (C38).
 
 ### Issues
 
-1. **C2** (`wamn-7e39m.1`). The shape, the token fetch, the cache, the 401 refresh and the bearer injection. Unit tests with a local token fixture: fresh, cached, expiring, refused.
-2. **C3** (`wamn-7e39m.2`). Signing, nonce, realm and header. Unit tests against RFC 5849 vectors adapted to HMAC-SHA256, and one NetSuite-shaped request.
-3. **C20 and the kind case** (`wamn-7e39m.3`). This issue covers `http-page`, the `rest_connector` template and the kind case. The kind case proves OAuth2, OAuth1 and paging with one 429 on page 2. The fixture uses offset paging and returns `Retry-After: 1` with the 429. The real router runs `transform → http-page`. The fixture sees page 2 twice, and the run emits each of the five items once in one array.
+1. **Org-scoped connection.** A control-database record `(org, name, type, definition)` and a credential handle keyed by org. `wamn-ctl connection declare` writes the record. `environment.k` references it by name: `connections.<alias> = { org = "<name>" }`. `env apply` materializes the instance, generation and binding through the existing `bind`, and looks up the credential under the org handle. Invariant: two environments that name one org connection resolve one secret, and a changed org definition appends a generation in each environment at its next apply. A live Postgres test covers the invariant.
+2. **`wamn_integration`.** The package lives under `apps/platform` and holds the models `setting` and `log`. `rest_connector` loses its `item` model and ends in a fixture consumer command. It reads and writes `last_synced_at` through `setting`. The kind case follows.
+3. **NetSuite (C21).** The package `apps/netsuite` runs as one application with `wamn_integration`. Its operations call SuiteTalk REST with `oauth1`: record get, a SuiteQL query paged by `http-page` in cursor style, create and update. One scheduled pull wiring runs `http-page → jsonata → <consumer command>`, windowed by `last_synced_at`. One push wiring starts from a consumer event. The kind case runs against a NetSuite-shaped fixture that verifies OAuth1, pages SuiteQL and creates one record. The issue lists the fixture needs before the case is written. Live calls against the owner's account are owner-run and documented in the issue, never in a test target.
 
-   "Written once" rests on the `rest_connector` publication test and the `http-page` unit tests for one emission. The kind case does not deploy `rest_connector` because it has no CDC reader. It adds no event broker or CDC.
-
-   Unit tests of `http-page` cover link-header paging, with a relative link and absolute links that return `terminal`. The issue lists the fixture needs before the case is written.
-
-Per-issue budget: build, clippy, fmt check, unit tests. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
+Per-issue budget: build, clippy, fmt check, unit tests, and the live Postgres test for issue 1. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
 
 ### Closeout
 
-Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the test log path, delete the remote branch. Then stop. Epic 4 is scoped after the owner's review.
+Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the test log path, delete the remote branch. Then stop. Epic 5 is scoped after the owner's review.
 
 ## 6. Sidecar shape (for Epic 6, not before)
 
