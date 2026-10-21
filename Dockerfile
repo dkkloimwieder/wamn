@@ -60,7 +60,7 @@ FROM root-source AS build-host
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-host-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-host -p wamn-runtime --bin wamn-host --bin docker-credential-wamn \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
@@ -70,7 +70,7 @@ FROM root-source AS build-scenario-worker
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-scenario-worker-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-scenario-worker \
  && install -D -m 0755 target/release/wamn-scenario-worker /native-output/wamn-scenario-worker
@@ -79,7 +79,7 @@ FROM root-source AS build-ctl
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-ctl-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-ctl \
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
@@ -90,7 +90,7 @@ FROM root-source AS build-cdc-reader
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-cdc-reader-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
@@ -99,18 +99,18 @@ FROM root-source AS build-identity
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-identity-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-identity \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
 
 # The test image is outside the retained MVP image set. It remains a
-# separate, package-scoped build with its own target cache.
+# separate, package-scoped build with the shared native target cache.
 FROM root-source AS build-gates
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-gates-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-gates \
  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates

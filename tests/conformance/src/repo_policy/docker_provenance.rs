@@ -52,12 +52,10 @@ fn selected_packages(contents: &str) -> Vec<&str> {
         .collect()
 }
 
-/// One target cache per build stage, and the download caches shared.
+/// One shared native target cache, and the download caches shared.
 ///
-/// Seventeen stages used to lock one target cache, so they compiled one at a
-/// time and deleted each other's workspace output. A stage that owns its target
-/// waits for nobody; the registry and Git caches are downloads, which Cargo
-/// already locks per package (wamn-szr0).
+/// The six native stages share one locked target cache across checkouts
+/// (wamn-i6h97). Edge and cases keep their own per-checkout target caches.
 fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Problems) {
     let mounts: Vec<_> = contents
         .lines()
@@ -74,13 +72,17 @@ fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Pr
             || format!("{owner} lost shared download cache {id}"),
         );
     }
-    let target =
-        format!("id=wamn-root-target-{stage_name}-${{WAMN_CHECKOUT_KEY}},target=/build/target");
+    let target = match stage_name {
+        "edge" | "cases" => {
+            format!("id=wamn-root-target-{stage_name}-${{WAMN_CHECKOUT_KEY}},target=/build/target")
+        }
+        _ => "id=wamn-root-target-native,target=/build/target".to_owned(),
+    };
     problems.require(
         mounts
             .iter()
             .any(|line| line.contains(&target) && line.contains("sharing=locked")),
-        || format!("{owner} must own the locked target cache {target}"),
+        || format!("{owner} must mount the locked target cache {target}"),
     );
 }
 
@@ -290,24 +292,17 @@ fn build_graph_has_one_source_stage_and_no_retired_leg(dockerfile: &str, problem
         stage_caches(gates, "build-gates", "gates", problems);
     }
 
-    // One target cache each, and no stage left holding the old shared one.
+    // Six stages share the native target; edge and cases stay per checkout.
+    // No stage keeps the retired shared root target cache.
     problems.require(!dockerfile.contains("id=wamn-root-target,"), || {
         "a stage still mounts the shared root target cache".to_owned()
     });
-    let targets: std::collections::BTreeSet<_> = dockerfile
-        .lines()
-        .filter_map(|line| line.split_once("id=wamn-root-target-"))
-        .filter_map(|(_, rest)| rest.split(',').next())
-        .collect();
-    let stages = dockerfile
-        .lines()
-        .filter(|line| line.starts_with("FROM root-source AS build-"))
-        .count();
-    problems.require(targets.len() == stages, || {
-        format!(
-            "every one of the {stages} native build stages owns one target cache, got {targets:?}"
-        )
-    });
+    for stage_name in ["edge", "cases"] {
+        let build_name = format!("build-{stage_name}");
+        if let Some(build) = stage(dockerfile, &build_name, problems) {
+            stage_caches(build, &build_name, stage_name, problems);
+        }
+    }
 
     // wamn-0h0g.15.139 audited these against the bare-ordinary-English rule and
     // KEPT THEM BARE. `jco` and `wac` are three characters matched over the whole

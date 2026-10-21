@@ -277,11 +277,11 @@ The target compiles with the Debian trixie cross compiler, so the box needs glib
 
 Keep one Cargo process per target directory.
 
-Target caches are per checkout, both locally and in Docker builds.
+Docker target cache is one per machine; host target dirs stay per checkout.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
 [`tools/lane-start`](../../tools/lane-start) sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` and exports the key as `WAMN_CHECKOUT_KEY`.
 Pass that key as Docker's `WAMN_CHECKOUT_KEY` build argument.
-A new checkout starts with a cold build.
+A new checkout starts with a cold host build.
 
 Reuse that worktree's own target, and let Cargo decide which artifacts need rebuilding.
 Keep large build targets off temporary memory filesystems.
