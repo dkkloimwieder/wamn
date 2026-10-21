@@ -221,14 +221,14 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             owner_inputs: vec![registry_owner.clone()],
         },
         InstallStep {
-            number: "4.14", title: "Releases",
-            runs: Runner::Job("identity/platform-releases-<org>--<project>--<env>"),
-            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("tenants", tenants.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("operator certificate", format!("identity/operator-{org}")), ("PAT Job and Secret", "identity/mint-pat, identity/wamn-system-admin".into()), ("packages and wirings", "from environment documents and package artifacts".into())],
+            number: "4.14", title: "Publish releases",
+            runs: Runner::Job("platform/platform-release-<org>--<project>--<env>"),
+            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("tenants", tenants.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("operator certificate", format!("identity/operator-{org}")), ("wiring gate", "refuses wirings until wamn-wgpm9.4".into()), ("packages and wirings", "from environment documents and package artifacts".into())],
             owner_inputs: vec![registry_owner.clone()],
         },
         InstallStep {
             number: "4.15", title: "Qualification",
-            runs: Runner::Job("platform/platform-qualify-<org>--<project>--<env>"),
+            runs: Runner::Owner("qualify-release on the build machine"),
             inputs: vec![("environments", environments.into()), ("platform_version", platform_version.into()), ("release artifact base", format!("{registry}/releases")), ("release chart", "$HOME/.cache/wamn-install/release-chart".into()), ("release digests", "from 4.14".into())],
             owner_inputs: vec![registry_owner],
         },
@@ -240,7 +240,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         },
         InstallStep {
             number: "4.16", title: "Record the releases",
-            runs: Runner::Verb("Kubernetes API"),
+            runs: Runner::Owner("commit the release lines printed by platform apply"),
             inputs: vec![("environments", environments.into()), ("route hosts", routes.clone()), ("web bucket", format!("gs://{}/clients/<package>/<release digest hex>/", document.buckets.web)), ("release digests", "from 4.14, qualified by 4.15".into())],
             owner_inputs: vec![],
         },

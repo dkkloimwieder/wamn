@@ -12,4 +12,5 @@ pub mod manifests;
 mod packages;
 pub mod project;
 pub mod provider;
+mod releases;
 pub mod steps;

@@ -1,4 +1,4 @@
-//! Install the platform through runbook step 4.13 using kubectl and Helm.
+//! Install the platform through runbook step 4.14 using kubectl and Helm.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -22,7 +22,7 @@ use super::{build, lock};
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.13 under the install lock.
+/// Apply steps 4.3 through 4.14 under the install lock.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -45,6 +45,7 @@ pub async fn apply(
         context,
         namespace: "platform".into(),
     };
+    let mut published = None;
     for step in applied_steps(document, platform_version) {
         progress(&format!("{} {}: starting", step.number, step.title))?;
         let changed = match step.number {
@@ -86,6 +87,19 @@ pub async fn apply(
                 super::packages::apply(&target, document, repository, environments, work_directory)
                     .await?
             }
+            "4.14" => {
+                let result = super::releases::apply(
+                    &target,
+                    document,
+                    repository,
+                    environments,
+                    work_directory,
+                )
+                .await?;
+                let changed = result.changed;
+                published = Some(result);
+                changed
+            }
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
         progress(&format!(
@@ -95,7 +109,20 @@ pub async fn apply(
             if changed { "done" } else { "skipped" }
         ))?;
     }
-    progress("Steps after 4.13 come later.")?;
+    if let Some(published) = published {
+        for (path, _, digest) in &published.releases {
+            progress(&format!("{}: release = \"{digest}\"", path.display()))?;
+        }
+        if published.releases.iter().any(|(_, environment, _)| {
+            environment.release == crate::environment::document::DeclaredRelease::None
+        }) {
+            progress(
+                "Commit the release lines in the environment files, then rerun platform apply for step 4.17.",
+            )?;
+            return Ok(());
+        }
+    }
+    progress("Steps after 4.14 come later.")?;
     Ok(())
 }
 
@@ -119,6 +146,7 @@ fn applied_steps(
                     | "4.11"
                     | "4.12"
                     | "4.13"
+                    | "4.14"
             )
         })
 }
@@ -906,7 +934,8 @@ mod tests {
         assert_eq!(
             numbers,
             [
-                "4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13"
+                "4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13",
+                "4.14"
             ]
         );
     }

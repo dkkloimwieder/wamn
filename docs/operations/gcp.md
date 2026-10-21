@@ -204,7 +204,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 ### 4.3 cert-manager and the edge certificate
 
 From the repository root, run `wamn-ctl platform apply <cluster.k>`.
-The verb runs sections 4.3 through 4.13 in order.
+The verb runs sections 4.3 through 4.14 in order.
 It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
 On GCP, it requests the production certificate directly.
 It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
@@ -656,6 +656,10 @@ target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url 
 
 ### 4.14 Releases
 
+`platform apply` runs `publish-release` as a Job for each environment without a wiring.
+Before any publication Job, it refuses a wiring and names `wamn-wgpm9.4`, which owns the cluster gate.
+Publication skips when the Job's completed input digest matches.
+
 `publish-release` prints the digest of the release manifest. Publish Receiving, which has no wiring:
 
 ```bash
@@ -786,6 +790,11 @@ git commit -m "Record platform $version benchmark"
 ```
 
 ### 4.16 Record the releases
+
+`platform apply` prints each environment path and its `release = "sha256:..."` line.
+It stops when any environment still declares `release = "none"`.
+Commit the printed lines in the environment files, then rerun the verb for step 4.17.
+The verb never edits a committed file.
 
 Each environment document names its release digest. The edge values and the URL map name the bucket path of each web client, which holds the digest hex. Write the new digests into the four files:
 
