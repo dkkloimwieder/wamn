@@ -90,6 +90,9 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
     client.batch_execute(RUN_STATE_SQL).await?;
     client.batch_execute(RUN_QUEUE_SQL).await?;
     client
+        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+        .await?;
+    client
         .batch_execute(&format!(
             "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
              VALUES ('{TENANT}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
