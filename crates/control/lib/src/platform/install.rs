@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
+use std::time::Instant;
 
 use anyhow::{Context as _, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -47,6 +48,7 @@ pub async fn apply(
     };
     let mut published = None;
     for step in applied_steps(document, platform_version) {
+        let started = Instant::now();
         progress(&format!("{} {}: starting", step.number, step.title))?;
         let changed = match step.number {
             "4.3" => certificates(&target, document, repository, &step).await?,
@@ -111,10 +113,11 @@ pub async fn apply(
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
         progress(&format!(
-            "{} {}: {}",
+            "{} {}: {} {:.1}s",
             step.number,
             step.title,
-            if changed { "done" } else { "skipped" }
+            if changed { "done" } else { "skipped" },
+            started.elapsed().as_secs_f64()
         ))?;
     }
     if let Some(published) = published {
@@ -130,6 +133,7 @@ pub async fn apply(
             return Ok(());
         }
     }
+    let started = Instant::now();
     progress("4.17 Apply with the release: starting")?;
     let changed = super::environments::apply(
         &target,
@@ -141,8 +145,9 @@ pub async fn apply(
     )
     .await?;
     progress(&format!(
-        "4.17 Apply with the release: {}",
-        if changed { "done" } else { "skipped" }
+        "4.17 Apply with the release: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
     ))?;
     progress("Steps after 4.17 come later.")?;
     Ok(())

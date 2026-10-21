@@ -206,6 +206,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 From the repository root, run `wamn-ctl platform apply <cluster.k>`.
 The verb runs sections 4.3 through 4.14 in order, then resumes at 4.17 after the owner commits release digests.
 It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
+Each done or skipped progress line includes elapsed seconds.
 On GCP, it requests the production certificate directly.
 It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
 Step 4.8 derives event users from the built packages of each `environments/*.k` beside `cluster.k`.
