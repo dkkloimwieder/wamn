@@ -14,12 +14,15 @@ The scope, address, permission, and query implementations therefore exist in bot
 Session renewal and the cookie transport retain one owner in `web/runtime`.
 DashboardShell and DashboardPanel frame each screen.
 FormView and TableView render forms and record lists through their application-owned bindings.
-Nested tables use TableView row details. The application owns expansion and child records.
+The Environment screen links to separate screens for Workloads, Live releases, Operations, and Roles.
+Each of these screens holds one table in the full panel.
+Rows open screens for memberships, workload conditions, reaches, statements, and relations.
+Each screen gives its tables the full panel width. Membership grants stay inline, with one command per change.
 The sign-in, invitation, recovery, and reset pages use `@wfe/form` with FormView.
 Their rules also exist in both shells until M3.
-After sign-in, the audience choice replaces the form in the centered identity panel.
-It uses wfe's [SidebarGroup](../../web/wfe/docs/layout.md#icon-sidebar) for expanded org and project groups.
-Each org lists its held Control entry first, then its projects and held environments.
+After sign-in, an audience table replaces the form.
+Its columns show the org, project, and environment.
+Breadcrumbs appear on screens after audience selection, but identity screens and audience choice omit them.
 One audience opens automatically.
 
 Each dashboard uses `Theme` from wfe v0.0.4 with its unchanged light defaults.

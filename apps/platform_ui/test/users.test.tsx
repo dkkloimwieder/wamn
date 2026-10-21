@@ -4,7 +4,7 @@ import { flush } from "solid-js";
 import { orgAdmin, user } from "@wamn/control-org-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
-import { User, Users, userSections } from "../src/users";
+import { InviteUser, User, Users, userSections } from "../src/users";
 import { CONTROL, identity, input } from "./fixtures";
 
 const admin = controlHolds({ orgAdmin: true, projects: [] });
@@ -37,54 +37,58 @@ describe("Users authority", () => {
     );
     expect(controlHolds({ orgAdmin: false, projects: [] })(operation)).toBe(false);
   });
-  it.each(["users", `users/${principalId}`])("shows no page at %s without org authority", async (path) => {
-    const session = identity(true, [], undefined, {
-      org_admin: false,
-      projects: [{ project: "widgets", project_admin: true }],
-    });
-    window.history.pushState({}, "", `/${CONTROL}/${path}`);
-    render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={userSections} fetch={session.fetch} />);
-    await screen.findByText("This address names no page.");
-    expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
-    expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
-  });
+  it.each(["users", "invite-user", `users/${principalId}`])(
+    "shows no page at %s without org authority",
+    async (path) => {
+      const session = identity(true, [], undefined, {
+        org_admin: false,
+        projects: [{ project: "widgets", project_admin: true }],
+      });
+      window.history.pushState({}, "", `/${CONTROL}/${path}`);
+      render(() => (
+        <Shell title="WAMN" org="acme" sections={[]} controlSections={userSections} fetch={session.fetch} />
+      ));
+      await screen.findByText("This address names no page.");
+      expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+      expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
+    },
+  );
 });
 
 describe("Users decisions", () => {
   it.each([true, false])("invites without implicit grants and reports delivery=%s", async (delivered) => {
     const writes: unknown[] = [];
     let invited = false;
-    let opened = "";
-    const transport = createTransport({
-      baseUrl: "/api",
-      fetch: async (url, init) => {
-        if (String(url).endsWith("/user/invite")) {
-          const [request] = JSON.parse(String(init?.body));
-          writes.push(request.value);
-          invited = true;
-          return completed({ principal_id: principalId, invited: delivered, enrolled: !delivered }, request.request_id);
-        }
-        return completed({ users: invited ? [person] : [] });
-      },
-    });
-    render(() => (
-      <Users
-        {...props}
-        transport={transport}
-        open={(path) => {
-          opened = path;
-        }}
-      />
-    ));
+    const session = identity(true);
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith("/user/invite")) {
+        const [request] = JSON.parse(String(init?.body));
+        writes.push(request.value);
+        invited = true;
+        return completed({ principal_id: principalId, invited: delivered, enrolled: !delivered }, request.request_id);
+      }
+      if (String(url).includes("/user/list")) return completed({ users: invited ? [person] : [] });
+      return session.fetch(url, init);
+    };
+    window.history.pushState({}, "", `/${CONTROL}/users`);
+    render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={userSections} fetch={fetch} />);
+    await screen.findByRole("table", { name: "Users" });
+    fireEvent.click(screen.getByRole("button", { name: "Table controls" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Invite user" }));
+    await screen.findByRole("heading", { name: "Invite user" });
+    expect(window.location.pathname).toBe(`/${CONTROL}/invite-user`);
+    expect(screen.queryByRole("table", { name: "Users" })).toBeNull();
     input(screen.getByRole("textbox", { name: /^Email$/ }), person.email);
     input(screen.getByLabelText("Display name"), person.display_name);
     fireEvent.click(screen.getByRole("button", { name: "Invite user" }));
     await screen.findByText(delivered ? "User invited." : "User is already enrolled.");
-    fireEvent.click(await screen.findByRole("button", { name: person.display_name }));
+    await screen.findByRole("button", { name: person.display_name });
+    expect(window.location.pathname).toBe(`/${CONTROL}/users`);
+    expect(screen.queryByLabelText("Display name")).toBeNull();
     expect(writes).toEqual([
       { email: person.email, display_name: person.display_name, memberships: [], project_admins: [], org_admin: false },
     ]);
-    expect(opened).toBe(`users/${principalId}`);
+
     const users = within(screen.getByRole("table", { name: "Users" }));
     expect(users.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
       "Name",
@@ -99,7 +103,42 @@ describe("Users decisions", () => {
     expect(users.getByRole("cell", { name: person.email })).toBeTruthy();
     expect(users.getByRole("cell", { name: "User state: active" })).toBeTruthy();
     expect(users.getByRole("cell", { name: "User" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: person.display_name }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/users/${principalId}`));
   });
+  it("keeps a refused invitation on the form with its values and error", async () => {
+    let opened = "";
+    const transport = createTransport({
+      baseUrl: "/api",
+      fetch: async (_url, init) => {
+        const [request] = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify([
+            {
+              request_id: request.request_id,
+              error: { code: "permission_denied", detail: { operation: user.USER_INVITE_ROUTE.operation } },
+            },
+          ]),
+        );
+      },
+    });
+    render(() => (
+      <InviteUser
+        {...props}
+        transport={transport}
+        open={(path) => {
+          opened = path;
+        }}
+      />
+    ));
+    input(screen.getByRole("textbox", { name: "Email" }), person.email);
+    input(screen.getByLabelText("Display name"), person.display_name);
+    fireEvent.click(screen.getByRole("button", { name: "Invite user" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Error: permission_denied");
+    expect(screen.getByRole("textbox", { name: "Email" })).toHaveProperty("value", person.email);
+    expect(opened).toBe("");
+  });
+
   it.each(["Deactivate user", "Activate user", "Grant org admin", "Revoke org admin"])(
     "refreshes after %s",
     async (action) => {
@@ -214,7 +253,6 @@ describe("User decisions", () => {
     expect(screen.getAllByTitle(principalId)).toHaveLength(3);
     const table = screen.getByRole("table", { name: "Project access" });
     expect(Array.from(table.querySelectorAll(":scope > thead th")).map((cell) => cell.textContent)).toEqual([
-      "Details",
       "Project",
       "State",
       "Display name",
@@ -232,10 +270,8 @@ describe("User decisions", () => {
     expect(row.getByRole("img", { name: "No" })).toBeTruthy();
     expect(screen.queryByText("other-env")).toBeNull();
     expect(calls.filter((path) => path.includes("/member/list"))).toHaveLength(2);
-    expect(screen.queryByRole("table", { name: "Memberships in widgets" })).toBeNull();
-    fireEvent.click(row.getByRole("button", { name: "Expand details for row widgets" }));
-    await screen.findByRole("table", { name: "Memberships in widgets" });
-    expect(screen.queryByRole("table", { name: "Memberships in gadgets" })).toBeNull();
+    expect(screen.getByRole("table", { name: "Memberships" }).querySelectorAll("tbody tr[data-row]")).toHaveLength(0);
+    expect(table.querySelector("table")).toBeNull();
     fireEvent.keyDown(screen.getByRole("button", { name: "Project" }), { key: "Enter" });
     fireEvent.keyDown(await screen.findByRole("option", { name: "widgets" }), { key: "Enter" });
     flush();
@@ -247,32 +283,28 @@ describe("User decisions", () => {
       within(
         screen.getByRole("table", { name: "Project access" }).querySelector<HTMLElement>('tr[data-row="widgets"]')!,
       );
-    await screen.findByRole("button", { name: "Revoke membership in dev" });
-    const memberships = within(screen.getByRole("table", { name: "Memberships in widgets" }));
+    await screen.findAllByRole("button", { name: "Revoke membership in widgets/dev" });
+    const memberships = within(screen.getByRole("table", { name: "Memberships" }));
     expect(memberships.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+      "Project",
       "Environment",
       "State",
       "Action",
     ]);
-    expect(memberships.getByRole("cell", { name: "active" })).toBeTruthy();
+    expect(memberships.getAllByRole("cell", { name: "active" })).toHaveLength(2);
     fireEvent.click(access().getByRole("button", { name: "Grant project admin" }));
     await waitFor(() => expect(access().getByText("Project admin")).toBeTruthy());
     fireEvent.click(access().getByRole("button", { name: "Revoke project admin" }));
     await waitFor(() => expect(access().getByText("User")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Revoke membership in dev" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership in dev" })).toBeNull());
-    fireEvent.click(access().getByRole("button", { name: "Collapse details for row widgets" }));
-    await waitFor(() => expect(screen.queryByRole("table", { name: "Memberships in widgets" })).toBeNull());
-    fireEvent.click(access().getByRole("button", { name: "Expand details for row widgets" }));
-    await screen.findByRole("table", { name: "Memberships in widgets" });
-    expect(screen.queryByRole("button", { name: "Revoke membership in dev" })).toBeNull();
+    fireEvent.click(memberships.getByRole("button", { name: "Revoke membership in widgets/dev" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership in widgets/dev" })).toBeNull());
     expect(writes).toEqual([
       { path: "/api/wamn_control/member/grant", value: { principal_id: principalId, project: "widgets", env: "dev" } },
       { path: "/api/wamn_control/project_admin/grant", value: { principal_id: principalId, project: "widgets" } },
       { path: "/api/wamn_control/project_admin/revoke", value: { principal_id: principalId, project: "widgets" } },
       { path: "/api/wamn_control/member/revoke", value: { principal_id: principalId, project: "widgets", env: "dev" } },
     ]);
-  }, 15_000);
+  });
   it("does not offer another user's grants when the addressed user is absent", async () => {
     const transport = createTransport({
       baseUrl: "/api",

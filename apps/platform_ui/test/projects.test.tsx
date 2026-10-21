@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { flush } from "solid-js";
 import { describe, expect, it } from "vitest";
 import { control, environment, member, project, projectAdmin, release, user } from "@wamn/control-org-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
-import { controlSections, Project, Projects } from "../src/projects";
+import { controlSections, Project } from "../src/projects";
 import { CONTROL, identity, input } from "./fixtures";
 
 const admin = controlHolds({ orgAdmin: true, projects: [] });
@@ -98,7 +99,7 @@ describe("Projects and Project", () => {
         : session.fetch(url, init);
     window.history.pushState({}, "", `/${CONTROL}`);
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
-    await screen.findByRole("heading", { name: "Projects" });
+    await screen.findByRole("table", { name: "Projects" });
     await screen.findByRole("button", { name: "widgets" });
     expect(
       await within(screen.getByRole("table", { name: "Projects" })).findByRole("cell", { name: "active" }),
@@ -108,46 +109,67 @@ describe("Projects and Project", () => {
     expect(session.state.calls.filter((path) => path.endsWith("/control/mine"))).toHaveLength(1);
   });
 
-  it("creates a project, refreshes the list, and opens its encoded address", async () => {
+  it("creates a project named create and keeps its detail address reachable", async () => {
     const projects: string[] = [];
     const writes: unknown[] = [];
-    let opened = "";
-    const transport = createTransport({
-      baseUrl: "/api",
-      fetch: async (url, init) => {
-        if (String(url).endsWith("/project/create")) {
-          const body = JSON.parse(String(init?.body));
-          writes.push(body);
-          projects.push(body[0].value.project);
-          return new Response(
-            JSON.stringify([{ request_id: body[0].request_id, value: { project: body[0].value.project } }]),
-          );
-        }
+    const session = identity(true);
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      if (!String(url).includes("/api/wamn_control/project/")) return session.fetch(url, init);
+      if (String(url).endsWith("/project/create")) {
+        const body = JSON.parse(String(init?.body));
+        writes.push(body);
+        projects.push(body[0].value.project);
         return new Response(
-          JSON.stringify([{ value: { projects: projects.map((name) => ({ name, state: "inactive" })) } }]),
+          JSON.stringify([{ request_id: body[0].request_id, value: { project: body[0].value.project } }]),
         );
-      },
-    });
-    render(() => (
-      <Projects
-        transport={transport}
-        holds={admin}
-        params={{}}
-        search={{}}
-        open={(path) => {
-          opened = path;
-        }}
-        close={() => {}}
-      />
-    ));
-    input(screen.getByLabelText("Project name"), "widgets");
+      }
+      return new Response(
+        JSON.stringify([{ value: { projects: projects.map((name) => ({ name, state: "inactive" })) } }]),
+      );
+    };
+    window.history.pushState({}, "", `/${CONTROL}/projects`);
+    render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
+    await screen.findByRole("table", { name: "Projects" });
+    fireEvent.click(screen.getByRole("button", { name: "Table controls" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Create project" });
+    expect(window.location.pathname).toBe(`/${CONTROL}/create-project`);
+    expect(screen.queryByRole("table", { name: "Projects" })).toBeNull();
+    input(screen.getByLabelText("Project name"), "create");
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
-    fireEvent.click(await screen.findByRole("button", { name: "widgets" }));
-    expect(writes).toEqual([[{ request_id: expect.any(String), value: { project: "widgets" } }]]);
-    expect(opened).toBe("projects/widgets");
+    await screen.findByRole("button", { name: "create" });
+    expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
+    expect(screen.queryByLabelText("Project name")).toBeNull();
+    expect(await screen.findByText("Project created.")).toHaveProperty("role", "status");
+    expect(writes).toEqual([[{ request_id: expect.any(String), value: { project: "create" } }]]);
+
     expect(
       within(screen.getByRole("table", { name: "Projects" })).getByRole("cell", { name: "inactive" }),
     ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "create" }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/create`));
+  });
+
+  it("opens the create form directly and cancels to Projects without writing", async () => {
+    const session = identity(true);
+    const fetch: typeof globalThis.fetch = async (url, init) =>
+      String(url).includes("/project/list")
+        ? new Response(JSON.stringify([{ value: { projects: [] } }]))
+        : session.fetch(url, init);
+    window.history.pushState({}, "", `/${CONTROL}/create-project`);
+    render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
+    await screen.findByRole("heading", { name: "Create project" });
+    const location = within(screen.getByRole("navigation", { name: "Platform location" }));
+    expect(location.getByRole("link", { name: "Projects" })).toBeTruthy();
+    expect(
+      within(screen.getByRole("navigation", { name: "Primary navigation" }))
+        .getByRole("link", { name: "Projects" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByRole("table", { name: "Projects" });
+    expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
+    expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
   });
 
   it("rejects incomplete membership input without claiming success", async () => {
@@ -183,7 +205,8 @@ describe("Projects and Project", () => {
     expect(screen.queryByText("Membership granted.")).toBeNull();
   });
 
-  it("shows every environment and member field without additional reads", async () => {
+  it("shows every environment and member field and links to the member screen", async () => {
+    let opened = "";
     const principalId = "12345678-1234-4000-8000-000000000001";
     const calls: string[] = [];
     const transport = createTransport({
@@ -216,7 +239,9 @@ describe("Projects and Project", () => {
         holds={admin}
         params={{ project: "widgets" }}
         search={{}}
-        open={() => {}}
+        open={(path) => {
+          opened = path;
+        }}
         close={() => {}}
       />
     ));
@@ -226,7 +251,6 @@ describe("Projects and Project", () => {
     expect(environments.getByRole("cell", { name: "inactive" })).toBeTruthy();
     const members = screen.getByRole("table", { name: "Members" });
     expect(Array.from(members.querySelectorAll(":scope > thead th")).map((cell) => cell.textContent)).toEqual([
-      "Details",
       "Display name",
       "Email",
       "User ID",
@@ -240,14 +264,83 @@ describe("Projects and Project", () => {
     expect(within(members).getByRole("img", { name: "Yes" })).toBeTruthy();
     expect(within(members).getByTitle(principalId).textContent).toBe("12345678");
     expect(screen.queryByRole("table", { name: "Memberships for alex@example.invalid" })).toBeNull();
-    fireEvent.click(within(members).getByRole("button", { name: `Expand details for row ${principalId}` }));
-    await screen.findByRole("table", { name: "Memberships for alex@example.invalid" });
-    expect(within(members).getByRole("button", { name: "Revoke membership in dev" })).toBeTruthy();
+    fireEvent.click(within(members).getByRole("button", { name: "Alex" }));
+    expect(opened).toBe(`projects/widgets/members/${principalId}`);
+    expect(members.querySelector("table")).toBeNull();
     expect(calls.sort()).toEqual([
       "/api/wamn_control/environment/list",
       "/api/wamn_control/member/list",
       "/api/wamn_control/project/list",
     ]);
+  });
+});
+
+describe("Project member", () => {
+  it("lets a project admin open a member and grant or revoke one membership per command", async () => {
+    const principalId = "12345678-1234-4000-8000-000000000001";
+    let environments = ["dev"];
+    const writes: unknown[] = [];
+    const session = identity(true, [], undefined, {
+      org_admin: false,
+      projects: [{ project: "widgets", project_admin: true }],
+    });
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      const path = new URL(String(url), "http://localhost").pathname;
+      if (path.endsWith("/environment/list"))
+        return new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }]));
+      if (path.endsWith("/member/list"))
+        return new Response(
+          JSON.stringify([
+            {
+              value: {
+                members: [
+                  {
+                    principal_id: principalId,
+                    display_name: "Alex",
+                    email: "alex@example.invalid",
+                    org_admin: false,
+                    project_admin: false,
+                    environments,
+                  },
+                ],
+              },
+            },
+          ]),
+        );
+      if (path.endsWith("/member/grant") || path.endsWith("/member/revoke")) {
+        const [request] = JSON.parse(String(init?.body));
+        writes.push({ path, value: request.value });
+        environments = path.endsWith("/grant") ? ["dev"] : [];
+        return new Response(
+          JSON.stringify([
+            { request_id: request.request_id, value: { ...request.value, member: environments.length > 0 } },
+          ]),
+        );
+      }
+      return session.fetch(url, init);
+    };
+    window.history.pushState({}, "", `/${CONTROL}/projects/widgets`);
+    render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Alex" }));
+    const table = await screen.findByRole("table", { name: "Memberships for alex@example.invalid" });
+    expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets/members/${principalId}`);
+    expect(table.closest("td")).toBeNull();
+    expect(screen.queryByRole("table", { name: "Members" })).toBeNull();
+    const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
+    expect(breadcrumbs.queryByRole("link", { name: "members" })).toBeNull();
+    expect(breadcrumbs.getByRole("link", { name: "widgets" })).toBeTruthy();
+    fireEvent.click(within(table).getByRole("button", { name: "Revoke membership in dev" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership in dev" })).toBeNull());
+    fireEvent.keyDown(screen.getByRole("button", { name: "Environment" }), { key: "Enter" });
+    fireEvent.keyDown(await screen.findByRole("option", { name: "dev" }), { key: "Enter" });
+    flush();
+    fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
+    await screen.findByRole("button", { name: "Revoke membership in dev" });
+    expect(writes).toEqual([
+      { path: "/api/wamn_control/member/revoke", value: { project: "widgets", env: "dev", principal_id: principalId } },
+      { path: "/api/wamn_control/member/grant", value: { project: "widgets", env: "dev", principal_id: principalId } },
+    ]);
+    expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
   });
 });
 

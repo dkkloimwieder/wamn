@@ -4,6 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { AUD, CONTROL, ONE, identity, input, open, signIn } from "./fixtures";
 
 describe("identity pages", () => {
+  it.each(["/", "/invite", "/recover", "/reset"])("omits breadcrumbs from %s", async (path) => {
+    open(path, identity(false).fetch);
+    await screen.findByLabelText("email");
+    expect(screen.queryByRole("navigation", { name: "Platform location" })).toBeNull();
+  });
   it("posts the invitation code of the address and the password to enroll, then opens sign in", async () => {
     const seen: { url: string; body: unknown }[] = [];
     const fetch = (url: string | URL | Request, init?: RequestInit) => {
@@ -83,7 +88,7 @@ describe("identity pages", () => {
     const { state, fetch } = identity(false, [...ONE, { aud: PROD, org: "acme", project: "widgets", env: "prod" }]);
     open("/", fetch);
     await signIn();
-    const audiences = await screen.findByRole("navigation", { name: "Audiences" });
+    const audiences = await screen.findByRole("table", { name: "Audiences" });
     expect(
       within(audiences)
         .getAllByRole("link")
@@ -92,8 +97,8 @@ describe("identity pages", () => {
     expect(screen.queryByLabelText("email")).toBeNull();
     expect(screen.queryByLabelText("password")).toBeNull();
     expect(screen.queryByRole("button", { name: "sign in" })).toBeNull();
-    expect(screen.queryByRole("table")).toBeNull();
-    expect(audiences.closest(".identity-panel")).not.toBeNull();
+    expect(audiences.closest(".platform-table-screen")).not.toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Platform location" })).toBeNull();
     expect(state.bodies[state.calls.indexOf("/password/environments")]).toEqual({
       email: "someone@wamn.dev",
       password: "a long password string",
@@ -105,7 +110,7 @@ describe("identity pages", () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/${PROD}/pallets`));
   });
 
-  it("groups only held audiences by org and project, with Control first and every group open", async () => {
+  it("lists only held audiences with their org, project, and environment", async () => {
     const listed = [
       ...["widgets", "gadgets"].flatMap((project) =>
         ["dev", "prod"].map((env) => ({
@@ -121,41 +126,30 @@ describe("identity pages", () => {
     const { state, fetch } = identity(false, listed);
     open("/", fetch);
     await signIn();
-    const audiences = await screen.findByRole("navigation", { name: "Audiences" });
-    function group(element: Element): unknown {
-      const details = element.querySelector(":scope > details")!;
-      expect(details).toHaveProperty("open", true);
-      return {
-        label: details.querySelector(":scope > summary")?.textContent,
-        entries: Array.from(details.querySelector(".ui-dashboard-menu")!.children).map((child) =>
-          child.tagName === "A" ? { label: child.textContent, href: child.getAttribute("href") } : group(child),
+    const audiences = await screen.findByRole("table", { name: "Audiences" });
+    expect(
+      within(audiences)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["Org", "Project", "Environment"]);
+    expect(
+      within(audiences)
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) =>
+          within(row)
+            .getAllByRole("cell")
+            .map((cell) => cell.textContent),
         ),
-      };
-    }
-    expect(Array.from(audiences.children).map(group)).toEqual([
-      {
-        label: "acme",
-        entries: [
-          { label: "Control", href: `/${CONTROL}` },
-          ...["widgets", "gadgets"].map((project) => ({
-            label: project,
-            entries: ["dev", "prod"].map((env) => ({
-              label: env,
-              href: `/urn:wamn:project-env:acme:${project}:${env}:k3m9x2p7`,
-            })),
-          })),
-        ],
-      },
-      {
-        label: "other",
-        entries: [
-          {
-            label: "widgets",
-            entries: [{ label: "dev", href: "/urn:wamn:project-env:other:widgets:dev:q8w4e2r6" }],
-          },
-        ],
-      },
+    ).toEqual([
+      ["acme", "", "Control"],
+      ["acme", "widgets", "dev"],
+      ["acme", "widgets", "prod"],
+      ["acme", "gadgets", "dev"],
+      ["acme", "gadgets", "prod"],
+      ["other", "widgets", "dev"],
     ]);
+    expect(audiences.querySelector("details")).toBeNull();
     const links = within(audiences).getAllByRole("link");
     expect(links.map((link) => link.getAttribute("href")).sort()).toEqual(
       listed.map((entry) => `/${entry.aud}`).sort(),
@@ -196,7 +190,8 @@ describe("identity pages", () => {
     open(`/${AUD}/pallets`, fetch);
     await screen.findByText("pallets screen");
     flush();
-    fireEvent.click(screen.getByText("sign out"));
+    fireEvent.keyDown(screen.getByRole("button", { name: "User menu" }), { key: "Enter" });
+    fireEvent.keyDown(await screen.findByRole("menuitem", { name: "Sign out" }), { key: "Enter" });
     expect(await screen.findByLabelText("password")).toBeDefined();
     expect(screen.queryByText("pallets screen")).toBeNull();
     expect(state.signedIn).toBe(false);
@@ -214,7 +209,7 @@ describe("identity pages", () => {
     expect(await screen.findByText("product totals screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/product-totals`));
     // One held screen of Products, so the model names it, and Pallets has none.
-    expect(screen.getByText("Products").closest("a")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Products" })).not.toBeNull();
     expect(screen.queryByText("Pallets")).toBeNull();
     expect(screen.queryByText("query")).toBeNull();
     flush();
@@ -237,10 +232,10 @@ describe("identity pages", () => {
     expect(screen.queryByText("Pallets")).toBeNull();
     expect(screen.queryByText("Administration")).toBeNull();
     flush();
-    fireEvent.click(screen.getByText("widgets"));
+    fireEvent.click(screen.getByRole("link", { name: "Projects: widgets" }));
     expect(await screen.findByText("members of widgets")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets`));
-    expect(screen.getByText("gadgets")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Projects: gadgets" })).toBeDefined();
   });
 });
 

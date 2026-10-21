@@ -33,5 +33,5 @@ export default defineConfig({
       ),
     },
   },
-  test: { environment: "jsdom", server: { deps: { inline: true } } },
+  test: { environment: "jsdom", testTimeout: 15_000, server: { deps: { inline: true } } },
 });

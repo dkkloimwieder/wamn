@@ -70,7 +70,7 @@ function mount(data: ReturnType<typeof fixture>, orgAdmin = true) {
     <Environment
       transport={data.transport}
       holds={controlHolds({ orgAdmin, projects: [{ project: "widgets", projectAdmin: true }] })}
-      params={{ project: "widgets", env: "dev" }}
+      params={{ aud: CONTROL, project: "widgets", env: "dev" }}
       search={{}}
       open={() => {}}
       close={() => {}}
@@ -103,32 +103,139 @@ describe("Environment", () => {
     mount(data);
     await screen.findByRole("region", { name: "Release profile" });
     expect(screen.getByRole("region", { name: "Environment status" }).textContent).toContain("sha256:release");
-    expect(screen.queryByRole("table", { name: "Conditions for http" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Expand details for row http" }));
+    expect(screen.queryByRole("table")).toBeNull();
+    const links = within(screen.getByRole("navigation", { name: "Environment tables" })).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual(["Workloads", "Live releases", "Operations", "Roles"]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(
+      ["workloads", "live-releases", "operations", "roles"].map((path) => `/${CONTROL}/projects/widgets/dev/${path}`),
+    );
+    expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(1);
+  });
+
+  it("opens each environment table and its details on separate screens", async () => {
+    const data = fixture();
+    const session = identity(true);
+    const base = `/${CONTROL}/projects/widgets/dev`;
+    window.history.pushState({}, "", base);
+    render(() => (
+      <Shell
+        title="WAMN"
+        org="acme"
+        sections={[]}
+        controlSections={controlSections}
+        fetch={(url, init) =>
+          String(url).includes("/api/wamn_control/") && !String(url).endsWith("/control/mine")
+            ? data.fetch(url, init)
+            : session.fetch(url, init)
+        }
+      />
+    ));
+    fireEvent.click(await screen.findByRole("link", { name: "Workloads" }));
+    await screen.findByRole("table", { name: "Workloads" });
+    expect(window.location.pathname).toBe(`${base}/workloads`);
+    expect(screen.getAllByRole("table")).toHaveLength(1);
+    fireEvent.click(await screen.findByRole("button", { name: "http" }));
     const conditions = within(await screen.findByRole("table", { name: "Conditions for http" }));
+    expect(window.location.pathname).toBe(`${base}/workloads/http`);
     expect(conditions.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Condition", "Status"]);
     expect(conditions.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Ready", "True"]);
-    expect(screen.getByRole("table", { name: "Live releases" }).textContent).toContain("1 pods");
-    expect(within(screen.getByRole("table", { name: "Live releases" })).getByTitle("sha256:release").textContent).toBe(
-      "sha256:r",
+    expect(screen.queryByRole("table", { name: "Workloads" })).toBeNull();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "Workloads" }),
     );
+    await screen.findByRole("table", { name: "Workloads" });
+    for (const [label, path] of [
+      ["Live releases", "live-releases"],
+      ["Roles", "roles"],
+      ["Operations", "operations"],
+    ] as const) {
+      fireEvent.click(
+        within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "dev" }),
+      );
+      fireEvent.click(await screen.findByRole("link", { name: label }));
+      await screen.findByRole("table", { name: label });
+      expect(window.location.pathname).toBe(`${base}/${path}`);
+      expect(screen.getAllByRole("table")).toHaveLength(1);
+      expect(screen.queryByRole("region", { name: "Environment status" })).toBeNull();
+      expect(screen.queryByRole("region", { name: "Release profile" })).toBeNull();
+      const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
+      expect(breadcrumbs.getByText(label).getAttribute("aria-current")).toBe("page");
+      if (label === "Live releases") {
+        const releases = within(screen.getByRole("table", { name: label }));
+        expect(releases.getByTitle("sha256:release").textContent).toBe("sha256:r");
+        expect(releases.getByText("1 pods")).toBeTruthy();
+      }
+      if (label === "Roles") {
+        expect(screen.getByRole("table", { name: label }).textContent).toContain("clerk: acme:receiving/record");
+      }
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "acme:receiving/record (acme/receiving)" }));
+    await screen.findByRole("table", { name: "Reaches" });
+    expect(window.location.pathname).toBe(`${base}/operations/acme%3Areceiving%2Frecord`);
+    expect(screen.queryByRole("table", { name: "Operations" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "acme: acme:receiving/record" }));
+    await screen.findByRole("table", { name: "Statements" });
+    expect(window.location.pathname).toBe(`${base}/operations/acme%3Areceiving%2Frecord/reaches/acme`);
     expect(screen.queryByRole("table", { name: "Reaches" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Expand details for row acme:receiving/record" }));
-    fireEvent.click(
-      within(await screen.findByRole("table", { name: "Reaches" })).getByRole("button", {
-        name: "Expand details for row acme",
-      }),
+    fireEvent.click(screen.getByRole("button", { name: "record.sql" }));
+    const relations = await screen.findByRole("table", { name: "Relations" });
+    expect(window.location.pathname).toBe(
+      `${base}/operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql`,
     );
-    fireEvent.click(
-      within(await screen.findByRole("table", { name: "Statements" })).getByRole("button", {
-        name: "Expand details for row record.sql",
-      }),
+    expect(relations.textContent).toContain("receipt: reads id; writes quantity; locks yes; deletes no");
+    expect(screen.queryByRole("table", { name: "Statements" })).toBeNull();
+    expect(relations.closest("td")).toBeNull();
+    const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
+    expect(breadcrumbs.getByRole("link", { name: "Operations" }).getAttribute("href")).toBe(`${base}/operations`);
+    expect(breadcrumbs.getByRole("link", { name: "acme:receiving/record" }).getAttribute("href")).toBe(
+      `${base}/operations/acme%3Areceiving%2Frecord`,
     );
-    expect((await screen.findByRole("table", { name: "Relations" })).textContent).toContain(
-      "receipt: reads id; writes quantity; locks yes; deletes no",
-    );
-    expect(screen.getByRole("table", { name: "Roles" }).textContent).toContain("clerk: acme:receiving/record");
-    expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(1);
+  });
+
+  it.each([
+    ["workloads", "Workloads"],
+    ["live-releases", "Live releases"],
+    ["operations", "Operations"],
+    ["roles", "Roles"],
+    ["workloads/http", "Conditions for http"],
+    ["operations/acme%3Areceiving%2Frecord", "Reaches"],
+    ["operations/acme%3Areceiving%2Frecord/reaches/acme", "Statements"],
+    ["operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql", "Relations"],
+  ])("opens the saved table address %s", async (path, table) => {
+    const data = fixture();
+    const session = identity(true);
+    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
+    render(() => (
+      <Shell
+        title="WAMN"
+        org="acme"
+        sections={[]}
+        controlSections={controlSections}
+        fetch={(url, init) =>
+          String(url).includes("/api/wamn_control/") && !String(url).endsWith("/control/mine")
+            ? data.fetch(url, init)
+            : session.fetch(url, init)
+        }
+      />
+    ));
+    expect((await screen.findByRole("table", { name: table })).closest("td")).toBeNull();
+    expect(screen.getAllByRole("table")).toHaveLength(1);
+  });
+
+  it("reports a missing detail", async () => {
+    const data = fixture();
+    render(() => (
+      <Environment
+        transport={data.transport}
+        holds={() => true}
+        params={{ project: "widgets", env: "dev", operation: "missing" }}
+        search={{}}
+        open={() => {}}
+        close={() => {}}
+      />
+    ));
+    await screen.findByText("This address names no page.");
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
   it.each(["active", "inactive"] as const)(
@@ -164,6 +271,25 @@ describe("Environment", () => {
     expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
   });
 
+  it.each(["operations", "roles"] as const)("shows an empty %s table without a release", async (table) => {
+    const data = fixture("active", null);
+    render(() => (
+      <Environment
+        transport={data.transport}
+        holds={() => true}
+        params={{ aud: CONTROL, project: "widgets", env: "dev" }}
+        table={table}
+        search={{}}
+        open={() => {}}
+        close={() => {}}
+      />
+    ));
+    const records = await screen.findByRole("table", { name: table === "operations" ? "Operations" : "Roles" });
+    expect(within(records).queryAllByRole("cell")).toHaveLength(0);
+    expect(screen.getAllByRole("table")).toHaveLength(1);
+    expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
+  });
+
   it("lets a project admin read its environment but offers no status writes", async () => {
     const data = fixture();
     mount(data, false);
@@ -171,16 +297,19 @@ describe("Environment", () => {
     expect(screen.queryByRole("button", { name: /environment$/ })).toBeNull();
   });
 
-  it("shows no page and sends no environment read outside the project admin's scope", async () => {
-    const session = identity(true, [], undefined, {
-      org_admin: false,
-      projects: [{ project: "widgets", project_admin: true }],
-    });
-    window.history.pushState({}, "", `/${CONTROL}/projects/other/dev`);
-    render(() => (
-      <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={session.fetch} />
-    ));
-    await screen.findByText("This address names no page.");
-    expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
-  });
+  it.each(["", "/workloads", "/live-releases", "/operations", "/roles"])(
+    "refuses an environment address outside the project admin's scope: %s",
+    async (path) => {
+      const session = identity(true, [], undefined, {
+        org_admin: false,
+        projects: [{ project: "widgets", project_admin: true }],
+      });
+      window.history.pushState({}, "", `/${CONTROL}/projects/other/dev${path}`);
+      render(() => (
+        <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={session.fetch} />
+      ));
+      await screen.findByText("This address names no page.");
+      expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
+    },
+  );
 });

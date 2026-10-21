@@ -736,7 +736,8 @@ It shows that the CSS entry compiles.
 It starts `wamn dev up` on disposable services through the existing `delivery_timings` fixture.
 
 The test uses platform verbs to enroll the org admin.
-The admin invites the second user from the Users screen.
+The admin opens the Users table controls and selects Invite user.
+The invitation form returns to Users after submission and shows the delivery result.
 The test reads the invitation code from the [local mail file](development-loop.md#wamn-dev-environment-developer-session) and passes it to the browser.
 The second user sets a password on the platform UI invite page and signs in.
 The admin deactivates and reactivates the user, then grants and revokes org-admin.
@@ -745,7 +746,9 @@ Each write must update the Users screen, including after a reload.
 The fixture grants the admin membership in `receiving/dev`, requires both audiences, and chooses Control.
 Control opens Projects, and the shell root carries `data-ui`.
 The fixture runs `wamn dev --config <root>/dev.json --overlay-root apps/wamn_receiving --hold` to install and start the Receiving release.
-The browser creates `browser-project` and opens its Project screen.
+The browser opens the Projects table controls and selects Create project.
+The form returns to Projects after submission.
+The browser opens the new `browser-project` from the table.
 The fixture then calls `provision_project_env` and `reconcile_journey_run_plane` to prepare `browser-project/dev` on the disposable PostgreSQL server.
 It prepares the administration credential through `run_workload_action` and installs its emitted file in the local control host's credential directory.
 
@@ -757,6 +760,7 @@ The project-admin session uses the project names from `control.mine` and never c
 Project inactivation and activation must each show only the opposite action, including after a page reload.
 
 The browser also opens `receiving/dev` from Project, reads its runtime status and release profile, and toggles its state with a reload.
+It follows the Environment links to Workloads, Live releases, Operations, and Roles, then reloads each table screen.
 If identity limits session renewals, the browser waits for its `Retry-After` period before it reloads the same address.
 The test prints its elapsed time and fails if it exceeds 15 minutes.
 
@@ -764,6 +768,7 @@ The browser uses a 1400 by 900 viewport and saves one PNG for each screen in `<r
 The Rust test and browser print that directory.
 Identity files are `sign-in.png`, `invite.png`, `recover.png`, `reset.png`, and `audience-choice.png`.
 Administration files are `control-layout.png`, `projects.png`, `project.png`, `environment.png`, `users.png`, and `user.png`.
+Environment table files are `environment-workloads.png`, `environment-live-releases.png`, `environment-operations.png`, and `environment-roles.png`.
 The other files are `receiving-layout.png` and `not-found.png`.
 Recovery and reset captures show their entry forms. The reset capture includes the missing-code message.
 The test retains these files after service cleanup.

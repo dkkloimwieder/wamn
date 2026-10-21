@@ -1,5 +1,5 @@
 import { createSignal, Show, untrack, type Component } from "solid-js";
-import { createTable, type NativeColumnDef, type TableRowDetails } from "@wfe/components/table";
+import { createTable, type NativeColumnDef } from "@wfe/components/table";
 import { ValueDisplay } from "@wfe/components";
 import { TableView, type ColumnPresentation, type CustomCellProps } from "@wfe/generator";
 
@@ -12,11 +12,9 @@ export function Records<Row>(props: {
   columns: readonly NativeColumnDef<Row>[];
   formats?: Readonly<Record<string, ColumnPresentation["format"]>>;
   cells?: Readonly<Record<string, Component<{ row: Row }>>>;
-  details?: Component<{ row: Row }>;
+  create?: { label: string; run: () => void };
 }) {
   const [collapsed, setCollapsed] = createSignal(true);
-  const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set());
-  const Details = untrack(() => props.details);
   const columns = untrack(() => props.columns);
   const cells = untrack(() =>
     Object.fromEntries(
@@ -49,33 +47,19 @@ export function Records<Row>(props: {
   const presentation = Object.fromEntries(
     columns.map((column) => [column.id, { label: String(column.header ?? column.id), renderer: column.id }]),
   );
-  const rowDetails: TableRowDetails | undefined = Details
-    ? {
-        expanded: (id) => expanded().has(id),
-        onExpandedChange: (id, open) =>
-          setExpanded((previous) => {
-            const next = new Set(previous);
-            if (open) next.add(id);
-            else next.delete(id);
-            return next;
-          }),
-        render: (id) => (
-          <Show when={props.rows.find((row) => props.rowKey(row) === id)}>{(row) => <Details row={row()} />}</Show>
-        ),
-      }
-    : undefined;
   return (
     <TableView
       description={{
         id: props.id,
         title: props.title,
         columns: presentation,
+        actions: props.create ? [{ id: "create", label: props.create.label }] : [],
         controls: { sorting: false, filtering: false, search: false, grouping: false, columnReordering: false },
       }}
       bindings={{
         table,
         cells,
-        rowDetails,
+        actions: { create: { run: () => props.create?.run() } },
         width: columns.some((column) => column.size !== undefined)
           ? table.getVisibleColumns().reduce((width, column) => width + column.getSize(), 0)
           : undefined,

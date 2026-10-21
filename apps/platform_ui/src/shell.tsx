@@ -35,6 +35,7 @@ export interface ShellAction {
   readonly operation: string;
 }
 export interface ShellRoute {
+  readonly label?: string;
   readonly path: string;
   readonly operation: string;
   readonly component: Component<ScreenProps>;
@@ -276,6 +277,7 @@ function Session(
             title={props.kind === "control" ? props.org : props.title}
             aud={props.aud}
             sections={shown().sections}
+            holds={shown().holds}
             address={props.address}
             signOut={() => keeper.signOut()}
           >

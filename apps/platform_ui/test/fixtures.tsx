@@ -225,6 +225,8 @@ export async function signIn() {
 }
 
 beforeEach(() => {
+  // jsdom does not scroll elements, but the menu scrolls its keyboard target.
+  HTMLElement.prototype.scrollIntoView = () => undefined;
   // jsdom has no media queries, and the sidebar asks whether the page is narrow.
   window.matchMedia = ((query: string) => ({
     matches: false,

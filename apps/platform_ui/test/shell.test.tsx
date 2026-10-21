@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { Shell } from "../src/shell";
 import { AUD, CONTROL, ONE, ADMIN, identity, open } from "./fixtures";
@@ -22,7 +22,7 @@ describe("the app shell", () => {
     window.history.pushState({}, "", `/${aud}`);
     const { container } = render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
     expect(await screen.findByText(aud === CONTROL ? "acme" : "Stub app")).toBeDefined();
-    expect(await screen.findByText("sign out")).toBeDefined();
+    expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
     expect(container.querySelector("nav .ui-dashboard-panel")).toBeNull();
     expect(screen.queryByText("This address names no page.")).toBeNull();
     window.history.pushState({}, "", `/${aud}/unknown`);
@@ -71,16 +71,19 @@ describe("the app shell", () => {
     const { fetch } = identity(true);
     open(`/${AUD}/pallets`, fetch);
     await screen.findByText("pallets screen");
-    const link = (text: string) => screen.getByText(text).closest("a");
+    const navigation = within(screen.getByRole("navigation", { name: "Primary navigation" }));
+    const link = (text: string) => navigation.queryByRole("link", { name: text });
     expect(link("Pallets")?.getAttribute("aria-current")).toBe("page");
     expect(link("Products")).toBeNull();
-    expect(screen.getAllByText("query").length).toBe(1);
-    fireEvent.click(screen.getByText("aggregate"));
+    expect(navigation.getAllByRole("link", { name: "Products: query" })).toHaveLength(1);
+    expect(document.querySelectorAll(".ui-dashboard-menu")).toHaveLength(1);
+    expect(document.querySelector(".ui-dashboard-menu .ui-dashboard-panel")).toBeNull();
+    fireEvent.click(navigation.getByRole("link", { name: "Products: aggregate" }));
     expect(await screen.findByText("product totals screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/product-totals`));
-    expect(link("aggregate")?.getAttribute("aria-current")).toBe("page");
+    expect(link("Products: aggregate")?.getAttribute("aria-current")).toBe("page");
     expect(link("Pallets")?.getAttribute("aria-current")).toBeNull();
-    fireEvent.click(screen.getByText("query"));
+    fireEvent.click(navigation.getByRole("link", { name: "Products: query" }));
     expect(await screen.findByText("products screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/products`));
   });
@@ -91,7 +94,11 @@ describe("the app shell", () => {
     fireEvent.click(await screen.findByText("open pallet abc"));
     expect(await screen.findByText("pallet abc record")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`));
-    expect(screen.getByText("Pallets").closest("a")?.getAttribute("aria-current")).toBe("page");
+    expect(
+      within(screen.getByRole("navigation", { name: "Primary navigation" }))
+        .getByRole("link", { name: "Pallets" })
+        ?.getAttribute("aria-current"),
+    ).toBe("page");
     fireEvent.click(screen.getByText("open pallet def"));
     expect(await screen.findByText("pallet def record")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/def`));
@@ -101,6 +108,21 @@ describe("the app shell", () => {
     const { state, fetch } = identity(true);
     open(`/${AUD}/pallets/abc`, fetch);
     expect(await screen.findByText("pallet abc record")).toBeDefined();
+    expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
+  });
+
+  it("shows route breadcrumbs and follows an ancestor without another session read", async () => {
+    const { state, fetch } = identity(true);
+    open(`/${AUD}/pallets/a%2Fb/update`, fetch);
+    await screen.findByText("update a/b with no note");
+    const location = within(screen.getByRole("navigation", { name: "Platform location" }));
+    expect(
+      location.getAllByRole("listitem").map((item) => item.querySelector("a, [aria-current]")?.textContent),
+    ).toEqual(["Stub app", "Pallets", "a/b", "update"]);
+    expect(location.getByText("update").getAttribute("aria-current")).toBe("page");
+    fireEvent.click(location.getByRole("link", { name: "a/b" }));
+    await screen.findByText("pallet a/b record");
+    expect(window.location.pathname).toBe(`/${AUD}/pallets/a%2Fb`);
     expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
   });
 
@@ -128,11 +150,11 @@ describe("the app shell", () => {
     const { fetch } = identity(true);
     open(`/${AUD}/pallets`, fetch);
     await screen.findByText("pallets screen");
-    expect(screen.getByText("Administration")).toBeDefined();
-    fireEvent.click(screen.getByText("roles"));
+    expect(screen.getByRole("link", { name: "Administration: roles" })).toBeDefined();
+    fireEvent.click(screen.getByRole("link", { name: "Administration: roles" }));
     expect(await screen.findByText("role")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/administration/roles`));
-    fireEvent.click(screen.getByText("users"));
+    fireEvent.click(screen.getByRole("link", { name: "Administration: users" }));
     expect(await screen.findByText("user")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/administration/users`));
     cleanup();
@@ -143,7 +165,7 @@ describe("the app shell", () => {
     cleanup();
     open(`/${AUD}/pallets`, member.fetch);
     await screen.findByText("pallets screen");
-    expect(screen.queryByText("Administration")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Administration: roles" })).toBeNull();
   });
 
   it("shows no page for the address of a route the caller does not hold", async () => {

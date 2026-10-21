@@ -8,3 +8,15 @@ body {
   height: fit-content;
   margin: auto;
 }
+
+.platform-table-screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.platform-table-screen table {
+  min-width: 100%;
+}
