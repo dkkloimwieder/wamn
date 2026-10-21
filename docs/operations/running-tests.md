@@ -518,7 +518,13 @@ It writes files under `/var/tmp` and deletes only its own cluster and registry c
 The image registry uses HTTP on the kind network.
 A second registry serves package and release artifacts over TLS with a fixture certificate.
 The test passes that registry and its CA file directly to the installer.
-It uses Receiving as the package fixture and publishes a release without a wiring through step 4.14.
+It uses Receiving and WMS as package fixtures through step 4.14.
+Receiving publishes a release without a wiring.
+WMS publishes `inventory_move_and_label` through one Job pod with a native gate sidecar.
+The main container mints its PAT in memory, gates the wiring, authors it, and publishes its release.
+The test requires both release lines, the gate startup log, and deletion of the Job-owned database login Secrets.
+The unchanged rerun must return the same WMS digest and leave its saved Job log unchanged.
+The gate does not execute the WMS blobstore effect, so this test needs no external bucket.
 The fixture copies `deploy/gcp/host-group-receiving.yaml` into its own cluster directory.
 The test records the printed digest in its own environment file and requires step 4.17 to report the missing qualification.
 An unchanged rerun must skip every step through 4.14 and refuse the same unqualified release.
