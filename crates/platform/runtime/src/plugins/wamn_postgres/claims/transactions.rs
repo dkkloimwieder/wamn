@@ -249,10 +249,12 @@ impl BoundClaims {
             claims.map_err(|error| map_pg_error(&error))?;
             Ok(())
         }
-        .instrument(tracing::info_span!(
-            "wamn.postgres.bind_claims",
-            wamn.authority_class = self.class.as_str()
-        ))
+        .instrument(wamn_engine::invocation_trace::sampled_span(|| {
+            tracing::info_span!(
+                "wamn.postgres.bind_claims",
+                wamn.authority_class = self.class.as_str()
+            )
+        }))
         .await
     }
 }
@@ -573,7 +575,9 @@ impl WamnPostgres {
             // sat inside wamn.postgres with no span: statement ended at 13.7 ms
             // and the postgres span at 15.9 ms, so 2.1 ms was invisible here.
             Ok(rows) => match async { finish_transaction(connection.connection(), "COMMIT").await }
-                .instrument(tracing::info_span!("wamn.postgres.commit"))
+                .instrument(wamn_engine::invocation_trace::sampled_span(|| {
+                    tracing::info_span!("wamn.postgres.commit")
+                }))
                 .await
             {
                 Ok(()) => {

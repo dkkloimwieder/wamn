@@ -11,6 +11,28 @@ use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
+/// Create a span unless the active OpenTelemetry trace is unsampled.
+///
+/// The entered upstream span already activates its sampled context. Borrowing
+/// that context avoids a registry lookup, context clone, or another span.
+/// Without a valid context, preserve ordinary startup and local tracing.
+/// Call `create` after releasing the borrow: entering a span can attach context.
+#[inline]
+pub fn sampled_span(create: impl FnOnce() -> tracing::Span) -> tracing::Span {
+    use opentelemetry::trace::TraceContextExt as _;
+
+    let enabled = opentelemetry::Context::map_current(|context| {
+        let span = context.span();
+        let context = span.span_context();
+        !context.is_valid() || context.is_sampled()
+    });
+    if enabled {
+        create()
+    } else {
+        tracing::Span::none()
+    }
+}
+
 /// Internal plugin identity for host invocation trace context.
 pub const INVOCATION_TRACES_ID: &str = "wamn:invocation-traces";
 

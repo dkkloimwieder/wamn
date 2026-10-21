@@ -206,22 +206,24 @@ pub fn invocation_span(
     site: &InvocationSite<'_>,
     remote_parent: Option<&opentelemetry::Context>,
 ) -> tracing::Span {
-    let span = tracing::info_span!(
-        target: "wamn::router",
-        "wamn.component.invoke",
-        wamn.tenant = %site.tenant_id,
-        wamn.project = %site.project,
-        wamn.environment = %site.environment,
-        wamn.wiring_id = %site.wiring_id,
-        wamn.wiring_version = site.wiring_version,
-        wamn.component_digest = %site.component_digest,
-        wamn.node_id = %site.node_id,
-        wamn.operation = %site.operation,
-        wamn.caller_principal_id = tracing::field::Empty,
-        wamn.caller_credential_type = tracing::field::Empty,
-        wamn.input_port = tracing::field::Empty,
-        wamn.attachment_id = tracing::field::Empty,
-    );
+    let span = wamn_engine::invocation_trace::sampled_span(|| {
+        tracing::info_span!(
+            target: "wamn::router",
+            "wamn.component.invoke",
+            wamn.tenant = %site.tenant_id,
+            wamn.project = %site.project,
+            wamn.environment = %site.environment,
+            wamn.wiring_id = %site.wiring_id,
+            wamn.wiring_version = site.wiring_version,
+            wamn.component_digest = %site.component_digest,
+            wamn.node_id = %site.node_id,
+            wamn.operation = %site.operation,
+            wamn.caller_principal_id = tracing::field::Empty,
+            wamn.caller_credential_type = tracing::field::Empty,
+            wamn.input_port = tracing::field::Empty,
+            wamn.attachment_id = tracing::field::Empty,
+        )
+    });
     if let Some(caller) = site.caller {
         span.record("wamn.caller_principal_id", caller.principal_id());
         span.record(
@@ -488,10 +490,12 @@ impl OperationHost {
             async move {
                 let bytes = source
                     .pull_verified(&fact)
-                    .instrument(tracing::info_span!(
-                        "wamn.component.pull",
-                        wamn.component_digest = %fact.component_digest,
-                    ))
+                    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
+                        tracing::info_span!(
+                            "wamn.component.pull",
+                            wamn.component_digest = %fact.component_digest,
+                        )
+                    }))
                     .await?;
                 anyhow::Ok(NativeComponent { fact, bytes })
             }

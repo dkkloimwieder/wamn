@@ -155,7 +155,9 @@ impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
         Ok(plugin
             .delivery
             .deliver(request, caller)
-            .instrument(tracing::info_span!(target: "wamn::route", "wamn.route.deliver"))
+            .instrument(crate::invocation_trace::sampled_span(
+                || tracing::info_span!(target: "wamn::route", "wamn.route.deliver"),
+            ))
             .await)
     }
 
@@ -176,7 +178,9 @@ impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
         match plugin
             .delivery
             .deliver_stream(request, caller)
-            .instrument(tracing::info_span!(target: "wamn::route", "wamn.route.deliver"))
+            .instrument(crate::invocation_trace::sampled_span(
+                || tracing::info_span!(target: "wamn::route", "wamn.route.deliver"),
+            ))
             .await
         {
             Err(report) => Ok(Err(report)),

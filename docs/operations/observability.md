@@ -9,6 +9,10 @@ gs://wamn-dev-otel/logs/year=YYYY/month=MM/day=DD/hour=HH/logs_<uuid>.gz
 
 The hour in the path is UTC. The collector writes no metrics.
 
+The existing head sampler controls WAMN request span creation as well as trace export.
+Unsampled requests create no WAMN child spans, but retain the two upstream HTTP spans.
+See [execution observability](../architecture/execution.md) for context propagation and behavior without an active trace.
+
 ## Query one hour
 
 Reading the objects needs `storage.objectViewer` on the bucket. Copy the hour to a local directory, and load its spans into DuckDB:

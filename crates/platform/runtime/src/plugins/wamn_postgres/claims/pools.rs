@@ -331,10 +331,12 @@ impl WamnPostgres {
             })?;
             Ok((obj, pp))
         }
-        .instrument(tracing::info_span!(
-            "wamn.postgres.acquire",
-            wamn.authority_class = class.as_str(),
-        ))
+        .instrument(wamn_engine::invocation_trace::sampled_span(|| {
+            tracing::info_span!(
+                "wamn.postgres.acquire",
+                wamn.authority_class = class.as_str(),
+            )
+        }))
         .await
     }
 

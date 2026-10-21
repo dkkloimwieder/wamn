@@ -912,6 +912,13 @@ After the lease expires, recovery takes a new lease generation. The old generati
 The [runtime tests](../operations/running-tests.md#host-and-package-runtime) cover the retained host and package paths.
 
 OpenTelemetry records invocation and effect spans, request timing, and delivery outcomes.
+WAMN creates request spans only when the active trace is sampled, using the existing head sampler decision.
+A head sampler decides whether to export a trace at its start.
+The shared guard borrows the active OpenTelemetry context without creating a span or cloning the context.
+Sampled requests retain their span names, fields, levels, and parent links. Log events remain unchanged.
+Without a valid context, startup and local tracing keep their existing behavior.
+Native dispatch and spawned request tasks carry the entered parent span, including when WAMN skips its child spans.
+The upstream `handle_http_request` and `invoke_component_handler` spans still exist for unsampled requests.
 Operational logs use INFO. Hosts send request traces to the platform OpenTelemetry collector.
 
 The [deployment guide](../operations/deployment.md) owns probe ports, grace periods, and rollout commands.
