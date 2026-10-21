@@ -96,11 +96,34 @@
       i32.const 560 i32.const 3 i32.const 64 call $begin)
     (func $commit-call
       i32.const 608 i32.const 15 i32.const 64 call $commit)
+    (func $run-statement
+      i32.const 128 call $transaction
+      i32.const 128 i32.load8_u if unreachable end
+      i32.const 136 i32.load i32.const 576 i32.const 10
+      i32.const 0 i32.const 0 i32.const 192 call $run
+      i32.const 192 i32.load8_u if unreachable end)
     (func $refused (param $tag i32)
       i32.const 64 i32.load8_u i32.const 1 i32.ne if unreachable end
       i32.const 72 i32.load8_u local.get $tag i32.ne if unreachable end)
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
     (func (export "run") (param $caller i32) (param $mode i32) (result i32)
+      ;; Continue the same Store after the host observes the first delivery id.
+      local.get $mode i32.const 9 i32.eq if
+        call $commit-call
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 544 i32.const 110 i32.store8
+      end
+      local.get $mode i32.const 10 i32.eq if
+        call $commit-call
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 1 call $return i32.const 0 return
+      end
+      local.get $mode i32.const 11 i32.eq if
+        ;; An unknown operation refuses before opening a transaction.
+        i32.const 512 i32.const 120 i32.store8
+        local.get $caller call $begin-call i32.const 3 call $refused
+        i32.const 512 i32.const 98 i32.store8
+      end
       local.get $mode i32.eqz if
         call $commit-call i32.const 6 call $refused
       else
@@ -120,21 +143,40 @@
                 ;; The stored text keeps the application's whitespace.
                 i32.const 80 i32.load i32.const 15 i32.ne if unreachable end
                 i32.const 76 i32.load i32.load i32.const 0x7622207b i32.ne if unreachable end
+                ;; Finished leaves no open operation: another replay is allowed.
+                local.get $caller call $begin-call
+                i32.const 64 i32.load8_u if unreachable end
+                i32.const 72 i32.load8_u i32.const 1 i32.ne if unreachable end
                 ;; A replay cannot commit or run a statement.
                 call $commit-call i32.const 6 call $refused
               else
                 i32.const 72 i32.load8_u if unreachable end
                 local.get $mode i32.const 1 i32.eq if
+                  call $run-statement
                   local.get $caller call $begin-call i32.const 7 call $refused
-                end
-                i32.const 128 call $transaction
-                i32.const 128 i32.load8_u if unreachable end
-                i32.const 136 i32.load i32.const 576 i32.const 10
-                i32.const 0 i32.const 0 i32.const 192 call $run
-                i32.const 192 i32.load8_u if unreachable end
-                local.get $mode i32.const 2 i32.ne if
-                  call $commit-call
+                  call $commit-call i32.const 6 call $refused
+                  ;; The refused begin rolled back the prior work and claim.
+                  local.get $caller call $begin-call
                   i32.const 64 i32.load8_u if unreachable end
+                  i32.const 72 i32.load8_u if unreachable end
+                end
+                call $run-statement
+                local.get $mode i32.const 2 i32.ne
+                local.get $mode i32.const 8 i32.ne i32.and
+                local.get $mode i32.const 9 i32.ne i32.and if
+                  call $commit-call
+                  local.get $mode i32.const 12 i32.eq if
+                    i32.const 8 call $refused
+                    i32.const 544 i32.const 110 i32.store8
+                    local.get $caller call $begin-call
+                    i32.const 64 i32.load8_u if unreachable end
+                    i32.const 72 i32.load8_u if unreachable end
+                    call $run-statement
+                    call $commit-call
+                    i32.const 64 i32.load8_u if unreachable end
+                  else
+                    i32.const 64 i32.load8_u if unreachable end
+                  end
                 end
               end
             end

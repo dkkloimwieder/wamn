@@ -135,9 +135,12 @@ fn lower_statements(
         .collect()
 }
 
-/// An internal resource, never exported. Its presence refuses every later begin.
-#[derive(Debug, Default)]
-struct StoreOperation(Option<OpenOperation>);
+/// Store-local lifecycle state. Only `open` marks an operation as begun.
+#[derive(Debug, Clone)]
+struct StoreOperation {
+    workload: Arc<str>,
+    open: Arc<tokio::sync::Mutex<Option<OpenOperation>>>,
+}
 
 #[derive(Debug)]
 struct OpenOperation {
@@ -213,27 +216,41 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         idempotency_key: String,
         request_hash: Vec<u8>,
     ) -> wash_runtime::wasmtime::Result<Result<Begun, Refusal>> {
+        let store = accessor.with(|mut access| {
+            let ctx = access.get();
+            if state(ctx.table).is_none() {
+                ctx.table.push(StoreOperation {
+                    workload: Arc::clone(&ctx.component_id),
+                    open: Arc::default(),
+                })?;
+            }
+            Ok::<_, wash_runtime::wasmtime::Error>(
+                state(ctx.table).expect("Store state exists").clone(),
+            )
+        })?;
+        // Serialize lifecycle calls without marking an unfinished begin as open.
+        let mut current = store.open.lock().await;
+        accessor.with(|mut access| {
+            access.get().component_id = Arc::clone(&store.workload);
+        });
+        if current.take().is_some() {
+            return Ok(Err(Refusal::AlreadyBegun));
+        }
         let input = accessor.with(|mut access| {
             let ctx = access.get();
-            if state(ctx.table).is_some() {
-                return Ok(Err(Refusal::AlreadyBegun));
-            }
-            // Reserve before awaiting: a concurrent begin sees the same marker.
-            ctx.table.push(StoreOperation::default())?;
             let Ok(caller) = ctx.table.get(&caller).cloned() else {
                 return Ok(Err(Refusal::InvalidCaller));
             };
             let postgres = ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?;
-            let workload = Arc::clone(&ctx.component_id);
-            Ok::<_, wash_runtime::wasmtime::Error>(Ok((postgres, workload, caller)))
+            Ok::<_, wash_runtime::wasmtime::Error>(Ok((postgres, caller)))
         })?;
-        let (postgres, workload, caller) = match input {
+        let (postgres, caller) = match input {
             Ok(input) => input,
             Err(refusal) => return Ok(Err(refusal)),
         };
         let result = begin(
             postgres,
-            &workload,
+            &store.workload,
             &caller,
             operation,
             idempotency_key,
@@ -242,13 +259,12 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         .await;
         match result {
             Ok((open, begun)) => {
-                if let Some(open) = open {
+                if let Some(open) = &open {
                     accessor.with(|mut access| {
-                        let mut ctx = access.get();
-                        ctx.component_id = Arc::from(open.scope.as_str());
-                        state(ctx.table).expect("begin reserved the Store").0 = Some(open);
+                        access.get().component_id = Arc::from(open.scope.as_str());
                     });
                 }
+                *current = open;
                 Ok(Ok(begun))
             }
             Err(refusal) => Ok(Err(refusal)),
@@ -259,9 +275,12 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
         result: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
-        let open =
-            accessor.with(|mut access| state(access.get().table).and_then(|state| state.0.take()));
-        let Some(open) = open else {
+        let store = accessor.with(|mut access| state(access.get().table).cloned());
+        let Some(store) = store else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        let mut current = store.open.lock().await;
+        let Some(open) = current.take() else {
             return Ok(Err(Refusal::NotBegun));
         };
         let transaction = open
@@ -275,6 +294,9 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         });
         // Drop clears all authority on both success and refusal.
         drop(open);
+        accessor.with(|mut access| {
+            access.get().component_id = Arc::clone(&store.workload);
+        });
         Ok(committed)
     }
 }

@@ -118,9 +118,13 @@ interface operation {
   }
 
   /// Check the host-issued caller and its grant, mint the delivery id, and
-  /// claim the key inside the Store's transaction. The host stores the request
-  /// hash unchanged. A second begin on this Store refuses.
-  /// Dropping the Store rolls back unfinished work.
+  /// claim the key inside a new transaction. The host stores the request
+  /// hash unchanged. Only one operation can be open per Store.
+  /// A begin while one is open returns already-begun and rolls it back.
+  /// Commit (ok or refusal) and refused begins clear the open operation.
+  /// Finished leaves no operation open. Another begin is then allowed,
+  /// with its own transaction and delivery id.
+  /// Dropping the Store rolls back its open operation.
   begin-operation: async func(caller: borrow<authenticated-caller>, operation: sealed-operation-id, idempotency-key: string, request-hash: list<u8>) -> result<begun, refusal>;
 
   /// Store the application's result JSON as text without inspecting it, emit

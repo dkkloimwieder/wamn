@@ -371,13 +371,16 @@ Package members can receive `statements` without receiving `operation`.
 
 `begin-operation` takes the opaque caller handle from `authenticate`, the sealed operation id, an idempotency key, and request hash bytes.
 The host checks the handle, release facts, and caller grant, then mints a delivery id.
-It pipelines the claims and write-log insert in the Store's transaction.
+It pipelines the claims and write-log insert in a new transaction for that operation.
 The host stores the hash bytes unchanged and returns stored result text unchanged as `begun::finished` on replay.
-The entry returns that text and runs no work.
+The entry returns that text and runs no work. `finished` leaves no operation open, so another begin is allowed immediately.
 
 `commit(result)` stores the application's JSON text without parsing it, emits the causation message, and commits the transaction.
 Dropping the Store rolls back unfinished work and clears its authority.
-A second begin on the same Store returns `already-begun`, including after a refused begin or commit.
+Only one operation can be open per Store.
+A begin while one is open returns `already-begun` and rolls back that open operation.
+Commit clears the open operation on success or refusal. A refused begin also clears it.
+The next begin on the same Store is allowed, with its own transaction and delivery id.
 Commit without a new open operation returns `not-begun`.
 Member statement handles borrow the same transaction, while `run`, `run-stream`, and guest transaction creation remain refused inside it.
 

@@ -104,32 +104,58 @@ impl GuestCall for Run {
         instance: Instance,
     ) -> GuestCallFuture<'_> {
         Box::pin(async move {
-            let (run, caller) = accessor.with(|mut access| {
+            accessor.with(|mut access| {
                 access.get().active_ctx.component_id = Arc::from(WORKLOAD);
-                let caller = access.get().table.push(AuthenticatedCaller::new(
-                    "entry",
-                    LIVE_PRINCIPAL,
-                    CredentialType::Pat,
-                    false,
-                    if self.mode == 3 {
-                        HashSet::new()
-                    } else {
-                        HashSet::from(["base:widget/update".into()])
-                    },
-                ))?;
-                let caller = ResourceAny::try_from_resource(caller, &mut access)?;
-                let export = instance.get_export_index(&mut access, None, "run").unwrap();
-                let run = instance.get_func(&mut access, export).unwrap();
-                Ok::<_, wash_runtime::wasmtime::Error>((run, caller))
-            })?;
-            let mut results = [Val::Bool(false)];
-            run.call_concurrent(
-                accessor,
-                &[Val::Resource(caller), Val::U32(self.mode)],
-                &mut results,
-            )
-            .await?;
-            assert!(matches!(results[0], Val::Bool(true)));
+            });
+            let modes = if self.mode == 8 {
+                vec![8, 9, 10]
+            } else {
+                vec![self.mode]
+            };
+            let mut deliveries = Vec::new();
+            for mode in modes {
+                let (run, caller) = accessor.with(|mut access| {
+                    let caller = access.get().table.push(AuthenticatedCaller::new(
+                        "entry",
+                        LIVE_PRINCIPAL,
+                        CredentialType::Pat,
+                        false,
+                        if self.mode == 3 {
+                            HashSet::new()
+                        } else {
+                            HashSet::from(["base:widget/update".into()])
+                        },
+                    ))?;
+                    let caller = ResourceAny::try_from_resource(caller, &mut access)?;
+                    let export = instance.get_export_index(&mut access, None, "run").unwrap();
+                    let run = instance.get_func(&mut access, export).unwrap();
+                    Ok::<_, wash_runtime::wasmtime::Error>((run, caller))
+                })?;
+                let mut results = [Val::Bool(false)];
+                run.call_concurrent(
+                    accessor,
+                    &[Val::Resource(caller), Val::U32(mode)],
+                    &mut results,
+                )
+                .await?;
+                assert!(matches!(results[0], Val::Bool(true)));
+                if mode == 8 || mode == 9 {
+                    deliveries.push(accessor.with(|mut access| {
+                        let ctx = &access.get().active_ctx;
+                        ctx.get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
+                            .current_run_for(&ctx.component_id)
+                            .expect("open operation has a delivery")
+                    }));
+                }
+            }
+            if self.mode == 8 {
+                assert_ne!(deliveries[0].run, deliveries[1].run);
+                for delivery in deliveries {
+                    uuid::Uuid::parse_str(&delivery.run).unwrap();
+                    assert_eq!(delivery.root, delivery.run);
+                    assert_eq!(delivery.depth, 0);
+                }
+            }
             let dropped = accessor.with(|mut access| access.get().dropped.token());
             tokio::spawn(async move {
                 dropped.cancelled().await;
@@ -292,10 +318,61 @@ async fn commit_without_begin_refuses() {
 }
 
 #[tokio::test]
-async fn a_second_begin_on_the_store_refuses() {
+async fn begin_while_open_refuses_and_allows_a_new_begin() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture().await;
     run_guest(postgres, release, 1).await;
+    assert_eq!(value(&database).await, 2);
+}
+
+#[tokio::test]
+async fn begin_commit_begin_on_the_same_store_uses_new_transaction_and_delivery() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 8).await;
+    assert_eq!(value(&database).await, 3);
+    let client = connect(&database).await;
+    let transactions: i64 = client
+        .query_one(
+            "SELECT count(DISTINCT transaction_id) FROM widget_history",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(transactions, 2);
+    let keys: Vec<String> = client
+        .query(
+            "SELECT idempotency_key FROM app_system.write_log ORDER BY idempotency_key",
+            &[],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(keys, ["key", "ney"]);
+}
+
+#[tokio::test]
+async fn refused_begin_then_begin_on_the_same_store_is_accepted() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 11).await;
+    assert_eq!(value(&database).await, 2);
+}
+
+#[tokio::test]
+async fn refused_commit_then_begin_on_the_same_store_is_accepted() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    database
+        .execute(&[
+            "ALTER TABLE app_system.write_log ADD CONSTRAINT refuse_first_finish \
+         CHECK (result IS NULL OR idempotency_key <> 'key')",
+        ])
+        .unwrap();
+    run_guest(postgres, release, 12).await;
     assert_eq!(value(&database).await, 2);
 }
 
