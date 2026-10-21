@@ -201,31 +201,32 @@ pub(super) async fn apply(
                 &secrets,
             )
             .await?;
-            if identity.id == "wamn_wms" {
-                let mut request = JobRequest {
-                    name: format!("platform-replica-{tenant}"),
-                    image: image.clone(),
-                    arguments: vec![
-                        "reconcile-replica-identity".into(),
-                        "--package".into(),
-                        "/inputs/package".into(),
-                    ],
-                    ..JobRequest::default()
-                };
-                let opened = open_package(registry, &identity.id, &identity.version).await?;
-                let source = crate::apply_package::read_package_directory(opened.root())?;
+            let mut request = JobRequest {
+                name: format!(
+                    "platform-replica-{}",
+                    &job::input_digest(&json!([tenant, identity.id]))[..24]
+                ),
+                image: image.clone(),
+                arguments: vec![
+                    "reconcile-replica-identity".into(),
+                    "--package".into(),
+                    "/inputs/package".into(),
+                ],
+                ..JobRequest::default()
+            };
+            let opened = open_package(registry, &identity.id, &identity.version).await?;
+            let source = crate::apply_package::read_package_directory(opened.root())?;
+            request.files.insert(
+                "package/wamn.json".into(),
+                String::from_utf8(source.manifest_bytes)?,
+            );
+            for migration in source.migrations {
                 request.files.insert(
-                    "package/wamn.json".into(),
-                    String::from_utf8(source.manifest_bytes)?,
+                    format!("package/{}", migration.relative_path),
+                    String::from_utf8(migration.bytes)?,
                 );
-                for migration in source.migrations {
-                    request.files.insert(
-                        format!("package/{}", migration.relative_path),
-                        String::from_utf8(migration.bytes)?,
-                    );
-                }
-                replicas.push((request, digest));
             }
+            replicas.push((request, digest));
         }
         if !tags.is_empty() {
             let mut request = JobRequest {
