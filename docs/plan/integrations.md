@@ -122,15 +122,15 @@ None of E4–E6 needs the sidecar: pure-Rust clients exist. C1 serves C23 and ot
 
 ## 4. Epic order
 
-Each epic names a goal and an exit condition. Only Epic 2 has issues. The order after Epic 2 is expected, not fixed; the owner re-orders at each review.
+Each epic names a goal and an exit condition. Only Epic 3 has issues. The order after Epic 3 is expected, not fixed; the owner re-orders at each review.
 
 ### Cloud
 
 | Epic | Goal | Exit condition |
 | --- | --- | --- |
 | 1 (done at `05f7659d`, `wamn-jstjf`) | C0. An HTTP connection is bound in a deployed environment and a guest sends through it. | Met. |
-| **2 (scoped, `wamn-5i3v9`)** | C9, C4, C10. Webhook in, schedule, webhook out. | §5. |
-| 3 | C2, C3, C20. OAuth credential types; the REST connector package. | One OAuth2 and one OAuth1 connection send through `connection_http` with a host-held token; C20 pages a public API in a kind case. |
+| 2 (done at `030ce57c`, `wamn-5i3v9`) | C9, C4, C10. Webhook in, schedule, webhook out. | Met. |
+| **3 (scoped, `wamn-7e39m`)** | C2, C3, C20. OAuth credential types; the REST connector package. | §5. |
 | 4 | C21, C22. NetSuite REST and RESTlet over C20. | A record read and a SuiteQL query against the owner's account from a deployed package. |
 | 5 | C27, C29, C31, C37. Packages over C20. | Each sends once from a run. |
 | 6 | C1, C23. Sidecar and ODBC. | A sidecar opens the Oracle ODBC driver, streams one query to a guest, holds no credential. |
@@ -152,33 +152,31 @@ Each epic names a goal and an exit condition. Only Epic 2 has issues. The order 
 
 Edge Epic A may run in parallel with cloud Epic 1: they share no files.
 
-## 5. Epic 2 — Webhook in, schedule, webhook out (scoped)
+## 5. Epic 3 — OAuth2, OAuth1, REST connector (scoped)
 
 ### Goal
 
-A signed POST starts a run. A declared schedule starts one run per due moment. A package signs and sends a webhook from a run. Branch `work/integrations` from `05f7659d`. No UI, no OAuth, no Secret Manager, no event-path change, and no hand edit of `wamn.json` outside the generator.
+One OAuth2 and one OAuth1 connection send through `connection_http` with a credential that only the host holds. A scheduled wiring pages a fixture API and writes one row per item. Branch `work/integrations` from `030ce57c`. No UI, no Secret Manager, no NetSuite calls (Epic 4), no new WIT, and no node parameters beyond those named here.
 
 ### Rulings
 
 | Ruling | Invariant to measure |
 | --- | --- |
-| C9. `AttachmentAuthPolicy::Signature` beside `None \| Pat \| Session`. The attachment declares `header` and `credential`, a handle in the credentials file with the secret `{"hmac":{"algorithm":"sha256","secret":"…"}}`. The route layer verifies HMAC-SHA256 over the raw body with a constant-time compare, before delivery. A failure answers 401 with no body detail. The principal is the same as `none`. No timestamp or replay window; idempotency stays the route's. | A wrong or missing signature never reaches the guest. Verification sees the raw bytes, and a verified request delivers exactly what the same unsigned request would. |
-| C4. `workflows.<id>.schedule: str` (five-field cron, UTC) in `manifest.k` beside `registration`; exactly one of the two. Apply-package stores it; publish derives it into the serving manifest. One host task per environment computes the next due moment of each workflow and calls `Workflows::start` with `idempotency_key = "<package id>/<workflow id>:<due RFC 3339>"`, `Trigger::Schedule { workflow_id, due }` and input `{"due":"…"}`. No backfill at start, no leader. `AttachmentType::Cron` and its `validate_route_target` refusal go, with their tests. | Two hosts over one due moment leave one `runs` row. A restart in the middle of an interval starts nothing late. |
-| C9 shape. The authored `publication/attachments.json` declares `"auth-policy": {"modes":["signature"],"header":"…","credential":"…"}`; `manifest.k` does not change. Issue 1 bumps the serving manifest to format 10 once, and C4 joins format 10. `routing.authenticate` in `wamn-flow-http-routing` takes `body: list<u8>` after `headers`, with no WIT version bump. The http-route guest reads the body first, under its current bound. The host verifies in `route_authentication.rs` and looks up the handle under its own project. A failure answers 401 with an empty body. | As C9. |
-| C4 shape. Apply-package writes the new table `catalog.workflow_schedules (package_id, workflow_id, schedule)`, keyed by package and workflow, as it writes `event_registrations`. A scheduled run is admitted like an event run: the executor credential, no caller, under the release that declares the workflow (workflow-feature §4.2). A node that needs an operation grant refuses. `Trigger::Schedule` carries no principal. The key is `<package id>/<workflow id>:<due>`. `wamn-ctl workflow declared` prints the declared workflows. `croner` parses the schedule. A missed or refused tick is logged, and the task waits for the next due moment with no catch-up. | As C4. |
-| C10. Credential type `hmac` in `connection_http.rs` beside `credential_headers`. The host computes `<header>: sha256=<hex>` over the request body from the C9 secret shape with `header` added, and injects it. The guest sees nothing. No new node: a package sends through `http-request`. Retry is the workflow queue's. | The fixture server verifies the signature it received. The request of the guest carried no secret. |
+| C2. OAuth2 client credentials. The secret is `{"oauth2":{"token-url":"…","client-id":"…","client-secret":"…","scope":"…"}}`, and `scope` is optional. `connection_http.rs::credential_headers` handles it beside `headers` and `hmac`, and a secret holds exactly one of the three. The host fetches the token by the client-credentials grant through the transport and address policy of the request. The token URL's authority is checked like `primary-authority`. The cache key is (project, handle, generation), and an entry lives until expiry minus 60 s. A 401 causes one refresh, and a second 401 returns to the guest. The host injects `Authorization: Bearer`. No refresh tokens and no authorization-code flow. | A guest request carries the bearer that the fixture issued. Two requests inside expiry fetch one token. The guest never sees the client id or secret. |
+| C3. OAuth 1.0a. The secret is `{"oauth1":{"consumer-key","consumer-secret","token","token-secret","realm"}}`, and `realm` is optional. The RFC 5849 signature base covers method, URL and query, and excludes the body. HMAC-SHA256 only (NetSuite TBA). Each request gets its own nonce and timestamp. The header is `Authorization: OAuth …`. | The fixture verifies the signature with the same secrets. A repeated request uses a new nonce. |
+| C20. REST connector. One platform node `http-page` in `apps/platform/no-std` beside `http-request`. Its parameters are `requirement`, `path-and-query`, `headers`, `page` and `items`. `page` is `{"style":"offset"\|"cursor"\|"link-header", …}`: offset names the `limit` and `offset` query parameters, cursor names a JSON pointer to the next cursor and its query parameter, and link-header follows `rel="next"`. `items` is a JSON pointer to the item array. The node emits one `main` output per item and stops when a page has no next. A 429 returns `node-error.rate-limited` so that the queue backs off, a 5xx is `retryable`, and a 4xx is `terminal`. The template package `apps/rest_connector` holds a scheduled wiring `http-page → jsonata → <command>` against a fixture, as the copy point for Epic 4. | A three-page fixture with one 429 yields every item exactly once and one queued retry. |
 
 ### Issues
 
-1. **C9** (`wamn-5i3v9.1`). The enum, manifest validation, the serving manifest, route verification and the refusal path. Unit tests for a good, a bad and a missing signature, and for raw-body fidelity.
-2. **C4** (`wamn-5i3v9.2`). The schema, the apply-package row, the publish derivation, the host schedule task, `Trigger::Schedule`, and `workflow list` shows the schedule. Delete `Cron`. Unit tests for the next-due arithmetic and the idempotency key. A Postgres live test starts one moment from two callers and lists one run.
-3. **C10 and the kind case** (`wamn-5i3v9.3`). The `hmac` credential type. The Epic 1 kind case gains a signed inbound POST, a scheduled workflow that fires once, and a signed outbound POST that the fixture verifies. The issue lists the fixture needs before the case is written.
+1. **C2** (`wamn-7e39m.1`). The shape, the token fetch, the cache, the 401 refresh and the bearer injection. Unit tests with a local token fixture: fresh, cached, expiring, refused.
+2. **C3** (`wamn-7e39m.2`). Signing, nonce, realm and header. Unit tests against RFC 5849 vectors adapted to HMAC-SHA256, and one NetSuite-shaped request.
+3. **C20 and the kind case** (`wamn-7e39m.3`). `http-page`, the `rest_connector` template and the kind case. The fixture gains a token endpoint, an OAuth1-verifying route and a paged route with one 429. The scheduled wiring pages it, and the command's rows equal the fixture's items. The issue lists the fixture needs before the case is written.
 
-Per-issue budget: build, clippy, fmt check, unit tests. The live Postgres test runs at issue 2. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class (a plugin assumption that only the dev loop satisfied) is fixed in place and recorded in the close reason.
+Per-issue budget: build, clippy, fmt check, unit tests. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
 
 ### Closeout
 
-Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the test log path, delete the remote branch. Then stop. Epic 3 is scoped after the owner's review.
+Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the test log path, delete the remote branch. Then stop. Epic 4 is scoped after the owner's review.
 
 ## 6. Sidecar shape (for Epic 6, not before)
 
