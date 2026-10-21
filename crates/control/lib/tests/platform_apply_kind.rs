@@ -575,7 +575,7 @@ async fn artifact_registry(
             "username": "fixture", "password": hex::encode(password)
         }}}))?,
     )?;
-    let certificate = reqwest::Certificate::from_pem(&std::fs::read(certs.join("tls.crt"))?)?;
+    let certificate = reqwest::Certificate::from_pem(&std::fs::read(certs.join("ca.crt"))?)?;
     let client = reqwest::Client::builder()
         .add_root_certificate(certificate)
         .build()?;
@@ -599,29 +599,64 @@ async fn artifact_registry(
         artifact_base: format!("{authority}/packages"),
         registry_auth_file: auth,
         insecure_registry: false,
-        oci_ca_paths: vec![certs.join("tls.crt")],
+        oci_ca_paths: vec![certs.join("ca.crt")],
     })
 }
 
+// rustls refuses a CA certificate as the server certificate, so the fixture
+// signs a CA:FALSE server certificate with its own CA.
 fn certificate(directory: &Path, address: &str) -> anyhow::Result<()> {
-    let output = Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-subj",
-            "/CN=platform-artifacts",
-            "-addext",
-            &format!("subjectAltName=IP:{address}"),
-            "-keyout",
-        ])
-        .arg(directory.join("tls.key"))
-        .arg("-out")
-        .arg(directory.join("tls.crt"))
+    let ca = directory.join("ca.crt");
+    if !ca.exists() {
+        openssl(
+            Command::new("openssl")
+                .args([
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-days",
+                    "1",
+                    "-subj",
+                    "/CN=platform-artifacts-ca",
+                    "-keyout",
+                ])
+                .arg(directory.join("ca.key"))
+                .arg("-out")
+                .arg(&ca),
+        )?;
+    }
+    openssl(
+        Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=platform-artifacts",
+                "-addext",
+                &format!("subjectAltName=IP:{address}"),
+                "-addext",
+                "basicConstraints=critical,CA:FALSE",
+                "-CA",
+            ])
+            .arg(&ca)
+            .arg("-CAkey")
+            .arg(directory.join("ca.key"))
+            .arg("-keyout")
+            .arg(directory.join("tls.key"))
+            .arg("-out")
+            .arg(directory.join("tls.crt")),
+    )
+}
+
+fn openssl(command: &mut Command) -> anyhow::Result<()> {
+    let output = command
         .stdin(Stdio::null())
         .output()
         .context("create the registry TLS certificate")?;
