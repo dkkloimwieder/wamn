@@ -687,8 +687,8 @@ fn cloud_minutes(build: &CloudBuild) -> anyhow::Result<u32> {
     }
 }
 
-/// Cloud command diagnostics exclude both arguments and captured output.
-/// In particular, gcloud authentication failures must not echo credentials.
+/// Cloud command diagnostics exclude the arguments and stdout. They carry the
+/// last 20 lines of stderr (owner ruling 2026-10-21).
 async fn cloud_output(command: &mut Command) -> anyhow::Result<String> {
     let result = command
         .kill_on_drop(true)
@@ -697,10 +697,17 @@ async fn cloud_output(command: &mut Command) -> anyhow::Result<String> {
         .context("start gcloud")?;
     ensure!(
         result.status.success(),
-        "gcloud failed with {}",
-        result.status
+        "gcloud failed with {}:\n{}",
+        result.status,
+        stderr_tail(&result.stderr, 20)
     );
     String::from_utf8(result.stdout).context("gcloud returned non-UTF-8 output")
+}
+
+fn stderr_tail(stderr: &[u8], lines: usize) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let all: Vec<_> = stderr.trim_end().lines().collect();
+    all[all.len().saturating_sub(lines)..].join("\n")
 }
 
 fn gcloud(project: &str) -> anyhow::Result<Command> {
@@ -758,7 +765,7 @@ async fn cloud_build(
             "Cloud Build refused: spend USD {spend_usd:.4} is at or above cap USD {cap_usd:.4}"
         );
     }
-    let build = submit_cloud_build(request, &cluster.project_id).await?;
+    let build = submit_cloud_build(request, &cluster.project_id, &cluster.buckets.state).await?;
     // Record failed builds before reporting their outcome.
     add_cloud_minutes(&stores, &day, cloud_minutes(&build)?).await?;
     ensure!(
@@ -773,6 +780,7 @@ async fn cloud_build(
 async fn submit_cloud_build(
     request: &BuildPlatformRequest,
     project: &str,
+    state_bucket: &str,
 ) -> anyhow::Result<CloudBuild> {
     let _stage = start_stage("cloud-submit");
     let supplement = format!(".wamn-cloud-build-{}", std::process::id());
@@ -803,6 +811,10 @@ async fn submit_cloud_build(
                 "--config",
             ])
             .arg(&config_file)
+            // The agent already writes below build/ in the state bucket.
+            .arg(format!(
+                "--gcs-source-staging-dir=gs://{state_bucket}/build/source"
+            ))
             .arg("--ignore-file")
             .arg(request.repository.join(".gcloudignore"))
             .arg(&request.repository),
@@ -998,6 +1010,18 @@ mod tests {
             },
         };
         (stores, opened)
+    }
+
+    #[test]
+    fn gcloud_errors_carry_the_last_stderr_lines() {
+        let stderr = (1..=25)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tail = stderr_tail(stderr.as_bytes(), 20);
+        assert_eq!(tail.lines().count(), 20);
+        assert!(tail.starts_with("line 6\n") && tail.ends_with("line 25"));
+        assert_eq!(stderr_tail(b"one\n", 20), "one");
     }
 
     #[tokio::test]

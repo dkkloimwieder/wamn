@@ -129,6 +129,8 @@ wamn-ctl build-platform --cluster deploy/gcp/cluster.k --registry us-central1-do
 ```
 
 The command submits the same Dockerfile targets with `gcloud builds submit` in `us-central1`, on `E2_HIGHCPU_8`.
+It stages the source in `gs://<buckets.state>/build/source/`, so Cloud Build needs no staging bucket of its own.
+If gcloud fails, the command prints the last 20 lines of its stderr.
 The generated configuration finishes every build before it pushes the four images and two role components under the same registry tags.
 The command waits for Cloud Build, then reads the pushed digests and stamps the chart.
 The local UI build and its recorded digest follow the local path.
