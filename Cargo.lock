@@ -6172,6 +6172,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+ "uuid",
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",

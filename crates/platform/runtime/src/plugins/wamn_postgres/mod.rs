@@ -61,6 +61,7 @@ mod claims;
 mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
+mod operation;
 mod operation_transaction;
 mod pool;
 mod production_claim;
@@ -123,6 +124,7 @@ mod bindings {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
+            "wamn:flow-http-routing/routing.authenticated-caller": wamn_engine::flow_http_routing::AuthenticatedCaller,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -141,6 +143,7 @@ mod bindings {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
+            "wamn:flow-http-routing/routing.authenticated-caller": wamn_engine::flow_http_routing::AuthenticatedCaller,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -367,6 +370,12 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         let has_client = interfaces.contains("wamn", "postgres", &["client"]);
         let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
+        if interfaces.contains("wamn", "postgres", &["operation"]) {
+            bindings::wamn::postgres::operation::add_to_linker::<_, SharedCtx>(
+                linker,
+                extract_active_ctx,
+            )?;
+        }
         if !has_client && !has_statements {
             return Ok(());
         }
@@ -470,6 +479,7 @@ impl HostPlugin for WamnPostgres {
                 WitInterface::from("wamn:postgres/types@0.4.0"),
                 WitInterface::from("wamn:postgres/client@0.4.0"),
                 WitInterface::from("wamn:postgres/statements@0.4.0"),
+                WitInterface::from("wamn:postgres/operation@0.4.0"),
             ]),
             exports: HashSet::new(),
         }

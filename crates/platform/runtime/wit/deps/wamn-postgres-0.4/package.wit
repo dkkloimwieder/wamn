@@ -26,7 +26,8 @@ package wamn:postgres@0.4.0;
 ///   change).
 ///
 /// STATUS: every declaration of 0.1.0, unchanged, plus `statements.run-stream`
-/// and `statements.operation-transaction`.
+/// and `statements.operation-transaction`. The separate `operation` interface
+/// adds entry-owned begin and commit without changing the package version.
 interface types {
   /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
   /// strings to preserve exactness (plan 3.3: material quantities are
@@ -87,6 +88,44 @@ interface types {
     /// Anything else: sqlstate + message.
     query-error(tuple<string, string>),
   }
+}
+
+/// Entry-owned operation boundary. Package members can import `statements`
+/// without receiving this interface.
+interface operation {
+  use types.{pg-error};
+  use wamn:flow-http-routing/routing@0.1.0.{authenticated-caller};
+
+  /// The existing operation id text, checked against the loaded release.
+  type sealed-operation-id = string;
+
+  variant refusal {
+    uncertain,
+    resolved,
+    conflict,
+    unknown-operation,
+    grant-denied,
+    invalid-caller,
+    not-begun,
+    already-begun,
+    postgres(pg-error),
+  }
+
+  variant begun {
+    new,
+    /// The stored result text. The entry returns it and runs no work.
+    finished(string),
+  }
+
+  /// Check the host-issued caller and its grant, mint the delivery id, and
+  /// claim the key inside the Store's transaction. The host stores the request
+  /// hash unchanged. A second begin on this Store refuses.
+  /// Dropping the Store rolls back unfinished work.
+  begin-operation: async func(caller: borrow<authenticated-caller>, operation: sealed-operation-id, idempotency-key: string, request-hash: list<u8>) -> result<begun, refusal>;
+
+  /// Store the application's result JSON as text without inspecting it, emit
+  /// the causation message, and commit. Without a new begin, this refuses.
+  commit: async func(%result: string) -> result<_, refusal>;
 }
 
 interface client {
@@ -185,7 +224,8 @@ interface statements {
 
   /// The transaction that the host began for this operation.
   ///
-  /// The host commits or rolls it back after the call, so `commit` and
+  /// The host commits or rolls it back after the call, or through the entry's
+  /// separate `operation.commit` import. Thus `commit` and
   /// `rollback` on it refuse with `postgres(query-error(("2D000", ...)))`.
   /// Dropping the handle leaves the transaction open. An operation without a
   /// host transaction gets `postgres(permission-denied)`.

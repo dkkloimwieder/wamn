@@ -37,6 +37,7 @@ wit_bindgen::generate!({
     world: "client-acme-receiving:component/client-acme-receiving@4.2.1",
     path: [
         "../../../crates/execution/workflow/router/wit",
+        "../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
         "../../target/wamn/wamn_receiving/wit/deps/wamn-receiving-receiving",
         "../../target/wamn/client_acme_receiving/wit",

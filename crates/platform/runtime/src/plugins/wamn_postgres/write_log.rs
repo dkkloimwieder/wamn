@@ -8,9 +8,10 @@
 //! after it, and a claim that never finishes keeps a null `result`, which is
 //! uncertain.
 //!
-//! The row's `request` is the engine's request hash, and its `operation` is
-//! the operation without its `@version`, so a retry across a release answers
-//! the stored result.
+//! The row's `request` holds the engine's hash or the entry's unchanged hash
+//! bytes. Its `operation` is the operation without its `@version`, so a retry
+//! across a release answers the stored result. The entry boundary returns
+//! result text without parsing it.
 
 use std::sync::Arc;
 
@@ -170,6 +171,56 @@ where
 }
 
 impl OperationTransaction {
+    /// Claim application-owned bytes without interpreting the hash or result.
+    pub(super) async fn begin_opaque(
+        &self,
+        operation: &str,
+        key: &str,
+        request: Vec<u8>,
+    ) -> Result<OpaqueBegun, PgError> {
+        let operation = log_operation(operation).to_owned();
+        let claimed = self
+            .log_statement(
+                CLAIM_SQL,
+                vec![
+                    Box::new(operation.clone()),
+                    Box::new(key.to_owned()),
+                    Box::new(request.clone()),
+                ],
+            )
+            .await?;
+        if !claimed.is_empty() {
+            return Ok(OpaqueBegun::New);
+        }
+        let rows = self
+            .log_statement(
+                READ_SQL,
+                vec![Box::new(operation), Box::new(key.to_owned())],
+            )
+            .await?;
+        let row = rows.first().ok_or_else(|| {
+            PgError::QueryError((
+                "P0002".to_owned(),
+                "the write log claim has no row".to_owned(),
+            ))
+        })?;
+        let stored: Vec<u8> = row.get(0);
+        let result: Option<String> = row.get(1);
+        if stored != request {
+            return Ok(OpaqueBegun::Conflict);
+        }
+        Ok(match result {
+            Some(result) => OpaqueBegun::Finished(result),
+            None => OpaqueBegun::Uncertain,
+        })
+    }
+
+    /// Stage the application's result text for the existing commit pipeline.
+    pub(super) fn finish_opaque(&self, operation: &str, key: &str, result: String) {
+        *self.finish.lock().expect("item finish lock poisoned") =
+            Some([log_operation(operation).to_owned(), key.to_owned(), result]);
+    }
+
     /// Run one write log statement on this transaction's connection.
     async fn log_statement(
         &self,
@@ -227,6 +278,15 @@ impl OperationTransaction {
             }
         }
     }
+}
+
+/// The write log has no operator resolution, so it never returns `resolved`.
+#[derive(Debug)]
+pub(super) enum OpaqueBegun {
+    New,
+    Finished(String),
+    Uncertain,
+    Conflict,
 }
 
 /// The claim of an operation with SQL, inside its item transaction.

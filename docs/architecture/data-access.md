@@ -252,7 +252,7 @@ A query that names an undeclared sort refuses with `invalid_input` on the field 
 Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
-Version 0.4.0 repeats every 0.1.0 declaration and adds `run-stream` and `operation-transaction`. It is the one version, and the host serves only it.
+Version 0.4.0 includes `run-stream`, `operation-transaction`, and the separate `operation` interface. It is the one version, and the host serves only it.
 The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000` ([host-owned transaction](../history/host-transaction.md)).
 An unnamed `statements` import runs the statement set of the active operation.
 In a composed component each member has its own named import, and the host links one instance per name.
@@ -337,7 +337,7 @@ Its key is the claim operation without its `@version`, for example `wamn-wms:loc
 The key is the input field that the route's `idempotency` names: `idempotency_key` for a create, and `value.idempotency_key` for a command item.
 An update, a delete, and any other route without a key field key each item by its `request_id`.
 
-The engine is the one claim path.
+The current Receiving path claims through the engine.
 It runs the intent rules of [`intent.rs`](../../crates/platform/engine/src/operation/intent.rs) around every create, update, delete and command, in the cloud and on the edge.
 No codec, data function or component spells a claim.
 The engine calls the component once for each item, with a one-item list.
@@ -363,6 +363,27 @@ A refused item leaves no row, so its key is free again, and a later different re
 A retry that answers a stored result commits nothing, so no event publishes a second time.
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
+
+The host also provides `wamn:postgres/operation@0.4.0` for an application entry.
+The current Receiving path does not call this interface.
+The host binds its workload to a component in the loaded release before serving calls.
+Package members can receive `statements` without receiving `operation`.
+
+`begin-operation` takes the opaque caller handle from `authenticate`, the sealed operation id, an idempotency key, and request hash bytes.
+The host checks the handle, release facts, and caller grant, then mints a delivery id.
+It pipelines the claims and write-log insert in the Store's transaction.
+The host stores the hash bytes unchanged and returns stored result text unchanged as `begun::finished` on replay.
+The entry returns that text and runs no work.
+
+`commit(result)` stores the application's JSON text without parsing it, emits the causation message, and commits the transaction.
+Dropping the Store rolls back unfinished work and clears its authority.
+A second begin on the same Store returns `already-begun`, including after a refused begin or commit.
+Commit without a new open operation returns `not-begun`.
+Member statement handles borrow the same transaction, while `run`, `run-stream`, and guest transaction creation remain refused inside it.
+
+This interface returns `uncertain`, `resolved`, `conflict`, `unknown-operation`, `grant-denied`, `invalid-caller`, `not-begun`, `already-begun`, or `postgres(pg-error)`.
+The write log supports no operator resolution, so it does not currently produce `resolved`.
+An unread commit answer returns `uncertain`.
 
 The request is the SHA-256 of the canonical item without `request_id`, with the key kept.
 The route carries the canonical form of its input item (`canonicalization`), which publish reads from the generated input contract.

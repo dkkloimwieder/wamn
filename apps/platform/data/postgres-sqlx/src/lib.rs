@@ -8,6 +8,7 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:postgres-sqlx/postgres-sqlx@0.1.0",
         path: [
+            "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
             "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
             "wit",
         ],

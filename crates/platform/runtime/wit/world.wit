@@ -6,6 +6,7 @@ world postgres-plugin {
   import wamn:postgres/types@0.4.0;
   import wamn:postgres/client@0.4.0;
   import wamn:postgres/statements@0.4.0;
+  import wamn:postgres/operation@0.4.0;
 }
 
 /// Host-side bindgen world for the trusted typed HTTP connection adapter

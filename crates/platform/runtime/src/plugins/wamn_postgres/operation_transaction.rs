@@ -1,12 +1,13 @@
 //! The transaction that the host owns for one logged operation item
 //! (`docs/history/host-transaction.md` 4.1).
 //!
-//! The host begins it before the guest call, under the claims of the call, in
-//! a pipeline with its write-log claim. The guest works in
+//! The host begins it before the guest call or through `operation.begin-operation`,
+//! under the call's claims, in a pipeline with its write-log claim. The guest works in
 //! it through `statements.operation-transaction`, and its `begin`, `run` and
 //! `run-stream` refuse while it is bound, because each would run on a
 //! connection of its own that the host's rollback does not reach. After the
-//! call the host commits or rolls it back.
+//! call the host commits or rolls it back. An entry uses `operation.commit`;
+//! dropping its Store rolls back unfinished work.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
