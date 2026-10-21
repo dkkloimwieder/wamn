@@ -204,7 +204,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 ### 4.3 cert-manager and the edge certificate
 
 From the repository root, run `wamn-ctl platform apply <cluster.k>`.
-The verb runs sections 4.3 through 4.14 in order.
+The verb runs sections 4.3 through 4.14 in order, then resumes at 4.17 after the owner commits release digests.
 It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
 On GCP, it requests the production certificate directly.
 It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
@@ -757,6 +757,8 @@ shred -u $G/management-author-pat.json
 
 ### 4.15 Qualification
 
+Qualification stays on the build machine, outside `platform apply`.
+
 `qualify-release` runs the release's cases in kind clusters on this machine against the release chart. If every case passes, it pushes the qualification beside the release ([delivery](delivery.md#release-qualification)). It pulls the chart images with `docker pull`, so it reads `DOCKER_CONFIG` of the platform file. Each run takes longer than one hour, so each run gets a new registry token:
 
 ```bash
@@ -812,6 +814,13 @@ git diff --stat
 Commit every change of `deploy/gcp` from sections 4.6, 4.11 and 4.16 in one commit, and push it.
 
 ### 4.17 Apply with the release
+
+`platform apply` runs `env apply` as a Job with the release declared in each environment file.
+The Job mounts the stamped chart, registry credentials, and private copies of the host group inputs.
+It derives event Secret names and the database instance suffix from the current environment.
+The Job skips when its completed input digest matches.
+An unqualified release fails through `env apply` itself.
+The verb prints that refusal and the `qualify-release` command for the build machine.
 
 The apply installs the release chart of each environment in `hosts`. `WAMN_RELEASE_HOST_GROUP` names the platform part of its host group: the NATS URLs, the event NATS Secrets, the registry helper and the identity CA:
 

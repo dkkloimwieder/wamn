@@ -2,8 +2,10 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -40,6 +42,8 @@ pub struct JobRequest {
     pub environment: BTreeMap<String, String>,
     /// Private mounted inputs, keyed by filename under `/inputs`.
     pub files: BTreeMap<String, String>,
+    /// Binary mounted inputs, such as the chart's packaged dependency.
+    pub binary_files: BTreeMap<String, Vec<u8>>,
     /// Namespace-scoped access required by this Job.
     pub permissions: Vec<Access>,
     /// Override the executable for an existing tool, such as identity or psql.
@@ -361,7 +365,7 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
             mount_path: "/out",
         });
     }
-    if !request.files.is_empty() {
+    if !request.files.is_empty() || !request.binary_files.is_empty() {
         volumes.push(Volume {
             name: "inputs",
             empty_dir: None,
@@ -371,6 +375,7 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
                 items: request
                     .files
                     .keys()
+                    .chain(request.binary_files.keys())
                     .enumerate()
                     .map(|(index, path)| SecretItem {
                         key: format!("file-{index}"),
@@ -469,6 +474,7 @@ pub async fn run(
     let digest = input_digest(&json!({
         "inputs": inputs, "image": request.image, "arguments": request.arguments,
         "environment": request.environment, "files": request.files,
+        "binary_files": request.binary_files,
         "permissions": request.permissions, "command": request.command,
         "capture_output": request.capture_output, "run_as_user": request.run_as_user
     }));
@@ -572,7 +578,7 @@ pub async fn run(
             )
             .await?;
         }
-        if !request.files.is_empty() {
+        if !request.files.is_empty() || !request.binary_files.is_empty() {
             let secret = Secret {
                 api_version: "v1".into(),
                 kind: "Secret".into(),
@@ -583,7 +589,17 @@ pub async fn run(
                     .enumerate()
                     .map(|(index, value)| (format!("file-{index}"), value.clone()))
                     .collect(),
-                data: BTreeMap::new(),
+                data: request
+                    .binary_files
+                    .values()
+                    .enumerate()
+                    .map(|(index, bytes)| {
+                        (
+                            format!("file-{}", request.files.len() + index),
+                            STANDARD.encode(bytes),
+                        )
+                    })
+                    .collect(),
                 content_type: "Opaque".into(),
             };
             kubectl::apply(
@@ -650,16 +666,39 @@ pub async fn run(
             )
             .await?;
         }
-        kubectl::wait(
-            &target.kubeconfig,
-            &target.context,
-            &target.namespace,
-            "job",
-            &request.name,
-            "condition=complete",
-            "600s",
-        )
-        .await
+        let deadline = Instant::now() + Duration::from_secs(600);
+        loop {
+            let status: Value = kubectl::get(
+                &target.kubeconfig,
+                &target.context,
+                &target.namespace,
+                "job",
+                &request.name,
+            )
+            .await?
+            .context("install Job disappeared")?;
+            if let Some(conditions) = status["status"]["conditions"].as_array() {
+                ensure!(
+                    !conditions
+                        .iter()
+                        .any(|condition| condition["type"] == "Failed"
+                            && condition["status"] == "True"),
+                    "install Job {} failed",
+                    request.name
+                );
+                if conditions.iter().any(|condition| {
+                    condition["type"] == "Complete" && condition["status"] == "True"
+                }) {
+                    break Ok(());
+                }
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "install Job {} did not complete in 600s",
+                request.name
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
     .await;
     let cleanup = finish(target, work_directory, request).await;

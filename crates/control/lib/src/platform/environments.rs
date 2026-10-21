@@ -1,4 +1,4 @@
-//! The first environment apply runs in the cluster with its declared inputs.
+//! Environment apply runs in the cluster with its declared inputs.
 
 use std::path::Path;
 
@@ -17,6 +17,8 @@ pub(super) async fn apply(
     document: &ClusterDocument,
     environments: &Path,
     directory: &Path,
+    repository: &Path,
+    initial: bool,
 ) -> anyhow::Result<bool> {
     let image = runner_image(directory)?;
     let secret: SecretData = kubectl::get(
@@ -41,13 +43,18 @@ pub(super) async fn apply(
     .context("missing Secret platform/wamn-ctl-auth-nats")?;
     let mut changed = false;
     for (_, mut environment) in super::broker::documents(environments)? {
-        environment.release = DeclaredRelease::None;
+        if initial {
+            environment.release = DeclaredRelease::None;
+        }
         let tenant = format!(
             "{}--{}--{}",
             environment.org, environment.project, environment.env
         );
         let mut request = JobRequest {
-            name: format!("platform-first-apply-{tenant}"),
+            name: format!(
+                "platform-{}apply-{tenant}",
+                if initial { "first-" } else { "" }
+            ),
             image: image.clone(),
             arguments: vec!["env".into(), "apply".into(), "/inputs/environment.k".into()],
             calls_kubernetes: true,
@@ -101,16 +108,216 @@ pub(super) async fn apply(
                 std::fs::read_to_string(directory.join("release-chart").join(name))?,
             );
         }
-        changed |= job::run(
+        if !initial {
+            release_inputs(
+                target,
+                document,
+                &environment,
+                repository,
+                directory,
+                &mut request,
+            )
+            .await?;
+        }
+        let result = job::run(
             target,
             directory,
             &request,
             &json!({"environment": environment}),
             std::slice::from_ref(&admin),
         )
-        .await?;
+        .await;
+        match result {
+            Ok(applied) => changed |= applied,
+            Err(error) => {
+                if let DeclaredRelease::Digest(digest) = &environment.release {
+                    let log = std::fs::read_to_string(
+                        directory.join("jobs").join(format!("{}.log", request.name)),
+                    )
+                    .unwrap_or_default();
+                    if let Some(message) = qualification_refusal(&log, digest) {
+                        let registry = super::packages::registry(document)?;
+                        anyhow::bail!(
+                            "{message}\nRun on the build machine: wamn-ctl qualify-release --release-digest {digest} --release-chart {} --artifact-base {}/releases --registry-auth-file {}",
+                            shell_path(&directory.join("release-chart")),
+                            document.registry,
+                            shell_path(&registry.registry_auth_file)
+                        );
+                    }
+                }
+                return Err(error);
+            }
+        }
     }
     Ok(changed)
+}
+
+fn qualification_refusal<'a>(log: &'a str, digest: &str) -> Option<&'a str> {
+    let prefix = format!("release {digest} has no qualification on the chart's image set:");
+    log.lines()
+        .find_map(|line| line.find(&prefix).map(|at| &line[at..]))
+}
+
+fn shell_path(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "'\"'\"'"))
+}
+
+fn chart_files(root: &Path, relative: &Path, request: &mut JobRequest) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(root.join(relative))? {
+        let entry = entry?;
+        let path = relative.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            chart_files(root, &path, request)?;
+        } else {
+            let name = path.to_str().context("chart path is not UTF-8")?.to_owned();
+            if !request.files.contains_key(&name) {
+                request
+                    .binary_files
+                    .insert(name, std::fs::read(entry.path())?);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn release_inputs(
+    target: &Target,
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    repository: &Path,
+    directory: &Path,
+    request: &mut JobRequest,
+) -> anyhow::Result<()> {
+    super::packages::registry_inputs(request, &super::packages::registry(document)?)?;
+    chart_files(&directory.join("release-chart"), Path::new(""), request)?;
+    let tenant = format!(
+        "{}--{}--{}",
+        environment.org, environment.project, environment.env
+    );
+    let secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        &format!("evt-nats-{tenant}-provisioning"),
+    )
+    .await?
+    .context("missing event provisioning Secret")?;
+    request.environment.insert(
+        "WAMN_EVENT_NATS_URL".into(),
+        "nats://evt-nats.platform.svc.cluster.local:4222".into(),
+    );
+    request
+        .files
+        .insert("event-password".into(), secret_text(&secret, "password")?);
+    request.environment.insert(
+        "WAMN_EVENT_NATS_USERNAME".into(),
+        secret_text(&secret, "username")?,
+    );
+    request.environment.insert(
+        "WAMN_EVENT_NATS_PASSWORD_FILE".into(),
+        "/inputs/event-password".into(),
+    );
+    let path = repository.join(format!(
+        "deploy/gcp/host-group-{}.yaml",
+        environment.project
+    ));
+    let mut group: serde_json::Value = serde_yaml::from_slice(
+        &std::fs::read(&path).with_context(|| format!("read host group {}", path.display()))?,
+    )?;
+    let secrets = super::packages::credentials(target, environment).await?;
+    let database = url::Url::parse(&secrets[1].value)
+        .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
+    let suffix = database
+        .path()
+        .rsplit_once("--")
+        .context("environment database has no instance suffix")?
+        .1;
+    for variable in group["env"]
+        .as_array_mut()
+        .context("host group has no env list")?
+    {
+        let replacement = match variable["name"].as_str().unwrap_or_default() {
+            "WAMN_COMPONENT_ARTIFACT_BASE" => Some(format!("{}/components", document.registry)),
+            "WAMN_EVT_ORG" => Some(environment.org.clone()),
+            "WAMN_EVT_PROJECT" => Some(environment.project.clone()),
+            "WAMN_EVT_ENV" => Some(environment.env.clone()),
+            "WAMN_SESSION_INSTANCE_SUFFIX" => Some(suffix.into()),
+            _ => None,
+        };
+        if let Some(value) = replacement {
+            variable["value"] = value.into();
+        }
+        if variable["name"] == "WAMN_EVT_NATS_USERNAME" {
+            variable["valueFrom"]["secretKeyRef"]["name"] =
+                format!("evt-nats-{tenant}-runtime").into();
+        }
+    }
+    for volume in group["volumes"]
+        .as_array_mut()
+        .context("host group has no volumes")?
+    {
+        match volume["name"].as_str().unwrap_or_default() {
+            "event-nats" => {
+                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-runtime").into()
+            }
+            "materializer-nats" => {
+                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-materializer").into()
+            }
+            _ => {}
+        }
+    }
+    request
+        .files
+        .insert("host-group.yaml".into(), serde_yaml::to_string(&group)?);
+    request.environment.insert(
+        "WAMN_RELEASE_HOST_GROUP".into(),
+        "/inputs/host-group.yaml".into(),
+    );
+    let hosts = request
+        .permissions
+        .iter_mut()
+        .find(|access| access.namespace == "hosts")
+        .context("missing hosts permissions")?;
+    hosts.rules.extend([
+        PolicyRule {
+            api_groups: vec![String::new()],
+            resources: vec!["services".into(), "configmaps".into(), "secrets".into()],
+            verbs: [
+                "get", "list", "watch", "create", "patch", "update", "delete",
+            ]
+            .map(str::to_owned)
+            .into(),
+        },
+        PolicyRule {
+            api_groups: vec!["apps".into()],
+            resources: vec!["deployments".into(), "replicasets".into()],
+            verbs: [
+                "get", "list", "watch", "create", "patch", "update", "delete",
+            ]
+            .map(str::to_owned)
+            .into(),
+        },
+        PolicyRule {
+            api_groups: vec!["networking.k8s.io".into()],
+            resources: vec!["networkpolicies".into()],
+            verbs: [
+                "get", "list", "watch", "create", "patch", "update", "delete",
+            ]
+            .map(str::to_owned)
+            .into(),
+        },
+        PolicyRule {
+            api_groups: vec!["wasmcloud.com".into()],
+            resources: vec!["workloaddeployments".into()],
+            verbs: [
+                "get", "list", "watch", "create", "patch", "update", "delete",
+            ]
+            .map(str::to_owned)
+            .into(),
+        },
+    ]);
+    Ok(())
 }
 
 fn kubeconfig() -> serde_json::Value {

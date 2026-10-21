@@ -1,4 +1,4 @@
-//! Install the platform through runbook step 4.14 using kubectl and Helm.
+//! Install the platform through runbook step 4.17 using kubectl and Helm.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -22,7 +22,7 @@ use super::{build, lock};
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.14 under the install lock.
+/// Apply steps 4.3 through 4.17 under the install lock.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -77,7 +77,15 @@ pub async fn apply(
             "4.8" => broker(&target, document, repository, environments, &step).await?,
             "4.9" => platform_inputs(&target, document, repository).await?,
             "4.11" => {
-                super::environments::apply(&target, document, environments, work_directory).await?
+                super::environments::apply(
+                    &target,
+                    document,
+                    environments,
+                    work_directory,
+                    repository,
+                    true,
+                )
+                .await?
             }
             "4.12" => {
                 super::identity::apply(&target, document, repository, environments, work_directory)
@@ -122,7 +130,21 @@ pub async fn apply(
             return Ok(());
         }
     }
-    progress("Steps after 4.14 come later.")?;
+    progress("4.17 Apply with the release: starting")?;
+    let changed = super::environments::apply(
+        &target,
+        document,
+        environments,
+        work_directory,
+        repository,
+        false,
+    )
+    .await?;
+    progress(&format!(
+        "4.17 Apply with the release: {}",
+        if changed { "done" } else { "skipped" }
+    ))?;
+    progress("Steps after 4.17 come later.")?;
     Ok(())
 }
 
