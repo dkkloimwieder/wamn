@@ -191,6 +191,7 @@ mod tests {
             buckets: Buckets {
                 web: String::new(),
                 otel: String::new(),
+                state: String::new(),
             },
             route_hosts: RouteHosts {
                 control: "control.example.com".into(),

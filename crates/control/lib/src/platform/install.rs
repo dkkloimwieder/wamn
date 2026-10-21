@@ -955,7 +955,7 @@ mod tests {
         let document: ClusterDocument = serde_json::from_value(json!({
             "provider": "kind", "project_id": "", "zone": "",
             "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
-            "registry": "localhost:5000", "buckets": {"web": "", "otel": ""},
+            "registry": "localhost:5000", "buckets": {"web": "", "otel": "", "state": ""},
             "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
         }))
         .unwrap();
@@ -977,7 +977,7 @@ mod tests {
             let document: ClusterDocument = serde_json::from_value(json!({
                 "provider": provider, "project_id": "", "zone": "",
                 "cluster_name": "test", "org": "acme", "owner_email": "owner@example.com",
-                "registry": "localhost:5000", "buckets": {"web": "", "otel": ""},
+                "registry": "localhost:5000", "buckets": {"web": "", "otel": "", "state": ""},
                 "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
             })).unwrap();
             let jobs = provisioning_jobs(&document, "registry/runner:1@sha256:abc");
@@ -1079,7 +1079,7 @@ mod tests {
         let document: ClusterDocument = serde_json::from_value(json!({
             "provider": "gcp", "project_id": "test-project", "zone": "us-central1-a",
             "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
-            "registry": "localhost:5000", "buckets": {"web": "test-web", "otel": "test-otel"},
+            "registry": "localhost:5000", "buckets": {"web": "test-web", "otel": "test-otel", "state": "test-state"},
             "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
         }))
         .unwrap();
@@ -1140,7 +1140,7 @@ mod tests {
             let document: ClusterDocument = serde_json::from_value(json!({
                 "provider": provider, "project_id": "test-project", "zone": "us-central1-a",
                 "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
-                "registry": "localhost:5000", "buckets": {"web": "", "otel": ""},
+                "registry": "localhost:5000", "buckets": {"web": "", "otel": "", "state": ""},
                 "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
             })).unwrap();
             let values = operator_values(

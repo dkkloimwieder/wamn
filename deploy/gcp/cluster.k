@@ -8,7 +8,7 @@ cluster.Cluster {
     org = "dkk"
     owner_email = "dkkloimwieder@gmail.com"
     registry = "us-central1-docker.pkg.dev/wamn-dev/wamn"
-    buckets = {web = "wamn-dev-web", otel = "wamn-dev-otel"}
+    buckets = {web = "wamn-dev-web", otel = "wamn-dev-otel", state = "wamn-dev-tofu-state"}
     route_hosts = {
         control = "control.wamn.dev"
     }

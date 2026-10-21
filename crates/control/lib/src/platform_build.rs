@@ -534,7 +534,6 @@ struct CloudBuild {
 /// e2-highcpu-8, default pool, US regions, USD per build-minute.
 /// https://cloud.google.com/build/pricing (read 2026-10-20).
 const E2_HIGHCPU_8_USD_PER_MINUTE: f64 = 0.0156;
-const BUILD_COUNTER_BUCKET: &str = "wamn-dev-tofu-state";
 
 #[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -553,35 +552,70 @@ fn agent_configuration() -> anyhow::Result<PathBuf> {
     )
 }
 
-fn counter_store() -> anyhow::Result<object_store::gcp::GoogleCloudStorage> {
-    object_store::gcp::GoogleCloudStorageBuilder::new()
-        .with_bucket_name(BUILD_COUNTER_BUCKET)
-        .with_application_credentials(
-            agent_configuration()?
-                .join("application_default_credentials.json")
-                .to_string_lossy(),
-        )
-        .build()
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "configure the build counter with the agent's application default credentials"
-            )
-        })
+type CounterStore = std::sync::Arc<dyn object_store::ObjectStore>;
+
+/// Opens the daily counter bucket with a fresh gcloud access token for each operation.
+struct CounterStores<F> {
+    gcloud: std::ffi::OsString,
+    configuration: PathBuf,
+    bucket: String,
+    open: F,
 }
 
-async fn read_counter(
-    store: &dyn object_store::ObjectStore,
+impl<F> CounterStores<F>
+where
+    F: Fn(&str, String) -> anyhow::Result<CounterStore>,
+{
+    // Tokens expire after an hour, so no token outlives one counter operation.
+    async fn store(&self) -> anyhow::Result<CounterStore> {
+        let result = Command::new(&self.gcloud)
+            .args(["auth", "print-access-token"])
+            .env("CLOUDSDK_CONFIG", &self.configuration)
+            .kill_on_drop(true)
+            .output()
+            .await
+            .context("start gcloud auth print-access-token")?;
+        ensure!(
+            result.status.success(),
+            "gcloud auth print-access-token failed with {}",
+            result.status
+        );
+        let token = String::from_utf8(result.stdout)
+            .map_err(|_| anyhow::anyhow!("gcloud auth print-access-token wrote non-UTF-8"))?;
+        (self.open)(&self.bucket, token.trim().to_owned())
+    }
+}
+
+fn gcs_store(bucket: &str, bearer: String) -> anyhow::Result<CounterStore> {
+    let store = object_store::gcp::GoogleCloudStorageBuilder::new()
+        .with_bucket_name(bucket)
+        .with_credentials(std::sync::Arc::new(
+            object_store::StaticCredentialProvider::new(object_store::gcp::GcpCredential {
+                bearer,
+            }),
+        ))
+        .build()
+        .map_err(|_| {
+            anyhow::anyhow!("configure the build counter with the agent's access token")
+        })?;
+    Ok(std::sync::Arc::new(store))
+}
+
+async fn read_counter<F>(
+    stores: &CounterStores<F>,
     path: &object_store::path::Path,
-) -> anyhow::Result<(DailyCounter, object_store::PutMode)> {
+) -> anyhow::Result<(DailyCounter, object_store::PutMode)>
+where
+    F: Fn(&str, String) -> anyhow::Result<CounterStore>,
+{
     use object_store::ObjectStoreExt as _;
-    let object = match store.get(path).await {
+    let bucket = &stores.bucket;
+    let object = match stores.store().await?.get(path).await {
         Ok(object) => object,
         Err(object_store::Error::NotFound { .. }) => {
             return Ok((DailyCounter::default(), object_store::PutMode::Create));
         }
-        Err(_) => anyhow::bail!(
-            "read gs://{BUILD_COUNTER_BUCKET}/{path}; check the agent's storage access"
-        ),
+        Err(_) => anyhow::bail!("read gs://{bucket}/{path}; check the agent's storage access"),
     };
     let mode = object_store::PutMode::Update(object_store::UpdateVersion {
         e_tag: object.meta.e_tag.clone(),
@@ -600,27 +634,36 @@ async fn read_counter(
     Ok((counter, mode))
 }
 
-async fn add_cloud_minutes(
-    store: &dyn object_store::ObjectStore,
+async fn add_cloud_minutes<F>(
+    stores: &CounterStores<F>,
     path: &object_store::path::Path,
     minutes: u32,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    F: Fn(&str, String) -> anyhow::Result<CounterStore>,
+{
+    let bucket = &stores.bucket;
     loop {
-        let (mut counter, mode) = read_counter(store, path).await?;
+        let (mut counter, mode) = read_counter(stores, path).await?;
         counter.cloud_minutes = counter
             .cloud_minutes
             .checked_add(u64::from(minutes))
             .context("cloud build minutes overflow")?;
         counter.spend_usd += f64::from(minutes) * E2_HIGHCPU_8_USD_PER_MINUTE;
         let payload = serde_json::to_vec(&counter)?.into();
-        match store.put_opts(path, payload, mode.into()).await {
+        match stores
+            .store()
+            .await?
+            .put_opts(path, payload, mode.into())
+            .await
+        {
             Ok(_) => return Ok(()),
             Err(
                 object_store::Error::Precondition { .. }
                 | object_store::Error::AlreadyExists { .. },
             ) => {}
             Err(_) => anyhow::bail!(
-                "write gs://{BUILD_COUNTER_BUCKET}/{path}; the cloud build's {minutes} minutes remain unrecorded"
+                "write gs://{bucket}/{path}; the cloud build's {minutes} minutes remain unrecorded"
             ),
         }
     }
@@ -695,11 +738,16 @@ async fn cloud_build(
         ]))
         .await?;
     }
-    let store = counter_store()?;
+    let stores = CounterStores {
+        gcloud: "gcloud".into(),
+        configuration: agent_configuration()?,
+        bucket: cluster.buckets.state.clone(),
+        open: gcs_store,
+    };
     // Charge the UTC submission day, even when a build finishes after midnight.
     let day =
         object_store::path::Path::from(format!("build/{}.json", Utc::now().format("%Y-%m-%d")));
-    let (counter, _) = read_counter(&store, &day).await?;
+    let (counter, _) = read_counter(&stores, &day).await?;
     if let BuildLocation::Refused { spend_usd, cap_usd } = build_location(
         processes,
         std::process::id(),
@@ -712,7 +760,7 @@ async fn cloud_build(
     }
     let build = submit_cloud_build(request, &cluster.project_id).await?;
     // Record failed builds before reporting their outcome.
-    add_cloud_minutes(&store, &day, cloud_minutes(&build)?).await?;
+    add_cloud_minutes(&stores, &day, cloud_minutes(&build)?).await?;
     ensure!(
         build.status == "SUCCESS",
         "Cloud Build {} finished with {}",
@@ -914,13 +962,79 @@ mod tests {
         }
     }
 
+    type Opened = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+    // A fake gcloud that prints a new token on each call, and a store that
+    // records the bearer each operation opened it with.
+    fn fake_stores(
+        name: &str,
+        store: std::sync::Arc<object_store::memory::InMemory>,
+    ) -> (
+        CounterStores<impl Fn(&str, String) -> anyhow::Result<CounterStore>>,
+        Opened,
+    ) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory =
+            std::env::temp_dir().join(format!("wamn-counter-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let gcloud = directory.join("gcloud");
+        std::fs::write(
+            &gcloud,
+            "#!/bin/sh\n[ \"$*\" = \"auth print-access-token\" ] || exit 2\necho call >> \"$CLOUDSDK_CONFIG/calls\"\necho \"token-$(wc -l < \"$CLOUDSDK_CONFIG/calls\" | tr -d ' ')\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&gcloud, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let opened = Opened::default();
+        let recorded = opened.clone();
+        let stores = CounterStores {
+            gcloud: gcloud.into(),
+            configuration: directory,
+            bucket: "test".into(),
+            open: move |bucket: &str, bearer: String| {
+                assert_eq!(bucket, "test");
+                recorded.lock().unwrap().push(bearer);
+                Ok(store.clone() as CounterStore)
+            },
+        };
+        (stores, opened)
+    }
+
+    #[tokio::test]
+    async fn daily_counter_fetches_a_token_for_each_read_and_write() {
+        let (stores, opened) = fake_stores("token", std::sync::Arc::default());
+        let path = object_store::path::Path::from("build/2026-10-21.json");
+        read_counter(&stores, &path).await.unwrap();
+        assert_eq!(*opened.lock().unwrap(), ["token-1"]);
+        // A read and a write, each with its own token, as after a cloud build.
+        add_cloud_minutes(&stores, &path, 5).await.unwrap();
+        assert_eq!(*opened.lock().unwrap(), ["token-1", "token-2", "token-3"]);
+        assert_eq!(
+            read_counter(&stores, &path).await.unwrap().0.cloud_minutes,
+            5
+        );
+        let failing = CounterStores {
+            gcloud: "false".into(),
+            ..stores
+        };
+        assert!(
+            read_counter(&failing, &path)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("gcloud auth print-access-token failed")
+        );
+        std::fs::remove_dir_all(&failing.configuration).unwrap();
+    }
+
     #[tokio::test]
     async fn daily_counter_creates_and_accumulates_success_and_failure_minutes() {
         use object_store::ObjectStore as _;
-        let store = object_store::memory::InMemory::new();
+        let store = std::sync::Arc::new(object_store::memory::InMemory::new());
+        let (stores, _) = fake_stores("minutes", store.clone());
         let path = object_store::path::Path::from("build/2026-10-20.json");
         assert_eq!(
-            read_counter(&store, &path).await.unwrap().0,
+            read_counter(&stores, &path).await.unwrap().0,
             DailyCounter::default()
         );
         for (status, finish, expected_minutes) in [
@@ -935,12 +1049,12 @@ mod tests {
             };
             let minutes = cloud_minutes(&build).unwrap();
             assert_eq!(minutes, expected_minutes);
-            add_cloud_minutes(&store, &path, minutes).await.unwrap();
+            add_cloud_minutes(&stores, &path, minutes).await.unwrap();
         }
-        let (counter, stale) = read_counter(&store, &path).await.unwrap();
+        let (counter, stale) = read_counter(&stores, &path).await.unwrap();
         assert_eq!(counter.cloud_minutes, 3);
         assert!((counter.spend_usd - 0.0468).abs() < 1e-12);
-        add_cloud_minutes(&store, &path, 1).await.unwrap();
+        add_cloud_minutes(&stores, &path, 1).await.unwrap();
         assert!(matches!(
             store
                 .put_opts(
@@ -952,9 +1066,10 @@ mod tests {
             Err(object_store::Error::Precondition { .. })
         ));
         assert_eq!(
-            read_counter(&store, &path).await.unwrap().0.cloud_minutes,
+            read_counter(&stores, &path).await.unwrap().0.cloud_minutes,
             4
         );
+        std::fs::remove_dir_all(&stores.configuration).unwrap();
     }
 
     #[test]

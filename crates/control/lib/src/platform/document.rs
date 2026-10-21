@@ -51,6 +51,8 @@ pub enum Provider {
 pub struct Buckets {
     pub web: String,
     pub otel: String,
+    /// The OpenTofu state bucket. `build-platform` keeps its daily counter below `build/`.
+    pub state: String,
 }
 
 /// The control route host.
@@ -118,7 +120,11 @@ impl ClusterDocument {
                 },
                 "zone is not a GCP zone"
             );
-            for (field, value) in [("web", &self.buckets.web), ("otel", &self.buckets.otel)] {
+            for (field, value) in [
+                ("web", &self.buckets.web),
+                ("otel", &self.buckets.otel),
+                ("state", &self.buckets.state),
+            ] {
                 ensure!(
                     (3..=63).contains(&value.len()) && dns_name(value),
                     "buckets.{field} is not a lowercase bucket name"
@@ -235,7 +241,7 @@ mod tests {
             "org": "dkk", "owner_email": "dkkloimwieder@gmail.com",
             "registry": "us-central1-docker.pkg.dev/wamn-dev/wamn",
             "build_cloud_cap_usd": 3.0,
-            "buckets": {"web": "wamn-dev-web", "otel": "wamn-dev-otel"},
+            "buckets": {"web": "wamn-dev-web", "otel": "wamn-dev-otel", "state": "wamn-dev-tofu-state"},
             "route_hosts": {"control": "control.wamn.dev"},
             "resend_from": "noreply@wamn.dev"
         })
@@ -374,7 +380,7 @@ mod tests {
         for field in ["project_id", "zone"] {
             value[field] = json!("");
         }
-        value["buckets"] = json!({"web": "", "otel": ""});
+        value["buckets"] = json!({"web": "", "otel": "", "state": ""});
         value["registry"] = json!("localhost:5000/wamn");
         let parsed = ClusterDocument::from_json(value.to_string().as_bytes()).unwrap();
         let bytes = compile(&parsed.to_kcl()).expect("kind compiles without GCP resources");

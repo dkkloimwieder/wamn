@@ -269,7 +269,7 @@ mod tests {
         serde_json::from_value(json!({
             "provider": provider, "project_id": "test-project", "zone": "us-central1-a",
             "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
-            "registry": "localhost:5000", "buckets": {"web": "", "otel": ""},
+            "registry": "localhost:5000", "buckets": {"web": "", "otel": "", "state": ""},
             "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
         }))
         .unwrap()

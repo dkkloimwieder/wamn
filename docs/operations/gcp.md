@@ -89,14 +89,6 @@ The owner supplies these inputs. The install stops at the first step that reads 
 
     The [budget command](https://cloud.google.com/sdk/gcloud/reference/billing/budgets/create) sends alerts to the default billing recipients. The budget does not stop builds. The daily cap in [building](building.md#cloud-platform-builds) controls new submissions.
 
-11. Storage access for the agent to read, create, and replace the daily counter objects. The counter uses the application default credentials under `CLOUDSDK_CONFIG`. If the agent lacks this access, the owner runs:
-
-    ```bash
-    gcloud storage buckets add-iam-policy-binding gs://wamn-dev-tofu-state --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/storage.objectUser --condition='expression=resource.name.startsWith("projects/_/buckets/wamn-dev-tofu-state/objects/build/"),title=wamn-build-counter'
-    ```
-
-    The condition limits the grant to `build/`. It gives no access to the OpenTofu state objects.
-
 `build-platform` uses these owner inputs and never creates their grants or budget. Missing access causes the cloud operation to fail.
 
 ## 2. Project resources

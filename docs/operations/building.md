@@ -120,7 +120,7 @@ It ignores its own process and processes with `--stamp-only`.
 When no other build runs, it uses the local Docker build path.
 
 The cloud path requires `--cluster <cluster.k>`.
-It reads the project and `build_cloud_cap_usd` from that document.
+It reads the project, `buckets.state` and `build_cloud_cap_usd` from that document.
 The cap defaults to USD 3 per UTC day.
 All existing flags keep their meaning, including the destination `--registry`.
 
@@ -138,8 +138,11 @@ The root `.gcloudignore` excludes the `.dockerignore` paths and every target dir
 The command copies only `apps/target/wamn` into a temporary source directory for the runner input, then removes that directory after submission.
 It does not upload Cargo target caches.
 
-Before submission, the command reads `gs://wamn-dev-tofu-state/build/<YYYY-MM-DD>.json` for the UTC submission day.
+Before submission, the command reads `gs://<buckets.state>/build/<YYYY-MM-DD>.json` for the UTC submission day.
+For wamn-dev, `buckets.state` is the OpenTofu state bucket `wamn-dev-tofu-state`.
 An absent object means zero spend.
+Before each counter read or write, the command runs `gcloud auth print-access-token` with the agent `CLOUDSDK_CONFIG` and uses that token.
+It needs no application default credentials and no key file.
 At or above the cap, it refuses the cloud build and prints the spend and cap.
 The local path does not use the cloud cap.
 

@@ -13,6 +13,8 @@ _email = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
 schema Buckets:
     web: str
     otel: str
+    # The OpenTofu state bucket. build-platform keeps its daily counter below build/.
+    state: str
 
 schema RouteHosts:
     control: str
@@ -43,4 +45,4 @@ schema Cluster:
         regex.match(registry, r"^[a-z0-9][a-z0-9.:-]*(/[a-z0-9][a-z0-9._-]*)*$"), "registry is a registry host and optional repository path"
         provider == "kind" or regex.match(project_id, r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$"), "project_id is a GCP project id"
         provider == "kind" or regex.match(zone, r"^[a-z]+-[a-z]+[0-9]+-[a-z]$"), "zone is a GCP zone"
-        provider == "kind" or all bucket in [buckets.web, buckets.otel] {len(bucket) >= 3 and len(bucket) <= 63 and regex.match(bucket, _host)}, "buckets are lowercase bucket names"
+        provider == "kind" or all bucket in [buckets.web, buckets.otel, buckets.state] {len(bucket) >= 3 and len(bucket) <= 63 and regex.match(bucket, _host)}, "buckets are lowercase bucket names"

@@ -135,7 +135,7 @@ cluster.Cluster {{
     org = "test"
     owner_email = "owner@example.com"
     registry = "localhost:{port}"
-    buckets = {{web = "", otel = ""}}
+    buckets = {{web = "", otel = "", state = ""}}
     route_hosts = {{control = "control.example.com"}}
     resend_from = "sender@example.com"
 }}
