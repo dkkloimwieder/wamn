@@ -502,8 +502,9 @@ mod tests {
             std::process::id()
         ));
         let log = (1..=25)
-            .map(|line| format!("line {line}\n"))
-            .collect::<String>();
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         private_file(&path)
             .unwrap()
             .write_all(log.as_bytes())
