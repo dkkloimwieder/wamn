@@ -203,6 +203,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 
 ### 4.3 cert-manager and the edge certificate
 
+Set `WAMN_REGISTRY_AUTH_FILE` to the credentials file prepared in section 4.10.
 From the repository root, run `wamn-ctl platform apply <cluster.k>`.
 The verb runs sections 4.3 through 4.14 in order, then resumes at 4.17 after the owner commits release digests.
 It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
@@ -226,7 +227,12 @@ Step 4.12 reads the owner's `identity-resend` Secret and refuses a missing, empt
 It prepares session targets as Jobs, then installs the identity chart with values derived from the document and stamped images.
 Jobs read the active session key, publish and activate a key when none is active, and request the public keys over TLS.
 The public Job results stay with their completion digests so a retry can reuse a published key.
-Run sections 4.13 onward by hand with the commands below.
+Step 4.13 pushes missing packages and applies them as Jobs.
+Step 4.14 publishes releases without wirings.
+A wiring refuses before publication and names `wamn-wgpm9.4`.
+The verb prints release lines for the owner to commit, then resumes at 4.17 on a rerun.
+Qualification stays on the build machine in section 4.15.
+Run sections 4.18 onward by hand with the commands below.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 

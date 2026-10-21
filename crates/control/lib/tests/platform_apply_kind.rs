@@ -1,6 +1,6 @@
 //! Install the platform on a private kind cluster and require an unchanged rerun.
 //!
-//! Requires Docker with buildx manifest reads, kind, Helm, kubectl, pnpm,
+//! Requires Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, OpenSSL,
 //! package build tools, and debug wamn and wamn-ctl binaries.
 //! The runner exports CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent and
 //! DOCKER_CONFIG pointing to a config.json with the GCP gcloud credential helper.
@@ -9,7 +9,9 @@
 //! and stamps them. It never builds images or needs image build tools.
 //! Network access to the GCP registry and public registries is required.
 //! No external database, bucket or DNS is required. The test keeps its input,
-//! kubeconfig and progress under /var/tmp and removes its cluster and registry.
+//! kubeconfig and progress under /var/tmp and removes its cluster and registries.
+//! A TLS artifact registry serves Receiving and its unqualified release.
+//! The test requires the qualification refusal and skips through step 4.14.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -43,7 +45,12 @@ impl Drop for ClusterGuard {
             Err(error) => eprintln!("delete kind cluster {}: {error}", self.name),
         }
         match Command::new("docker")
-            .args(["rm", "-f", &format!("{}-registry", self.name)])
+            .args([
+                "rm",
+                "-f",
+                &format!("{}-registry", self.name),
+                &format!("{}-artifacts", self.name),
+            ])
             .stdin(Stdio::null())
             .status()
         {
@@ -54,7 +61,7 @@ impl Drop for ClusterGuard {
     }
 }
 
-const STEP_TITLES: [&str; 10] = [
+const STEP_TITLES: [&str; 12] = [
     "4.3 cert-manager and the edge certificate",
     "4.4 Namespaces, runtime operator and internal CA",
     "4.4.1 Collector",
@@ -65,6 +72,8 @@ const STEP_TITLES: [&str; 10] = [
     "4.9 Platform install inputs",
     "4.11 First apply",
     "4.12 Identity and session key",
+    "4.13 Packages",
+    "4.14 Publish releases",
 ];
 
 #[tokio::test(flavor = "current_thread")]
@@ -110,6 +119,7 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
     )?;
     let _cluster = ClusterGuard { name: name.clone() };
     let port = registry(&name)?;
+    let artifacts = artifact_registry(&name, &directory).await?;
     let file = directory.join("cluster.k");
     std::fs::write(
         &file,
@@ -155,7 +165,7 @@ cluster.Cluster {{
     values["cluster"] = name.clone().into();
     values["context"] = format!("kind-{name}").into();
     values["registry"] = document.registry.clone().into();
-    values["route_host"] = environment.route_host.into();
+    values["route_host"] = environment.route_host.clone().into();
     values["web_client"]["bucket"] = "".into();
     values["gates_image"] = chart["platform"]["gates"]["image"].clone();
     std::fs::write(
@@ -197,6 +207,7 @@ cluster.Cluster {{
         &repository,
         &environments,
         &work,
+        &artifacts,
         |line| {
             println!("{line}");
             writeln!(progress, "{line}")?;
@@ -298,8 +309,50 @@ cluster.Cluster {{
         anonymous.contains("Authorization Violation") && !anonymous.contains("PONG"),
         "event NATS accepted an anonymous connection: {anonymous}"
     );
+    let prefix = format!("{}: release = \"", input.display());
+    let digest = first
+        .iter()
+        .find_map(|line| {
+            line.strip_prefix(&prefix)
+                .and_then(|line| line.strip_suffix('"'))
+        })
+        .context("publication printed no release line")?
+        .to_owned();
+    ensure!(
+        EnvironmentDocument::compile(&input)?.release == DeclaredRelease::None,
+        "platform apply changed the environment file"
+    );
+    environment.release = DeclaredRelease::Digest(digest.clone());
+    std::fs::write(&input, environment.to_kcl())?;
+    let refused = install::apply(
+        &document,
+        &version,
+        &repository,
+        &environments,
+        &work,
+        &artifacts,
+        |line| {
+            println!("{line}");
+            writeln!(progress, "{line}")?;
+            Ok(())
+        },
+    )
+    .await
+    .expect_err("an unqualified release must refuse");
+    let refusal = format!("{refused:#}");
+    ensure!(
+        refusal.contains(&format!(
+            "release {digest} has no qualification on the chart's image set:"
+        )),
+        "{refusal}"
+    );
+    ensure!(
+        refusal.contains(&format!("qualify-release --release-digest {digest}")),
+        "{refusal}"
+    );
+    writeln!(progress, "{refusal}")?;
     let secrets = secret_versions(&kubeconfig, &context).await?;
-    let mut logs = first.join("\n");
+    let mut logs = format!("{}\n{refusal}", first.join("\n"));
     for entry in std::fs::read_dir(work.join("jobs"))? {
         logs.push_str(&std::fs::read_to_string(entry?.path())?);
     }
@@ -332,12 +385,13 @@ cluster.Cluster {{
     }
 
     let mut second = Vec::new();
-    install::apply(
+    let repeated = install::apply(
         &document,
         &version,
         &repository,
         &environments,
         &work,
+        &artifacts,
         |line| {
             println!("{line}");
             writeln!(progress, "{line}")?;
@@ -345,7 +399,12 @@ cluster.Cluster {{
             Ok(())
         },
     )
-    .await?;
+    .await
+    .expect_err("the unchanged unqualified release still refuses");
+    ensure!(
+        format!("{repeated:#}").contains(&format!("release {digest} has no qualification")),
+        "{repeated:#}"
+    );
     require_steps(&second, "skipped")?;
     for ((name, first), (_, second)) in secrets
         .iter()
@@ -465,6 +524,110 @@ async fn copy_images(source: &str, destination: &str, version: &str) -> anyhow::
     Ok(())
 }
 
+async fn artifact_registry(
+    cluster: &str,
+    directory: &Path,
+) -> anyhow::Result<wamn_control::package_artifact::PackageRegistry> {
+    use std::os::unix::fs::DirBuilderExt as _;
+    let certs = directory.join("artifact-registry");
+    std::fs::DirBuilder::new().mode(0o700).create(&certs)?;
+    let name = format!("{cluster}-artifacts");
+    certificate(&certs, "127.0.0.1")?;
+    docker(&[
+        "run",
+        "-d",
+        "--name",
+        &name,
+        "--network",
+        "kind",
+        "-v",
+        &format!("{}:/certs:ro", certs.display()),
+        "-e",
+        "REGISTRY_HTTP_TLS_CERTIFICATE=/certs/tls.crt",
+        "-e",
+        "REGISTRY_HTTP_TLS_KEY=/certs/tls.key",
+        "registry:2",
+    ])?;
+    let address = docker(&[
+        "inspect",
+        "--format",
+        "{{(index .NetworkSettings.Networks \"kind\").IPAddress}}",
+        &name,
+    ])?
+    .trim()
+    .to_owned();
+    certificate(&certs, &address)?;
+    docker(&["restart", &name])?;
+    let authority = format!("{address}:5000");
+    let mut password = [0u8; 32];
+    SystemRandom::new()
+        .fill(&mut password)
+        .map_err(|_| anyhow::anyhow!("generate registry fixture credential"))?;
+    let auth = certs.join("config.json");
+    std::fs::write(
+        &auth,
+        serde_json::to_vec(&json!({"auths": {&authority: {
+            "username": "fixture", "password": hex::encode(password)
+        }}}))?,
+    )?;
+    let certificate = reqwest::Certificate::from_pem(&std::fs::read(certs.join("tls.crt"))?)?;
+    let client = reqwest::Client::builder()
+        .add_root_certificate(certificate)
+        .build()?;
+    let deadline = Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if client
+            .get(format!("https://{authority}/v2/"))
+            .send()
+            .await
+            .is_ok_and(|reply| reply.status().is_success())
+        {
+            break;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "artifact registry did not become ready"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    Ok(wamn_control::package_artifact::PackageRegistry {
+        artifact_base: format!("{authority}/packages"),
+        registry_auth_file: auth,
+        insecure_registry: false,
+        oci_ca_paths: vec![certs.join("tls.crt")],
+    })
+}
+
+fn certificate(directory: &Path, address: &str) -> anyhow::Result<()> {
+    let output = Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=platform-artifacts",
+            "-addext",
+            &format!("subjectAltName=IP:{address}"),
+            "-keyout",
+        ])
+        .arg(directory.join("tls.key"))
+        .arg("-out")
+        .arg(directory.join("tls.crt"))
+        .stdin(Stdio::null())
+        .output()
+        .context("create the registry TLS certificate")?;
+    ensure!(
+        output.status.success(),
+        "openssl failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
 fn registry(cluster: &str) -> anyhow::Result<u16> {
     let network = Command::new("docker")
         .args(["network", "inspect", "kind"])
@@ -516,6 +679,21 @@ fn require_steps(lines: &[String], result: &str) -> anyhow::Result<()> {
         .filter(|line| line.starts_with("4.") && !line.ends_with(": starting"))
         .map(String::as_str)
         .collect();
+    let completed = completed
+        .iter()
+        .map(|line| {
+            let (step, elapsed) = line.rsplit_once(' ').context("step has no elapsed time")?;
+            let seconds: f64 = elapsed
+                .strip_suffix('s')
+                .context("elapsed time has no seconds suffix")?
+                .parse()?;
+            ensure!(
+                seconds.is_finite() && seconds >= 0.0,
+                "invalid elapsed time"
+            );
+            Ok(step)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let expected = STEP_TITLES.map(|title| format!("{title}: {result}"));
     ensure!(
         completed == expected,

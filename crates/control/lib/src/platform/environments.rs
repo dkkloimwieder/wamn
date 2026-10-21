@@ -18,8 +18,9 @@ pub(super) async fn apply(
     environments: &Path,
     directory: &Path,
     repository: &Path,
-    initial: bool,
+    registry: Option<&wamn_package_artifact::PackageRegistry>,
 ) -> anyhow::Result<bool> {
+    let initial = registry.is_none();
     let image = runner_image(directory)?;
     let secret: SecretData = kubectl::get(
         &target.kubeconfig,
@@ -108,7 +109,7 @@ pub(super) async fn apply(
                 std::fs::read_to_string(directory.join("release-chart").join(name))?,
             );
         }
-        if !initial {
+        if let Some(registry) = registry {
             release_inputs(
                 target,
                 document,
@@ -116,6 +117,7 @@ pub(super) async fn apply(
                 repository,
                 directory,
                 &mut request,
+                registry,
             )
             .await?;
         }
@@ -130,18 +132,18 @@ pub(super) async fn apply(
         match result {
             Ok(applied) => changed |= applied,
             Err(error) => {
-                if let DeclaredRelease::Digest(digest) = &environment.release {
+                if let DeclaredRelease::Digest(digest) = &environment.release
+                    && error.to_string() == format!("install Job {} failed", request.name)
+                {
                     let log = std::fs::read_to_string(
                         directory.join("jobs").join(format!("{}.log", request.name)),
                     )
                     .unwrap_or_default();
                     if let Some(message) = qualification_refusal(&log, digest) {
-                        let registry = super::packages::registry(document)?;
+                        let registry = registry.context("release apply has no registry inputs")?;
                         anyhow::bail!(
-                            "{message}\nRun on the build machine: wamn-ctl qualify-release --release-digest {digest} --release-chart {} --artifact-base {}/releases --registry-auth-file {}",
-                            shell_path(&directory.join("release-chart")),
-                            document.registry,
-                            shell_path(&registry.registry_auth_file)
+                            "{message}\nRun on the build machine: {}",
+                            qualification_command(digest, directory, registry)?
                         );
                     }
                 }
@@ -156,6 +158,26 @@ fn qualification_refusal<'a>(log: &'a str, digest: &str) -> Option<&'a str> {
     let prefix = format!("release {digest} has no qualification on the chart's image set:");
     log.lines()
         .find_map(|line| line.find(&prefix).map(|at| &line[at..]))
+}
+
+fn qualification_command(
+    digest: &str,
+    directory: &Path,
+    registry: &wamn_package_artifact::PackageRegistry,
+) -> anyhow::Result<String> {
+    let mut command = format!(
+        "wamn-ctl qualify-release --release-digest {digest} --release-chart {} --artifact-base {} --registry-auth-file {}",
+        shell_path(&directory.join("release-chart")),
+        shell_path(Path::new(&super::packages::artifact_base(
+            registry, "releases"
+        )?)),
+        shell_path(&registry.registry_auth_file)
+    );
+    for path in &registry.oci_ca_paths {
+        command.push_str(" --oci-ca-path ");
+        command.push_str(&shell_path(path));
+    }
+    Ok(command)
 }
 
 fn shell_path(path: &Path) -> String {
@@ -187,8 +209,17 @@ async fn release_inputs(
     repository: &Path,
     directory: &Path,
     request: &mut JobRequest,
+    registry: &wamn_package_artifact::PackageRegistry,
 ) -> anyhow::Result<()> {
-    super::packages::registry_inputs(request, &super::packages::registry(document)?)?;
+    super::packages::registry_inputs(request, registry)?;
+    request.environment.insert(
+        "WAMN_PACKAGE_ARTIFACT_BASE".into(),
+        registry.artifact_base.clone(),
+    );
+    request.environment.insert(
+        "WAMN_RELEASE_ARTIFACT_BASE".into(),
+        super::packages::artifact_base(registry, "releases")?,
+    );
     chart_files(&directory.join("release-chart"), Path::new(""), request)?;
     let tenant = format!(
         "{}--{}--{}",
@@ -259,10 +290,10 @@ async fn release_inputs(
     {
         match volume["name"].as_str().unwrap_or_default() {
             "event-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-runtime").into()
+                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-runtime").into();
             }
             "materializer-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-materializer").into()
+                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-materializer").into();
             }
             _ => {}
         }
@@ -308,7 +339,7 @@ async fn release_inputs(
             .into(),
         },
         PolicyRule {
-            api_groups: vec!["wasmcloud.com".into()],
+            api_groups: vec!["runtime.wasmcloud.dev".into()],
             resources: vec!["workloaddeployments".into()],
             verbs: [
                 "get", "list", "watch", "create", "patch", "update", "delete",
@@ -370,6 +401,21 @@ fn permissions() -> Vec<Access> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualification_message_is_the_jobs_refusal_for_the_requested_release() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let message = format!(
+            "release {digest} has no qualification on the chart's image set: registry/releases:qualification-example is absent"
+        );
+        let log = format!("Error: refused\n\nCaused by:\n    {message}\n");
+        assert_eq!(qualification_refusal(&log, &digest), Some(message.as_str()));
+        assert_eq!(qualification_refusal(&log, "sha256:other"), None);
+        assert_eq!(
+            qualification_refusal("database connection refused", &digest),
+            None
+        );
+    }
 
     #[test]
     fn job_configuration_uses_its_service_account_and_namespace_access() {

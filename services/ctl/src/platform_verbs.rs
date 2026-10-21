@@ -49,6 +49,7 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
                 .unwrap_or(Path::new("."))
                 .join("environments"),
             &directory,
+            &wamn_control::platform::install::registry(&document)?,
             |line| {
                 writeln!(output, "{line}")?;
                 output.flush().context("write install progress")

@@ -10,7 +10,6 @@ use crate::package_artifact::{PackageSource, open_package_source};
 use crate::release_chart::Target;
 use crate::release_composition::{PackageInput, load_wirings};
 
-use super::document::ClusterDocument;
 use super::install::runner_image;
 use super::job::{self, JobRequest};
 use super::packages;
@@ -22,12 +21,11 @@ pub(super) struct Published {
 
 pub(super) async fn apply(
     target: &Target,
-    document: &ClusterDocument,
     repository: &Path,
     environments: &Path,
     directory: &Path,
+    registry: &wamn_package_artifact::PackageRegistry,
 ) -> anyhow::Result<Published> {
-    let registry = packages::registry(document)?;
     let image = runner_image(directory)?;
     let mut prepared = Vec::new();
     // Refuse every wiring before starting any publication Job.
@@ -92,10 +90,10 @@ pub(super) async fn apply(
             "environment {} names no package",
             path.display()
         );
-        packages::registry_inputs(&mut request, &registry)?;
+        packages::registry_inputs(&mut request, registry)?;
         request.environment.insert(
             "WAMN_RELEASE_ARTIFACT_BASE".into(),
-            format!("{}/releases", document.registry),
+            packages::artifact_base(registry, "releases")?,
         );
         prepared.push((path, environment, request, artifacts));
     }
@@ -105,11 +103,13 @@ pub(super) async fn apply(
     };
     for (path, environment, request, artifacts) in prepared {
         let secrets = packages::credentials(target, &environment).await?;
+        let database = url::Url::parse(&secrets[1].value)
+            .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
         published.changed |= job::run(
             target,
             directory,
             &request,
-            &json!({"artifacts": artifacts}),
+            &json!({"artifacts": artifacts, "database": database.path()}),
             &secrets,
         )
         .await?;

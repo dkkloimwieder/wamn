@@ -508,13 +508,20 @@ These cases test connection reuse and authority isolation without measuring thro
 
 ### Platform and environment apply on kind
 
-The platform test needs Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, and the gcloud credential helper on PATH.
+The platform test needs Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, OpenSSL, and the gcloud credential helper on PATH.
 It needs network access to the GCP registry and public registries.
 It also needs the [package build tools and workspace dependencies](building.md#wamn-build), but no image build tools.
 It reads the debug binaries `wamn` and `wamn-ctl` from `CARGO_TARGET_DIR/debug`, or `target/debug` when that variable is unset.
 The local platform UI bundle must exist before the registry stamp.
 It needs no existing database, bucket or DNS.
-It writes files under `/var/tmp` and deletes only its own cluster and registry container after success or failure.
+It writes files under `/var/tmp` and deletes only its own cluster and registry containers after success or failure.
+The image registry uses HTTP on the kind network.
+A second registry serves package and release artifacts over TLS with a fixture certificate.
+The test passes that registry and its CA file directly to the installer.
+It uses Receiving as the package fixture and publishes a release without a wiring through step 4.14.
+The test records the printed digest in its own environment file and requires step 4.17 to report the missing qualification.
+An unchanged rerun must skip every step through 4.14 and refuse the same unqualified release.
+The GCP greenfield proves a qualified step 4.17.
 
 The runner must use the agent identity and a Docker configuration that selects the gcloud credential helper:
 
@@ -546,14 +553,14 @@ Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container a
 The test never builds platform images.
 
 The fixture creates `identity/identity-resend` with a stand-in key before the install.
-The test runs `platform apply` through section 4.12.
+The test runs `platform apply` through section 4.14.
 The runner image must contain the pinned KCL compiler for the first environment apply.
 It requires ready PostgreSQL and NATS.
 An anonymous CONNECT must return `Authorization Violation` without `PONG`.
 It also requires both `identity-ca` ConfigMaps, identity database and session target Secrets, and the completion ConfigMaps for the environment and identity Jobs.
 The identity Job requests public keys over TLS and requires the active key in the response.
 The test refuses credentials in progress or Job logs.
-A second apply must report every step as skipped.
+After the qualification refusal, an unchanged apply must skip every step through 4.14.
 The broker and session target Secrets must keep their resource versions.
 
 The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.

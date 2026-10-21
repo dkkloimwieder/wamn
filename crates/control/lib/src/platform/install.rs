@@ -36,6 +36,7 @@ pub async fn apply(
     repository: &Path,
     environments: &Path,
     work_directory: &Path,
+    registry: &wamn_package_artifact::PackageRegistry,
     mut progress: impl FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let _lock = lock::take(work_directory)?;
@@ -85,7 +86,7 @@ pub async fn apply(
                     environments,
                     work_directory,
                     repository,
-                    true,
+                    None,
                 )
                 .await?
             }
@@ -94,16 +95,16 @@ pub async fn apply(
                     .await?
             }
             "4.13" => {
-                super::packages::apply(&target, document, repository, environments, work_directory)
+                super::packages::apply(&target, repository, environments, work_directory, registry)
                     .await?
             }
             "4.14" => {
                 let result = super::releases::apply(
                     &target,
-                    document,
                     repository,
                     environments,
                     work_directory,
+                    registry,
                 )
                 .await?;
                 let changed = result.changed;
@@ -141,7 +142,7 @@ pub async fn apply(
         environments,
         work_directory,
         repository,
-        false,
+        Some(registry),
     )
     .await?;
     progress(&format!(
@@ -151,6 +152,17 @@ pub async fn apply(
     ))?;
     progress("Steps after 4.17 come later.")?;
     Ok(())
+}
+
+/// Read the existing package registry environment inputs for an install.
+///
+/// # Errors
+///
+/// Returns an error when WAMN_REGISTRY_AUTH_FILE is unset.
+pub fn registry(
+    document: &ClusterDocument,
+) -> anyhow::Result<wamn_package_artifact::PackageRegistry> {
+    super::packages::registry(document)
 }
 
 fn applied_steps(

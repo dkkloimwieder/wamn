@@ -702,8 +702,8 @@ pub async fn run(
     }
     .await;
     let cleanup = finish(target, work_directory, request).await;
-    result?;
     let output = cleanup?;
+    result?;
     let mut data: BTreeMap<_, _> = [("digest".into(), digest)].into();
     if request.capture_output {
         data.insert("output".into(), output);
@@ -748,7 +748,8 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
         },
     )
     .context("save the Job log");
-    // Even a failed Job must release its temporary credentials.
+    saved?;
+    // After its log is saved, even a failed Job must release its credentials.
     let deleted = kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
@@ -765,7 +766,6 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
         None,
     )
     .await;
-    saved?;
     deleted?;
     for access in &request.permissions {
         kubectl::kubectl(
@@ -936,6 +936,28 @@ mod tests {
             job["spec"]["template"]["spec"]["containers"][0]["env"][0],
             json!({"name":"WAMN_AUTH_NATS_TLS_KEY","value":"/inputs/tls.key"})
         );
+    }
+
+    #[test]
+    fn nested_chart_and_package_paths_project_from_valid_secret_keys() {
+        let mut request = request();
+        request.files.insert(
+            "package/migrations/0001_initial.sql".into(),
+            "private-sql".into(),
+        );
+        request
+            .binary_files
+            .insert("charts/runtime-operator.tgz".into(), vec![0, 255]);
+        let job = serde_json::to_value(render(&request, "platform", &[])).unwrap();
+        assert_eq!(
+            job["spec"]["template"]["spec"]["volumes"][0]["secret"]["items"],
+            json!([
+                {"key":"file-0","path":"package/migrations/0001_initial.sql"},
+                {"key":"file-1","path":"charts/runtime-operator.tgz"}
+            ])
+        );
+        assert!(!job.to_string().contains("private-sql"));
+        assert!(!format!("{request:?}").contains("private-sql"));
     }
 
     #[test]

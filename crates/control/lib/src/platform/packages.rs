@@ -9,7 +9,7 @@ use wamn_schema_generator::PackageManifest;
 
 use crate::delivery::environment::EnvironmentFile;
 use crate::environment::document::EnvironmentDocument;
-use crate::package_artifact::{PushPackageRequest, push_package};
+use crate::package_artifact::{PushPackageRequest, open_package, push_package};
 use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
@@ -50,6 +50,17 @@ pub(super) fn registry(document: &ClusterDocument) -> anyhow::Result<PackageRegi
             .map(|paths| std::env::split_paths(&paths).collect())
             .unwrap_or_default(),
     })
+}
+
+pub(super) fn artifact_base(
+    registry: &PackageRegistry,
+    repository: &str,
+) -> anyhow::Result<String> {
+    let base = registry
+        .artifact_base
+        .strip_suffix("/packages")
+        .context("platform package base must end with /packages")?;
+    Ok(format!("{base}/{repository}"))
 }
 
 pub(super) fn registry_inputs(
@@ -131,12 +142,11 @@ pub(super) async fn credentials(
 
 pub(super) async fn apply(
     target: &Target,
-    document: &ClusterDocument,
     repository: &Path,
     environments: &Path,
     directory: &Path,
+    registry: &PackageRegistry,
 ) -> anyhow::Result<bool> {
-    let registry = registry(document)?;
     let image = runner_image(directory)?;
     let mut changed = false;
     for (path, environment) in super::broker::documents(environments)? {
@@ -145,25 +155,26 @@ pub(super) async fn apply(
             environment.org, environment.project, environment.env
         );
         let secrets = credentials(target, &environment).await?;
+        let database = url::Url::parse(&secrets[1].value)
+            .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
         let mut tags = Vec::new();
         let mut artifacts = Vec::new();
         let mut replicas = Vec::new();
         for package in read(repository, &path)? {
             let identity = &package.manifest.package;
             let tag = format!("{}-{}", identity.id, identity.version);
-            let artifact = Repository::open(&registry, &tag)?.manifest().await?;
-            let digest = match artifact {
-                Some((_, digest)) => digest,
-                None => {
-                    let pushed = push_package(&PushPackageRequest {
-                        package: package.root.clone(),
-                        registry: registry.clone(),
-                        component_artifact_base: format!("{}/components", document.registry),
-                    })
-                    .await?;
-                    changed = true;
-                    pushed.digest
-                }
+            let artifact = Repository::open(registry, &tag)?.manifest().await?;
+            let digest = if let Some((_, digest)) = artifact {
+                digest
+            } else {
+                let pushed = push_package(&PushPackageRequest {
+                    package: package.root.clone(),
+                    registry: registry.clone(),
+                    component_artifact_base: artifact_base(registry, "components")?,
+                })
+                .await?;
+                changed = true;
+                pushed.digest
             };
             tags.push(tag.clone());
             artifacts.push(digest.clone());
@@ -184,12 +195,12 @@ pub(super) async fn apply(
                 ],
                 ..JobRequest::default()
             };
-            registry_inputs(&mut request, &registry)?;
+            registry_inputs(&mut request, registry)?;
             changed |= job::run(
                 target,
                 directory,
                 &request,
-                &json!({"artifact": digest}),
+                &json!({"artifact": digest, "database": database.path()}),
                 &secrets,
             )
             .await?;
@@ -204,15 +215,16 @@ pub(super) async fn apply(
                     ],
                     ..JobRequest::default()
                 };
+                let opened = open_package(registry, &identity.id, &identity.version).await?;
+                let source = crate::apply_package::read_package_directory(opened.root())?;
                 request.files.insert(
                     "package/wamn.json".into(),
-                    serde_json::to_string(&package.manifest)?,
+                    String::from_utf8(source.manifest_bytes)?,
                 );
-                for entry in std::fs::read_dir(package.root.join("migrations"))? {
-                    let entry = entry?;
+                for migration in source.migrations {
                     request.files.insert(
-                        format!("package/migrations/{}", entry.file_name().to_string_lossy()),
-                        std::fs::read_to_string(entry.path())?,
+                        format!("package/{}", migration.relative_path),
+                        String::from_utf8(migration.bytes)?,
                     );
                 }
                 replicas.push((request, digest));
@@ -236,12 +248,12 @@ pub(super) async fn apply(
                     .arguments
                     .extend(["--package-artifact".into(), tag.clone()]);
             }
-            registry_inputs(&mut request, &registry)?;
+            registry_inputs(&mut request, registry)?;
             changed |= job::run(
                 target,
                 directory,
                 &request,
-                &json!({"artifacts": artifacts}),
+                &json!({"artifacts": artifacts, "database": database.path()}),
                 &secrets,
             )
             .await?;
@@ -251,7 +263,7 @@ pub(super) async fn apply(
                 target,
                 directory,
                 &request,
-                &json!({"artifact": digest}),
+                &json!({"artifact": digest, "database": database.path()}),
                 &secrets,
             )
             .await?;
