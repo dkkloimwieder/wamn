@@ -1,250 +1,232 @@
-/**
- * The route table of the Receiving web application.
- *
- * A section label names the model, and each label below it is the label the
- * generated module exports. Each screen hands its component the transport of
- * the signed-in session, which the shell hands it as a prop.
- *
- * A purchase order and a receipt have a record page at `<path>/<id>`, which a
- * table row opens. The purchase order page opens its update form, the receipt
- * form, its receiving screen and its history, each on a route below it. The
- * receipt form also opens from the Receipts table and from a purchase order
- * row, which fills the order in the query. A row of the receiving screen
- * fills the order and one receipt line, and a location row fills the location
- * of one receipt line. A completed submission returns to the page that opened
- * the form.
- */
+/** Receiving's package route table. Descriptions supply every operation label. */
+import { createSignal, onCleanup, Show } from "solid-js";
+import { DetailView, type DetailDescription } from "@wfe/generator";
+import { FieldError } from "@wfe/components";
+import { Page, fillPath, type ScreenProps, type ShellSection } from "@wamn/platform-ui";
+import type { OperationRoute } from "@wamn/web-runtime";
+import * as location from "@wamn/receiving-client/location.js";
+import * as purchase from "@wamn/receiving-client/purchase_order.js";
+import * as receipt from "@wamn/receiving-client/receipt.js";
+import * as receiving from "@wamn/receiving-client/receiving.js";
+import * as supplier from "@wamn/receiving-client/supplier.js";
+import * as descriptions from "@wamn/receiving-client/components/index.js";
+import { Actions, Records, type NavigationAction } from "./table";
+import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "./forms";
+import { invoke, type RecordValue } from "./data";
 
-import { Show } from "solid-js";
+const recordPath = (base: string, row?: RecordValue) => `${base}/${encodeURIComponent(String(row?.id ?? ""))}`;
+const receiptAction = (fill: (row?: RecordValue) => object): NavigationAction => ({
+  description: descriptions.ReceivingRecordReceiptForm,
+  path: (row) => fillPath("receipts/new", fill(row)),
+});
 
-import { fillPath, filledValues, screen, type ScreenProps, type ShellSection } from "@wamn/shell";
-import {
-  LocationListTableLabel,
-  PurchaseOrderQueryTableLabel,
-  PurchaseOrderUpdateFormLabel,
-  ReceiptQueryTableLabel,
-  ReceivingLoadPurchaseOrderHistoryTableLabel,
-  ReceivingLoadReceiptScreenTableLabel,
-  ReceivingRecordReceiptFormLabel,
-  SupplierCreateFormLabel,
-  SupplierQueryTableLabel,
-} from "@wamn/receiving-client/components/labels.js";
-import { LOCATION_LIST_ROUTE } from "@wamn/receiving-client/location.js";
-import {
-  PURCHASE_ORDER_GET_ROUTE,
-  PURCHASE_ORDER_QUERY_ROUTE,
-  PURCHASE_ORDER_UPDATE_ROUTE,
-} from "@wamn/receiving-client/purchase_order.js";
-import { RECEIPT_GET_ROUTE, RECEIPT_QUERY_ROUTE } from "@wamn/receiving-client/receipt.js";
-import {
-  RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE,
-  RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE,
-  RECEIVING_RECORD_RECEIPT_ROUTE,
-} from "@wamn/receiving-client/receiving.js";
-import { SUPPLIER_CREATE_ROUTE, SUPPLIER_QUERY_ROUTE } from "@wamn/receiving-client/supplier.js";
+function Detail(props: {
+  screen: ScreenProps;
+  description: DetailDescription<RecordValue>;
+  route: OperationRoute;
+  actions?: readonly NavigationAction[];
+}) {
+  const [record, setRecord] = createSignal<RecordValue>();
+  const [error, setError] = createSignal<string>();
+  let active = true;
+  onCleanup(() => {
+    active = false;
+  });
+  void invoke<RecordValue>(props.screen.transport, props.route, { id: props.screen.params.id! }).then(
+    (record) => {
+      if (active) setRecord(record);
+    },
+    (error) => {
+      if (active) setError(String(error));
+    },
+  );
+  return (
+    <Page title={props.description.title} actions={<Actions screen={props.screen} actions={props.actions} />}>
+      <Show when={error()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+      <Show when={record()}>
+        {(row) => <DetailView description={{ ...props.description, title: undefined }} bindings={{ record: row }} />}
+      </Show>
+    </Page>
+  );
+}
 
-/** The generated module of each model. A route loads its module when it opens. */
-const location = () => import("@wamn/receiving-client/components/location.js");
-const purchaseOrder = () => import("@wamn/receiving-client/components/purchase_order.js");
-const receipt = () => import("@wamn/receiving-client/components/receipt.js");
-const receiving = () => import("@wamn/receiving-client/components/receiving.js");
-const supplier = () => import("@wamn/receiving-client/components/supplier.js");
-
-/** The record page path of one row. */
-const record = (path: string, row: { readonly id: string }) => `${path}/${encodeURIComponent(row.id)}`;
-
-/** The key of the record page, from the address. The route path always holds it. */
-// eslint-disable-next-line solid/reactivity -- every caller reads it inside a JSX prop, whose getter its component tracks.
-const key = (props: ScreenProps) => ({ id: props.params.id ?? "" });
-
-/** Returns to the page that opened the form once a submission completes. A refusal stays on the form. */
-const done = (props: ScreenProps) => (outcome: { readonly status: string }) => {
-  if (outcome.status === "completed") {
-    props.close();
-  }
-};
-
-/** The number of history entries on one page. */
-const HISTORY_PAGE = 20;
-
+const d = descriptions;
 export const SECTIONS: readonly ShellSection[] = [
   {
-    label: "Purchase orders",
+    label: d.PurchaseOrderQueryTable.title,
     screens: [
       {
+        scroll: "content",
         path: "purchase-orders",
-        operation: PURCHASE_ORDER_QUERY_ROUTE.operation,
-        label: PurchaseOrderQueryTableLabel,
-        component: screen(purchaseOrder, (m) => (props) => (
-          <m.PurchaseOrderQueryTable
-            transport={props.transport}
-            onOpen={{ "wamn-receiving:purchase-order/get": (row) => props.open(record("purchase-orders", row)) }}
-            onFill={{
-              "wamn-receiving:receiving/record-receipt": (fill) => props.open(fillPath("receipts/new", fill)),
-            }}
+        operation: d.PurchaseOrderQueryTable.id,
+        label: d.PurchaseOrderQueryTable.title,
+        component: (props) => (
+          <Records
+            screen={props}
+            description={d.PurchaseOrderQueryTable}
+            route={purchase.PURCHASE_ORDER_QUERY_ROUTE}
+            filters={["purchase_order_number", "status", "supplier_id"]}
+            sortable={["created_at", "purchase_order_number", "status"]}
+            rowActions={[
+              { description: d.PurchaseOrderGetDetail, path: (row) => recordPath("purchase-orders", row) },
+              receiptAction((row) => ({ value: { purchaseOrderId: row?.id } })),
+              { description: d.PurchaseOrderUpdateForm, path: (row) => `${recordPath("purchase-orders", row)}/update` },
+            ]}
           />
-        )),
+        ),
       },
     ],
     routes: [
       {
         path: "purchase-orders/:id",
-        operation: PURCHASE_ORDER_GET_ROUTE.operation,
-        actions: [
-          {
-            label: ReceivingRecordReceiptFormLabel,
-            path: "receipts/new?value.purchaseOrderId=:id",
-            operation: RECEIVING_RECORD_RECEIPT_ROUTE.operation,
-          },
-          {
-            label: ReceivingLoadReceiptScreenTableLabel,
-            path: "purchase-orders/:id/receiving",
-            operation: RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE.operation,
-          },
-          {
-            label: ReceivingLoadPurchaseOrderHistoryTableLabel,
-            path: "purchase-orders/:id/history",
-            operation: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE.operation,
-          },
-          {
-            label: PurchaseOrderUpdateFormLabel,
-            path: "purchase-orders/:id/update",
-            operation: PURCHASE_ORDER_UPDATE_ROUTE.operation,
-          },
-        ],
-        component: screen(purchaseOrder, (m) => (props) => (
-          <m.PurchaseOrderGetDetail transport={props.transport} input={key(props)} />
-        )),
+        operation: d.PurchaseOrderGetDetail.id,
+        label: d.PurchaseOrderGetDetail.title,
+        component: (props) => (
+          <Detail
+            screen={props}
+            description={d.PurchaseOrderGetDetail}
+            route={purchase.PURCHASE_ORDER_GET_ROUTE}
+            actions={[
+              receiptAction(() => ({ value: { purchaseOrderId: props.params.id } })),
+              {
+                description: d.ReceivingLoadReceiptScreenTable,
+                path: () => `purchase-orders/${props.params.id}/receiving`,
+              },
+              {
+                description: d.ReceivingLoadPurchaseOrderHistoryTable,
+                path: () => `purchase-orders/${props.params.id}/history`,
+              },
+              { description: d.PurchaseOrderUpdateForm, path: () => `purchase-orders/${props.params.id}/update` },
+            ]}
+          />
+        ),
       },
       {
         path: "purchase-orders/:id/update",
-        operation: PURCHASE_ORDER_UPDATE_ROUTE.operation,
-        component: screen(purchaseOrder, (m) => (props) => (
-          <m.PurchaseOrderUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
-        )),
+        operation: d.PurchaseOrderUpdateForm.id,
+        label: d.PurchaseOrderUpdateForm.title,
+        component: PurchaseOrderForm,
       },
       {
+        scroll: "content",
         path: "purchase-orders/:id/receiving",
-        operation: RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE.operation,
-        // A table reads its fixed input once, so a new order in the address
-        // mounts a new table (wamn-erwv.6).
-        component: screen(receiving, (m) => (props) => (
-          <Show when={key(props).id} keyed>
-            {(id) => (
-              <m.ReceivingLoadReceiptScreenTable
-                transport={props.transport}
-                fixed={{ purchaseOrderId: id }}
-                onFill={{
-                  "wamn-receiving:receiving/record-receipt": (fill: { readonly value?: object }) =>
-                    props.open(fillPath("receipts/new", { ...fill, value: { ...fill.value, purchaseOrderId: id } })),
-                }}
-              />
-            )}
-          </Show>
-        )),
+        operation: d.ReceivingLoadReceiptScreenTable.id,
+        label: d.ReceivingLoadReceiptScreenTable.title,
+        component: (props) => (
+          <Records
+            screen={props}
+            description={d.ReceivingLoadReceiptScreenTable}
+            route={receiving.RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE}
+            input={{ purchase_order_id: props.params.id! }}
+            rowActions={[
+              receiptAction((row) => ({
+                value: {
+                  purchaseOrderId: props.params.id,
+                  line: [{ purchaseOrderLineId: row?.line_id }],
+                },
+              })),
+            ]}
+          />
+        ),
       },
       {
+        scroll: "content",
         path: "purchase-orders/:id/history",
-        operation: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE.operation,
-        // A new order in the address mounts a new table, as above (wamn-erwv.6).
-        component: screen(receiving, (m) => (props) => (
-          <Show when={key(props).id} keyed>
-            {(id) => (
-              <m.ReceivingLoadPurchaseOrderHistoryTable
-                transport={props.transport}
-                fixed={{ id, limit: HISTORY_PAGE }}
-              />
-            )}
-          </Show>
-        )),
+        operation: d.ReceivingLoadPurchaseOrderHistoryTable.id,
+        label: d.ReceivingLoadPurchaseOrderHistoryTable.title,
+        component: (props) => (
+          <Records
+            screen={props}
+            description={d.ReceivingLoadPurchaseOrderHistoryTable}
+            route={receiving.RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE}
+            input={{ id: props.params.id!, limit: 25 }}
+            history
+          />
+        ),
       },
     ],
   },
   {
-    label: "Receipts",
+    label: d.ReceiptQueryTable.title,
     screens: [
       {
+        scroll: "content",
         path: "receipts",
-        operation: RECEIPT_QUERY_ROUTE.operation,
-        label: ReceiptQueryTableLabel,
+        operation: d.ReceiptQueryTable.id,
+        label: d.ReceiptQueryTable.title,
         actions: [
           {
-            label: ReceivingRecordReceiptFormLabel,
+            label: d.ReceivingRecordReceiptForm.title,
             path: "receipts/new",
-            operation: RECEIVING_RECORD_RECEIPT_ROUTE.operation,
+            operation: d.ReceivingRecordReceiptForm.id,
           },
         ],
-        component: screen(receipt, (m) => (props) => (
-          <m.ReceiptQueryTable
-            transport={props.transport}
-            onOpen={{ "wamn-receiving:receipt/get": (row) => props.open(record("receipts", row)) }}
+        component: (props) => (
+          <Records
+            screen={props}
+            description={d.ReceiptQueryTable}
+            route={receipt.RECEIPT_QUERY_ROUTE}
+            rowActions={[{ description: d.ReceiptGetDetail, path: (row) => recordPath("receipts", row) }]}
           />
-        )),
+        ),
       },
     ],
     routes: [
       {
         path: "receipts/new",
-        operation: RECEIVING_RECORD_RECEIPT_ROUTE.operation,
-        component: screen(receiving, (m) => (props) => (
-          <m.ReceivingRecordReceiptForm
-            transport={props.transport}
-            initial={filledValues(props.search)}
-            onSubmitted={done(props)}
-          />
-        )),
+        operation: d.ReceivingRecordReceiptForm.id,
+        label: d.ReceivingRecordReceiptForm.title,
+        component: ReceiptForm,
       },
       {
         path: "receipts/:id",
-        operation: RECEIPT_GET_ROUTE.operation,
-        component: screen(receipt, (m) => (props) => (
-          <m.ReceiptGetDetail transport={props.transport} input={key(props)} />
-        )),
+        operation: d.ReceiptGetDetail.id,
+        label: d.ReceiptGetDetail.title,
+        component: (props) => (
+          <Detail screen={props} description={d.ReceiptGetDetail} route={receipt.RECEIPT_GET_ROUTE} />
+        ),
       },
     ],
   },
   {
-    label: "Suppliers",
+    label: d.SupplierQueryTable.title,
     screens: [
       {
+        scroll: "content",
         path: "suppliers",
-        operation: SUPPLIER_QUERY_ROUTE.operation,
-        label: SupplierQueryTableLabel,
-        actions: [
-          { label: SupplierCreateFormLabel, path: "suppliers/new", operation: SUPPLIER_CREATE_ROUTE.operation },
-        ],
-        component: screen(supplier, (m) => (props) => <m.SupplierQueryTable transport={props.transport} />),
+        operation: d.SupplierQueryTable.id,
+        label: d.SupplierQueryTable.title,
+        actions: [{ label: d.SupplierCreateForm.title, path: "suppliers/new", operation: d.SupplierCreateForm.id }],
+        component: (props) => (
+          <Records screen={props} description={d.SupplierQueryTable} route={supplier.SUPPLIER_QUERY_ROUTE} />
+        ),
       },
     ],
     routes: [
       {
         path: "suppliers/new",
-        operation: SUPPLIER_CREATE_ROUTE.operation,
-        component: screen(supplier, (m) => (props) => (
-          <m.SupplierCreateForm
-            transport={props.transport}
-            initial={filledValues(props.search)}
-            onSubmitted={done(props)}
-          />
-        )),
+        operation: d.SupplierCreateForm.id,
+        label: d.SupplierCreateForm.title,
+        component: SupplierForm,
       },
     ],
   },
   {
-    label: "Locations",
+    label: d.LocationListTable.title,
     screens: [
       {
+        scroll: "content",
         path: "locations",
-        operation: LOCATION_LIST_ROUTE.operation,
-        label: LocationListTableLabel,
-        component: screen(location, (m) => (props) => (
-          <m.LocationListTable
-            transport={props.transport}
-            onFill={{
-              "wamn-receiving:receiving/record-receipt": (fill) => props.open(fillPath("receipts/new", fill)),
-            }}
+        operation: d.LocationListTable.id,
+        label: d.LocationListTable.title,
+        component: (props) => (
+          <Records
+            screen={props}
+            description={d.LocationListTable}
+            route={location.LOCATION_LIST_ROUTE}
+            rowActions={[receiptAction((row) => ({ value: { line: [{ locationId: row?.id }] } }))]}
           />
-        )),
+        ),
       },
     ],
   },

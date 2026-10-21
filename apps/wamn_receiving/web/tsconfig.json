@@ -1,36 +1,34 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "jsxImportSource": "@solidjs/web",
+    "customConditions": ["wfe-source"],
     "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
-    "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["node", "vite/client"],
     "paths": {
+      "d3-shape": ["./node_modules/@types/d3-shape"],
       "@wamn/web-runtime": ["../../../web/runtime/src/index.ts"],
-      "@wamn/ui": ["../../../web/ui/src/index.ts"],
-      "@wamn/ui/admin": ["../../../web/ui/src/admin/index.ts"],
-      "@wamn/shell": ["../../../web/shell/src/index.ts"],
-      "@wamn/control-client": ["../../../apps/target/wamn/wamn_control/client-ts/index.ts"],
-      "@wamn/control-org-client": ["../../../apps/target/wamn/wamn_control/control/client-ts/index.ts"],
-      "@wamn/receiving-client/*": ["../../target/wamn/wamn_receiving/client-ts/*"],
+      "@wamn/control-client": ["../../target/wamn/wamn_control/client-ts/index.ts"],
+      "@wamn/control-org-client": ["../../target/wamn/wamn_control/control/client-ts/index.ts"],
       "solid-js": ["./node_modules/solid-js"],
-      "solid-js/*": ["./node_modules/solid-js/*"],
-      "@solidjs/router": ["./node_modules/@solidjs/router"],
-      "@tanstack/solid-table": ["./node_modules/@tanstack/solid-table"],
-      "@tanstack/solid-form": ["./node_modules/@tanstack/solid-form"],
-      "zod": ["./node_modules/zod"],
-      "zod/*": ["./node_modules/zod/*"]
+      "@solidjs/web": ["./node_modules/@solidjs/web"],
+      "@solidjs/web/*": ["./node_modules/@solidjs/web/*"],
+      "@wamn/receiving-client/*": ["../../target/wamn/wamn_receiving/client-ts/*"],
+      "@wamn/platform-ui": ["../../platform_ui/src/index.ts"],
+      "@wfe/components": ["../../../web/wfe/packages/components/src/index.ts"],
+      "@wfe/components/*": ["../../../web/wfe/packages/components/src/*"],
+      "@wfe/generator": ["../../../web/wfe/packages/generator/src/index.ts"],
+      "@wfe/form": ["../../../web/wfe/packages/form/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+  "include": ["src", "test", "vite.config.ts"]
 }

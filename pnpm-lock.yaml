@@ -241,40 +241,46 @@ importers:
 
   apps/wamn_receiving/web:
     dependencies:
-      '@solidjs/router':
-        specifier: ^1.0.0
-        version: 1.0.0(solid-js@1.9.16)
-      '@tanstack/solid-table':
-        specifier: ^9.2.6
-        version: 9.2.6(solid-js@1.9.16)
+      '@solidjs/web':
+        specifier: 2.0.0-rc.16
+        version: 2.0.0-rc.16(solid-js@2.0.0-rc.16)
+      '@wfe/components':
+        specifier: workspace:*
+        version: link:../../../web/wfe/packages/components
+      '@wfe/form':
+        specifier: workspace:*
+        version: link:../../../web/wfe/packages/form
+      '@wfe/generator':
+        specifier: workspace:*
+        version: link:../../../web/wfe/packages/generator
       solid-js:
-        specifier: ^1.9.16
-        version: 1.9.16
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
+        specifier: 2.0.0-rc.16
+        version: 2.0.0-rc.16
     devDependencies:
-      '@tailwindcss/vite':
-        specifier: ^4.3.3
-        version: 4.3.3(vite@8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0))
+      '@solidjs/testing-library':
+        specifier: 1.0.0-beta.3
+        version: 1.0.0-beta.3(@solidjs/web@2.0.0-rc.16(solid-js@2.0.0-rc.16))(solid-js@2.0.0-rc.16)
+      '@solidjs/vite-plugin':
+        specifier: 3.0.0-next.50
+        version: 3.0.0-next.50(@solidjs/web@2.0.0-rc.16(solid-js@2.0.0-rc.16))(solid-js@2.0.0-rc.16)(vite@8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0))
+      '@types/d3-shape':
+        specifier: 3.1.8
+        version: 3.1.8
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
-      '@typescript/native':
-        specifier: npm:typescript@^7.0.2
-        version: typescript@7.0.2
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.3
+      jsdom:
+        specifier: ^30.1.2
+        version: 30.1.2
       typescript:
         specifier: npm:@typescript/typescript6@^6.0.2
         version: '@typescript/typescript6@6.0.2'
       vite:
         specifier: ^8.3.3
         version: 8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)
-      vite-plugin-solid:
-        specifier: ^2.11.14
-        version: 2.11.14(solid-js@1.9.16)(vite@8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0))
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@24.19.1)(@vitest/browser-playwright@5.0.3)(@vitest/ui@5.0.3)(jsdom@30.1.2)(vite@8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0))
 
   apps/wamn_wms/web:
     dependencies:

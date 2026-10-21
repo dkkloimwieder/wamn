@@ -13,9 +13,9 @@ import { afterEach, beforeEach } from "vitest";
 import { member, user } from "@wamn/control-org-client";
 import { permission } from "@wamn/control-client";
 
-import { createSignal, flush } from "solid-js";
+import { createSignal, flush, For } from "solid-js";
 
-import { Shell, type ScreenProps, type ShellSection } from "../src/index.js";
+import { Shell, RecordLink, type ScreenProps, type ShellSection } from "../src/index.js";
 
 export const AUD = "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7";
 
@@ -61,6 +61,13 @@ function stubRecord(props: ScreenProps) {
   return (
     <>
       <p>pallet {props.params.id} record</p>
+      <For each={props.actions}>
+        {(action) => (
+          <RecordLink screen={props} path={action.path}>
+            {action.label}
+          </RecordLink>
+        )}
+      </For>
       <button type="button" onClick={() => props.open("pallets/def")}>
         open pallet def
       </button>

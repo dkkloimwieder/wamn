@@ -1,4 +1,4 @@
-import { createSignal, For, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
+import { createSignal, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { DashboardPanel, type DashboardShellProps } from "@wfe/components/layout";
 import { permission } from "@wamn/control-client";
@@ -27,6 +27,7 @@ export interface ScreenProps {
   readonly search: Readonly<Record<string, string | undefined>>;
   readonly open: (path: string) => void;
   readonly close: () => void;
+  readonly actions?: readonly ShellAction[];
 }
 export interface ShellAction {
   readonly label: string;
@@ -330,17 +331,13 @@ function Destination(props: {
               );
         return (
           <>
-            <For each={(route.actions ?? []).filter((action) => props.view.holds(action.operation))}>
-              {(action) => (
-                <NavigationLink
-                  href={`/${props.aud}/${action.path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? ""))}`}
-                  navigate={(path) => props.address.navigate(path, false, true)}
-                >
-                  {action.label}
-                </NavigationLink>
-              )}
-            </For>
             <route.component
+              actions={(route.actions ?? [])
+                .filter((action) => props.view.holds(action.operation))
+                .map((action) => ({
+                  ...action,
+                  path: action.path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? "")),
+                }))}
               transport={props.transport}
               holds={(operation, project) => props.view.holds(operation, project ?? params.project)}
               controlMine={props.view.controlMine}

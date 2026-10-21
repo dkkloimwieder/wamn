@@ -161,6 +161,33 @@ fn forms_keep_repeated_groups_domains_and_reserved_input_exclusion() {
 }
 
 #[test]
+fn populated_references_use_custom_controls_in_scalar_and_repeated_fields() {
+    let files = emit(&fixture::client_release());
+    let form = description(&files, "widget", "WidgetRecordBatchForm");
+    let fields = form["fields"].as_array().unwrap();
+    assert_eq!(
+        fields
+            .iter()
+            .find(|field| field["field"] == "value.maker_id")
+            .unwrap()["control"],
+        "custom"
+    );
+    let group = fields
+        .iter()
+        .find(|field| field["field"] == "value.line[]")
+        .unwrap();
+    assert_eq!(
+        group["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["field"] == "widget_id")
+            .unwrap()["control"],
+        "custom"
+    );
+}
+
+#[test]
 fn optional_and_nullable_controls_obey_wfe_scalar_types() {
     let mut ir = fixture::client_release();
     let op = ir

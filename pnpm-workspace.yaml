@@ -1,6 +1,6 @@
 # The web packages. One `pnpm install` here installs all of them against one
 # lock file. The platform UI consumes wfe through workspace dependencies.
-# Receiving and WMS still reach the Solid 1 shell through path aliases.
+# WMS still reaches the Solid 1 shell through path aliases.
 packages:
   - web/runtime
   - web/components

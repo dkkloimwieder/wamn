@@ -847,6 +847,40 @@ Its PostgreSQL server and the fixture's containers stop after the test.
 The results directory keeps `platform-ui-env/control-web.log` for failure diagnosis.
 A local pass is required before this flow goes to GCP.
 
+### Local Receiving screens
+
+`local_receiving_screens` drives the Receiving web app through real local services.
+It uses the same prerequisites, component variables, and `delivery_timings` fixture as [Local platform sign-in](#local-platform-sign-in).
+Build Receiving and the platform UI before the run.
+The test seeds 26 purchase orders, one line per order, one supplier, one item, and one location in its disposable database.
+It signs in, follows record links, pages the orders, changes a supplier, and records a receipt.
+It also creates a supplier and uses the form cancel action.
+The browser requires table-header actions, full-panel tables, literal uppercase breadcrumbs, and forms that return to their tables.
+
+Build the test without starting services:
+
+```bash
+CARGO_TARGET_DIR="$(readlink -f target)" TMPDIR=/var/tmp \
+  cargo test --offline -p wamn-ctl --test receiving_ui_live --no-run
+```
+
+After you set the component variables from Local platform sign-in, run from the repository root:
+
+```bash
+export TMPDIR=/var/tmp
+export CARGO_TARGET_DIR="$(readlink -f target)"
+results="$(mktemp -d /var/tmp/wamn-receiving-ui-XXXXXX)/run"
+"$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
+  cargo test --offline -p wamn-ctl --test receiving_ui_live \
+  local_receiving_screens -- --ignored --exact --nocapture
+```
+
+The browser saves 1400 by 900 screenshots in `<results>/receiving-screenshots/`.
+The files are `sign-in.png`, `audiences.png`, `purchase-orders.png`, `purchase-order.png`, `change-supplier.png`, `purchase-order-history.png`, and `receiving.png`.
+It also saves `record-receipt.png`, `receipts.png`, `receipt.png`, `create-supplier.png`, `suppliers.png`, and `locations.png`.
+The test prints the directory and retains it after service cleanup.
+The service log stays at `<results>/receiving-ui-env/control-web.log`.
+
 ### Generated descriptions
 
 `client_component.rs` emits typed descriptions for `@wfe/generator` from the pinned `web/wfe` package.

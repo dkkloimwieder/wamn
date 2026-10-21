@@ -9,7 +9,9 @@ The build refuses Solid 1 modules and imports from the old UI packages.
 
 The shell core owns addresses, permission filtering, navigation, and query values.
 Its tests port the Solid 1 assertions and use stub screens for later Control and administration work.
-Receiving and WMS retain their Solid 1 shell until M3.
+Receiving uses this shell with generated wfe descriptions. WMS retains the Solid 1 shell.
+The shell passes permitted route actions through `ScreenProps.actions`, with route parameters filled.
+Receiving renders those actions through the table `toolbarActions` binding.
 
 The scope, address, permission, and query implementations therefore exist in both shells during the migration.
 Session renewal and the cookie transport retain one owner in `web/runtime`.

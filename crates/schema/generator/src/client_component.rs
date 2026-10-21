@@ -215,7 +215,7 @@ fn presentation(field: &FieldIr) -> Value {
     value
 }
 
-fn scalar(field: &FieldIr, key: &str) -> (Value, String) {
+fn scalar(field: &FieldIr, key: &str, populated: bool) -> (Value, String) {
     let mut value = presentation(field);
     value["field"] = json!(key);
     value["required"] = json!(field.required && !field.nullable);
@@ -233,7 +233,9 @@ fn scalar(field: &FieldIr, key: &str) -> (Value, String) {
             .collect::<Vec<_>>()
             .join(" | ")
     };
-    let control = if ty == "number" {
+    let control = if populated {
+        "custom"
+    } else if ty == "number" {
         if !field.required {
             value["empty"] = json!("undefined");
         } else if field.nullable {
@@ -295,7 +297,14 @@ fn form(screen: &ScreenPlan<'_>) -> Result<(Vec<Value>, String), ClientComponent
             }
             groups.entry(group).or_default().push(field);
         } else {
-            let (description, ty) = scalar(field, &field.path);
+            let (description, ty) = scalar(
+                field,
+                &field.path,
+                screen
+                    .population
+                    .iter()
+                    .any(|input| input.input == field.path),
+            );
             fields.push(description);
             values.push_str(&ty);
         }
@@ -311,7 +320,14 @@ fn form(screen: &ScreenPlan<'_>) -> Result<(Vec<Value>, String), ClientComponent
                 .path
                 .strip_prefix(&format!("{path}."))
                 .expect("group prefix");
-            let (description, ty) = scalar(field, key);
+            let (description, ty) = scalar(
+                field,
+                key,
+                screen
+                    .population
+                    .iter()
+                    .any(|input| input.input == field.path),
+            );
             rows.push(description);
             values.push_str("  ");
             values.push_str(&ty);
