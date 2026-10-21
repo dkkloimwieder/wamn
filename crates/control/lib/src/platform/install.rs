@@ -1,4 +1,4 @@
-//! Install the platform through runbook step 4.17 using kubectl and Helm.
+//! Install the platform through runbook step 4.19 using kubectl and Helm.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -23,7 +23,7 @@ use super::{build, lock};
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.17 under the install lock.
+/// Apply steps 4.3 through 4.19 under the install lock, excluding owner steps.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -150,7 +150,16 @@ pub async fn apply(
         if changed { "done" } else { "skipped" },
         started.elapsed().as_secs_f64()
     ))?;
-    progress("Steps after 4.18 come later.")?;
+    super::web::apply(
+        &target,
+        document,
+        environments,
+        work_directory,
+        registry,
+        &mut progress,
+    )
+    .await?;
+    progress("Steps after 4.19 come later.")?;
     Ok(())
 }
 

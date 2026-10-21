@@ -240,6 +240,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 # repository files they read, and the cluster tools, each pinned by version
 # and its published sha256 (the Docker CLI by the sha256 of its archive).
 FROM ctl AS runner
+COPY --from=build-native /native-output/wamn /usr/local/bin/wamn
 ADD --checksum=sha256:5c0d19f31fece1accd0358bb8cff591fe25d7b6cba19f0fd412cbfdc07f75ff6 https://download.docker.com/linux/static/stable/x86_64/docker-28.5.1.tgz /tmp/docker.tgz
 ADD --checksum=sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6 https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz /tmp/helm.tgz
 ADD --checksum=sha256:1cb3490c4df4c823ae6b76289797791c1077611f677d2b3a3d0bc292dc704f2e https://github.com/kcl-lang/cli/releases/download/v0.13.0/kcl-v0.13.0-linux-amd64.tar.gz /tmp/kcl.tgz

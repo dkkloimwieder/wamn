@@ -58,6 +58,8 @@ pub struct JobRequest {
     pub image: String,
     pub arguments: Vec<String>,
     pub calls_kubernetes: bool,
+    /// An existing account, for example the platform's Workload Identity binding.
+    pub service_account: Option<String>,
     /// The command writes its Secret to `/out/secret.json`.
     pub emits_secret: bool,
     /// Public environment inputs. Credentials use `JobSecret`.
@@ -520,7 +522,10 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
                 spec: PodSpec {
                     restart_policy: "Never",
                     automount_service_account_token: request.calls_kubernetes,
-                    service_account_name: request.calls_kubernetes.then(|| request.name.clone()),
+                    service_account_name: request
+                        .service_account
+                        .clone()
+                        .or_else(|| request.calls_kubernetes.then(|| request.name.clone())),
                     security_context: request
                         .run_as_user
                         .map(|run_as_user| SecurityContext { run_as_user }),
@@ -559,8 +564,7 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
 }
 
 fn account(request: &JobRequest, owner: &Metadata) -> anyhow::Result<Option<ServiceAccount>> {
-    request
-        .calls_kubernetes
+    (request.calls_kubernetes && request.service_account.is_none())
         .then(|| {
             Ok(ServiceAccount {
                 api_version: "v1",
@@ -607,6 +611,9 @@ pub async fn run(
     if request.setup.is_some() || request.sidecar.is_some() {
         digest_inputs["setup"] = serde_json::to_value(&request.setup)?;
         digest_inputs["sidecar"] = serde_json::to_value(&request.sidecar)?;
+    }
+    if let Some(account) = &request.service_account {
+        digest_inputs["service_account"] = account.clone().into();
     }
     let digest = input_digest(&digest_inputs);
     let marker = format!("wamn-install-{}", request.name);
@@ -688,7 +695,11 @@ pub async fn run(
                 },
                 subjects: vec![Subject {
                     kind: "ServiceAccount",
-                    name: request.name.clone(),
+                    name: request
+                        .service_account
+                        .as_ref()
+                        .unwrap_or(&request.name)
+                        .clone(),
                     namespace: target.namespace.clone(),
                 }],
             };
@@ -1099,6 +1110,19 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn existing_account_is_used_without_creating_or_owning_it() {
+        let mut request = request();
+        request.calls_kubernetes = true;
+        request.service_account = Some("wamn-host".into());
+        let owner = metadata(&request.name, "hosts");
+        assert!(account(&request, &owner).unwrap().is_none());
+        let job = serde_json::to_value(render(&request, "hosts", &[])).unwrap();
+        let pod = &job["spec"]["template"]["spec"];
+        assert_eq!(pod["serviceAccountName"], "wamn-host");
+        assert_eq!(pod["automountServiceAccountToken"], true);
     }
 
     #[test]

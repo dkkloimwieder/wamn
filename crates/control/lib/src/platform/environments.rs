@@ -189,7 +189,11 @@ fn shell_path(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "'\"'\"'"))
 }
 
-fn chart_files(root: &Path, relative: &Path, request: &mut JobRequest) -> anyhow::Result<()> {
+pub(super) fn chart_files(
+    root: &Path,
+    relative: &Path,
+    request: &mut JobRequest,
+) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(root.join(relative))? {
         let entry = entry?;
         let path = relative.join(entry.file_name());
@@ -353,7 +357,7 @@ async fn release_inputs(
     Ok(())
 }
 
-fn kubeconfig() -> serde_json::Value {
+pub(super) fn kubeconfig() -> serde_json::Value {
     json!({
         "apiVersion": "v1", "kind": "Config",
         "clusters": [{"name": "install", "cluster": {

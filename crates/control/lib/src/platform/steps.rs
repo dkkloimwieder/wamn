@@ -258,7 +258,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         },
         InstallStep {
             number: "4.19", title: "Web clients",
-            runs: Runner::Job("platform/platform-web-<org>--<project>--<env>"),
+            runs: Runner::Job("hosts/platform-web-<org>--<project>--<env>"),
             inputs: vec![("environments", environments.into()), ("package artifact base", format!("{registry}/packages")), ("buckets.web", document.buckets.web.clone()), ("client destination", format!("gs://{}/clients/<package>/<release digest hex>/", document.buckets.web))],
             owner_inputs: vec![web_bucket.clone()],
         },

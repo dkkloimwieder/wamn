@@ -266,7 +266,8 @@ Step 4.14 publishes each release through a Job.
 For a wired release, one pod runs the gate, authorship, and publication with an in-memory PAT.
 The verb prints release lines for the owner to commit, then resumes at 4.17 on a rerun.
 Qualification stays on the build machine in section 4.15.
-Run sections 4.18 onward by hand with the commands below.
+The verb also runs sections 4.18 and 4.19.
+Run section 4.19.1 onward by hand with the commands below.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 
@@ -911,16 +912,16 @@ Each log shows `registration loaded`, the three `preflight` lines and `walsender
 
 ### 4.19 Web clients
 
-`wamn web upload` reads the built client from the package artifact and writes it to `gs://wamn-dev-web/clients/<package>/<digest hex>/` with the application default credentials. It reads the platform inputs of `env apply`. With `WAMN_EVENT_NATS_URL` set, it also asks for a NATS user, so unset that variable:
+`platform apply` runs `wamn web upload` as a Job for each environment and its declared release digest.
+The Job runs in `hosts` as `wamn-host`, which uses the owner-supplied `wamn-blob` Workload Identity binding.
+It reads the built clients from package artifacts and writes them below `gs://<buckets.web>/clients/<package>/<digest hex>/`.
+It leaves `WAMN_EVENT_NATS_URL` unset.
+The Job runner saves the log before it deletes the Job and its temporary Secrets.
+A completed Job with the same input digest skips the upload.
 
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-registry_token
-unset WAMN_EVENT_NATS_URL
-for project in receiving wms; do
-  target/debug/wamn web upload dkk/$project/dev --release "$(cat $W/release-$project)" --bucket gs://wamn-dev-web/clients
-done
-```
+If `buckets.web` is empty, the report prints `skipped: no bucket` for each environment's upload and its check.
+The verb starts no web Job in that case.
+The kind fixture has no web bucket.
 
 ### 4.19.1 Control host and platform UI
 
