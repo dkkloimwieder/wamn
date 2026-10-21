@@ -58,6 +58,10 @@ pub struct BuildPlatformArgs {
     /// Cluster document with the cloud build project and daily spend cap.
     #[arg(long)]
     pub cluster: Option<PathBuf>,
+    /// Build with Cloud Build even when no other build runs. Requires
+    /// `--cluster`, and the daily cap still applies.
+    #[arg(long, default_value_t = false, conflicts_with = "stamp_only")]
+    pub cloud: bool,
 }
 
 /// Qualify one published release by its digest, and print the
@@ -92,6 +96,7 @@ pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
             .with_context(|| format!("find {}", args.repository.display()))?,
         registry: args.registry,
         out: args.out,
+        cloud: args.cloud,
     };
     let chart = if args.stamp_only {
         stamp_only(&request).await?

@@ -133,6 +133,8 @@ pub struct BuildPlatformRequest {
     pub out: PathBuf,
     /// Optional cluster inputs for cloud builds.
     pub cluster: Option<crate::platform::document::ClusterDocument>,
+    /// Use Cloud Build even when no other build runs, under the same daily cap.
+    pub cloud: bool,
 }
 
 /// Where a build can run given other build processes and today's spend.
@@ -146,12 +148,14 @@ enum BuildLocation {
 fn build_location(
     processes: &[(u32, Vec<String>)],
     pid: u32,
+    cloud: bool,
     spend_usd: f64,
     cap_usd: f64,
 ) -> BuildLocation {
-    let busy = processes
-        .iter()
-        .any(|(other_pid, args)| *other_pid != pid && builds_platform(args));
+    let busy = cloud
+        || processes
+            .iter()
+            .any(|(other_pid, args)| *other_pid != pid && builds_platform(args));
     if !busy {
         BuildLocation::Local
     } else if spend_usd < cap_usd {
@@ -178,8 +182,9 @@ fn builds_platform(args: &[String]) -> bool {
         if argument == "--log-level" {
             arguments.next();
         } else if !argument.starts_with("--log-level=") {
+            // Neither a stamp nor a cloud build runs Docker on this machine.
             return argument == "build-platform"
-                && !arguments.any(|argument| argument == "--stamp-only");
+                && !arguments.any(|argument| argument == "--stamp-only" || argument == "--cloud");
         }
     }
     false
@@ -202,7 +207,9 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         apps_target.display()
     );
     let processes = process_list()?;
-    if build_location(&processes, std::process::id(), 0.0, 3.0) != BuildLocation::Local {
+    if build_location(&processes, std::process::id(), request.cloud, 0.0, 3.0)
+        != BuildLocation::Local
+    {
         return cloud_build(request, &processes).await;
     }
     let roles = std::env::temp_dir().join(format!("wamn-roles-{}", std::process::id()));
@@ -758,6 +765,7 @@ async fn cloud_build(
     if let BuildLocation::Refused { spend_usd, cap_usd } = build_location(
         processes,
         std::process::id(),
+        request.cloud,
         counter.spend_usd,
         cluster.build_cloud_cap_usd,
     ) {
@@ -950,22 +958,35 @@ mod tests {
             process(11, &["wamn-ctl", "build-platform", "--stamp-only"]),
             process(12, &["sh", "-c", "wamn-ctl build-platform"]),
             process(13, &["wamn-ctl", "env", "build-platform"]),
+            process(15, &["wamn-ctl", "build-platform", "--cloud"]),
         ];
         assert_eq!(
-            build_location(&processes, 10, 3.0, 3.0),
+            build_location(&processes, 10, false, 3.0, 3.0),
             BuildLocation::Local
+        );
+        // --cloud forces Cloud Build under the same cap.
+        assert_eq!(
+            build_location(&processes, 10, true, 2.0, 3.0),
+            BuildLocation::Cloud
+        );
+        assert_eq!(
+            build_location(&processes, 10, true, 3.0, 3.0),
+            BuildLocation::Refused {
+                spend_usd: 3.0,
+                cap_usd: 3.0
+            }
         );
         processes.push(process(
             14,
             &["wamn-ctl", "--log-level=info", "build-platform"],
         ));
         assert_eq!(
-            build_location(&processes, 10, 2.0, 3.0),
+            build_location(&processes, 10, false, 2.0, 3.0),
             BuildLocation::Cloud
         );
         for spend_usd in [3.0, 3.1] {
             assert_eq!(
-                build_location(&processes, 10, spend_usd, 3.0),
+                build_location(&processes, 10, false, spend_usd, 3.0),
                 BuildLocation::Refused {
                     spend_usd,
                     cap_usd: 3.0
@@ -1169,6 +1190,7 @@ mod tests {
         ));
         let error = build_platform(&BuildPlatformRequest {
             cluster: None,
+            cloud: false,
             out: repository.join("chart"),
             repository,
             registry: "localhost:5000".to_owned(),
@@ -1184,6 +1206,7 @@ mod tests {
             std::env::temp_dir().join(format!("wamn-stamp-no-ui-{}", std::process::id()));
         let error = stamp_only(&BuildPlatformRequest {
             cluster: None,
+            cloud: false,
             out: repository.join("chart"),
             repository: repository.clone(),
             registry: "must-not-be-contacted.invalid".into(),
@@ -1206,6 +1229,7 @@ mod tests {
         let error = build_then_push(
             &BuildPlatformRequest {
                 cluster: None,
+                cloud: false,
                 repository: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
                 registry: "localhost:5000".to_owned(),
                 out: PathBuf::from("/chart"),
@@ -1236,6 +1260,7 @@ mod tests {
         let stamped = stamp_from_registry(
             &BuildPlatformRequest {
                 cluster: None,
+                cloud: false,
                 repository: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
                 registry: "localhost:5000".to_owned(),
                 out: out.to_owned(),

@@ -118,6 +118,9 @@ Before a Docker build starts, `build-platform` reads the process list.
 If another `wamn-ctl build-platform` process builds images, the command uses Google Cloud Build.
 It ignores its own process and processes with `--stamp-only`.
 When no other build runs, it uses the local Docker build path.
+With `--cloud`, it uses Google Cloud Build even when no other build runs, under the same daily cap.
+A `--cloud` build runs no Docker build on this machine, so other builds do not count it as busy.
+If a local build would wait on another build, use the cloud path, so that no build waits on the machine.
 
 The cloud path requires `--cluster <cluster.k>`.
 It reads the project, `buckets.state` and `build_cloud_cap_usd` from that document.
