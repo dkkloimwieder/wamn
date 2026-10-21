@@ -302,7 +302,8 @@ if ! $ready; then
   exit 1
 fi
 
-# Keep CPU pinning here; activation owns host settings.
+# Keep CPU pinning here; activation reads the release chart's runtime.env,
+# including all three WASMTIME_POOLING_*_KEEP_RESIDENT values.
 python3 - "$host_bin" "$work/host.pid" "$profile" "$work/guest.map" >"$work/host" <<'PY'
 import shlex
 import sys

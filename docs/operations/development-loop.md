@@ -156,6 +156,16 @@ A Wasmtime store holds a component's execution state.
 The HTTP workload reads its Wasmtime store pool size and concurrency from the same defaults.
 Activation sets HOME to `/tmp`, the same value that the runtime-operator chart template sets.
 The parity test compares HOME directly, so a change on either side fails the test.
+
+The chart's `runtime.env` list also supplies allocator residency, the bytes that each slot retains after use.
+Application and control hosts read this list, including those started by `tools/bench/local.sh`.
+`WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT` is `65536`. A release probe measured the 1179648-byte initial Receiving memory as slower, because the drop clears the kept range with memset.
+`WASMTIME_POOLING_TABLE_KEEP_RESIDENT` is `4096`, one host page covering the largest Receiving table of 3,360 bytes.
+`WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT` is `8192`, the two resident stack pages measured during Receiving instantiation.
+
+Native async stack zeroing remains disabled, so the stack value currently has no effect.
+These values stay below their slot capacities and do not change allocator limits.
+
 The probe binds to a free loopback port.
 Activation reads pool sizes, the request limit, and Wasmtime resource limits from the embedded `deploy/gcp/host-group-receiving.yaml`.
 Warm reuse trusts only the digest of the HTTP route component staged by this developer session.

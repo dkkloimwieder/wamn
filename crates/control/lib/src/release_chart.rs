@@ -22,7 +22,7 @@ use wamn_engine::release_manifest::release_label;
 
 /// The chart version this module renders for. It equals `version` in
 /// `deploy/platform/release/Chart.yaml`.
-pub const CHART_VERSION: &str = "0.1.49";
+pub const CHART_VERSION: &str = "0.1.51";
 
 /// The Helm release name of an environment: `r-<slug>-<hash>`.
 ///
@@ -269,9 +269,9 @@ pub const TELEMETRY_VARIABLES: [(&str, &str); 4] = [
 ];
 
 /// The host variables a host group body must not set: the derived ones, the
-/// telemetry ones, and the chart's environment variable, which the release
-/// replaces by argument.
-const REFUSED_VARIABLES: [&str; 8] = [
+/// telemetry and allocator residency ones, and the chart's environment
+/// variable, which the release replaces by argument.
+const REFUSED_VARIABLES: [&str; 11] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
@@ -280,6 +280,9 @@ const REFUSED_VARIABLES: [&str; 8] = [
     "OTEL_TRACES_SAMPLER",
     "OTEL_TRACES_SAMPLER_ARG",
     "WASMCLOUD_HOST_ENVIRONMENT",
+    "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT",
+    "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
+    "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT",
 ];
 
 /// The inputs of one environment's install values.
@@ -657,7 +660,13 @@ mod tests {
         let mut input = input();
         input.manifest_digest = "e3b0".into();
         assert!(values(&input).is_err());
-        for variable in ["WAMN_ORG", "WASMCLOUD_HOST_ENVIRONMENT"] {
+        for variable in [
+            "WAMN_ORG",
+            "WASMCLOUD_HOST_ENVIRONMENT",
+            "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT",
+            "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
+            "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT",
+        ] {
             let mut input = super::tests::input();
             input.host_group.insert(
                 "env".into(),

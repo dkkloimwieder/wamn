@@ -985,6 +985,21 @@ fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> H
         }),
     );
     env.push(("HOME".to_owned(), HOST_HOME.to_owned()));
+    for variable in runtime["env"]
+        .as_sequence()
+        .expect("platform host environment")
+    {
+        env.push((
+            variable["name"]
+                .as_str()
+                .expect("environment name")
+                .to_owned(),
+            variable["value"]
+                .as_str()
+                .expect("environment value")
+                .to_owned(),
+        ));
+    }
     for variable in group["env"].as_sequence().expect("host group environment") {
         let name = variable["name"].as_str().expect("environment name");
         if [
@@ -2605,6 +2620,18 @@ mod tests {
                 ),
                 ("OTEL_TRACES_SAMPLER_ARG".to_owned(), "0.1".to_owned()),
                 ("HOME".to_owned(), "/tmp".to_owned()),
+                (
+                    "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT".to_owned(),
+                    "65536".to_owned(),
+                ),
+                (
+                    "WASMTIME_POOLING_TABLE_KEEP_RESIDENT".to_owned(),
+                    "4096".to_owned(),
+                ),
+                (
+                    "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT".to_owned(),
+                    "8192".to_owned(),
+                ),
                 ("WAMN_COMPONENT_POOL_SIZE".to_owned(), "16".to_owned()),
                 ("WAMN_PG_GUEST_POOL_MAX".to_owned(), "16".to_owned()),
                 ("WAMN_PG_PLATFORM_POOL_MAX".to_owned(), "8".to_owned()),

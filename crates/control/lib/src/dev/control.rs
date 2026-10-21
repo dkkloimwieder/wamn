@@ -118,6 +118,21 @@ pub(super) async fn start(
     ))?;
     let group = &group["runtime-operator"]["runtime"]["hostGroups"][0];
     let mut env = serde_json::Map::new();
+    let platform: serde_json::Value = serde_yaml::from_str(include_str!(
+        "../../../../../deploy/platform/release/values.yaml"
+    ))?;
+    for variable in platform["runtime-operator"]["runtime"]["env"]
+        .as_array()
+        .context("platform host environment")?
+    {
+        env.insert(
+            variable["name"]
+                .as_str()
+                .context("environment name")?
+                .to_owned(),
+            variable["value"].clone(),
+        );
+    }
     for variable in group["env"]
         .as_array()
         .context("control host environment")?

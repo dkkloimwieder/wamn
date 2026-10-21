@@ -283,6 +283,10 @@ Credential checks retain the exact pinned generation rules above.
 Pool capacity does not limit request admission or total memory.
 Existing route and queue admission limits, native memory accounting, and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
+The release chart sets how many bytes each allocator slot keeps resident after use.
+Dev activation and the local benchmark read the same values ([host environment](../operations/development-loop.md)).
+These values change residency only. They do not increase slot counts or memory ceilings.
+Wasmtime leaves async stack zeroing disabled, so its async stack residency value has no effect under this configuration.
 Native epochs bound guest execution. Duration metering does not grant instruction fuel.
 All cleanup paths retain their resource bounds and return failures to their owner.
 
