@@ -394,8 +394,8 @@ pub fn plan_package_migrations(
         }
     }
 
-    // A package with no SQL ships no migration.
-    let migrations = if manifest.declares_no_sql() && directory.migrations.is_empty() {
+    // A package that owns no table ships no migration.
+    let migrations = if manifest.owns_no_table() && directory.migrations.is_empty() {
         Vec::new()
     } else {
         normalized_migrations(&directory.migrations)?

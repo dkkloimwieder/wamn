@@ -218,10 +218,10 @@ pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let migrations_path = root.join("migrations");
     let mut migrations = Vec::new();
-    // A package with no SQL has no migrations directory.
+    // A package that owns no table has no migrations directory.
     if !migrations_path.exists()
         && wamn_schema_generator::PackageManifest::from_slice(&manifest_bytes)
-            .is_ok_and(|manifest| manifest.declares_no_sql())
+            .is_ok_and(|manifest| manifest.owns_no_table())
     {
         return Ok(PackageDirectory {
             manifest_bytes,

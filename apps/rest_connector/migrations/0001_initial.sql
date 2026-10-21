@@ -1,1 +1,0 @@
--- Integration state belongs to the composed wamn_integration package.

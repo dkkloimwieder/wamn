@@ -675,6 +675,18 @@ impl PackageManifest {
                 .values()
                 .all(|operation| operation.idempotent_by == Some(CommandIdempotence::Stateless))
     }
+
+    /// Whether the package owns no table: it declares no SQL, or every model
+    /// it declares belongs to another package and it has no internal
+    /// relation. Such a package has no migration.
+    pub fn owns_no_table(&self) -> bool {
+        self.declares_no_sql()
+            || (self.internal_relations.is_empty()
+                && self
+                    .models
+                    .values()
+                    .all(|model| model.owner != self.package.id))
+    }
 }
 
 /// Validate and return the manifest's exact package-local operation vocabulary.
