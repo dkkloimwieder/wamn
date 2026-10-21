@@ -11,7 +11,7 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
   const defaults = untrack(() => ({
     principalId: props.params.principal ?? "",
     project: props.params.project ?? "",
-    env: "",
+    env: props.params.env ?? "",
   }));
   const [values, setValues] = createSignal(defaults);
   const [projects, setProjects] = createSignal<readonly { name: string; environments: readonly string[] }[]>([]);
@@ -74,7 +74,7 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
                   ? [{ field: "principalId", label: "User ID", control: "text" } as const]
                   : []),
                 ...(!props.params.project ? [{ field: "project", label: "Project", control: "select" } as const] : []),
-                { field: "env", label: "Environment", control: "select" },
+                ...(!props.params.env ? [{ field: "env", label: "Environment", control: "select" } as const] : []),
               ],
               submit: { id: "grant", label: "Grant membership" },
               actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],

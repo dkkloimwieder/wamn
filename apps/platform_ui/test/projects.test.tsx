@@ -74,11 +74,15 @@ describe("Projects and Project", () => {
         { project: "gadgets", project_admin: false },
       ],
     });
-    window.history.pushState({}, "", `/${CONTROL}`);
+    window.history.pushState({}, "", `/${CONTROL}/projects`);
     render(() => (
       <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={session.fetch} />
     ));
-    await screen.findByRole("link", { name: "widgets" }, { timeout: 5000 });
+    await within(await screen.findByRole("table", { name: "Projects" })).findByRole(
+      "link",
+      { name: "widgets" },
+      { timeout: 5000 },
+    );
     expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
     expect(screen.queryByRole("link", { name: "gadgets" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
@@ -103,7 +107,7 @@ describe("Projects and Project", () => {
     window.history.pushState({}, "", `/${CONTROL}`);
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
     await screen.findByRole("table", { name: "Projects" });
-    await screen.findByRole("link", { name: "widgets" });
+    await within(screen.getByRole("table", { name: "Projects" })).findByRole("link", { name: "widgets" });
     expect(
       await within(screen.getByRole("table", { name: "Projects" })).findByRole("cell", { name: "active" }),
     ).toBeTruthy();
@@ -167,11 +171,7 @@ describe("Projects and Project", () => {
     await screen.findByRole("heading", { name: "Create project" });
     const location = within(screen.getByRole("navigation", { name: "Platform location" }));
     expect(location.getByRole("link", { name: "PROJECTS" })).toBeTruthy();
-    expect(
-      within(screen.getByRole("navigation", { name: "Primary navigation" }))
-        .getByRole("link", { name: "Projects" })
-        .getAttribute("aria-current"),
-    ).toBe("page");
+    expect(document.querySelector('.ui-sidebar-group-panel[data-ui-active="true"]')).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await screen.findByRole("table", { name: "Projects" });
     expect(window.location.pathname).toBe(`/${CONTROL}/projects`);

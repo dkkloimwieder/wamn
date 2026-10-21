@@ -13,6 +13,7 @@ export function Records<Row>(props: {
   columns: readonly NativeColumnDef<Row>[];
   formats?: Readonly<Record<string, ColumnPresentation["format"]>>;
   cells?: Readonly<Record<string, Component<{ row: Row }>>>;
+  details?: Component<{ row: Row }>;
   create?: { label: string; run: () => void };
   refresh: () => void | Promise<void>;
 }) {
@@ -30,6 +31,25 @@ export function Records<Row>(props: {
       setRefreshing(false);
     }
   };
+  const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set());
+  const Details = untrack(() => props.details);
+  const rowDetails = Details
+    ? {
+        expanded: (id: string) => expanded().has(id),
+        onExpandedChange: (id: string, open: boolean) =>
+          setExpanded((previous) => {
+            const next = new Set(previous);
+            if (open) next.add(id);
+            else next.delete(id);
+            return next;
+          }),
+        render: (id: string) => (
+          <Show when={props.rows.find((row) => props.rowKey(row) === id)} keyed>
+            {(row) => <Details row={row} />}
+          </Show>
+        ),
+      }
+    : undefined;
   const [collapsed, setCollapsed] = createSignal(true);
   const pageSize = 25;
   const [requestedPage, setPage] = createSignal(0);
@@ -83,6 +103,8 @@ export function Records<Row>(props: {
         }}
         bindings={{
           table,
+          rowDetails,
+          footerEnabled: props.rows.length > pageSize ? true : undefined,
           onApplyFilters: () => void refresh(),
           cells,
           toolbarActions: ToolbarActions,

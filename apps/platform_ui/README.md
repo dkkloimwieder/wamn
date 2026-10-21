@@ -31,12 +31,19 @@ Operations, roles, reaches, statements, and relations come from `release.profile
 Membership and audience tables use the same pagination.
 Refresh requests fresh data from each table’s owning API, including `control.mine` for project administrators.
 
-The Environment screen links to separate screens for Workloads, Live releases, Operations, and Roles.
-Each of these screens holds one table in the full panel.
+The left pane follows the address through organization, project, and environment contexts, including direct links, history navigation, and reloads.
+SidebarContextSwitcher shows the current context, searches sibling choices, and returns to the parent.
+At the organization level, Projects expands to held projects from `control.mine`. Only org admins see Users.
+Project context shows expandable Environments and Members. Environment context shows Workloads, Live releases, Operations, Roles, and Members.
+Environment membership screens filter members and scope grants and revocations to the current environment.
+A viewer with one held project opens that project directly when entering Control. The parent action still returns to the organization.
+The Users group contains Project access and Memberships links for the addressed user.
 
-Project links to separate Environments and Members tables. User links to separate Project access and Memberships tables.
-Each table occupies its own screen with `scroll="content"` and no outer padding.
-Rows link to memberships, workload conditions, role operations, reaches, reach operations, statements, relations, and relation fields.
+Tables with actions retain separate screens with `scroll="content"` and no outer padding.
+Read-only reference tables expand through wfe `rowDetails`: conditions under Workloads, operations under Roles, and reaches under Operations.
+Reaches expand to operations and statements. Statements expand to relations, which expand to read and write fields.
+These reference tables have no separate screens or routes.
+Child tables use wfe defaults without controls or refresh. A child with more than 25 rows shows the shared pagination footer.
 Each column shows one fact. Parent tables show counts for growing lists.
 Record links use native anchors with the wfe accent color.
 
@@ -57,7 +64,8 @@ Identity screens and audience choice omit breadcrumbs.
 An audience with no available screens shows a named empty-state card and a link to audience selection.
 One audience opens automatically.
 
-Each dashboard uses `Theme` from wfe v0.0.5 with its unchanged light defaults.
+Each dashboard uses `Theme` from wfe v0.0.6 with its unchanged light defaults.
+Dependency pins remain at the v0.0.5 baseline.
 WFE owns the theme properties, styles, fonts, and licenses.
 This follows [Adopt the components](../../web/wfe/docs/adoption.md) and [Default theme](../../web/wfe/docs/theme.md).
 The application owns dashboard height. EntryPanel owns the centered identity form layout.

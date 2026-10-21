@@ -752,7 +752,7 @@ The admin deactivates and reactivates the user, then grants and revokes org-admi
 Each write must update the Users screen, including after a reload.
 
 The fixture grants the admin membership in `receiving/dev`, requires both audiences, and chooses Control.
-Control opens Projects, and the shell root carries `data-ui`.
+Control opens the single held project directly, or Projects when the viewer holds several projects. The shell root carries `data-ui`.
 The fixture runs `wamn dev --config <root>/dev.json --overlay-root apps/wamn_receiving --hold` to install and start the Receiving release.
 The browser opens the Projects table controls and selects Create project.
 The form returns to Projects after submission.
@@ -766,13 +766,14 @@ Record actions beside the title grant and revoke project-admin access.
 Membership rows provide the Revoke membership action.
 The User screen scopes every write to the principal in its address.
 Each write must update the screen.
-The second user sees only that project. Addresses for `receiving`, Users, and User show no page.
+The second user opens its single project directly and can return to the organization. Addresses for `receiving`, Users, and User show no page.
 The project-admin session uses the project names from `control.mine` and never calls `project.list`.
 Project inactivation and activation must each show only the opposite action, including after a page reload.
 
 The browser opens `receiving/dev` from the Environments table for the project.
 It reads the runtime status and release profile, then toggles the state and reloads the page.
-It follows the Environment links to Workloads, Live releases, Operations, and Roles, then reloads each table screen.
+It follows the environment pane to Workloads, Live releases, Operations, and Roles, then reloads each table screen.
+It expands workload conditions and the Operations reference tables, searches context choices, returns to a parent, and opens environment Members.
 If identity limits session renewals, the browser waits for its `Retry-After` period before it reloads the same address.
 The test prints its elapsed time and fails if it exceeds 15 minutes.
 
@@ -783,6 +784,8 @@ Administration files are `control-layout.png`, `projects.png`, `project.png`, `e
 Form files are `create-project.png`, `invite-user.png`, `project-grant-membership.png`, `member-grant-membership.png`, and `user-grant-membership.png`.
 Access table files are `project-environments.png`, `project-members.png`, `member-memberships.png`, `user-projects.png`, and `user-memberships.png`.
 Environment table files are `environment-workloads.png`, `environment-live-releases.png`, `environment-operations.png`, and `environment-roles.png`.
+Expanded reference files are `workload-conditions.png` and `operation-references.png`.
+Context files are `environment-switcher.png` and `environment-members.png`.
 The other files are `receiving-layout.png` and `not-found.png`.
 Recovery and reset captures show their entry forms. The reset capture includes the missing-code message.
 The test retains these files after service cleanup.

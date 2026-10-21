@@ -23,6 +23,7 @@ const captured = new Set();
 async function capture(page, screen) {
   if (captured.has(screen)) return;
   await page.evaluate(() => document.fonts.ready);
+  await page.mouse.move(0, 0);
   const root = page.locator("#app > .ui-theme[data-ui]");
   assert.equal(await root.count(), 1, `${screen} has one theme root`);
   if (["sign-in", "invite", "recover", "reset", "no-access", "not-found"].includes(screen)) {
@@ -47,6 +48,16 @@ async function capture(page, screen) {
     }
   } else {
     assert.equal(await root.locator(":scope > .ui-dashboard").count(), 1, `${screen} has one dashboard shell`);
+    // Audience choice and applications without screens have no navigation.
+    if (!["audience-choice", "receiving-layout"].includes(screen)) {
+      const navigation = root.getByRole("navigation", { name: "Primary navigation" });
+      assert.equal(await navigation.count(), 1, `${screen} has one navigation pane`);
+      assert.equal(
+        await navigation.locator('[aria-current="page"], [data-ui-active="true"], [aria-pressed="true"]').count(),
+        1,
+        `${screen} has exactly one selected navigation item`,
+      );
+    }
   }
   assert.equal(await root.getAttribute("data-ui-density"), "compact");
   assert.equal(await root.getAttribute("data-ui-theme"), null);
@@ -75,7 +86,10 @@ async function capture(page, screen) {
   const breadcrumbs = page.getByRole("navigation", { name: "Platform location" });
   for (const text of await breadcrumbs.locator("a, [aria-current=page]").allTextContents())
     assert.equal(text, text.toUpperCase());
-  assert.ok((await page.getByRole("table").count()) <= 1, `${screen} has at most one growing table`);
+  assert.ok(
+    await page.getByRole("table").evaluateAll((tables) => tables.filter((table) => !table.closest("td")).length <= 1),
+    `${screen} has at most one parent table`,
+  );
   for (const group of await root.getByRole("group", { name: "Record actions" }).all()) {
     assert.equal(await group.locator("..").getByRole("heading", { level: 1 }).count(), 1);
     for (const button of await group.getByRole("button").all()) {
@@ -99,13 +113,37 @@ async function capture(page, screen) {
       `${screen} table touches the main edge without main padding`,
     );
     const pages = table.getByRole("navigation", { name: "Table pages" });
-    assert.equal(await pages.count(), 1, `${screen} uses wfe pagination`);
-    assert.ok((await table.locator("tbody > tr[data-row]").count()) <= 25);
-    await pages.getByRole("button", { name: "Previous page", exact: true }).waitFor();
-    await pages.getByRole("button", { name: "Next page", exact: true }).waitFor();
+    assert.ok((await pages.count()) >= 1, `${screen} uses wfe pagination`);
+    assert.ok(
+      await table
+        .getByRole("table")
+        .evaluateAll((tables) =>
+          tables.every((table) => table.querySelectorAll(":scope > tbody > tr[data-row]").length <= 25),
+        ),
+    );
+    await pages.first().getByRole("button", { name: "Previous page", exact: true }).waitFor();
+    await pages.first().getByRole("button", { name: "Next page", exact: true }).waitFor();
   }
   await page.screenshot({ path: join(report, `${screen}.png`), fullPage: false });
   captured.add(screen);
+}
+async function expandReference(table, id) {
+  const toggle = table.getByRole("button", { name: `Expand details for row ${id}`, exact: true });
+  const workspace = table.locator(
+    "xpath=ancestor::section[contains(concat(' ', normalize-space(@class), ' '), ' table-workspace ')][1]",
+  );
+  const next = workspace
+    .locator(":scope > .table-workspace-results > footer")
+    .getByRole("button", { name: "Next page", exact: true });
+  while (!(await toggle.count())) {
+    assert.ok(await next.isEnabled(), `reference row ${id} exists on a remaining page`);
+    await next.click();
+  }
+  await toggle.click();
+}
+async function expandGroup(page, label) {
+  const summary = page.locator("summary").filter({ hasText: label });
+  if (!(await summary.evaluate((node) => node.parentElement.open))) await summary.click();
 }
 const org = required("WAMN_BROWSER_ORG");
 const base = required("WAMN_BROWSER_URL");
@@ -167,14 +205,24 @@ try {
   await control.click();
   const response = await mine;
   assert.equal(response.status(), 200);
-  assert.equal((await response.json())[0].value.org_admin, true);
+  const held = (await response.json())[0].value;
+  assert.equal(held.org_admin, true);
+  if (held.projects.length === 1) {
+    await page
+      .getByRole("button", { name: `Change context: Project ${held.projects[0].project}`, exact: true })
+      .click();
+    await page.getByRole("button", { name: `Up one level: Organization ${org}`, exact: true }).click();
+  }
   await page.getByRole("table", { name: "Projects", exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, `${controlPath}/projects`);
   assert.equal(await page.getByRole("navigation", { name: "Primary navigation" }).count(), 1);
   assert.equal(await page.locator("#app > [data-ui]").count(), 1);
   assert.equal(await page.locator("#app > [data-ui]").getAttribute("data-ui-density"), "compact");
 
-  await page.getByRole("link", { name: fixture.releaseProject, exact: true }).waitFor();
+  await page
+    .getByRole("table", { name: "Projects", exact: true })
+    .getByRole("link", { name: fixture.releaseProject, exact: true })
+    .waitFor();
   await capture(page, "control-layout");
   await capture(page, "projects");
 
@@ -229,7 +277,7 @@ try {
     await page.getByRole("button", { name: "Grant org admin", exact: true }).click();
     await page.getByRole("button", { name: "Revoke org admin", exact: true }).waitFor();
     await signIn(enrollment, fixture.email, `${base}${controlPath}`);
-    await enrollment.getByRole("table", { name: "Projects", exact: true }).waitFor();
+    await enrollment.getByRole("button", { name: /^Change context: (Organization|Project) / }).waitFor();
     await visit(page);
     await page.getByRole("button", { name: "Revoke org admin", exact: true }).click();
     await page.getByRole("button", { name: "Grant org admin", exact: true }).waitFor();
@@ -248,11 +296,15 @@ try {
   await page.getByLabel("Project name", { exact: true }).fill(fixture.project);
   await page.getByRole("button", { name: "Create project", exact: true }).click();
   await page.getByText("Project created.", { exact: true }).waitFor();
-  await page.getByRole("link", { name: fixture.project, exact: true }).click();
+  await page
+    .getByRole("table", { name: "Projects", exact: true })
+    .getByRole("link", { name: fixture.project, exact: true })
+    .click();
   await page.getByRole("heading", { name: fixture.project, exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.project}`);
   await capture(page, "project");
-  await page.getByRole("link", { name: "Environments", exact: true }).click();
+  await expandGroup(page, "Environments");
+  await page.getByRole("link", { name: "All environments", exact: true }).click();
   const environments = page.getByRole("table", { name: "Environments", exact: true });
   await environments.waitFor();
   assert.equal(await environments.locator("tbody tr[data-row]").count(), 0);
@@ -341,14 +393,22 @@ try {
       if (new URL(request.url()).pathname === "/api/wamn_control/project/list") projectListRequests.push(request.url());
     });
     await signIn(second, fixture.email, `${base}${controlPath}`);
+    await second.getByRole("heading", { name: fixture.project, exact: true }).waitFor();
+    assert.equal(new URL(second.url()).pathname, `${controlPath}/projects/${fixture.project}`);
+    await second.getByRole("button", { name: `Change context: Project ${fixture.project}`, exact: true }).click();
+    assert.equal(await second.locator("[data-context-option]").count(), 0);
+    await second.getByRole("button", { name: `Up one level: Organization ${org}`, exact: true }).click();
     await second.getByRole("table", { name: "Projects", exact: true }).waitFor();
-    await second.getByRole("link", { name: fixture.project, exact: true }).waitFor();
     assert.deepEqual(
       await second.getByRole("table", { name: "Projects", exact: true }).locator("tbody a").allTextContents(),
       [fixture.project],
     );
     assert.equal(await second.getByRole("button", { name: "Create project", exact: true }).count(), 0);
-    await second.getByRole("link", { name: fixture.project, exact: true }).click();
+    assert.equal(await second.getByRole("link", { name: "Users", exact: true }).count(), 0);
+    await second
+      .getByRole("table", { name: "Projects", exact: true })
+      .getByRole("link", { name: fixture.project, exact: true })
+      .click();
     await second.getByRole("heading", { name: fixture.project, exact: true }).waitFor();
     assert.equal(await second.getByRole("button", { name: /^(Activate|Inactivate) project$/ }).count(), 0);
     await visit(second, `${base}${controlPath}/projects/receiving`);
@@ -361,7 +421,7 @@ try {
     assert.deepEqual(projectListRequests, []);
     assert.deepEqual(errors, []);
     console.log(
-      `PASS: project-admin lands on Projects, sees only its project, calls no project.list, and cannot open receiving (${((performance.now() - projectAdminStarted) / 1000).toFixed(2)}s)`,
+      `PASS: project-admin opens its single project directly, sees only its project, calls no project.list, and cannot open receiving (${((performance.now() - projectAdminStarted) / 1000).toFixed(2)}s)`,
     );
   } finally {
     await secondContext.close();
@@ -403,7 +463,8 @@ try {
   await page.getByRole("button", { name: "Inactivate project", exact: true }).waitFor();
   await visit(page, `${base}${controlPath}/projects/${fixture.releaseProject}`);
   await page.getByRole("heading", { name: fixture.releaseProject, exact: true }).waitFor();
-  await page.getByRole("link", { name: "Environments", exact: true }).click();
+  await expandGroup(page, "Environments");
+  await page.getByRole("link", { name: "All environments", exact: true }).click();
   await page
     .getByRole("table", { name: "Environments", exact: true })
     .getByRole("link", { name: fixture.releaseEnv, exact: true })
@@ -428,8 +489,14 @@ try {
     ["Operations", "operations"],
     ["Roles", "roles"],
   ]) {
+    const profileRead =
+      path === "operations"
+        ? page.waitForResponse((response) =>
+            new URL(response.url()).pathname.endsWith("/api/wamn_control/release/profile"),
+          )
+        : undefined;
     await page
-      .getByRole("navigation", { name: "Environment tables" })
+      .getByRole("navigation", { name: "Primary navigation" })
       .getByRole("link", { name: label, exact: true })
       .click();
     const table = page.getByRole("table", { name: label, exact: true });
@@ -442,17 +509,40 @@ try {
     );
     await capture(page, `environment-${path}`);
     if (path === "workloads" || path === "operations") {
-      await table.locator("tbody a").first().click();
+      const profile = profileRead ? (await (await profileRead).json())[0].value : undefined;
+      const operation = profile?.operations.find((entry) =>
+        entry.reaches.some((reach) => reach.statements.some((statement) => statement.relations.length)),
+      );
+      if (path === "operations") {
+        assert.ok(operation, "the release has an operation with SQL relations");
+        await expandReference(table, operation.operation);
+      } else await table.locator("[data-subtable-toggle]").first().click();
       await page
         .getByRole("table", { name: path === "workloads" ? /^Conditions for / : "Reaches", exact: true })
         .waitFor();
-      assert.equal(await page.getByRole("table").count(), 1);
-      assert.equal(await page.locator("table table").count(), 0);
-      await page
-        .getByRole("navigation", { name: "Platform location" })
-        .getByRole("link", { name: label.toUpperCase(), exact: true })
-        .click();
-      await table.waitFor();
+      assert.equal(new URL(page.url()).pathname, `${environmentPathname}/${path}`);
+      assert.ok((await page.locator("table table").count()) > 0);
+      if (path === "operations") {
+        const reaches = page.getByRole("table", { name: "Reaches", exact: true });
+        const reach = operation.reaches.find((entry) =>
+          entry.statements.some((statement) => statement.relations.length),
+        );
+        await expandReference(reaches, reach.package);
+        const statements = page.getByRole("table", { name: "Statements", exact: true });
+        await statements.waitFor();
+        const statement = reach.statements.find((entry) => entry.relations.length);
+        await expandReference(statements, statement.path);
+        const relations = page.getByRole("table", { name: "Relations", exact: true });
+        await relations.waitFor();
+        await relations.locator("[data-subtable-toggle]").first().click();
+        await page.getByRole("table", { name: "Read fields", exact: true }).waitFor();
+        await page.getByRole("table", { name: "Write fields", exact: true }).waitFor();
+      }
+      await capture(page, path === "workloads" ? "workload-conditions" : "operation-references");
+    }
+    if (path === "roles" && (await table.locator("[data-subtable-toggle]").count())) {
+      await table.locator("[data-subtable-toggle]").first().click();
+      await page.getByRole("table", { name: "Role operations", exact: true }).waitFor();
     }
     await visit(page);
     await table.waitFor();
@@ -462,6 +552,36 @@ try {
       .click();
     assert.equal(page.url(), environmentAddress);
   }
+  await page
+    .getByRole("button", {
+      name: `Change context: Environment ${fixture.releaseProject}/${fixture.releaseEnv}`,
+      exact: true,
+    })
+    .click();
+  await page.getByRole("textbox", { name: "Search contexts", exact: true }).fill(fixture.releaseEnv);
+  await capture(page, "environment-switcher");
+  await page.getByRole("button", { name: `Up one level: Project ${fixture.releaseProject}`, exact: true }).click();
+  await page.getByRole("button", { name: `Change context: Project ${fixture.releaseProject}`, exact: true }).click();
+  await page.getByRole("textbox", { name: "Search contexts", exact: true }).fill(fixture.project);
+  await page.getByRole("button", { name: `Project ${fixture.project}`, exact: true }).click();
+  await page.getByRole("heading", { name: fixture.project, exact: true }).waitFor();
+  await expandGroup(page, "Environments");
+  await page
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: fixture.env, exact: true })
+    .click();
+  await page.getByRole("link", { name: "Members", exact: true }).click();
+  await page
+    .getByRole("table", { name: "Members", exact: true })
+    .getByRole("link", { name: "Invited User", exact: true })
+    .waitFor();
+  assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.project}/${fixture.env}/members`);
+  await capture(page, "environment-members");
+  await visit(page);
+  await page
+    .getByRole("button", { name: `Change context: Environment ${fixture.project}/${fixture.env}`, exact: true })
+    .waitFor();
+  await visit(page, environmentAddress);
   await page.getByRole("button", { name: "Inactivate environment", exact: true }).click();
   await page.getByText("State: inactive", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Inactivate environment", exact: true }).count(), 0);
@@ -477,7 +597,7 @@ try {
     "PASS: Environment navigation, local runtime status, release profile, single activate/inactivate action and reload state",
   );
   console.log(
-    "PASS: Control lands on Projects; create, membership grant/revoke, project-admin grant/revoke, scoped access, activate/inactivate and reload state",
+    "PASS: Control hierarchy follows the address; create, membership grant/revoke, project-admin grant/revoke, scoped access, activate/inactivate and reload state",
   );
   const receiving = await browser.newPage({ viewport });
   await signIn(receiving, required("WAMN_BROWSER_EMAIL"));
@@ -535,6 +655,10 @@ try {
       "environment-live-releases",
       "environment-operations",
       "environment-roles",
+      "workload-conditions",
+      "operation-references",
+      "environment-switcher",
+      "environment-members",
       "users",
       "user",
       "receiving-layout",

@@ -263,14 +263,6 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     <FieldValue value={current().orgAdmin} format="boolean-symbol" />
                   </Field>
                 </FormGrid>
-                <nav aria-label="User tables" class="ui-form-actions">
-                  <RecordLink screen={props} path={`${base}/projects`}>
-                    Project access
-                  </RecordLink>
-                  <RecordLink screen={props} path={`${base}/memberships`}>
-                    Memberships
-                  </RecordLink>
-                </nav>
               </Page>
             </Show>
             <Show when={props.table === "projects"}>

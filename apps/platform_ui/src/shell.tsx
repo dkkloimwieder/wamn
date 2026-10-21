@@ -215,7 +215,11 @@ function Session(
             setView(shown);
             const first = shown.sections[0]?.screens[0];
             if (props.address.url().pathname.replace(/\/$/, "") === `/${props.aud}` && first) {
-              props.address.navigate(`/${props.aud}/${first.path}`, true);
+              const projects = shown.controlMine?.projects.filter((entry) =>
+                shown.holds(member.MEMBER_LIST_ROUTE.operation, entry.project),
+              );
+              const home = projects?.length === 1 ? `projects/${encodeURIComponent(projects[0]!.project)}` : first.path;
+              props.address.navigate(`/${props.aud}/${home}`, true);
             }
           },
           (error: unknown) => {
@@ -262,6 +266,8 @@ function Session(
               aud={props.aud}
               sections={shown().sections}
               holds={shown().holds}
+              controlMine={shown().controlMine}
+              transport={transport}
               address={props.address}
               signOut={() => keeper.signOut()}
             >

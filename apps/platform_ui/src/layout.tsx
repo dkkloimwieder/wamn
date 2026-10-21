@@ -1,6 +1,8 @@
 import { For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Breadcrumbs, DropdownMenu } from "@wfe/components";
+import { ControlNavigation } from "./control-navigation";
+import type { Transport } from "@wamn/web-runtime";
 import { Frame } from "./page";
 import { matchPath, type Address } from "./address";
 import type { ScreenProps, ShellSection } from "./shell";
@@ -12,6 +14,8 @@ export default function Layout(props: {
   sections: readonly ShellSection[];
   holds: ScreenProps["holds"];
   address: Address;
+  controlMine?: ScreenProps["controlMine"];
+  transport: Transport;
   signOut: () => Promise<void>;
   children: JSX.Element;
 }): JSX.Element {
@@ -21,16 +25,15 @@ export default function Layout(props: {
     props.address.navigate(path);
     close?.();
   };
-  const scroll = () => {
+  const selected = () => {
     const path = props.address.url().pathname.split("/").slice(2).join("/");
-    const route = props.sections
-      .flatMap((section) => [...section.screens, ...(section.routes ?? [])])
-      .find((route) => {
-        const params = matchPath(route.path, path);
-        return params && props.holds(route.operation, params.project);
-      });
-    return route?.scroll ?? "main";
+    for (const route of props.sections.flatMap((section) => [...section.screens, ...(section.routes ?? [])])) {
+      const params = matchPath(route.path, path);
+      if (params && props.holds(route.operation, params.project)) return { route, params };
+    }
+    return undefined;
   };
+  const scroll = () => selected()?.route.scroll ?? "main";
   const breadcrumbs = () => {
     const root = `/${props.aud}`;
     const entries = [{ label: props.title, href: root }];
@@ -114,38 +117,59 @@ export default function Layout(props: {
       }
       navigation={
         props.sections.length
-          ? ({ close }) => (
-              <div class="ui-dashboard-menu">
-                <For each={props.sections}>
-                  {(section) => (
-                    <For each={section.screens}>
-                      {(item) => (
-                        <a
-                          href={`/${props.aud}/${item.path}`}
-                          data-ui-text="system"
-                          aria-current={
-                            props.address.url().pathname === `/${props.aud}/${item.path}` ||
-                            props.address.url().pathname.startsWith(`/${props.aud}/${item.path}/`) ||
-                            (item === section.screens[0] &&
-                              section.routes?.some((route) => {
-                                const params = matchPath(
-                                  route.path,
-                                  props.address.url().pathname.split("/").slice(2).join("/"),
-                                );
-                                return params && props.holds(route.operation, params.project);
-                              }))
-                              ? "page"
-                              : undefined
-                          }
-                          onClick={follow(`/${props.aud}/${item.path}`, close)}
-                        >
-                          {section.screens.length === 1 ? section.label : `${section.label}: ${item.label}`}
-                        </a>
+          ? (navigation) => (
+              <Show
+                when={
+                  props.controlMine &&
+                  props.sections.some((section) =>
+                    section.screens.some((screen) => screen.path === "projects" || screen.path === "users"),
+                  )
+                }
+                fallback={
+                  <div class="ui-dashboard-menu">
+                    <For each={props.sections}>
+                      {(section) => (
+                        <For each={section.screens}>
+                          {(item) => (
+                            <a
+                              href={`/${props.aud}/${item.path}`}
+                              data-ui-text="system"
+                              aria-current={
+                                props.address.url().pathname === `/${props.aud}/${item.path}` ||
+                                props.address.url().pathname.startsWith(`/${props.aud}/${item.path}/`) ||
+                                (item === section.screens[0] &&
+                                  section.routes?.some((route) => {
+                                    const params = matchPath(
+                                      route.path,
+                                      props.address.url().pathname.split("/").slice(2).join("/"),
+                                    );
+                                    return params && props.holds(route.operation, params.project);
+                                  }))
+                                  ? "page"
+                                  : undefined
+                              }
+                              onClick={follow(`/${props.aud}/${item.path}`, navigation.close)}
+                            >
+                              {section.screens.length === 1 ? section.label : `${section.label}: ${item.label}`}
+                            </a>
+                          )}
+                        </For>
                       )}
                     </For>
-                  )}
-                </For>
-              </div>
+                  </div>
+                }
+              >
+                <ControlNavigation
+                  org={props.title}
+                  aud={props.aud}
+                  mine={props.controlMine!}
+                  holds={props.holds}
+                  params={selected()?.params ?? {}}
+                  address={props.address}
+                  transport={props.transport}
+                  navigation={navigation}
+                />
+              </Show>
             )
           : undefined
       }

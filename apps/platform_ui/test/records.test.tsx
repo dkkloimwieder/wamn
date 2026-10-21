@@ -57,4 +57,42 @@ describe("Records pagination", () => {
     expect(previous.disabled).toBe(true);
     expect(next.disabled).toBe(true);
   });
+  it("keeps all child rows reachable through the shared pagination and refreshes expanded details", () => {
+    const [children, setChildren] = createSignal(Array.from({ length: 26 }, (_, index) => String(index + 1)));
+    render(() => (
+      <Records
+        refresh={() => {}}
+        id="parents"
+        title="Parents"
+        rows={["parent"]}
+        rowKey={(row) => row}
+        columns={[{ id: "name", header: "Name", accessorFn: (row) => row }]}
+        details={() => (
+          <Records
+            refresh={() => {}}
+            id="children"
+            title="Children"
+            rows={children()}
+            rowKey={(row) => row}
+            columns={[{ id: "name", header: "Name", accessorFn: (row) => row }]}
+          />
+        )}
+      />
+    ));
+    fireEvent.click(screen.getByRole("button", { name: "Expand details for row parent" }));
+    flush();
+    const child = within(screen.getByRole("table", { name: "Children" }));
+    expect(child.getAllByRole("cell")).toHaveLength(25);
+    expect(screen.getAllByRole("button", { name: "Refresh results" })).toHaveLength(1);
+    const pages = screen.getAllByRole("navigation", { name: "Table pages" });
+    expect(pages).toHaveLength(2);
+    const childPages = pages.find((page) => page.closest("td"))!;
+    fireEvent.click(within(childPages).getByRole("button", { name: "Next page" }));
+    flush();
+    expect(child.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["26"]);
+    setChildren(["changed"]);
+    flush();
+    expect(child.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["changed"]);
+    expect(screen.getAllByRole("navigation", { name: "Table pages" })).toHaveLength(1);
+  });
 });

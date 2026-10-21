@@ -105,15 +105,11 @@ describe("Environment", () => {
     await screen.findByRole("region", { name: "Release profile" });
     expect(screen.getByRole("region", { name: "Environment status" }).textContent).toContain("sha256:release");
     expect(screen.queryByRole("table")).toBeNull();
-    const links = within(screen.getByRole("navigation", { name: "Environment tables" })).getAllByRole("link");
-    expect(links.map((link) => link.textContent)).toEqual(["Workloads", "Live releases", "Operations", "Roles"]);
-    expect(links.map((link) => link.getAttribute("href"))).toEqual(
-      ["workloads", "live-releases", "operations", "roles"].map((path) => `/${CONTROL}/projects/widgets/dev/${path}`),
-    );
+    expect(screen.queryByRole("navigation", { name: "Environment tables" })).toBeNull();
     expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(1);
   });
 
-  it("opens each environment table and its details on separate screens", async () => {
+  it("expands read-only tables under workloads, roles and operations without changing the address", async () => {
     const data = fixture();
     const session = identity(true);
     const base = `/${CONTROL}/projects/widgets/dev`;
@@ -132,76 +128,46 @@ describe("Environment", () => {
       />
     ));
     fireEvent.click(await screen.findByRole("link", { name: "Workloads" }));
-    await screen.findByRole("table", { name: "Workloads" });
-    expect(window.location.pathname).toBe(`${base}/workloads`);
-    expect(screen.getAllByRole("table")).toHaveLength(1);
-    fireEvent.click(await screen.findByRole("link", { name: "http" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row http" }));
     const conditions = within(await screen.findByRole("table", { name: "Conditions for http" }));
-    expect(window.location.pathname).toBe(`${base}/workloads/http`);
-    expect(conditions.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Condition", "State"]);
     expect(conditions.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["Ready", "True"]);
-    expect(screen.queryByRole("table", { name: "Workloads" })).toBeNull();
-    fireEvent.click(
-      within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "WORKLOADS" }),
-    );
-    await screen.findByRole("table", { name: "Workloads" });
-    for (const [label, path] of [
-      ["Live releases", "live-releases"],
-      ["Roles", "roles"],
-      ["Operations", "operations"],
-    ] as const) {
-      fireEvent.click(
-        within(screen.getByRole("navigation", { name: "Platform location" })).getByRole("link", { name: "DEV" }),
-      );
-      fireEvent.click(await screen.findByRole("link", { name: label }));
-      await screen.findByRole("table", { name: label });
-      expect(window.location.pathname).toBe(`${base}/${path}`);
-      expect(screen.getAllByRole("table")).toHaveLength(1);
-      expect(screen.queryByRole("region", { name: "Environment status" })).toBeNull();
-      expect(screen.queryByRole("region", { name: "Release profile" })).toBeNull();
-      const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
-      expect(breadcrumbs.getByText(label.toUpperCase()).getAttribute("aria-current")).toBe("page");
-      if (label === "Live releases") {
-        const releases = within(screen.getByRole("table", { name: label }));
-        expect(releases.getByTitle("sha256:release").textContent).toBe("sha256:r");
-        expect(releases.getByRole("cell", { name: "1" })).toBeTruthy();
-      }
-      if (label === "Roles") {
-        expect(
-          within(screen.getByRole("table", { name: label }))
-            .getByRole("link", { name: "clerk" })
-            .getAttribute("href"),
-        ).toBe(`${base}/roles/clerk`);
-      }
-    }
-    fireEvent.click(await screen.findByRole("link", { name: "acme:receiving/record" }));
-    await screen.findByRole("table", { name: "Reaches" });
-    expect(window.location.pathname).toBe(`${base}/operations/acme%3Areceiving%2Frecord`);
-    expect(screen.queryByRole("table", { name: "Operations" })).toBeNull();
-    fireEvent.click(screen.getByRole("link", { name: "acme" }));
-    await screen.findByRole("table", { name: "Statements" });
-    expect(window.location.pathname).toBe(`${base}/operations/acme%3Areceiving%2Frecord/reaches/acme`);
-    expect(screen.queryByRole("table", { name: "Reaches" })).toBeNull();
-    fireEvent.click(screen.getByRole("link", { name: "record.sql" }));
-    const relations = await screen.findByRole("table", { name: "Relations" });
-    expect(window.location.pathname).toBe(
-      `${base}/operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql`,
-    );
+    expect(window.location.pathname).toBe(`${base}/workloads`);
+    expect(screen.getByRole("table", { name: "Conditions for http" }).closest("td")).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: "Refresh results" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse details for row http" }));
+    await waitFor(() => expect(screen.queryByRole("table", { name: "Conditions for http" })).toBeNull());
+    fireEvent.click(screen.getByRole("link", { name: "Roles" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row clerk" }));
     expect(
-      within(relations)
-        .getAllByRole("columnheader")
-        .map((cell) => cell.textContent),
-    ).toEqual(["Relation", "Read fields", "Write fields", "Locks", "Deletes"]);
-    expect(within(relations).getByRole("link", { name: "receipt" })).toBeTruthy();
-    expect(within(relations).getByRole("img", { name: "Yes" })).toBeTruthy();
-    expect(within(relations).getByRole("img", { name: "No" })).toBeTruthy();
-    expect(screen.queryByRole("table", { name: "Statements" })).toBeNull();
-    expect(relations.closest("td")).toBeNull();
-    const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
-    expect(breadcrumbs.getByRole("link", { name: "OPERATIONS" }).getAttribute("href")).toBe(`${base}/operations`);
-    expect(breadcrumbs.getByRole("link", { name: "ACME:RECEIVING/RECORD" }).getAttribute("href")).toBe(
-      `${base}/operations/acme%3Areceiving%2Frecord`,
-    );
+      within(await screen.findByRole("table", { name: "Role operations" })).getByRole("cell", {
+        name: "acme:receiving/record",
+      }),
+    ).toBeTruthy();
+    expect(window.location.pathname).toBe(`${base}/roles`);
+    fireEvent.click(screen.getByRole("link", { name: "Operations" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row acme:receiving/record" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row acme" }));
+    expect(await screen.findByRole("table", { name: "Reach operations" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row record.sql" }));
+    const relations = within(await screen.findByRole("table", { name: "Relations" }));
+    expect(relations.getByRole("cell", { name: "receipt" })).toBeTruthy();
+    expect(relations.getByRole("img", { name: "Yes" })).toBeTruthy();
+    expect(relations.getByRole("img", { name: "No" })).toBeTruthy();
+    fireEvent.click(relations.getByRole("button", { name: "Expand details for row receipt" }));
+    expect(
+      within(await screen.findByRole("table", { name: "Read fields" })).getByRole("cell", { name: "id" }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByRole("table", { name: "Write fields" })).getByRole("cell", { name: "quantity" }),
+    ).toBeTruthy();
+    expect(window.location.pathname).toBe(`${base}/operations`);
+    expect(screen.getAllByRole("button", { name: "Refresh results" })).toHaveLength(1);
+    expect(screen.getAllByRole("navigation", { name: "Table pages" })).toHaveLength(1);
+    expect(
+      within(screen.getByRole("navigation", { name: "Platform location" }))
+        .getByText("OPERATIONS")
+        .getAttribute("aria-current"),
+    ).toBe("page");
   });
 
   it.each([
@@ -209,17 +175,6 @@ describe("Environment", () => {
     ["live-releases", "Live releases"],
     ["operations", "Operations"],
     ["roles", "Roles"],
-    ["roles/clerk", "Role operations"],
-    ["operations/acme%3Areceiving%2Frecord/reaches/acme/operations", "Reach operations"],
-    ["operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql/relations/receipt/reads", "Read fields"],
-    [
-      "operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql/relations/receipt/writes",
-      "Write fields",
-    ],
-    ["workloads/http", "Conditions for http"],
-    ["operations/acme%3Areceiving%2Frecord", "Reaches"],
-    ["operations/acme%3Areceiving%2Frecord/reaches/acme", "Statements"],
-    ["operations/acme%3Areceiving%2Frecord/reaches/acme/statements/record.sql", "Relations"],
   ])("opens the saved table address %s", async (path, table) => {
     const data = fixture();
     const session = identity(true);
@@ -253,7 +208,7 @@ describe("Environment", () => {
     "operations/missing",
     "operations/acme%3Areceiving%2Frecord/reaches/missing",
     "operations/acme%3Areceiving%2Frecord/reaches/acme/statements/missing.sql",
-  ])("shows a standalone not-found page for the missing detail %s", async (path) => {
+  ])("rejects removed reference routes: %s", async (path) => {
     const data = fixture();
     const session = identity(true);
     window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
@@ -278,9 +233,9 @@ describe("Environment", () => {
     expect(screen.getAllByRole("link")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Go to audience home" }).getAttribute("href")).toBe(`/${CONTROL}`);
     expect(screen.queryByRole("table")).toBeNull();
-    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/workloads/http`);
+    window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/workloads`);
     window.dispatchEvent(new PopStateEvent("popstate"));
-    await screen.findByRole("table", { name: "Conditions for http" });
+    await screen.findByRole("table", { name: "Workloads" });
     expect(document.querySelector(".ui-dashboard")).not.toBeNull();
     expect(screen.queryByText("This address names no page.")).toBeNull();
   });

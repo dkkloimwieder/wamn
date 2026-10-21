@@ -128,7 +128,8 @@ export function CreateProject(props: ScreenProps): JSX.Element {
 
 export function Project(props: ScreenProps & { table?: "environments" | "members" }): JSX.Element {
   const name = untrack(() => props.params.project!);
-  const base = `projects/${encodeURIComponent(name)}`;
+  const projectBase = `projects/${encodeURIComponent(name)}`;
+  const base = props.params.env ? `${projectBase}/${encodeURIComponent(props.params.env)}` : projectBase;
   const [environments, setEnvironments] = createSignal<readonly environment.EnvironmentListResultEnvironments[]>([]);
   const [state, setState] = createSignal<"active" | "inactive">();
   const [members, setMembers] = createSignal<readonly member.MemberListResultMembers[]>([]);
@@ -157,8 +158,15 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
       setMissing(true);
       return;
     }
-    setEnvironments(value(envs).environments);
-    setMembers(value(people).members);
+    const listed = value(envs).environments;
+    if (props.params.env && !listed.some((env) => env.name === props.params.env)) {
+      setMissing(true);
+      return;
+    }
+    setEnvironments(listed);
+    setMembers(
+      value(people).members.filter((person) => !props.params.env || person.environments.includes(props.params.env)),
+    );
     setLoaded(true);
   };
   void untrack(refresh).catch((error: unknown) => {
@@ -214,14 +222,6 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
           <Show when={state()}>
             <p>State: {state()}</p>
           </Show>
-          <nav aria-label="Project tables" class="ui-form-actions">
-            <RecordLink screen={props} path={`${base}/environments`}>
-              Environments
-            </RecordLink>
-            <RecordLink screen={props} path={`${base}/members`}>
-              Members
-            </RecordLink>
-          </nav>
         </Page>
       </Show>
       <Show when={props.table === "environments"}>
@@ -265,7 +265,12 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
               { id: "principalId", header: "User ID", accessorKey: "principalId", size: 120 },
               { id: "orgAdmin", header: "Org admin", accessorKey: "orgAdmin", size: 100 },
               { id: "projectAdmin", header: "Project admin", accessorKey: "projectAdmin", size: 120 },
-              { id: "memberships", header: "Memberships", accessorFn: (entry) => entry.environments.length },
+              {
+                id: "memberships",
+                header: "Memberships",
+                accessorFn: (entry) =>
+                  entry.environments.filter((env) => !props.params.env || env === props.params.env).length,
+              },
             ]}
             formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol", projectAdmin: "boolean-symbol" }}
             cells={{
@@ -314,7 +319,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 refresh={refresh}
                 id="member-environments"
                 title={`Memberships for ${current().email}`}
-                rows={current().environments}
+                rows={current().environments.filter((env) => !props.params.env || env === props.params.env)}
                 rowKey={(env) => env}
                 create={
                   props.holds(member.MEMBER_GRANT_ROUTE.operation)
@@ -330,7 +335,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 ]}
                 cells={{
                   env: (cell) => (
-                    <RecordLink screen={props} path={`${base}/${encodeURIComponent(cell.row)}`}>
+                    <RecordLink screen={props} path={`${projectBase}/${encodeURIComponent(cell.row)}`}>
                       {cell.row}
                     </RecordLink>
                   ),
@@ -455,59 +460,38 @@ export const controlSections: readonly ShellSection[] = [
         scroll: "content",
       },
       {
-        path: "projects/:project/:env/workloads/:workload",
-        operation: environment.ENVIRONMENT_STATUS_ROUTE.operation,
-        component: Environment,
+        path: "projects/:project/:env/members",
+        label: "Members",
+        operation: member.MEMBER_LIST_ROUTE.operation,
+        component: (props) => <Project {...props} table="members" />,
         scroll: "content",
       },
       {
-        path: "projects/:project/:env/operations/:operation",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: Environment,
-        scroll: "content",
+        path: "projects/:project/:env/members/grant",
+        label: "Grant membership",
+        operation: member.MEMBER_GRANT_ROUTE.operation,
+        component: (props) => (
+          <GrantMembership
+            {...props}
+            returnTo={`projects/${encodeURIComponent(props.params.project!)}/${encodeURIComponent(props.params.env!)}/members`}
+          />
+        ),
       },
       {
-        path: "projects/:project/:env/operations/:operation/reaches/:reach",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: Environment,
-        scroll: "content",
+        path: "projects/:project/:env/members/:principal/grant",
+        label: "Grant membership",
+        operation: member.MEMBER_GRANT_ROUTE.operation,
+        component: (props) => (
+          <GrantMembership
+            {...props}
+            returnTo={`projects/${encodeURIComponent(props.params.project!)}/${encodeURIComponent(props.params.env!)}/members/${encodeURIComponent(props.params.principal!)}`}
+          />
+        ),
       },
       {
-        path: "projects/:project/:env/operations/:operation/reaches/:reach/statements/:statement",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: Environment,
-        scroll: "content",
-      },
-      {
-        path: "projects/:project/:env/roles/:role",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: Environment,
-        scroll: "content",
-      },
-      {
-        path: "projects/:project/:env/operations/:operation/reaches/:reach/operations",
-        label: "Operations",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: (props) => <Environment {...props} reachOperations />,
-        scroll: "content",
-      },
-      {
-        path: "projects/:project/:env/operations/:operation/reaches/:reach/statements/:statement/relations/:relation",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: Environment,
-      },
-      {
-        path: "projects/:project/:env/operations/:operation/reaches/:reach/statements/:statement/relations/:relation/reads",
-        label: "Read fields",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: (props) => <Environment {...props} fields="reads" />,
-        scroll: "content",
-      },
-      {
-        path: "projects/:project/:env/operations/:operation/reaches/:reach/statements/:statement/relations/:relation/writes",
-        label: "Write fields",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: (props) => <Environment {...props} fields="writes" />,
+        path: "projects/:project/:env/members/:principal",
+        operation: member.MEMBER_LIST_ROUTE.operation,
+        component: Project,
         scroll: "content",
       },
       {

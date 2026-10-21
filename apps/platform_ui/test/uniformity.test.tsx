@@ -131,7 +131,9 @@ describe("uniform record screens", () => {
 
   it("keeps record links native for modified clicks", async () => {
     mount("projects");
-    const link = await screen.findByRole("link", { name: "widgets" });
+    const link = await within(await screen.findByRole("table", { name: "Projects" })).findByRole("link", {
+      name: "widgets",
+    });
     expect(link.getAttribute("href")).toBe(`/${CONTROL}/projects/widgets`);
     const event = new MouseEvent("click", { button: 0, ctrlKey: true, bubbles: true, cancelable: true });
     link.dispatchEvent(event);
