@@ -80,15 +80,8 @@ pub async fn apply(
             "4.8" => broker(&target, document, repository, environments, &step).await?,
             "4.9" => platform_inputs(&target, document, repository).await?,
             "4.11" => {
-                super::environments::apply(
-                    &target,
-                    document,
-                    environments,
-                    work_directory,
-                    repository,
-                    None,
-                )
-                .await?
+                super::environments::apply(&target, document, environments, work_directory, None)
+                    .await?
             }
             "4.12" => {
                 super::identity::apply(&target, document, repository, environments, work_directory)
@@ -141,7 +134,6 @@ pub async fn apply(
         document,
         environments,
         work_directory,
-        repository,
         Some(registry),
     )
     .await?;

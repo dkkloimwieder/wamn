@@ -519,6 +519,7 @@ The image registry uses HTTP on the kind network.
 A second registry serves package and release artifacts over TLS with a fixture certificate.
 The test passes that registry and its CA file directly to the installer.
 It uses Receiving as the package fixture and publishes a release without a wiring through step 4.14.
+The fixture copies `deploy/gcp/host-group-receiving.yaml` into its own cluster directory.
 The test records the printed digest in its own environment file and requires step 4.17 to report the missing qualification.
 An unchanged rerun must skip every step through 4.14 and refuse the same unqualified release.
 The GCP greenfield proves a qualified step 4.17.

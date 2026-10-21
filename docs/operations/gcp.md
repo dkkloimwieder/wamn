@@ -629,7 +629,7 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
 `platform apply` reads package roots from each environment's adjacent JSON file and versions from their built manifests.
 It reads registry credentials from `WAMN_REGISTRY_AUTH_FILE` and optional CA files from `WAMN_OCI_CA_PATHS`.
 It pushes a package only when its registry tag is absent.
-It runs `apply-package` and `reconcile-package-data-access` as Jobs, then runs `reconcile-replica-identity` for WMS.
+It runs `apply-package` and `reconcile-package-data-access` as Jobs, then runs `reconcile-replica-identity` for every package.
 The Jobs skip when their completed input digests match.
 The commands below describe the manual equivalent.
 
@@ -824,6 +824,7 @@ Commit every change of `deploy/gcp` from sections 4.6, 4.11 and 4.16 in one comm
 
 `platform apply` runs `env apply` as a Job with the release declared in each environment file.
 The Job mounts the stamped chart, registry credentials, and private copies of the host group inputs.
+It reads `host-group-<project>.yaml` beside the cluster document and the `environments/` directory.
 It derives event Secret names and the database instance suffix from the current environment.
 The Job skips when its completed input digest matches.
 An unqualified release fails through `env apply` itself.

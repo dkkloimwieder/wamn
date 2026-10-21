@@ -150,6 +150,11 @@ cluster.Cluster {{
     std::fs::create_dir(&environments)?;
     let source = repository.join("deploy/gcp/environments/dkk--receiving--dev.k");
     let mut environment = EnvironmentDocument::compile(&source)?;
+    let host_group = format!("host-group-{}.yaml", environment.project);
+    std::fs::copy(
+        repository.join("deploy/gcp").join(&host_group),
+        directory.join(&host_group),
+    )?;
     environment.org.clone_from(&document.org);
     environment.release = DeclaredRelease::None;
     let domain = document

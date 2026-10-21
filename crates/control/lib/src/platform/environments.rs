@@ -17,7 +17,6 @@ pub(super) async fn apply(
     document: &ClusterDocument,
     environments: &Path,
     directory: &Path,
-    repository: &Path,
     registry: Option<&wamn_package_artifact::PackageRegistry>,
 ) -> anyhow::Result<bool> {
     let initial = registry.is_none();
@@ -114,7 +113,9 @@ pub(super) async fn apply(
                 target,
                 document,
                 &environment,
-                repository,
+                environments
+                    .parent()
+                    .context("environments has no cluster directory")?,
                 directory,
                 &mut request,
                 registry,
@@ -206,7 +207,7 @@ async fn release_inputs(
     target: &Target,
     document: &ClusterDocument,
     environment: &crate::environment::document::EnvironmentDocument,
-    repository: &Path,
+    cluster_directory: &Path,
     directory: &Path,
     request: &mut JobRequest,
     registry: &wamn_package_artifact::PackageRegistry,
@@ -249,10 +250,7 @@ async fn release_inputs(
         "WAMN_EVENT_NATS_PASSWORD_FILE".into(),
         "/inputs/event-password".into(),
     );
-    let path = repository.join(format!(
-        "deploy/gcp/host-group-{}.yaml",
-        environment.project
-    ));
+    let path = cluster_directory.join(format!("host-group-{}.yaml", environment.project));
     let mut group: serde_json::Value = serde_yaml::from_slice(
         &std::fs::read(&path).with_context(|| format!("read host group {}", path.display()))?,
     )?;
