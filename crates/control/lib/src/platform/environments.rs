@@ -134,7 +134,11 @@ pub(super) async fn apply(
             Ok(applied) => changed |= applied,
             Err(error) => {
                 if let DeclaredRelease::Digest(digest) = &environment.release
-                    && error.to_string() == format!("install Job {} failed", request.name)
+                    && matches!(
+                        error.downcast_ref::<job::JobError>(),
+                        Some(job::JobError { kind: job::JobErrorKind::JobFailed, name })
+                            if name == &request.name
+                    )
                 {
                     let log = std::fs::read_to_string(
                         directory.join("jobs").join(format!("{}.log", request.name)),

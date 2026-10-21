@@ -29,6 +29,19 @@ done
 cat /out/secret.json && rm /out/secret.json
 "#;
 
+/// A failure reported by an install Job's status.
+#[derive(Debug, thiserror::Error)]
+#[error("install Job {name} failed")]
+pub(super) struct JobError {
+    pub kind: JobErrorKind,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobErrorKind {
+    JobFailed,
+}
+
 /// Inputs to one install Job. Arguments contain no credentials.
 #[derive(Default)]
 pub struct JobRequest {
@@ -678,14 +691,16 @@ pub async fn run(
             .await?
             .context("install Job disappeared")?;
             if let Some(conditions) = status["status"]["conditions"].as_array() {
-                ensure!(
-                    !conditions
-                        .iter()
-                        .any(|condition| condition["type"] == "Failed"
-                            && condition["status"] == "True"),
-                    "install Job {} failed",
-                    request.name
-                );
+                if conditions
+                    .iter()
+                    .any(|condition| condition["type"] == "Failed" && condition["status"] == "True")
+                {
+                    return Err(JobError {
+                        kind: JobErrorKind::JobFailed,
+                        name: request.name.clone(),
+                    }
+                    .into());
+                }
                 if conditions.iter().any(|condition| {
                     condition["type"] == "Complete" && condition["status"] == "True"
                 }) {
