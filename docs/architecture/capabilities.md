@@ -73,13 +73,33 @@ A request names a requirement, method, relative path and query, headers, optiona
 The guest does not supply an endpoint or credential.
 The host resolves the admitted requirement and confines the request to that connection.
 
-The credential secret accepts `{"headers":{…}}` or `{"hmac":{"algorithm":"sha256","secret":"…","header":"…"}}`.
+The credential secret holds exactly one top-level key: `headers`, `hmac`, `oauth1`, or `oauth2`.
+Static headers use `{"headers":{…}}`.
+HMAC credentials use `{"hmac":{"algorithm":"sha256","secret":"…","header":"…"}}`.
 HMAC is a signature that uses a shared secret.
 The host signs the exact outbound body bytes and injects `sha256=<lowercase hex>` in the declared header.
 The secret and header name must be nonempty, and the name must be valid and not reserved by the host.
 The HMAC shape refuses unknown fields and algorithms other than `sha256`.
 
-The guest receives no credential. The workflow queue owns retries.
+OAuth1 credentials use `{"oauth1":{"consumer-key":"…","consumer-secret":"…","token":"…","token-secret":"…","realm":"…"}}`.
+The `realm` field is optional.
+The host signs each send by RFC 5849 with HMAC-SHA256 and a fresh nonce and timestamp.
+The signature base covers the method, the URL and the query, and excludes the body.
+The host injects `Authorization: OAuth …`, with the realm first and quoted verbatim when it is set.
+
+OAuth2 credentials use `{"oauth2":{"token-url":"…","client-id":"…","client-secret":"…","scope":"…"}}`.
+The `scope` field is optional.
+The host requests a client-credentials token with HTTP Basic authentication and a form body.
+The token endpoint stays inside the bound authority and base path and uses the same transport and address policy.
+The host caches tokens by project, credential handle, and selected catalog generation until `expires_in` minus 60 seconds.
+Missing expiry, expiry at most 60 seconds, or an unrepresentable expiry permits only the current send.
+
+The host injects `Authorization: Bearer` into the API request.
+An API 401 removes the cached token and causes one fresh token request and one API retry.
+A second 401 returns to the guest and removes that token from the cache.
+If the fresh token request fails, the guest receives the first API 401.
+A token failure before any API request returns `credential-unavailable` without the token endpoint's response body.
+The guest receives no credential. The workflow queue owns other retries.
 
 The transport pins the approved peer and compares the connected peer.
 Its client identity includes the connection scope and credential generation.

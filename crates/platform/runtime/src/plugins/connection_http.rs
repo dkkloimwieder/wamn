@@ -8,8 +8,10 @@
 //! record participates.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use tokio::time::Instant;
 use tracing::Instrument as _;
 use wamn_catalog::{ArtifactHash, ConnectionTypeDescriptor, ServingComponent, ServingManifest};
 use wamn_execution_contract::EffectOutcome;
@@ -21,8 +23,8 @@ use wash_runtime::wasmtime::component::{Accessor, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
-    AuthorityError, TlsPolicy, TokioDnsResolver, parse_http_connection_authority,
-    resolve_http_request,
+    AuthorityDecision, AuthorityError, HttpConnectionAuthority, TlsPolicy, TokioDnsResolver,
+    bound_http_target, parse_http_connection_authority, resolve_http_request,
 };
 use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
@@ -206,6 +208,7 @@ pub struct ConnectionHttp {
     /// instance. The production driver binds before `handler.run` and revokes
     /// before returning the instance to the pool.
     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+    oauth2: Oauth2Cache,
 }
 
 impl ConnectionHttp {
@@ -227,6 +230,10 @@ impl ConnectionHttp {
             allowed_hosts,
             release,
             invocations: std::sync::RwLock::new(HashMap::new()),
+            oauth2: Oauth2Cache {
+                entries: Mutex::new(HashMap::new()),
+                now: Instant::now,
+            },
         }
     }
 
@@ -457,16 +464,6 @@ impl ConnectionHttp {
             .credential_handle
             .as_deref()
             .ok_or(ConnectionError::CredentialUnavailable)?;
-        let secret = self
-            .vault
-            .lookup(&self.project, handle)
-            .ok_or(ConnectionError::CredentialUnavailable)?;
-        let credential_headers = credential_headers(
-            &secret,
-            &request.method,
-            &decision.logical_url,
-            request.body.as_deref().unwrap_or_default(),
-        )?;
         let scope = ClientScope {
             connection: ConnectionScope {
                 tenant: self.tenant.clone(),
@@ -495,15 +492,202 @@ impl ConnectionHttp {
                 .generation
                 .ok_or(ConnectionError::CredentialUnavailable)?,
         };
-        execute(
+        self.execute_authenticated(scope, &authority, decision, request, handle)
+            .await
+    }
+
+    async fn execute_authenticated(
+        &self,
+        scope: ClientScope,
+        authority: &HttpConnectionAuthority,
+        decision: AuthorityDecision,
+        request: &Request,
+        handle: &str,
+    ) -> Result<Response, ConnectionError> {
+        let secret = self
+            .vault
+            .lookup(&self.project, handle)
+            .ok_or(ConnectionError::CredentialUnavailable)?;
+        let object = credential_object(&secret)?;
+        let Some(oauth2) = object.get("oauth2") else {
+            let headers = credential_headers(
+                &secret,
+                &request.method,
+                &decision.logical_url,
+                request.body.as_deref().unwrap_or_default(),
+            )?;
+            return execute(&self.transport, scope, decision, request, headers).await;
+        };
+        let credential: Oauth2Credential = serde_json::from_value(oauth2.clone())
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        if credential.client_id.is_empty() || credential.client_secret.is_empty() {
+            return Err(ConnectionError::CredentialUnavailable);
+        }
+        let key = (self.project.clone(), handle.into(), scope.generation);
+        let token = self
+            .oauth2_token(&scope, authority, &credential, &key)
+            .await?;
+        let first = execute(
+            &self.transport,
+            scope.clone(),
+            decision.clone(),
+            request,
+            [("authorization".into(), token)].into(),
+        )
+        .await?;
+        if first.status != 401 {
+            return Ok(first);
+        }
+        self.oauth2
+            .entries
+            .lock()
+            .expect("OAuth2 cache lock")
+            .remove(&key);
+        let Ok(token) = self
+            .oauth2_token(&scope, authority, &credential, &key)
+            .await
+        else {
+            return Ok(first);
+        };
+        let second = execute(
             &self.transport,
             scope,
             decision,
             request,
-            credential_headers,
+            [("authorization".into(), token)].into(),
+        )
+        .await?;
+        if second.status == 401 {
+            self.oauth2
+                .entries
+                .lock()
+                .expect("OAuth2 cache lock")
+                .remove(&key);
+        }
+        Ok(second)
+    }
+
+    async fn oauth2_token(
+        &self,
+        scope: &ClientScope,
+        authority: &HttpConnectionAuthority,
+        credential: &Oauth2Credential,
+        key: &Oauth2CacheKey,
+    ) -> Result<String, ConnectionError> {
+        let (target, endpoint) = bound_http_target(authority, &credential.token_url)
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        let now = (self.oauth2.now)();
+        {
+            let mut entries = self.oauth2.entries.lock().expect("OAuth2 cache lock");
+            entries.retain(|_, (_, expires)| *expires > now);
+            if let Some((token, _)) = entries.get(key) {
+                return Ok(token.clone());
+            }
+        }
+        let mut decision = resolve_http_request(
+            authority,
+            &target,
+            &self.allowed_hosts,
+            &ConnectionNetworkPolicy,
+            &TokioDnsResolver,
         )
         .await
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        decision.logical_url = endpoint;
+        let token =
+            fetch_oauth2_token(&self.transport, scope.clone(), &decision, credential).await?;
+        let header = format!("Bearer {}", token.access_token);
+        // Missing or short expiry permits this send only. Start at fetch time,
+        // so time spent obtaining the token never extends its cached lifetime.
+        if let Some(expires) = token
+            .expires_in
+            .and_then(|seconds| seconds.checked_sub(60))
+            .and_then(|seconds| now.checked_add(Duration::from_secs(seconds)))
+            .filter(|expires| *expires > (self.oauth2.now)())
+        {
+            self.oauth2
+                .entries
+                .lock()
+                .expect("OAuth2 cache lock")
+                .insert(key.clone(), (header.clone(), expires));
+        }
+        Ok(header)
     }
+}
+
+type Oauth2CacheKey = (Box<str>, Box<str>, i64);
+
+struct Oauth2Cache {
+    entries: Mutex<HashMap<Oauth2CacheKey, (String, Instant)>>,
+    now: fn() -> Instant,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+struct Oauth2Credential {
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    scope: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct Oauth2Token {
+    access_token: String,
+    token_type: String,
+    expires_in: Option<u64>,
+}
+
+async fn fetch_oauth2_token(
+    transport: &HttpTransport,
+    scope: ClientScope,
+    decision: &AuthorityDecision,
+    credential: &Oauth2Credential,
+) -> Result<Oauth2Token, ConnectionError> {
+    use base64::Engine as _;
+
+    // RFC 6749 section 2.3.1 form-encodes both Basic components first.
+    let encode =
+        |value: &str| url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!(
+        "{}:{}",
+        encode(&credential.client_id),
+        encode(&credential.client_secret),
+    ));
+    let body = {
+        let mut form = url::form_urlencoded::Serializer::new(String::new());
+        form.append_pair("grant_type", "client_credentials");
+        if let Some(scope) = &credential.scope {
+            form.append_pair("scope", scope);
+        }
+        form.finish()
+    };
+    let request = hyper::Request::builder()
+        .method("POST")
+        .uri(decision.logical_url.as_ref())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("authorization", format!("Basic {basic}"))
+        .body(body.as_bytes())
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    let response = transport
+        .execute(scope, decision, request)
+        .await
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    if response.status() != hyper::StatusCode::OK {
+        return Err(ConnectionError::CredentialUnavailable);
+    }
+    let token: Oauth2Token = serde_json::from_slice(response.body())
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    if !token.token_type.eq_ignore_ascii_case("bearer")
+        || token.access_token.is_empty()
+        || !token
+            .access_token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/=".contains(&byte))
+    {
+        return Err(ConnectionError::CredentialUnavailable);
+    }
+    Ok(token)
 }
 
 fn authority_denied(phase: &'static str, error: &AuthorityError) -> ConnectionError {
@@ -774,14 +958,7 @@ fn credential_headers_with(
     body: &[u8],
     request_values: fn() -> Result<(String, u64), ConnectionError>,
 ) -> Result<HashMap<String, String>, ConnectionError> {
-    let value: serde_json::Value =
-        serde_json::from_str(secret).map_err(|_| ConnectionError::CredentialUnavailable)?;
-    let object = value
-        .as_object()
-        .ok_or(ConnectionError::CredentialUnavailable)?;
-    if object.len() != 1 {
-        return Err(ConnectionError::CredentialUnavailable);
-    }
+    let object = credential_object(secret)?;
     if let Some(oauth1) = object.get("oauth1") {
         let credential: Oauth1Credential = serde_json::from_value(oauth1.clone())
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
@@ -838,6 +1015,17 @@ fn credential_headers_with(
             Ok((name.clone(), value.to_string()))
         })
         .collect()
+}
+
+fn credential_object(
+    secret: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, ConnectionError> {
+    let object: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(secret).map_err(|_| ConnectionError::CredentialUnavailable)?;
+    if object.len() != 1 {
+        return Err(ConnectionError::CredentialUnavailable);
+    }
+    Ok(object)
 }
 
 #[derive(serde::Deserialize)]
@@ -1291,6 +1479,7 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
 
 #[cfg(test)]
 mod tests {
+    mod oauth2_tests;
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
