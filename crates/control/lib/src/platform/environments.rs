@@ -405,6 +405,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn qualification_command_keeps_the_host_chart_registry_and_ca_paths() {
+        let registry = wamn_package_artifact::PackageRegistry {
+            artifact_base: "registry.example/packages".into(),
+            registry_auth_file: "/host/registry.json".into(),
+            insecure_registry: false,
+            oci_ca_paths: vec!["/host/ca.crt".into()],
+        };
+        assert_eq!(
+            qualification_command("sha256:abc", Path::new("/host/work"), &registry).unwrap(),
+            "wamn-ctl qualify-release --release-digest sha256:abc --release-chart '/host/work/release-chart' --artifact-base 'registry.example/releases' --registry-auth-file '/host/registry.json' --oci-ca-path '/host/ca.crt'"
+        );
+    }
+
+    #[test]
     fn qualification_message_is_the_jobs_refusal_for_the_requested_release() {
         let digest = format!("sha256:{}", "a".repeat(64));
         let message = format!(

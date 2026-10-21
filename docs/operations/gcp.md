@@ -874,6 +874,8 @@ It derives event Secret names and the database instance suffix from the current 
 The Job skips when its completed input digest matches.
 An unqualified release fails through `env apply` itself.
 The verb prints that refusal and the `qualify-release` command for the build machine.
+After host qualification succeeds, rerun `platform apply` with the same release digest.
+The Job applies that qualified release through the existing `env apply` path.
 
 The apply installs the release chart of each environment in `hosts`. `WAMN_RELEASE_HOST_GROUP` names the platform part of its host group: the NATS URLs, the event NATS Secrets, the registry helper and the identity CA:
 
