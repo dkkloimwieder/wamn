@@ -4,11 +4,15 @@ import { describe, expect, it, vi } from "vitest";
 import { AUD, CONTROL, ONE, identity, input, open, signIn } from "./fixtures";
 
 describe("identity pages", () => {
-  it.each(["/", "/invite", "/recover", "/reset"])("omits breadcrumbs from %s", async (path) => {
-    open(path, identity(false).fetch);
-    await screen.findByLabelText("email");
-    expect(screen.queryByRole("navigation", { name: "Platform location" })).toBeNull();
-  });
+  it.each(["/", "/invite", "/recover", "/reset", `/${AUD}/pallets`])(
+    "uses EntryPanel without breadcrumbs at %s",
+    async (path) => {
+      open(path, identity(false).fetch);
+      const email = await screen.findByLabelText("email");
+      expect(email.closest(".ui-entry-panel")).not.toBeNull();
+      expect(screen.queryByRole("navigation", { name: "Platform location" })).toBeNull();
+    },
+  );
   it("posts the invitation code of the address and the password to enroll, then opens sign in", async () => {
     const seen: { url: string; body: unknown }[] = [];
     const fetch = (url: string | URL | Request, init?: RequestInit) => {

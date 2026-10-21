@@ -12,13 +12,13 @@ export default defineConfig({
           item.type === "chunk" ? Object.keys(item.modules) : [],
         );
         const solid = modules.filter((id) => /\/solid-js\//.test(id));
-        if (solid.length === 0 || solid.some((id) => !id.includes("solid-js@2.0.0-rc.14/"))) {
-          this.error(`The platform bundle must contain only Solid 2.0.0-rc.14: ${solid.join(", ")}`);
+        if (solid.length === 0 || solid.some((id) => !id.includes("solid-js@2.0.0-rc.16/"))) {
+          this.error(`The platform bundle must contain only Solid 2.0.0-rc.16: ${solid.join(", ")}`);
         }
         if (modules.some((id) => /\/web\/(shell|ui|components)\//.test(id))) {
           this.error("The platform bundle imports a Solid 1 UI package");
         }
-        this.info("Platform bundle: Solid 2.0.0-rc.14 only");
+        this.info("Platform bundle: Solid 2.0.0-rc.16 only");
       },
     },
   ],

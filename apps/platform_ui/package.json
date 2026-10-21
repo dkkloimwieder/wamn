@@ -12,12 +12,12 @@
     "@wfe/components": "workspace:*",
     "@wfe/form": "workspace:*",
     "@wfe/generator": "workspace:*",
-    "@solidjs/web": "2.0.0-rc.14",
-    "solid-js": "2.0.0-rc.14"
+    "@solidjs/web": "2.0.0-rc.16",
+    "solid-js": "2.0.0-rc.16"
   },
   "devDependencies": {
     "@solidjs/testing-library": "1.0.0-beta.3",
-    "@solidjs/vite-plugin": "3.0.0-next.49",
+    "@solidjs/vite-plugin": "3.0.0-next.50",
     "@types/d3-shape": "3.1.8",
     "@types/node": "^24.19.1",
     "jsdom": "^30.1.2",

@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { FieldError, Input } from "@wfe/components/fields";
+import { EntryPanel } from "@wfe/components/layout";
 import { Records } from "./records";
 import { createForm, type FormContext } from "@wfe/form";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
@@ -122,7 +123,7 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
         <Show
           when={credentials()}
           fallback={
-            <Page class="identity-panel">
+            <EntryPanel size="container">
               <SignInForm
                 address={props.address}
                 trouble={null}
@@ -135,7 +136,7 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
                   else setCredentials({ email, password });
                 }}
               />
-            </Page>
+            </EntryPanel>
           }
         >
           {(held) => {
@@ -232,7 +233,7 @@ function NewPassword(
   } as const satisfies FormDescription<typeof defaults>;
   return (
     <Frame header={<span>{props.title}</span>}>
-      <Page class="identity-panel">
+      <EntryPanel size="container">
         <Show when={props.missing && !form.errors.form}>
           <FieldError role="alert">{props.missing}</FieldError>
         </Show>
@@ -243,7 +244,7 @@ function NewPassword(
             fields: { email: Email, password: NewPasswordInput, again: NewPasswordInput },
           }}
         />
-      </Page>
+      </EntryPanel>
     </Frame>
   );
 }
@@ -300,7 +301,7 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
   } as const satisfies FormDescription<typeof defaults>;
   return (
     <Frame header={<span>{props.title}</span>}>
-      <Page class="identity-panel">
+      <EntryPanel size="container">
         <FormView
           description={description}
           bindings={{
@@ -312,7 +313,7 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
         <Show when={form.phase === "success"}>
           <p>If this address has an account, a mail with a reset link is on its way.</p>
         </Show>
-      </Page>
+      </EntryPanel>
     </Frame>
   );
 }

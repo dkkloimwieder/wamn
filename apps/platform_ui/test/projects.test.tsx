@@ -130,8 +130,8 @@ describe("Projects and Project", () => {
     window.history.pushState({}, "", `/${CONTROL}/projects`);
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
     await screen.findByRole("table", { name: "Projects" });
-    fireEvent.click(screen.getByRole("button", { name: "Table controls" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Create project" }));
+    const header = screen.getByRole("button", { name: "Table controls" }).closest(".table-workspace-header-actions")!;
+    fireEvent.click(within(header as HTMLElement).getByRole("button", { name: "Create project" }));
     await screen.findByRole("heading", { name: "Create project" });
     expect(window.location.pathname).toBe(`/${CONTROL}/create-project`);
     expect(screen.queryByRole("table", { name: "Projects" })).toBeNull();

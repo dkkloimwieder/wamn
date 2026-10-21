@@ -1,6 +1,7 @@
-import { createSignal, Show, untrack, type Component } from "solid-js";
+import { createMemo, createSignal, Show, untrack, type Component } from "solid-js";
 import { createTable, type NativeColumnDef } from "@wfe/components/table";
 import { ValueDisplay } from "@wfe/components";
+import { Button } from "@wfe/components/fields";
 import { TableView, type ColumnPresentation, type CustomCellProps } from "@wfe/generator";
 
 /** Application-owned rows and columns, presented by the shared table. */
@@ -15,6 +16,14 @@ export function Records<Row>(props: {
   create?: { label: string; run: () => void };
 }) {
   const [collapsed, setCollapsed] = createSignal(true);
+  const pageSize = 25;
+  const [requestedPage, setPage] = createSignal(0);
+  const pageCount = createMemo(() => Math.max(1, Math.ceil(props.rows.length / pageSize)));
+  const page = createMemo(() => Math.min(requestedPage(), pageCount() - 1));
+  const rows = createMemo(() => props.rows.slice(page() * pageSize, (page() + 1) * pageSize));
+  const ToolbarActions = () => (
+    <Show when={props.create}>{(action) => <Button onClick={() => action().run()}>{action().label}</Button>}</Show>
+  );
   const columns = untrack(() => props.columns);
   const cells = untrack(() =>
     Object.fromEntries(
@@ -39,8 +48,8 @@ export function Records<Row>(props: {
   );
   const table = createTable({
     source: {
-      ids: () => props.rows.map(props.rowKey),
-      get: (id) => props.rows.find((row) => props.rowKey(row) === id),
+      ids: () => rows().map(props.rowKey),
+      get: (id) => rows().find((row) => props.rowKey(row) === id),
     },
     columns,
   });
@@ -53,13 +62,20 @@ export function Records<Row>(props: {
         id: props.id,
         title: props.title,
         columns: presentation,
-        actions: props.create ? [{ id: "create", label: props.create.label }] : [],
         controls: { sorting: false, filtering: false, search: false, grouping: false, columnReordering: false },
       }}
       bindings={{
         table,
         cells,
-        actions: { create: { run: () => props.create?.run() } },
+        toolbarActions: ToolbarActions,
+        pagination: {
+          hasPrevious: page() > 0,
+          hasNext: page() + 1 < pageCount(),
+          onPrevious: () => setPage(page() - 1),
+          onNext: () => setPage(page() + 1),
+          status: `Page ${page() + 1} of ${pageCount()}`,
+          totalRows: props.rows.length,
+        },
         width: columns.some((column) => column.size !== undefined)
           ? table.getVisibleColumns().reduce((width, column) => width + column.getSize(), 0)
           : undefined,

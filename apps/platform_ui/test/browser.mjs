@@ -29,10 +29,21 @@ async function capture(page, screen) {
   assert.equal(await root.getAttribute("data-ui-density"), "compact");
   assert.equal(await root.getAttribute("data-ui-theme"), null);
   assert.ok(
-    await root.locator(".ui-dashboard-panel, .platform-table-screen").count(),
-    `${screen} has a dashboard panel or a full-panel table`,
+    await root.locator(".ui-dashboard-panel, .platform-table-screen, .ui-entry-panel").count(),
+    `${screen} has a dashboard panel, entry panel, or a full-panel table`,
   );
   assert.equal(await root.evaluate((node) => getComputedStyle(node).getPropertyValue("--ui-accent").trim()), "#1971c2");
+  if (["sign-in", "invite", "recover", "reset"].includes(screen)) {
+    assert.equal(await root.locator(".ui-entry-panel").count(), 1);
+    assert.equal(await page.getByRole("navigation", { name: "Platform location" }).count(), 0);
+  }
+  for (const table of await root.locator(".platform-table-screen").all()) {
+    const pages = table.getByRole("navigation", { name: "Table pages" });
+    assert.equal(await pages.count(), 1, `${screen} uses wfe pagination`);
+    assert.ok((await table.locator("tbody > tr[data-row]").count()) <= 25);
+    await pages.getByRole("button", { name: "Previous page", exact: true }).waitFor();
+    await pages.getByRole("button", { name: "Next page", exact: true }).waitFor();
+  }
   await page.screenshot({ path: join(report, `${screen}.png`), fullPage: false });
   captured.add(screen);
 }
@@ -112,8 +123,10 @@ try {
     .getByRole("link", { name: "Users", exact: true })
     .click();
   await page.getByRole("table", { name: "Users", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Table controls", exact: true }).click();
-  await page.getByRole("button", { name: "Invite user", exact: true }).click();
+  await page
+    .locator(".table-workspace-header-actions")
+    .getByRole("button", { name: "Invite user", exact: true })
+    .click();
   await page.getByRole("heading", { name: "Invite user", exact: true }).waitFor();
   await page.getByRole("textbox", { name: "Email", exact: true }).fill(fixture.email);
   await page.getByLabel("Display name", { exact: true }).fill("Invited User");
@@ -163,8 +176,10 @@ try {
     await invitedContext.close();
   }
   await visit(page, `${base}${controlPath}/projects`);
-  await page.getByRole("button", { name: "Table controls", exact: true }).click();
-  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await page
+    .locator(".table-workspace-header-actions")
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
   await page.getByRole("heading", { name: "Create project", exact: true }).waitFor();
   await page.getByLabel("Project name", { exact: true }).fill(fixture.project);
   await page.getByRole("button", { name: "Create project", exact: true }).click();

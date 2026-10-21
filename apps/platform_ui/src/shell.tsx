@@ -1,6 +1,6 @@
 import { createSignal, For, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { DashboardPanel } from "@wfe/components/layout";
+import { DashboardPanel, EntryPanel } from "@wfe/components/layout";
 import { Button } from "@wfe/components/fields";
 import { permission } from "@wamn/control-client";
 import { control, environment, member, orgAdmin, project, projectAdmin, release, user } from "@wamn/control-org-client";
@@ -250,7 +250,7 @@ function Session(
       when={state()?.status === "signedIn"}
       fallback={
         <Frame header={<span>{props.title}</span>}>
-          <Page class="identity-panel">
+          <EntryPanel size="container">
             <Show when={state() !== null}>
               <SignInForm
                 address={props.address}
@@ -258,7 +258,7 @@ function Session(
                 submit={(email, password) => keeper.signIn(email, password)}
               />
             </Show>
-          </Page>
+          </EntryPanel>
         </Frame>
       }
     >

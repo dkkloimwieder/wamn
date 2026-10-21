@@ -73,8 +73,8 @@ describe("Users decisions", () => {
     window.history.pushState({}, "", `/${CONTROL}/users`);
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={userSections} fetch={fetch} />);
     await screen.findByRole("table", { name: "Users" });
-    fireEvent.click(screen.getByRole("button", { name: "Table controls" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Invite user" }));
+    const header = screen.getByRole("button", { name: "Table controls" }).closest(".table-workspace-header-actions")!;
+    fireEvent.click(within(header as HTMLElement).getByRole("button", { name: "Invite user" }));
     await screen.findByRole("heading", { name: "Invite user" });
     expect(window.location.pathname).toBe(`/${CONTROL}/invite-user`);
     expect(screen.queryByRole("table", { name: "Users" })).toBeNull();
