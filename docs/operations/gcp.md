@@ -893,13 +893,18 @@ target/debug/wamn-ctl env show dkk/wms/dev
 
 ### 4.18 CDC readers
 
-The CDC readers run in `hosts`. `env apply` wrote their replication Secrets and their registry-reader Secrets there, and recorded `hosts` on each reader row. Each reader reads its registration with the registry-reader login:
+`platform apply` renders one CDC reader Deployment per environment in `hosts` and waits for its rollout.
+The reader uses the stamped gates image, which contains `/usr/local/bin/wamn-cdc-reader`.
+The Deployment mounts the replication, registry-reader, and event publisher Secrets by name.
+The verb does not read their values.
+The reader loads its registration from the environment row with its registry-reader login.
+An unchanged apply skips the write when the rendered fields match the live objects.
+
+For each environment, read its logs:
 
 ```bash
-kubectl apply -f deploy/gcp/cdc-reader.yaml -f deploy/gcp/cdc-reader-wms.yaml
-kubectl -n hosts rollout status deploy/cdc-reader deploy/cdc-reader-wms --timeout=180s
-kubectl -n hosts logs deploy/cdc-reader --tail=20
-kubectl -n hosts logs deploy/cdc-reader-wms --tail=20
+kubectl -n hosts logs deploy/cdc-reader-dkk--receiving--dev --tail=20
+kubectl -n hosts logs deploy/cdc-reader-dkk--wms--dev --tail=20
 ```
 
 Each log shows `registration loaded`, the three `preflight` lines and `walsender session open`.

@@ -253,7 +253,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.18", title: "CDC readers",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("environments", environments.into()), ("replication Secrets", "hosts/wamn-cdc-<org>--<project>--<env>".into()), ("registry-reader Secrets", "hosts/wamn-registry-reader-<org>--<project>--<env>".into()), ("reader image", format!("{registry}/wamn-cdc-reader (digest from deploy/gcp/cdc-reader*.yaml)")), ("event NATS", "nats://evt-nats.platform.svc.cluster.local:4222".into()), ("service account", "hosts/event-reader".into())],
+            inputs: vec![("environments", environments.into()), ("replication Secrets", "hosts/wamn-cdc-<org>--<project>--<env>".into()), ("registry-reader Secrets", "hosts/wamn-registry-reader-<org>--<project>--<env>".into()), ("reader image", "stamped platform.gates.image; /usr/local/bin/wamn-cdc-reader".into()), ("event NATS", "nats://evt-nats.platform.svc.cluster.local:4222".into()), ("service account", "hosts/event-reader".into())],
             owner_inputs: vec![],
         },
         InstallStep {

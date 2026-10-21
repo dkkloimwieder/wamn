@@ -2,6 +2,7 @@
 
 mod broker;
 pub mod build;
+mod cdc;
 pub mod document;
 mod environments;
 mod identity;
