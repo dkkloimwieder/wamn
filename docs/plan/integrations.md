@@ -90,7 +90,8 @@ Rows marked *done* or *dropped* stay for the record.
 | C36 | Prometheus `/metrics` | host | — | M |
 | C37 | Alerting (Slack, PagerDuty) | package over C20 | C4 | S |
 | C38 | Cross-package reads: one package reads another package's model | platform | owner ruling | — |
-| C39 | CDC only for the models that an event registration reads | platform | owner ruling | S |
+| C39 | CDC only for the schemas that an event registration reads | platform | — | S |
+| C40 | CDC capture of several registered schemas in one environment | platform | owner ruling | M |
 | C1 | Native driver sidecar: `wamn:connection/driver` + declared container | plugin + deploy | — | L |
 
 ### Edge
@@ -128,7 +129,7 @@ Owner rulings of 2026-10-21. Each ruling holds for every integration from Epic 4
 
 | Ruling | Invariant |
 | --- | --- |
-| A sync integration (NetSuite, Dynamics, QuickBooks, Shopify and the like) never serves the request path. It is its own application, with one release for every org, project and environment. An environment enables it by naming its release in `environment.k`. | No consumer route calls an integration synchronously. A consumer starts the integration's workflows, and the integration pushes into consumer commands by workflow. |
+| A sync integration (NetSuite, Dynamics, QuickBooks, Shopify and the like) never serves the request path. It is its own application, with one package lineage for every org, project and environment. The environment's one release names the integration packages beside the consumer, pinned by version, with no consumer rebuild. Updating the integration is one publish and one `env apply` per environment. | No consumer route calls an integration synchronously. A consumer starts the integration's workflows, and the integration pushes into consumer commands by workflow. |
 | A compute service returns a value in request time. It is an outbound call inside a consumer operation, made by a thin package composed into the consumer. | The compute package declares no model where it can avoid one. |
 | An integration is stateless. It has no domain models and no staging tables. | Every domain table belongs to the consumer. The integration reaches it only through the consumer's commands and events. A consumer never reads from an integration. |
 | Standard state is one platform package, `wamn_integration`, composed into every integration application. Model `setting` holds per-environment key and value pairs that an admin edits: account ids, mappings, enabled targets and `last_synced_at`. Model `log` holds one row per run outcome worth keeping beyond `runs`: records pushed and vendor refusals, by record id. It is delivered like the platform nodes. | No new WIT. An integration keeps no state outside `setting`, `log` and the catalog. |
@@ -145,9 +146,10 @@ Each epic names a goal and an exit condition. Only Epic 4 has issues. The order 
 | 1 (done at `05f7659d`, `wamn-jstjf`) | C0. An HTTP connection is bound in a deployed environment and a guest sends through it. | Met. |
 | 2 (done at `030ce57c`, `wamn-5i3v9`) | C9, C4, C10. Webhook in, schedule, webhook out. | Met. |
 | 3 (done at `afba25a3f`, `wamn-7e39m`) | C2, C3, C20. OAuth credential types; the REST connector package. | Met. |
-| **4 (scoped)** | Org-scoped connection, `wamn_integration`, C21. NetSuite REST over C20 in the §3a shape. | §5. |
-| 5 | C22, C27, C29, C31, C37. NetSuite RESTlet and packages over C20. | Each sends once from a run. |
-| 6 | C1, C23. Sidecar and ODBC. | A sidecar opens the Oracle ODBC driver, streams one query to a guest, holds no credential. |
+| **4 (scoped)** | Org-scoped connection, C39, the integration principal, `wamn_integration`. The §3a shape without a vendor. | §5. |
+| 5 | C21, C22. NetSuite REST and RESTlet in the §3a shape. `http-page` gains `method` and `body-input-pointer`. SuiteQL pages in offset style, with an optional `has-more` pointer that stops the loop (owner ruling of 2026-10-21). | A record read and a SuiteQL query against the owner's account from a deployed package. |
+| 6 | C27, C29, C31, C37. Packages over C20. | Each sends once from a run. |
+| 7 | C1, C23. Sidecar and ODBC. | A sidecar opens the Oracle ODBC driver, streams one query to a guest, holds no credential. |
 | later | C24–C26, C17, C30, C7/C8, C11–C14, C16, C18, C28, C5, C6, C36 | Picked by need. |
 | deferred | C15, C32, C33, C34, C35 | Owner rulings or a user. |
 
@@ -170,9 +172,9 @@ Edge Epic A may run in parallel with cloud Epic 1: they share no files.
 
 ### Goal
 
-An org declares a connection once, and each environment that names it binds the same secret. Every integration application carries `wamn_integration` for its state. `apps/netsuite` pulls and pushes NetSuite records over SuiteTalk REST with `oauth1` in the §3a shape. Branch `work/integrations` from `695963e3b`.
+An org declares a connection once, and each environment that names it binds the same secret. An environment's release carries an integration application beside its consumer, and a scheduled integration run calls a consumer command under its own principal. Every integration application carries `wamn_integration` for its state. NetSuite (C21) moved to Epic 5 by owner ruling of 2026-10-21. Branch `work/integrations` from `695963e3b`.
 
-Out of this epic: no UI, no Secret Manager, no RESTlet (C22, Epic 5), no ODBC (C23), and no cross-package reads (C38).
+Out of this epic: no UI, no Secret Manager, no NetSuite (C21, C22, Epic 5), no ODBC (C23), no cross-package reads (C38), and no capture of several schemas (C40).
 
 ### Rulings
 
@@ -184,15 +186,17 @@ Owner rulings of 2026-10-21 on the scoping forks. Each ruling is recorded verbat
 | The credentials file has version 2 with an `orgs` map. The host still reads the old file. | A host resolves an org handle only for its own org. |
 | `environment.k` changes in `Connection` only, which also accepts `{ org = "<name>" }`. | The platform-install lane hears of the change before the commit. |
 | `apps/platform/wamn_integration` is a base package. It owns `setting`, `log` and their SQL operations, and integrations compose it. "No new WIT" means no new platform capability. Generated operation WIT is allowed. | An integration keeps no state outside `setting`, `log` and the catalog. |
-| The environment grants the integration application the named consumer command. The grant is declared and authorized at apply, never per call. A schedule run acts as its application. | A consumer command runs from an integration workflow only when the environment grants it. |
-| The kind case gets event NATS and a CDC reader, because the issue 3 push event needs CDC on the consumer. C39 records the alternative for a later ruling. | The kind case deploys `wamn_integration` and the consumer with CDC on. |
-| `http-page` gains the parameters `method` and `body-input-pointer`. SuiteQL pages in offset style, with an optional `has-more` pointer that stops the loop. This deviates from the Epic 3 ruling, whose cursor style described the fixture. The node serves the vendor's shape. | A SuiteQL query pages with one POST body on every page and stops when `has-more` is false. |
+| The integration application calls a named consumer command. The permission is authorized ahead of the call, never per call. A schedule run acts as its application. The HTTP-route alternative is rejected. | A consumer command runs from an integration workflow only when the integration principal holds its permission. |
+| The kind case gets event NATS and a CDC reader. | The kind case deploys `wamn_integration` and the consumer with CDC on. |
+| An environment stays one release, and a release is a set of applications. The integration packages sit in that release beside the consumer, pinned by version. `environment.k` gets no `integrations` field. | No KCL change beyond `Connection`. |
+| C39, bounded. CDC captures only the schemas that an event registration reads. C40 holds capture of several schemas. | `ensure_cdc` still refuses two registered schemas. A release with consumer models and `wamn_integration` deploys with CDC on the consumer schema only. |
+| Apply creates one service principal for each integration application in each environment, with a derived name. Its grants are not in `environment.k` (R18). An admin grants it a role with the consumer command permissions through the existing role administration. | A schedule run acts as that principal. The runs check admits the principal on a schedule run. A consumer command without the grant refuses the run. |
 
 ### Issues
 
-1. **Org-scoped connection.** A control-database record `(org, name, type, definition)` and a credential handle keyed by org. `wamn-ctl connection declare` writes the record. `environment.k` references it by name: `connections.<alias> = { org = "<name>" }`. `env apply` materializes the instance, generation and binding through the existing `bind`, and looks up the credential under the org handle. Invariant: two environments that name one org connection resolve one secret, and a changed org definition appends a generation in each environment at its next apply. A live Postgres test covers the invariant.
-2. **`wamn_integration`.** The package lives under `apps/platform` and holds the models `setting` and `log`. `rest_connector` loses its `item` model and ends in a fixture consumer command. It reads and writes `last_synced_at` through `setting`. The kind case follows.
-3. **NetSuite (C21).** The package `apps/netsuite` runs as one application with `wamn_integration`. Its operations call SuiteTalk REST with `oauth1`: record get, a SuiteQL query paged by `http-page` in offset style, create and update. One scheduled pull wiring runs `http-page → jsonata → <consumer command>`, windowed by `last_synced_at`. One push wiring starts from a consumer event. The kind case runs against a NetSuite-shaped fixture that verifies OAuth1, pages SuiteQL and creates one record. The issue lists the fixture needs before the case is written. Live calls against the owner's account are owner-run and documented in the issue, never in a test target.
+1. **Org-scoped connection** (`wamn-lcaxg.1`, done at `e3871563e`). A control-database record `(org, name, type, definition)` and a credential handle keyed by org. `wamn-ctl connection declare` writes the record. `environment.k` references it by name: `connections.<alias> = { org = "<name>" }`. `env apply` materializes the instance, generation and binding through the existing `bind`.
+2. **The integration application in a release** (`wamn-lcaxg.2`). The release names the integration packages beside the consumer. C39, bounded: CDC captures only the schemas that an event registration reads. Apply creates the integration principal, and the runs check admits it on a schedule run. A scheduled integration run calls a consumer command when an admin granted the principal a role with that permission.
+3. **`wamn_integration` and the kind case** (`wamn-lcaxg.3`). The base package `apps/platform/wamn_integration` holds the models `setting` and `log` and their SQL operations. `rest_connector` composes it, loses its `item` model, and ends in a fixture consumer command. It reads and writes `last_synced_at` through `setting`. The kind case gets event NATS and a CDC reader, deploys one release with the consumer and the integration, grants the principal with the ctl verb, and runs the scheduled pull.
 
 Per-issue budget: build, clippy, fmt check, unit tests, and the live Postgres test for issue 1. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
 

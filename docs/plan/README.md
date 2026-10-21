@@ -8,7 +8,7 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Environment teardown](environment-teardown.md): done, `wamn-psss`.
 - [Generated operations](generated-operations.md): done, `wamn-iowb`.
 - [Identity](identity.md): deferred, `wamn-jpx2`.
-- [Integrations](integrations.md): live, `wamn-lcaxg` (Epic 4); Epics 1 `wamn-jstjf`, 2 `wamn-5i3v9` and 3 `wamn-7e39m` are done.
+- [Integrations](integrations.md): live, `wamn-lcaxg` (Epic 4, NetSuite moved to Epic 5); Epics 1 `wamn-jstjf`, 2 `wamn-5i3v9` and 3 `wamn-7e39m` are done.
 - [Manifest authoring](manifest-authoring.md): done, `wamn-j1ti`.
 - [NATS outage](nats-outage.md): deferred, `wamn-gdex` and `wamn-ifh7`.
 - [Operator image](operator-image.md): done, `wamn-n5d1` and `wamn-lo7z`.
