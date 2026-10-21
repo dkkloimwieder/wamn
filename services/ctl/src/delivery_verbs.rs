@@ -55,6 +55,9 @@ pub struct BuildPlatformArgs {
     /// version's images, and refuse when any is missing (R15).
     #[arg(long, default_value_t = false)]
     pub stamp_only: bool,
+    /// Cluster document with the cloud build project and daily spend cap.
+    #[arg(long)]
+    pub cluster: Option<PathBuf>,
 }
 
 /// Qualify one published release by its digest, and print the
@@ -80,6 +83,11 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
 pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
     use wamn_control::platform_build::{BuildPlatformRequest, build_platform, stamp_only};
     let request = BuildPlatformRequest {
+        cluster: args
+            .cluster
+            .as_deref()
+            .map(wamn_control::platform::document::ClusterDocument::compile)
+            .transpose()?,
         repository: std::fs::canonicalize(&args.repository)
             .with_context(|| format!("find {}", args.repository.display()))?,
         registry: args.registry,

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// One cluster document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterDocument {
     pub provider: Provider,
@@ -25,9 +25,16 @@ pub struct ClusterDocument {
     pub owner_email: String,
     /// Registry host and optional repository path, without a URL scheme.
     pub registry: String,
+    /// Daily cloud build spend limit in USD.
+    #[serde(default = "default_build_cloud_cap_usd")]
+    pub build_cloud_cap_usd: f64,
     pub buckets: Buckets,
     pub route_hosts: RouteHosts,
     pub resend_from: String,
+}
+
+fn default_build_cloud_cap_usd() -> f64 {
+    3.0
 }
 
 /// The cluster provider.
@@ -77,6 +84,10 @@ impl ClusterDocument {
     }
 
     fn check(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.build_cloud_cap_usd.is_finite() && self.build_cloud_cap_usd >= 0.0,
+            "build_cloud_cap_usd must be a finite, nonnegative amount"
+        );
         ensure!(
             name(&self.cluster_name, 40),
             "cluster_name is not a lowercase name"
@@ -223,6 +234,7 @@ mod tests {
             "cluster_name": "wamn",
             "org": "dkk", "owner_email": "dkkloimwieder@gmail.com",
             "registry": "us-central1-docker.pkg.dev/wamn-dev/wamn",
+            "build_cloud_cap_usd": 3.0,
             "buckets": {"web": "wamn-dev-web", "otel": "wamn-dev-otel"},
             "route_hosts": {"control": "control.wamn.dev"},
             "resend_from": "noreply@wamn.dev"
@@ -278,6 +290,7 @@ mod tests {
     fn kcl_and_json_refuse_bad_values() {
         for (pointer, value) in [
             ("/provider", json!("aws")),
+            ("/build_cloud_cap_usd", json!(-1.0)),
             ("/project_id", json!("bad")),
             ("/zone", json!("us-central1")),
             ("/cluster_name", json!("Bad")),

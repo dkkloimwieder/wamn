@@ -29,11 +29,13 @@ schema Cluster:
     org: str
     owner_email: str
     registry: str
+    build_cloud_cap_usd: float = 3.0
     buckets: Buckets
     route_hosts: RouteHosts
     resend_from: str
 
     check:
+        build_cloud_cap_usd >= 0, "build_cloud_cap_usd is nonnegative"
         len(cluster_name) <= 40 and regex.match(cluster_name, _name), "cluster_name is a lowercase name of at most 40 characters"
         regex.match(org, r"^[a-z][a-z0-9_-]*$"), "org is a coordinate name"
         regex.match(owner_email, _email), "owner_email is an email address"

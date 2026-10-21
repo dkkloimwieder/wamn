@@ -131,6 +131,8 @@ pub struct BuildPlatformRequest {
     pub registry: String,
     /// The directory the stamped chart is written to. It must not exist.
     pub out: PathBuf,
+    /// Optional cluster inputs for cloud builds.
+    pub cluster: Option<crate::platform::document::ClusterDocument>,
 }
 
 /// Build every platform image and role component, then push them, then stamp
@@ -519,6 +521,7 @@ mod tests {
             std::process::id()
         ));
         let error = build_platform(&BuildPlatformRequest {
+            cluster: None,
             out: repository.join("chart"),
             repository,
             registry: "localhost:5000".to_owned(),
@@ -533,6 +536,7 @@ mod tests {
         let repository =
             std::env::temp_dir().join(format!("wamn-stamp-no-ui-{}", std::process::id()));
         let error = stamp_only(&BuildPlatformRequest {
+            cluster: None,
             out: repository.join("chart"),
             repository: repository.clone(),
             registry: "must-not-be-contacted.invalid".into(),
@@ -554,6 +558,7 @@ mod tests {
         let mut calls = Vec::new();
         let error = build_then_push(
             &BuildPlatformRequest {
+                cluster: None,
                 repository: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
                 registry: "localhost:5000".to_owned(),
                 out: PathBuf::from("/chart"),
@@ -583,6 +588,7 @@ mod tests {
         let mut calls = Vec::new();
         let stamped = stamp_from_registry(
             &BuildPlatformRequest {
+                cluster: None,
                 repository: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
                 registry: "localhost:5000".to_owned(),
                 out: out.to_owned(),

@@ -180,6 +180,7 @@ mod tests {
 
     fn document(provider: Provider) -> ClusterDocument {
         ClusterDocument {
+            build_cloud_cap_usd: 3.0,
             provider,
             project_id: "test-project".into(),
             zone: "us-central1-a".into(),
