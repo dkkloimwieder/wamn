@@ -29,7 +29,10 @@ use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_control::kubectl;
 use wamn_control::platform::document::ClusterDocument;
 use wamn_control::platform::{install, steps};
-use wash_runtime::oci::{OciConfig, OciPullPolicy, pull_component, push_component};
+#[path = "support/platform_images.rs"]
+mod platform_images;
+use platform_images::stamp_registry;
+use wash_runtime::oci::OciConfig;
 
 struct ClusterGuard {
     name: String,
@@ -93,32 +96,14 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let version =
         steps::read_platform_version(&repository.join("deploy/platform/release/Chart.yaml"))?;
-    let source_registry =
-        ClusterDocument::compile(&repository.join("deploy/gcp/cluster.k"))?.registry;
-    let agent = Path::new(&std::env::var_os("HOME").context("HOME is required")?)
-        .join(".config/gcloud-wamn-agent");
-    ensure!(
-        std::env::var_os("CLOUDSDK_CONFIG").as_deref() == Some(agent.as_os_str()),
-        "export CLOUDSDK_CONFIG={} for the agent identity",
-        agent.display()
-    );
-    let docker_config = std::env::var_os("DOCKER_CONFIG")
-        .context("export DOCKER_CONFIG with the GCP gcloud credential helper")?;
-    let credentials: Value = serde_json::from_slice(&std::fs::read(
-        Path::new(&docker_config).join("config.json"),
-    )?)?;
-    let host = source_registry.split('/').next().context("registry host")?;
-    ensure!(
-        credentials["credHelpers"][host] == "gcloud",
-        "DOCKER_CONFIG must select the gcloud credential helper for {host}"
-    );
+    let source_chart = platform_images::source_chart(&repository, &directory)?;
+    let source_images = wamn_control::release_chart::image_set(&source_chart).await?;
+    let source_registry = source_images
+        .host
+        .split("/wamn-host")
+        .next()
+        .context("host registry")?;
     println!("work directory {}", directory.display());
-    stamp_registry(
-        &repository,
-        &source_registry,
-        &version,
-        &directory.join("source-chart"),
-    )?;
     let _cluster = ClusterGuard { name: name.clone() };
     let port = registry(&name)?;
     let artifacts = artifact_registry(&name, &directory).await?;
@@ -144,7 +129,7 @@ cluster.Cluster {{
         ),
     )?;
     let document = ClusterDocument::compile(&file).context("compile the kind cluster document")?;
-    copy_images(&source_registry, &document.registry, &version).await?;
+    copy_images(source_registry, &document.registry, &version).await?;
     let fixture_chart = directory.join("fixture-chart");
     stamp_registry(&repository, &document.registry, &version, &fixture_chart)?;
     let chart: Value = serde_yaml::from_slice(&std::fs::read(fixture_chart.join("values.yaml"))?)?;
@@ -1206,38 +1191,6 @@ async fn secret_versions(kubeconfig: &Path, context: &str) -> anyhow::Result<Vec
     Ok(secrets)
 }
 
-fn stamp_registry(
-    repository: &Path,
-    registry: &str,
-    version: &str,
-    out: &Path,
-) -> anyhow::Result<()> {
-    let target = std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into());
-    let output = Command::new(repository.join(target).join("debug/wamn-ctl"))
-        .current_dir(repository)
-        .args([
-            "build-platform",
-            "--stamp-only",
-            "--registry",
-            registry,
-            "--out",
-        ])
-        .arg(out)
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("stamp registry images of platform {version}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    eprint!("{stderr}");
-    if !output.status.success() {
-        ensure!(
-            stderr.contains(version),
-            "stamp-only error does not name version {version}: {stderr}"
-        );
-        anyhow::bail!("stamp registry images of platform {version}: {stderr}");
-    }
-    Ok(())
-}
-
 async fn copy_images(source: &str, destination: &str, version: &str) -> anyhow::Result<()> {
     for name in ["wamn-host", "wamn-runner", "wamn-gates", "wamn-identity"] {
         let from = format!("{source}/{name}:{version}");
@@ -1249,12 +1202,7 @@ async fn copy_images(source: &str, destination: &str, version: &str) -> anyhow::
     for role in ["http", "materializer"] {
         let from = format!("{source}/wamn/{role}:{version}");
         let to = format!("{destination}/wamn/{role}:{version}");
-        let (bytes, _) = pull_component(&from, OciConfig::default(), OciPullPolicy::Always)
-            .await
-            .with_context(|| format!("pull {from}"))?;
-        push_component(&to, &bytes, OciConfig::new_insecure(), None)
-            .await
-            .with_context(|| format!("push {to}"))?;
+        platform_images::copy_role(&from, &to, OciConfig::new_insecure()).await?;
     }
     Ok(())
 }

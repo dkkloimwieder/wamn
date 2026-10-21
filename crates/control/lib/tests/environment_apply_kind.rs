@@ -7,8 +7,8 @@
 //! cert-manager, the operator release, the CNPG operator and one `Cluster`,
 //! and a TLS registry with a password on the kind network. The system
 //! database lives on the CNPG cluster and the verb reaches it through a port
-//! forward. The fixture release has no http attachment and no registration,
-//! so no role WorkloadDeployment renders; roles are tested by `wamn-qh1g`.
+//! forward. The HTTP release renders its route role. The integration release
+//! renders its materializer and captures the consumer schema through CDC.
 //!
 //! Checks, each recorded with its command and output in `report.json`:
 //! 1. The first apply creates the environment: its row, its database and
@@ -24,7 +24,7 @@
 //!    The server sees one bearer header and the guest returns status 200.
 //!    A signed inbound POST delivers inline like the unsigned route and sends once.
 //!    Wrong and missing signatures return 401 with an empty body and no fixture request.
-//!    Two minute ticks each leave one completed schedule run without a principal.
+//!    Two minute ticks each leave one completed schedule run under the application principal.
 //!    A second wiring sends a POST that the fixture verifies with its HMAC secret.
 //!    OAuth2 reuses one token for two sends, and the fixture verifies OAuth1 signatures.
 //!    The REST schedule retries page two after 429 and stores each item once.
@@ -80,18 +80,23 @@
 //! events, the descriptions, the container logs and, for a failed rollout,
 //! the same taken before Helm's rollback removed its pods.
 //!
-//! The host and http role images are the ones of the release chart that
-//! `WAMN_RELEASE_CHART` names, which `wamn-ctl build-platform` stamped
-//! (§9.3, R15): the host is loaded onto the node and the http role is copied
-//! into the suite's registry, and a copy of that chart is stamped with them.
-//! Rebuild that chart at this branch head for the signature and schedule code.
-//! The suite rebuilds its HTTP fixture image, loads it into its own cluster,
-//! and provides its outbound secret through `WAMN_HTTP_FIXTURE_HMAC_SECRET`.
-//! The existing environment database stores the schedule runs. No new database
-//! or registry is needed. The schedule assertion waits at most 150 seconds.
+//! The chart supplies the host, HTTP and materializer images. Set
+//! `WAMN_RELEASE_CHART` to a stamped chart, or export `CLOUDSDK_CONFIG` and
+//! `DOCKER_CONFIG` as for `platform_apply_kind` to stamp the cloud registry.
+//! The fixture copies the two roles into its TLS registry and loads the host
+//! into its private node. The platform images must match this checkout.
+//! The suite builds its HTTP fixture image and reuses the existing Cargo target.
+//! The native debug `wamn-cdc-reader` runs against the forwarded database.
+//! Event NATS runs on the kind network with separate generated credentials.
+//! The integration applies one release containing `wamn_integration`,
+//! `rest_connector` and `rest_consumer_fixture`. The ctl role verbs grant the
+//! connector principal the consumer permission before the scheduled pull.
+//! Each schedule assertion has a 150-second bound.
 //!
-//! Run (epic closeout only), after `wamn build apps/edge_device`:
-//! `WAMN_RELEASE_CHART=<chart> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
+//! Before the epic closeout run, build the debug `wamn-ctl` and `wamn-cdc-reader`
+//! binaries. Build the packages `edge_device`, `platform/wamn_integration`,
+//! `rest_consumer_fixture` and `rest_connector` with `wamn build`.
+//! `WAMN_RELEASE_CHART=<chart> cargo test --locked --offline -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -118,6 +123,10 @@ use wamn_engine::release_manifest::release_label;
 
 #[path = "support/http_connection.rs"]
 mod http_connection;
+#[path = "support/integration.rs"]
+mod integration;
+#[path = "support/platform_images.rs"]
+mod platform_images;
 
 const NAMESPACE: &str = "wamn-system";
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
@@ -345,7 +354,13 @@ impl Run {
             .output()
             .await;
         let _ = Command::new("docker")
-            .args(["rm", "--force", "--volumes", &self.registry])
+            .args([
+                "rm",
+                "--force",
+                "--volumes",
+                &self.registry,
+                &format!("{}-events", self.cluster),
+            ])
             .output()
             .await;
         let _ = Command::new("docker")
@@ -361,15 +376,22 @@ impl Run {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, WAMN_RELEASE_CHART; epic closeout only"]
+#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, stamped chart or cloud credentials; epic closeout only"]
 async fn environment_apply_kind() -> anyhow::Result<()> {
-    let chart = std::env::var_os("WAMN_RELEASE_CHART")
-        .map(PathBuf::from)
-        .context("WAMN_RELEASE_CHART names the release chart that build-platform stamped")?;
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let target =
+        repository.join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()));
+    for binary in ["wamn-ctl", "wamn-cdc-reader"] {
+        ensure!(
+            target.join("debug").join(binary).is_file(),
+            "build debug {binary} in {} before the kind case",
+            target.display()
+        );
+    }
     let pid = std::process::id();
     let work = std::env::temp_dir().join(format!("wamn-apply-{pid}"));
     std::fs::create_dir_all(&work)?;
+    let chart = platform_images::source_chart(&repository, &work)?;
     println!("work directory {}", work.display());
     let mut run = Run {
         work,
@@ -820,35 +842,19 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         http_connection::release(&manifest_h, &version, vec![transform, request, page])?;
     http_connection::deploy(run, repository).await?;
 
-    // The http role image: the chart's route guest, copied into the registry.
-    let loopback = matches!(
-        platform.http.split([':', '/']).next(),
-        Some("localhost" | "127.0.0.1")
-    );
-    let (guest, _) = wash_runtime::oci::pull_component(
-        &platform.http,
-        wash_runtime::oci::OciConfig {
-            insecure: loopback,
-            cache_dir: Some(work.join("oci-cache")),
-            ..wash_runtime::oci::OciConfig::default()
-        },
-        wash_runtime::oci::OciPullPolicy::Always,
-    )
-    .await
-    .context("pull the chart's http role image")?;
     wash_runtime::oci::set_extra_ca_certificates(&[work.join("ca.crt")])?;
-    let http_digest = wash_runtime::oci::push_component(
+    let http_digest = platform_images::copy_role(
+        &platform.http,
         &format!("{local}/wamn/flow-http:apply"),
-        &guest,
         wash_runtime::oci::OciConfig::new_with_credentials(USER, PASSWORD),
-        None,
     )
-    .await
-    .context("push the http role image")?;
-    ensure!(
-        http_digest.starts_with("sha256:"),
-        "the http role push returned {http_digest}"
-    );
+    .await?;
+    let materializer_digest = platform_images::copy_role(
+        &platform.materializer,
+        &format!("{local}/wamn/materializer:apply"),
+        wash_runtime::oci::OciConfig::new_with_credentials(USER, PASSWORD),
+    )
+    .await?;
     let digest = push_manifest_bytes(
         &manifest_a,
         &format!("{local}/wamn/releases"),
@@ -868,6 +874,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .split_once('@')
         .map_or(platform.host.as_str(), |(tagged, _)| tagged);
     run.run("docker", &["pull", "--quiet", &platform.host])
+        .await?;
+    run.run("docker", &["tag", &platform.host, host_image])
         .await?;
     run.run(
         "kind",
@@ -909,7 +917,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let set = ImageSet {
         host: format!("{host_image}@{node_digest}"),
         http: format!("{local}/wamn/flow-http@{http_digest}"),
-        materializer: platform.materializer.clone(),
+        materializer: format!("{local}/wamn/materializer@{materializer_digest}"),
     };
     let chart = stamp(source, &set, None, &work.join("chart"))?;
     run.run("helm", &["dependency", "build", &chart.to_string_lossy()])
@@ -1358,6 +1366,15 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;
+    Box::pin(integration::exercise(
+        run,
+        repository,
+        &platform,
+        &package_registry,
+        &set,
+        &admin_url,
+    ))
+    .await?;
     system_task.abort();
 
     // 5. A12: a second environment in the same namespace.

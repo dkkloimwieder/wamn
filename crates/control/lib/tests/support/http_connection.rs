@@ -132,7 +132,8 @@ pub async fn component(
         component_artifact_config_bytes, component_artifact_layout,
     };
 
-    let target = run.work.join("http-guests");
+    let target =
+        repository.join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()));
     run.run(
         "cargo",
         &[
@@ -662,7 +663,7 @@ pub async fn assert_triggers(
     let result = result
         .context("schedule did not complete two due moments within 150 seconds")
         .and_then(std::convert::identity);
-    run.pass("schedule starts exactly one run per due key without a principal",
+    run.pass("schedule starts exactly one run per due key under its application principal",
         "SELECT schedule runs from wamn_run.runs",
         json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
         result.is_ok());
@@ -671,6 +672,15 @@ pub async fn assert_triggers(
 }
 
 async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyhow::Result<Value> {
+    let subject = wamn_platform_identity::application_subject(tenant, PACKAGE)?;
+    let email = format!("{subject}@{}", super::PLATFORM_DOMAIN);
+    let principal: String = database
+        .query_one(
+            "SELECT id::text FROM app_system.users WHERE tenant_id=$1 AND email=$2",
+            &[&tenant, &email],
+        )
+        .await?
+        .get(0);
     let first_due = Utc::now()
         .with_second(0)
         .unwrap()
@@ -704,7 +714,7 @@ async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyh
             if let Some(row) = matching.first() {
                 ensure!(
                     row["trigger_source"] == "schedule"
-                        && row["service_principal_id"].is_null()
+                        && row["service_principal_id"] == principal
                         && row["invocation_context"] == json!({})
                         && row["package_id"] == PACKAGE
                         && row["wiring_id"] == SCHEDULE
