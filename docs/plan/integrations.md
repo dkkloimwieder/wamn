@@ -191,6 +191,7 @@ Owner rulings of 2026-10-21 on the scoping forks. Each ruling is recorded verbat
 | An environment stays one release, and a release is a set of applications. The integration packages sit in that release beside the consumer, pinned by version. `environment.k` gets no `integrations` field. | No KCL change beyond `Connection`. |
 | C39, bounded. CDC captures only the schemas that an event registration reads. C40 holds capture of several schemas. | `ensure_cdc` still refuses two registered schemas. A release with consumer models and `wamn_integration` deploys with CDC on the consumer schema only. |
 | Apply creates one service principal for each integration application in each environment, with a derived name. Its grants are not in `environment.k` (R18). An admin grants it a role with the consumer command permissions through the existing role administration. | A schedule run acts as that principal. The runs check admits the principal on a schedule run. A consumer command without the grant refuses the run. |
+| `http-page` gains an optional parameter `carry-input-pointer`. When it is set, the node emits `{"items":[…],"carry":<value>}`, where the value is the input at that pointer. Without it, the node emits the plain array. This deviates from the Epic 3 ruling that the node emits one array. The scheduled pull uses it to carry the schedule's `due` time to the final `setting.write`. | `last_synced_at` advances to the run's `due` time, and only after the consumer command succeeds. |
 
 ### Issues
 
