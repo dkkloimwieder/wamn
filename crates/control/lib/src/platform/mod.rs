@@ -15,3 +15,4 @@ pub mod provider;
 mod releases;
 pub mod steps;
 pub mod wired_release;
+pub mod wiring_job;

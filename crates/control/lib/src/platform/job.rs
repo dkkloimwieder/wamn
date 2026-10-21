@@ -74,6 +74,30 @@ pub struct JobRequest {
     pub capture_output: bool,
     /// UID for tools whose image user cannot read the private input volume.
     pub run_as_user: Option<u32>,
+    /// Existing Secrets mounted read-only in this Job's namespace.
+    pub secret_mounts: Vec<SecretMount>,
+    /// Credential preparation before the native sidecar starts.
+    pub setup: Option<JobContainer>,
+    /// One native sidecar from the same runner image.
+    pub sidecar: Option<JobContainer>,
+}
+
+/// A read-only projection of an existing Secret. Values stay in the cluster.
+#[derive(Debug, Clone, Serialize)]
+pub struct SecretMount {
+    pub name: String,
+    pub path: String,
+    pub keys: Vec<String>,
+}
+
+/// Another container in the Job pod, using the main container's image.
+#[derive(Debug, Default, Serialize)]
+pub struct JobContainer {
+    pub command: Vec<String>,
+    pub arguments: Vec<String>,
+    pub environment: BTreeMap<String, String>,
+    /// Environment name to Secret name and key, without any credential value.
+    pub secret_environment: BTreeMap<String, (String, String)>,
 }
 
 impl std::fmt::Debug for JobRequest {
@@ -195,6 +219,8 @@ struct PodSpec {
     security_context: Option<SecurityContext>,
     containers: Vec<Container>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    init_containers: Vec<Container>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     volumes: Vec<Volume>,
 }
 
@@ -209,6 +235,8 @@ struct SecurityContext {
 struct Container {
     name: String,
     image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restart_policy: Option<&'static str>,
     command: Vec<String>,
     args: Vec<String>,
     env: Vec<Environment>,
@@ -238,17 +266,19 @@ struct SecretKey {
     key: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VolumeMount {
-    name: &'static str,
-    mount_path: &'static str,
+    name: String,
+    mount_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    read_only: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Volume {
-    name: &'static str,
+    name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     empty_dir: Option<EmptyDir>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -375,7 +405,7 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
         command = vec!["/bin/sh".into(), "-ec".into()];
         args.splice(0..0, [HANDOFF.into(), request.name.clone()]);
         volumes.push(Volume {
-            name: "out",
+            name: "out".into(),
             empty_dir: Some(EmptyDir {
                 medium: "Memory",
                 size_limit: "1Mi",
@@ -383,13 +413,14 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
             secret: None,
         });
         volume_mounts.push(VolumeMount {
-            name: "out",
-            mount_path: "/out",
+            name: "out".into(),
+            mount_path: "/out".into(),
+            read_only: None,
         });
     }
     if !request.files.is_empty() || !request.binary_files.is_empty() {
         volumes.push(Volume {
-            name: "inputs",
+            name: "inputs".into(),
             empty_dir: None,
             secret: Some(SecretVolume {
                 secret_name: format!("{}-files", request.name),
@@ -407,9 +438,77 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
             }),
         });
         volume_mounts.push(VolumeMount {
-            name: "inputs",
-            mount_path: "/inputs",
+            name: "inputs".into(),
+            mount_path: "/inputs".into(),
+            read_only: None,
         });
+    }
+    // Companions receive the file inputs, never the operator certificate.
+    let companion_mounts = volume_mounts.clone();
+    for (index, mount) in request.secret_mounts.iter().enumerate() {
+        let name = format!("existing-{index}");
+        volumes.push(Volume {
+            name: name.clone(),
+            empty_dir: None,
+            secret: Some(SecretVolume {
+                secret_name: mount.name.clone(),
+                default_mode: 0o400,
+                items: mount
+                    .keys
+                    .iter()
+                    .map(|key| SecretItem {
+                        key: key.clone(),
+                        path: key.clone(),
+                    })
+                    .collect(),
+            }),
+        });
+        volume_mounts.push(VolumeMount {
+            name,
+            mount_path: mount.path.clone(),
+            read_only: Some(true),
+        });
+    }
+    let mut init_containers = Vec::new();
+    for (name, companion, restart_policy) in [
+        ("prepare", request.setup.as_ref(), None),
+        ("gate", request.sidecar.as_ref(), Some("Always")),
+    ] {
+        if let Some(companion) = companion {
+            let mut env: Vec<_> = companion
+                .environment
+                .iter()
+                .map(|(name, value)| Environment {
+                    name: name.clone(),
+                    value: Some(value.clone()),
+                    value_from: None,
+                })
+                .collect();
+            env.extend(
+                companion
+                    .secret_environment
+                    .iter()
+                    .map(|(name, (secret, key))| Environment {
+                        name: name.clone(),
+                        value: None,
+                        value_from: Some(SecretSource {
+                            secret_key_ref: SecretKey {
+                                name: secret.clone(),
+                                key: key.clone(),
+                            },
+                        }),
+                    }),
+            );
+            init_containers.push(Container {
+                name: name.into(),
+                image: request.image.clone(),
+                restart_policy,
+                command: companion.command.clone(),
+                args: companion.arguments.clone(),
+                env,
+                volume_mounts: companion_mounts.clone(),
+            });
+        }
     }
     Job {
         api_version: "batch/v1",
@@ -425,7 +524,9 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
                     security_context: request
                         .run_as_user
                         .map(|run_as_user| SecurityContext { run_as_user }),
+                    init_containers,
                     containers: vec![Container {
+                        restart_policy: None,
                         name: request.name.clone(),
                         image: request.image.clone(),
                         command,
@@ -493,13 +594,21 @@ pub async fn run(
     inputs: &Value,
     secrets: &[JobSecret],
 ) -> anyhow::Result<bool> {
-    let digest = input_digest(&json!({
+    let mut digest_inputs = json!({
         "inputs": inputs, "image": request.image, "arguments": request.arguments,
         "environment": request.environment, "files": request.files,
         "binary_files": request.binary_files,
         "permissions": request.permissions, "command": request.command,
         "capture_output": request.capture_output, "run_as_user": request.run_as_user
-    }));
+    });
+    if !request.secret_mounts.is_empty() {
+        digest_inputs["secret_mounts"] = serde_json::to_value(&request.secret_mounts)?;
+    }
+    if request.setup.is_some() || request.sidecar.is_some() {
+        digest_inputs["setup"] = serde_json::to_value(&request.setup)?;
+        digest_inputs["sidecar"] = serde_json::to_value(&request.sidecar)?;
+    }
+    let digest = input_digest(&digest_inputs);
     let marker = format!("wamn-install-{}", request.name);
     let completed = kubectl::get(
         &target.kubeconfig,
@@ -762,6 +871,26 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
         None,
     )
     .await;
+    let output = if request.capture_output && request.sidecar.is_some() {
+        Some(
+            kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                &target.namespace,
+                &[
+                    "logs",
+                    &format!("job/{name}"),
+                    "--container",
+                    name,
+                    "--pod-running-timeout=10s",
+                ],
+                None,
+            )
+            .await,
+        )
+    } else {
+        None
+    };
     let directory = directory.join("jobs");
     std::fs::create_dir_all(&directory).context("create the Job log directory")?;
     let saved = std::fs::write(
@@ -802,7 +931,7 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
         .await?;
     }
     if request.capture_output {
-        log.context("read the public Job result")
+        output.unwrap_or(log).context("read the public Job result")
     } else {
         Ok(String::new())
     }
@@ -876,6 +1005,54 @@ mod tests {
             json!({"name":"wamn-system-admin","key":"url"})
         );
         assert!(!job.to_string().contains("private"));
+    }
+
+    #[test]
+    fn native_sidecar_and_setup_use_the_same_image_and_scoped_secrets() {
+        let mut request = request();
+        request.secret_mounts.push(SecretMount {
+            name: "operator-test".into(),
+            path: "/etc/wamn/operator".into(),
+            keys: vec!["tls.crt".into(), "tls.key".into()],
+        });
+        request.setup = Some(JobContainer {
+            command: vec!["/bin/sh".into()],
+            arguments: vec!["-ec".into(), "prepare".into()],
+            ..JobContainer::default()
+        });
+        request.sidecar = Some(JobContainer {
+            command: vec!["/usr/local/bin/wamn-scenario-worker".into()],
+            arguments: vec!["serve".into()],
+            environment: [("WAMN_MANAGEMENT_ORG".into(), "test".into())].into(),
+            secret_environment: [(
+                "WAMN_SYSTEM_URL".into(),
+                ("gate-reader".into(), "url".into()),
+            )]
+            .into(),
+        });
+        let job = serde_json::to_value(render(&request, "identity", &[])).unwrap();
+        let pod = &job["spec"]["template"]["spec"];
+        assert_eq!(job["metadata"]["namespace"], "identity");
+        assert_eq!(pod["initContainers"].as_array().unwrap().len(), 2);
+        assert!(pod["initContainers"][0].get("restartPolicy").is_none());
+        assert_eq!(pod["initContainers"][1]["restartPolicy"], "Always");
+        assert_eq!(pod["initContainers"][1]["image"], request.image);
+        assert_eq!(pod["initContainers"][1]["args"], json!(["serve"]));
+        assert_eq!(
+            pod["initContainers"][1]["env"][1]["valueFrom"]["secretKeyRef"],
+            json!({"name":"gate-reader","key":"url"})
+        );
+        assert!(pod["initContainers"][1].get("volumeMounts").is_none());
+        assert_eq!(pod["containers"][0]["volumeMounts"][0]["readOnly"], true);
+        assert_eq!(pod["volumes"][0]["secret"]["secretName"], "operator-test");
+        assert!(pod["containers"][0].get("restartPolicy").is_none());
+        let ordinary =
+            serde_json::to_value(render(&super::tests::request(), "platform", &[])).unwrap();
+        assert!(
+            ordinary["spec"]["template"]["spec"]
+                .get("initContainers")
+                .is_none()
+        );
     }
 
     #[test]
