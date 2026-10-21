@@ -25,8 +25,6 @@ pub const OUTBOUND_SECRET: &str = "fixture-outbound-key";
 pub const SCHEDULE: &str = "http-minute";
 pub const OAUTH2_HANDLE: &str = "oauth2-upstream";
 pub const OAUTH1_HANDLE: &str = "oauth1-upstream";
-pub const REST_PACKAGE: &str = "rest_connector";
-pub const REST_VERSION: &str = "0.1.0";
 pub const BODY: &str = "{ \"id\" : 1 }";
 
 pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
@@ -282,6 +280,18 @@ pub fn oauth_wirings() -> anyhow::Result<Vec<WiringDocument>> {
     .collect()
 }
 
+pub fn paged_wiring() -> anyhow::Result<WiringDocument> {
+    let mut graph = serde_json::to_value(wiring()?)?;
+    graph["wiring-id"] = json!("http-pages");
+    graph["nodes"]["send"]["component"] = json!("http-page");
+    graph["nodes"]["send"]["params"] = json!({
+        "requirement": "upstream", "path-and-query": "/pages?limit=2",
+        "page": {"style": "offset", "limit": "limit", "offset": "offset"},
+        "items": "/items"
+    });
+    Ok(serde_json::from_value(graph)?)
+}
+
 pub fn scheduled_wiring() -> anyhow::Result<WiringDocument> {
     let mut graph = serde_json::to_value(wiring()?)?;
     graph["wiring-id"] = json!(SCHEDULE);
@@ -311,8 +321,9 @@ pub fn release(
     let wiring = wiring()?;
     let signed_wiring = signed_wiring()?;
     let scheduled_wiring = scheduled_wiring()?;
+    let paged_wiring = paged_wiring()?;
     let oauth_wirings = oauth_wirings()?;
-    for graph in [&wiring, &signed_wiring, &scheduled_wiring]
+    for graph in [&wiring, &signed_wiring, &scheduled_wiring, &paged_wiring]
         .into_iter()
         .chain(&oauth_wirings)
     {
@@ -339,6 +350,12 @@ pub fn release(
             json!({
                 "modes": ["signature"], "header": "x-hub-signature-256", "credential": INBOUND_HANDLE
             }),
+        ),
+        (
+            "http-pages",
+            "/http/pages",
+            "http-pages",
+            json!({"modes": ["none"]}),
         ),
         (
             "http-oauth2",
@@ -384,6 +401,7 @@ pub fn release(
             ServingWiring::new(PACKAGE, wiring),
             ServingWiring::new(PACKAGE, signed_wiring),
             ServingWiring::new(PACKAGE, scheduled_wiring),
+            ServingWiring::new(PACKAGE, paged_wiring),
         ]
         .into(),
         attachments,
@@ -637,9 +655,7 @@ pub async fn assert_triggers(
     );
 
     assert_oauth(run, &base, route_host).await?;
-    tokio::time::timeout(Duration::from_secs(90), assert_paged(run, database))
-        .await
-        .context("REST schedule did not store the fixture items")??;
+    assert_paged(run, &base, route_host).await?;
     let result =
         tokio::time::timeout(Duration::from_secs(150), scheduled_runs(database, tenant)).await;
     let result = result
@@ -650,8 +666,6 @@ pub async fn assert_triggers(
         json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
         result.is_ok());
     result?;
-    // Those two later schedule moments also rerun the REST workflow.
-    assert_paged(run, database).await?;
     Ok(())
 }
 
@@ -714,89 +728,6 @@ async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyh
     }
 }
 
-/// Push the template package and add its scheduled workflow to the fixture release.
-pub async fn with_rest_package(
-    run: &Run,
-    repository: &Path,
-    registry: &str,
-    package_registry: &wamn_control::package_artifact::PackageRegistry,
-    http: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    use wamn_control::package_artifact::{PushPackageRequest, push_package};
-    let package = repository.join("apps/rest_connector");
-    push_package(&PushPackageRequest {
-        package: package.clone(),
-        registry: package_registry.clone(),
-        component_artifact_base: format!("{registry}/wamn/components"),
-    })
-    .await?;
-    let page = component(
-        run,
-        repository,
-        registry,
-        REST_VERSION,
-        REST_PACKAGE,
-        "http-page",
-    )
-    .await?;
-    let mut descriptors =
-        wamn_package_artifact::read_descriptors(package_registry, REST_PACKAGE, REST_VERSION)
-            .await?;
-    descriptors.retain(|descriptor| descriptor.component != "http-page");
-    descriptors.push(page);
-    let scope = ComponentPackageScope {
-        tenant_id: wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
-        package_id: REST_PACKAGE.to_owned(),
-        package_version: REST_VERSION.to_owned(),
-    };
-    let facts: Vec<_> = descriptors
-        .iter()
-        .cloned()
-        .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
-        .collect();
-    let graph = rest_wiring(repository)?;
-    wamn_control::author_wiring::gate_wiring_document(&graph, &scope, &facts)?;
-    let (mut manifest, _) = ServingManifest::from_canonical_bytes(http)?;
-    manifest
-        .release
-        .packages
-        .insert(wamn_catalog::PackageCoordinate::new(
-            REST_PACKAGE,
-            REST_VERSION,
-        )?);
-    for (descriptor, fact) in descriptors.into_iter().zip(&facts) {
-        manifest
-            .components
-            .insert(ServingComponent::project(fact, descriptor.connections)?);
-    }
-    manifest
-        .workflow
-        .wirings
-        .insert(ServingWiring::new(REST_PACKAGE, graph.clone()));
-    manifest.workflow.schedules.insert(
-        format!("{REST_PACKAGE}::item"),
-        ServingSchedule {
-            package_id: REST_PACKAGE.to_owned(),
-            workflow_id: "item".to_owned(),
-            wiring_id: graph.wiring_id,
-            wiring_version: graph.version,
-            schedule: "* * * * *".to_owned(),
-        },
-    );
-    let bytes = manifest.canonical_bytes();
-    ServingManifest::from_canonical_bytes(&bytes)?;
-    Ok(bytes)
-}
-
-pub fn rest_wiring(repository: &Path) -> anyhow::Result<WiringDocument> {
-    use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
-    let graph = read_authored_document(
-        &repository.join("apps/rest_connector/publication/wirings/rest_item.json"),
-        AuthoredDocument::Wiring,
-    )?;
-    Ok(serde_json::from_value(graph)?)
-}
-
 async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Result<()> {
     for route in ["oauth2", "oauth2", "oauth1", "oauth1"] {
         let (status, body) =
@@ -847,48 +778,48 @@ async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Re
     Ok(())
 }
 
-async fn assert_paged(run: &mut Run, database: &tokio_postgres::Client) -> anyhow::Result<()> {
-    loop {
-        let rows: Value = database.query_one(
-            "SELECT COALESCE(jsonb_agg(jsonb_build_object('id', key, 'name', name) ORDER BY key), '[]'::jsonb) FROM rest_connector.item", &[],
-        ).await?.get(0);
-        if rows.as_array().is_some_and(|rows| rows.len() == 5) {
-            let records = request_records(&request_log(run).await?)?;
-            // Stop at the first completed traversal. Later schedule moments repeat the reads.
-            let mut pages = Vec::new();
-            for record in records
-                .into_iter()
-                .filter(|record| record["page"].is_number())
-            {
-                let last = record["page"] == 3;
-                pages.push(record);
-                if last {
-                    break;
-                }
-            }
-            let mut items: Vec<_> = pages
-                .iter()
-                .filter(|record| record["status"] == "200 OK")
-                .filter_map(|record| record["items"].as_array())
-                .flatten()
-                .cloned()
-                .collect();
-            items.sort_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
-            items.dedup();
-            let second: Vec<_> = pages.iter().filter(|record| record["page"] == 2).collect();
-            let passed = rows == json!(items)
-                && second.len() == 2
-                && second[0]["status"] == "429 Too Many Requests"
-                && second[1]["status"] == "200 OK";
-            run.pass(
-                "REST paging retries page two and stores each fixture item once",
-                "SELECT key, name FROM rest_connector.item; kubectl logs deployment/http-fixture",
-                json!({"rows":rows,"pages":pages}),
-                passed,
-            );
-            ensure!(passed, "REST fixture rows or page-two retry differ");
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+async fn assert_paged(run: &mut Run, base: &str, route_host: &str) -> anyhow::Result<()> {
+    let (status, body) =
+        super::route_probe_post(run, &format!("{base}/http/pages"), route_host).await?;
+    let items: Value = serde_json::from_str(&body)?;
+    let pages: Vec<_> = request_records(&request_log(run).await?)?
+        .into_iter()
+        .filter(|record| record["page"].is_number())
+        .collect();
+    let attempts: Vec<_> = pages
+        .iter()
+        .map(|record| {
+            json!([
+                record["page"],
+                record["page_request_count"],
+                record["status"]
+            ])
+        })
+        .collect();
+    let passed = status == 200
+        && items
+            == json!([
+                {"id":"one","name":"First"}, {"id":"two","name":"Second"},
+                {"id":"three","name":"Third"}, {"id":"four","name":"Fourth"},
+                {"id":"five","name":"Fifth"}
+            ])
+        && json!(attempts)
+            == json!([
+                [1, 1, "200 OK"],
+                [2, 1, "429 Too Many Requests"],
+                [1, 2, "200 OK"],
+                [2, 2, "200 OK"],
+                [3, 1, "200 OK"]
+            ]);
+    run.pass(
+        "HTTP paging retries once and emits every fixture item exactly once",
+        "POST /http/pages; kubectl logs deployment/http-fixture",
+        json!({"status": status, "items": items, "pages": pages}),
+        passed,
+    );
+    ensure!(
+        passed,
+        "HTTP paging retry or emitted items differ from the fixture contract"
+    );
+    Ok(())
 }

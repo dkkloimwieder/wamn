@@ -11,10 +11,16 @@ use hmac::{Hmac, KeyInit as _, Mac as _};
 use serde_json::json;
 use sha2::Sha256;
 
+#[derive(Default)]
+struct Counts {
+    token_fetches: usize,
+    pages: HashMap<usize, usize>,
+}
+
 fn serve_socket(
     mut socket: TcpStream,
     secret: &[u8],
-    counts: &Mutex<HashMap<String, usize>>,
+    counts: &Mutex<Counts>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let mut head = Vec::new();
@@ -62,9 +68,6 @@ fn serve_socket(
             target
         ))?;
         let mut counts = counts.lock().unwrap();
-        let count = counts.entry(target.to_owned()).or_default();
-        *count += 1;
-        let request_count = *count;
         let mut status = "200 OK";
         let mut extra = "";
         let mut response_body = body.clone();
@@ -80,9 +83,11 @@ fn serve_socket(
             .map(|value| value.trim_matches('"'));
         let mut token_verified = false;
         let mut page = None;
+        let mut page_request_count = None;
         let mut items = serde_json::Value::Null;
         match url.path() {
             "/oauth/token" => {
+                counts.token_fetches += 1;
                 let basic = format!(
                     "Basic {}",
                     base64::engine::general_purpose::STANDARD
@@ -114,7 +119,11 @@ fn serve_socket(
                 let limit: usize = query.get("limit").ok_or("page limit")?.parse()?;
                 assert_eq!(limit, 2);
                 let offset: usize = query.get("offset").map_or(Ok(0), |value| value.parse())?;
-                page = Some(offset / limit + 1);
+                let number = offset / limit + 1;
+                page = Some(number);
+                let count = counts.pages.entry(number).or_default();
+                *count += 1;
+                page_request_count = Some(*count);
                 let all = json!([
                     {"id":"one","name":"First"}, {"id":"two","name":"Second"},
                     {"id":"three","name":"Third"}, {"id":"four","name":"Fourth"},
@@ -128,7 +137,7 @@ fn serve_socket(
                     .take(limit)
                     .cloned()
                     .collect();
-                if offset == 2 && request_count == 1 {
+                if number == 2 && *count == 1 {
                     status = "429 Too Many Requests";
                     extra = "retry-after: 1\r\n";
                     response_body = b"{}".to_vec();
@@ -147,9 +156,10 @@ fn serve_socket(
                 json!({
                     "head": head, "body": body, "signature_verified": signature_verified,
                     "bearer_verified": bearer_verified, "token_verified": token_verified,
-                    "oauth1_verified": oauth1_verified, "oauth_nonce": oauth_nonce, "request_count": request_count,
-                    "page": page, "items": items, "status": status,
-                    "token_fetches": counts.get("/oauth/token").copied().unwrap_or(0),
+                    "oauth1_verified": oauth1_verified, "oauth_nonce": oauth_nonce,
+                    "page": page, "page_request_count": page_request_count,
+                    "items": items, "status": status,
+                    "token_fetches": counts.token_fetches,
                 })
             )?;
             log.flush()?;
@@ -168,7 +178,7 @@ fn serve_socket(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let secret: Arc<str> = std::env::var("WAMN_HTTP_FIXTURE_HMAC_SECRET")?.into();
     assert!(!secret.is_empty(), "fixture HMAC secret is empty");
-    let counts = Arc::new(Mutex::new(HashMap::new()));
+    let counts = Arc::new(Mutex::new(Counts::default()));
     for socket in TcpListener::bind("0.0.0.0:8080")?.incoming() {
         let socket = socket?;
         let secret = Arc::clone(&secret);

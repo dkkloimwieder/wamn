@@ -814,15 +814,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let request =
         http_connection::component(run, repository, &local, &version, PACKAGE, "http-request")
             .await?;
-    let manifest_http = http_connection::release(&manifest_h, &version, vec![transform, request])?;
-    let manifest_http = http_connection::with_rest_package(
-        run,
-        repository,
-        &local,
-        &package_registry,
-        &manifest_http,
-    )
-    .await?;
+    let page =
+        http_connection::component(run, repository, &local, &version, PACKAGE, "http-page").await?;
+    let manifest_http =
+        http_connection::release(&manifest_h, &version, vec![transform, request, page])?;
     http_connection::deploy(run, repository).await?;
 
     // The http role image: the chart's route guest, copied into the registry.
@@ -1262,6 +1257,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         http_connection::wiring()?,
         http_connection::signed_wiring()?,
         http_connection::scheduled_wiring()?,
+        http_connection::paged_wiring()?,
     ]
     .into_iter()
     .chain(http_connection::oauth_wirings()?)
@@ -1282,13 +1278,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             )
             .await?;
     }
-    let rest_wiring = http_connection::rest_wiring(repository)?;
-    http_project.execute(
-        "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash) \
-         VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) ON CONFLICT DO NOTHING",
-        &[&http_tenant, &http_connection::REST_PACKAGE, &http_connection::REST_VERSION,
-          &rest_wiring.wiring_id, &1_i32, &serde_json::to_string(&rest_wiring)?, &rest_wiring.wiring_hash().as_str()],
-    ).await?;
     let http_rows = async || -> anyhow::Result<Value> {
         Ok(http_project
             .query_one(
@@ -2121,6 +2110,7 @@ fn the_fixture_releases_are_canonical_manifests() {
     let components = [
         include_str!("../../../../apps/platform/no-std/transform/declaration.json.in"),
         include_str!("../../../../apps/platform/no-std/http-request/declaration.json.in"),
+        include_str!("../../../../apps/platform/no-std/http-page/declaration.json.in"),
     ]
     .into_iter()
     .map(|template| {
@@ -2157,7 +2147,7 @@ fn the_fixture_releases_are_canonical_manifests() {
             .iter()
             .map(|component| component.descriptor.component.as_str())
             .collect::<Vec<_>>(),
-        ["device", "http-request", "transform"]
+        ["device", "http-page", "http-request", "transform"]
     );
     assert_eq!(http.routes, h.routes);
     assert_eq!(http.attachments, h.attachments);
@@ -2175,6 +2165,10 @@ fn the_fixture_releases_are_canonical_manifests() {
             wamn_catalog::ServingWiring::new(
                 PACKAGE,
                 http_connection::scheduled_wiring().expect("the scheduled HTTP wiring"),
+            ),
+            wamn_catalog::ServingWiring::new(
+                PACKAGE,
+                http_connection::paged_wiring().expect("the paged HTTP wiring"),
             )
         ]
         .into_iter()
@@ -2190,7 +2184,7 @@ fn the_fixture_releases_are_canonical_manifests() {
         http.workflow.attachments["http-send"].wiring_id,
         "http-send"
     );
-    assert_eq!(http.workflow.attachments.len(), 5);
+    assert_eq!(http.workflow.attachments.len(), 6);
     assert_eq!(
         http.workflow.attachments["http-signed"].auth_policy,
         json!({
