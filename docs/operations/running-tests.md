@@ -534,9 +534,26 @@ The test requires both release lines, the gate startup log, and deletion of the 
 The unchanged rerun must return the same WMS digest and leave its saved Job log unchanged.
 The gate does not execute the WMS blobstore effect, so this test needs no external bucket.
 The fixture copies `deploy/gcp/host-group-receiving.yaml` into its own cluster directory.
-The test records the printed digest in its own environment file and requires step 4.17 to report the missing qualification.
-An unchanged rerun must skip every step through 4.14 and refuse the same unqualified release.
-The GCP greenfield proves a qualified step 4.17.
+The test records both printed digests in its own environment files.
+WMS stays unqualified and runs first in the refusal assertions.
+The unchanged rerun must skip every step through 4.14 and refuse that same WMS release.
+The test then calls `delivery::qualification::qualify` on the host for Receiving, which has one required case.
+It supplies the fixture release registry, its credential file, its CA path, and the stamped chart.
+It prints one line with the qualification wall time and result.
+Qualification starts its own case cluster through the host Docker socket.
+
+The fixture then copies the exact role manifests and blobs to its TLS registry and stamps the same image digests at reachable addresses.
+It retains the original chart in `qualification-chart` and requires an unchanged qualification key.
+Containerd uses the existing HTTP mirror for native images, while workload processes read roles over TLS.
+The Receiving host group mounts the fixture registry credential and CA Secret.
+These changes affect only temporary fixture files.
+
+A separate environment directory selects qualified Receiving for the remaining install and its unchanged rerun.
+Step 4.17 must serve that release, and step 4.18 must log `registration loaded` and `walsender session open`.
+Step 4.19 must report `skipped: no bucket` for the upload and its check, with no web Job or completion record.
+The final rerun must skip every implemented step and report 4.15 and 4.16 as owner steps.
+Both phases retain the PAT, database credential, and unchanged Secret assertions.
+The GCP greenfield covers uploads to a real bucket.
 
 The runner must use the agent identity and a Docker configuration that selects the gcloud credential helper:
 

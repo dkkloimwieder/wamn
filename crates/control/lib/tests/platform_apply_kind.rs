@@ -12,7 +12,8 @@
 //! kubeconfig and progress under /var/tmp and removes its cluster and registries.
 //! A TLS artifact registry serves Receiving, WMS, and their unqualified releases.
 //! WMS publishes through the native gate sidecar with an in-memory PAT.
-//! The test requires the qualification refusal and skips through step 4.14.
+//! WMS stays unqualified and must refuse. The host qualifies Receiving, then
+//! the test applies only Receiving through 4.19 and requires an unchanged rerun.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -188,7 +189,8 @@ cluster.Cluster {{
     wms_environment.org.clone_from(&document.org);
     wms_environment.release = DeclaredRelease::None;
     wms_environment.route_host = format!("wms.{domain}");
-    let wms_input = environments.join("test--wms--dev.k");
+    // Keep the unqualified environment first so both refusal runs exercise WMS.
+    let wms_input = environments.join("a-unqualified-wms.k");
     std::fs::write(&wms_input, wms_environment.to_kcl())?;
     let mut wms_values: Value =
         serde_json::from_slice(&std::fs::read(wms_source.with_extension("json"))?)?;
@@ -420,55 +422,17 @@ cluster.Cluster {{
     let refusal = format!("{refused:#}");
     ensure!(
         refusal.contains(&format!(
-            "release {digest} has no qualification on the chart's image set:"
+            "release {wms_digest} has no qualification on the chart's image set:"
         )),
         "{refusal}"
     );
     ensure!(
-        refusal.contains(&format!("qualify-release --release-digest {digest}")),
+        refusal.contains(&format!("qualify-release --release-digest {wms_digest}")),
         "{refusal}"
     );
     writeln!(progress, "{refusal}")?;
     let secrets = secret_versions(&kubeconfig, &context).await?;
-    let mut logs = format!("{}\n{refusal}", first.join("\n"));
-    for entry in std::fs::read_dir(work.join("jobs"))? {
-        logs.push_str(&std::fs::read_to_string(entry?.path())?);
-    }
-    ensure!(
-        !logs.contains(wamn_session::PAT_TOKEN_PREFIX),
-        "a PAT reached the install progress or Job logs"
-    );
-    ensure!(
-        !database_userinfo(&logs),
-        "a database URL with credentials reached the install progress or Job logs"
-    );
-    for (_, secret) in &secrets {
-        for (key, encoded) in secret["data"].as_object().context("Secret has no data")? {
-            let encoded = encoded.as_str().context("Secret data is not text")?;
-            let decoded = STANDARD.decode(encoded).context("decode fixture Secret")?;
-            let value = std::str::from_utf8(&decoded).context("fixture Secret is not UTF-8")?;
-            let mut private = Vec::new();
-            if matches!(key.as_str(), "password" | "api-key" | "url") {
-                private.push(value.to_owned());
-                if key == "url" {
-                    private_url_password(value, &mut private);
-                }
-            } else if matches!(
-                key.as_str(),
-                "binding.json" | "target.json" | "authorization.conf"
-            ) {
-                let value: Value =
-                    serde_json::from_str(value.strip_prefix("authorization: ").unwrap_or(value))?;
-                private_values(&value, &mut private);
-            }
-            for value in private {
-                ensure!(
-                    !logs.contains(&value) && !logs.contains(&STANDARD.encode(&value)),
-                    "a credential reached the install progress or Job logs"
-                );
-            }
-        }
-    }
+    require_private_logs(&work, &format!("{}\n{refusal}", first.join("\n")), &secrets)?;
 
     let mut second = Vec::new();
     let repeated = install::apply(
@@ -488,7 +452,7 @@ cluster.Cluster {{
     .await
     .expect_err("the unchanged unqualified release still refuses");
     ensure!(
-        format!("{repeated:#}").contains(&format!("release {digest} has no qualification")),
+        format!("{repeated:#}").contains(&format!("release {wms_digest} has no qualification")),
         "{repeated:#}"
     );
     require_steps(&second, "skipped")?;
@@ -511,6 +475,429 @@ cluster.Cluster {{
             "unchanged apply rewrote Secret {name}"
         );
     }
+    // Qualification stays on the Docker host. Receiving has one required case.
+    let mut releases = artifacts.clone();
+    releases.artifact_base = artifacts
+        .artifact_base
+        .strip_suffix("/packages")
+        .context("fixture package registry suffix")?
+        .to_owned()
+        + "/releases";
+    let started = Instant::now();
+    let qualified = wamn_control::delivery::qualification::qualify(
+        wamn_control::delivery::qualification::QualifyReleaseRequest {
+            release_digest: digest.clone(),
+            releases,
+            release_chart: work.join("release-chart"),
+        },
+    )
+    .await;
+    let timing = format!(
+        "qualify-release Receiving wall time {:.3}s result {}",
+        started.elapsed().as_secs_f64(),
+        if qualified.is_ok() { "pass" } else { "fail" }
+    );
+    println!("{timing}");
+    writeln!(progress, "{timing}")?;
+    qualified?;
+
+    // The HTTP mirror supplies native images to containerd. Workload processes
+    // need the same role digests at the pod-reachable TLS artifact registry.
+    let mut serving = document.clone();
+    serving.registry = artifacts
+        .artifact_base
+        .strip_suffix("/packages")
+        .context("fixture package registry suffix")?
+        .to_owned();
+    serving_chart(&document, &serving, &work, &artifacts).await?;
+    serving_credentials(&kubeconfig, &context, &directory, &host_group, &artifacts).await?;
+    let selected = directory.join("qualified-environments");
+    std::fs::create_dir(&selected)?;
+    let selected_input = selected.join("test--receiving--dev.k");
+    std::fs::copy(&input, &selected_input)?;
+    std::fs::copy(
+        input.with_extension("json"),
+        selected_input.with_extension("json"),
+    )?;
+    let mut applied = Vec::new();
+    install::apply(
+        &serving,
+        &version,
+        &repository,
+        &selected,
+        &work,
+        &artifacts,
+        |line| {
+            println!("{line}");
+            writeln!(progress, "{line}")?;
+            applied.push(line.to_owned());
+            Ok(())
+        },
+    )
+    .await?;
+    for title in ["4.17 Apply with the release", "4.18 CDC readers"] {
+        ensure!(
+            applied
+                .iter()
+                .any(|line| line.starts_with(&format!("{title}: done "))),
+            "{title} did not run"
+        );
+    }
+    let release = wamn_control::environment::analyse::deployed_release(
+        &wamn_control::release_chart::Target {
+            kubeconfig: kubeconfig.clone(),
+            context: context.clone(),
+            namespace: "hosts".into(),
+        },
+        "test--receiving--dev",
+    )
+    .await?;
+    ensure!(
+        release.as_deref() == Some(digest.as_str()),
+        "Receiving serves another release"
+    );
+    let deadline = Instant::now() + std::time::Duration::from_secs(180);
+    let reader_log = loop {
+        let log = kubectl::kubectl(
+            &kubeconfig,
+            &context,
+            "hosts",
+            &["logs", "deployment/cdc-reader-test--receiving--dev"],
+            None,
+        )
+        .await?;
+        if log.contains("registration loaded") && log.contains("walsender session open") {
+            break log;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "CDC reader did not open its walsender session: {log}"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    };
+    require_web_skip(&applied)?;
+    let secrets = secret_versions(&kubeconfig, &context).await?;
+    let mut repeated = Vec::new();
+    install::apply(
+        &serving,
+        &version,
+        &repository,
+        &selected,
+        &work,
+        &artifacts,
+        |line| {
+            println!("{line}");
+            writeln!(progress, "{line}")?;
+            repeated.push(line.to_owned());
+            Ok(())
+        },
+    )
+    .await?;
+    require_steps(&repeated, "skipped")?;
+    for title in ["4.17 Apply with the release", "4.18 CDC readers"] {
+        ensure!(
+            repeated
+                .iter()
+                .any(|line| line.starts_with(&format!("{title}: skipped "))),
+            "{title} did not skip"
+        );
+    }
+    require_web_skip(&repeated)?;
+    for line in [
+        "4.15 Qualification: skipped: qualify-release on the build machine",
+        "4.16 Record the releases: skipped: owner input",
+    ] {
+        ensure!(
+            repeated.iter().any(|reported| reported == line),
+            "missing owner-step skip: {line}"
+        );
+    }
+    for ((name, first), (_, second)) in secrets
+        .iter()
+        .zip(secret_versions(&kubeconfig, &context).await?)
+    {
+        ensure!(
+            first["metadata"]["resourceVersion"] == second["metadata"]["resourceVersion"],
+            "unchanged apply rewrote Secret {name}"
+        );
+    }
+    let jobs: Value = serde_json::from_str(
+        &kubectl::kubectl(
+            &kubeconfig,
+            &context,
+            "hosts",
+            &["get", "jobs", "-o", "json"],
+            None,
+        )
+        .await?,
+    )?;
+    ensure!(
+        !jobs["items"]
+            .as_array()
+            .context("Jobs have no items")?
+            .iter()
+            .any(|job| job["metadata"]["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("platform-web-"))),
+        "kind started a web Job"
+    );
+    let completion: Option<Value> = kubectl::get(
+        &kubeconfig,
+        &context,
+        "platform",
+        "configmap",
+        "wamn-install-platform-web-test--receiving--dev",
+    )
+    .await?;
+    ensure!(completion.is_none(), "kind completed a web upload Job");
+    let logs = format!(
+        "{}\n{reader_log}",
+        std::fs::read_to_string(directory.join("progress.log"))?
+    );
+    let registry_secret = kubectl::get(
+        &kubeconfig,
+        &context,
+        "hosts",
+        "secret",
+        "platform-fixture-registry",
+    )
+    .await?
+    .context("fixture registry Secret")?;
+    require_private_logs(&work, &logs, &secrets)?;
+    require_private_logs(
+        &work,
+        &logs,
+        &[("platform-fixture-registry".into(), registry_secret)],
+    )?;
+    Ok(())
+}
+
+async fn serving_chart(
+    source: &ClusterDocument,
+    serving: &ClusterDocument,
+    work: &Path,
+    artifacts: &wamn_control::package_artifact::PackageRegistry,
+) -> anyhow::Result<()> {
+    use wamn_control::release_chart;
+    let chart = work.join("release-chart");
+    let original = release_chart::image_set(&chart).await?;
+    let mut images = original.clone();
+    let mut qualification = release_chart::qualification_images(&chart).await?;
+    for (role, reference) in [
+        ("http", &images.http),
+        ("materializer", &images.materializer),
+    ] {
+        copy_role(
+            reference,
+            &source.registry,
+            &serving.registry,
+            role,
+            &artifacts.oci_ca_paths,
+        )
+        .await?;
+    }
+    for image in [
+        &mut images.host,
+        &mut images.http,
+        &mut images.materializer,
+        &mut qualification.runner,
+        &mut qualification.gates,
+        &mut qualification.identity,
+    ] {
+        *image = format!(
+            "{}{}",
+            serving.registry,
+            image
+                .strip_prefix(&source.registry)
+                .context("fixture image is outside its source registry")?
+        );
+    }
+    ensure!(
+        wamn_control::delivery::qualification_artifact::image_set_digests(&original)?
+            == wamn_control::delivery::qualification_artifact::image_set_digests(&images)?,
+        "fixture registry copy changed the qualification key"
+    );
+    let saved = work.join("qualification-chart");
+    std::fs::rename(&chart, &saved)?;
+    release_chart::stamp(&saved, &images, Some(&qualification), &chart)?;
+    let mirrors = work.join(format!("{}.registry", source.cluster_name));
+    let destination = mirrors.join(&serving.registry);
+    std::fs::create_dir(&destination)?;
+    std::fs::copy(
+        mirrors.join(&source.registry).join("hosts.toml"),
+        destination.join("hosts.toml"),
+    )?;
+    Ok(())
+}
+
+// Preserve manifest bytes, including the config descriptor, so the qualification
+// applies to exactly the same role digests at the pod-reachable TLS address.
+async fn copy_role(
+    source: &str,
+    from: &str,
+    to: &str,
+    role: &str,
+    ca_paths: &[std::path::PathBuf],
+) -> anyhow::Result<()> {
+    use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
+    use oci_client::manifest::{IMAGE_MANIFEST_MEDIA_TYPE, OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
+    use oci_client::secrets::RegistryAuth;
+    use oci_client::{Client, Reference, RegistryOperation};
+    let client = Client::try_from(ClientConfig {
+        protocol: ClientProtocol::HttpsExcept(vec![from.into()]),
+        extra_root_certificates: ca_paths
+            .iter()
+            .map(|path| {
+                Ok(Certificate {
+                    encoding: CertificateEncoding::Pem,
+                    data: std::fs::read(path)?,
+                })
+            })
+            .collect::<anyhow::Result<_>>()?,
+        ..ClientConfig::default()
+    })?;
+    let source: Reference = source.parse()?;
+    let (bytes, digest) = client
+        .pull_manifest_raw(
+            &source,
+            &RegistryAuth::Anonymous,
+            &[OCI_IMAGE_MEDIA_TYPE, IMAGE_MANIFEST_MEDIA_TYPE],
+        )
+        .await?;
+    ensure!(
+        source.digest() == Some(digest.as_str()),
+        "role registry returned another manifest"
+    );
+    ensure!(
+        format!(
+            "sha256:{}",
+            hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes))
+        ) == digest,
+        "role manifest digest mismatch"
+    );
+    let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
+    let target = Reference::with_digest(to.into(), format!("wamn/{role}"), digest);
+    client
+        .auth(&target, &RegistryAuth::Anonymous, RegistryOperation::Push)
+        .await?;
+    for blob in std::iter::once(&manifest.config).chain(&manifest.layers) {
+        let mut data = Vec::new();
+        client.pull_blob(&source, blob, &mut data).await?;
+        client.push_blob(&target, data, &blob.digest).await?;
+    }
+    client
+        .push_manifest_raw(
+            &target,
+            bytes,
+            manifest
+                .media_type
+                .as_deref()
+                .unwrap_or(OCI_IMAGE_MEDIA_TYPE)
+                .parse()?,
+        )
+        .await?;
+    Ok(())
+}
+
+async fn serving_credentials(
+    kubeconfig: &Path,
+    context: &str,
+    directory: &Path,
+    host_group: &str,
+    artifacts: &wamn_control::package_artifact::PackageRegistry,
+) -> anyhow::Result<()> {
+    kubectl::apply(
+        kubeconfig,
+        context,
+        "hosts",
+        &json!({
+            "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+            "metadata": {"name": "platform-fixture-registry", "namespace": "hosts"},
+            "stringData": {
+                "config.json": std::fs::read_to_string(&artifacts.registry_auth_file)?,
+                "ca.crt": std::fs::read_to_string(&artifacts.oci_ca_paths[0])?
+            }
+        }),
+    )
+    .await?;
+    let path = directory.join(host_group);
+    let mut group: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
+    let env = group["env"]
+        .as_array_mut()
+        .context("host group environment")?;
+    env.retain(|value| value["name"] != "WAMN_REGISTRY_TOKEN_METADATA");
+    env.push(json!({"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/etc/wamn/registry/config.json"}));
+    for volume in group["volumes"]
+        .as_array_mut()
+        .context("host group volumes")?
+    {
+        if volume["name"] == "registry-pull" {
+            *volume = json!({"name": "registry-pull", "secret": {"secretName": "platform-fixture-registry"}});
+        }
+    }
+    group["ociCaPaths"] = json!(["/etc/wamn/registry/ca.crt"]);
+    std::fs::write(path, serde_yaml::to_string(&group)?)?;
+    Ok(())
+}
+
+fn require_web_skip(lines: &[String]) -> anyhow::Result<()> {
+    for action in ["upload", "check"] {
+        ensure!(
+            lines
+                .iter()
+                .any(|line| line
+                    == &format!("4.19 Web {action} test/receiving/dev: skipped: no bucket")),
+            "missing no-bucket {action} skip"
+        );
+    }
+    Ok(())
+}
+
+fn require_private_logs(
+    work: &Path,
+    progress: &str,
+    secrets: &[(String, Value)],
+) -> anyhow::Result<()> {
+    let mut logs = progress.to_owned();
+    for entry in std::fs::read_dir(work.join("jobs"))? {
+        logs.push_str(&std::fs::read_to_string(entry?.path())?);
+    }
+    ensure!(
+        !logs.contains(wamn_session::PAT_TOKEN_PREFIX),
+        "a PAT reached the install progress or Job logs"
+    );
+    ensure!(
+        !database_userinfo(&logs),
+        "a database URL with credentials reached the install progress or Job logs"
+    );
+    for (_, secret) in secrets {
+        for (key, encoded) in secret["data"].as_object().context("Secret has no data")? {
+            let encoded = encoded.as_str().context("Secret data is not text")?;
+            let decoded = STANDARD.decode(encoded).context("decode fixture Secret")?;
+            let value = std::str::from_utf8(&decoded).context("fixture Secret is not UTF-8")?;
+            let mut private = Vec::new();
+            if matches!(key.as_str(), "password" | "api-key" | "url") {
+                private.push(value.to_owned());
+                if key == "url" {
+                    private_url_password(value, &mut private);
+                }
+            } else if matches!(
+                key.as_str(),
+                "binding.json" | "target.json" | "authorization.conf" | "config.json"
+            ) {
+                let value: Value =
+                    serde_json::from_str(value.strip_prefix("authorization: ").unwrap_or(value))?;
+                private_values(&value, &mut private);
+            }
+            for value in private {
+                ensure!(
+                    !logs.contains(&value) && !logs.contains(&STANDARD.encode(&value)),
+                    "a credential reached the install progress or Job logs"
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -818,7 +1205,12 @@ fn docker(arguments: &[&str]) -> anyhow::Result<String> {
 fn require_steps(lines: &[String], result: &str) -> anyhow::Result<()> {
     let completed: Vec<_> = lines
         .iter()
-        .filter(|line| line.starts_with("4.") && !line.ends_with(": starting"))
+        .filter(|line| {
+            STEP_TITLES
+                .iter()
+                .any(|title| line.starts_with(&format!("{title}: ")))
+                && !line.ends_with(": starting")
+        })
         .map(String::as_str)
         .collect();
     let completed = completed

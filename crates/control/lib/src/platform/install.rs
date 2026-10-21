@@ -127,6 +127,8 @@ pub async fn apply(
             return Ok(());
         }
     }
+    progress("4.15 Qualification: skipped: qualify-release on the build machine")?;
+    progress("4.16 Record the releases: skipped: owner input")?;
     let started = Instant::now();
     progress("4.17 Apply with the release: starting")?;
     let changed = super::environments::apply(

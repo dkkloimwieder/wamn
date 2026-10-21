@@ -75,7 +75,7 @@ fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
                             format!("--org={}", environment.org),
                             format!("--project={}", environment.project),
                             format!("--env={}", environment.env),
-                            "--stream-replicas=1".into(), "--dup-window-secs=120".into()
+                            "--stream-replicas=1", "--dup-window-secs=120"
                         ],
                         "env": [
                             {"name": "WAMN_CDC_URL", "valueFrom": {"secretKeyRef": {

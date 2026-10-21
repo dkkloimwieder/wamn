@@ -811,6 +811,7 @@ shred -u $G/management-author-pat.json
 ### 4.15 Qualification
 
 Qualification stays on the build machine, outside `platform apply`.
+Step 4.15 reports a skip and never starts a qualification Job.
 
 `qualify-release` runs the release's cases in kind clusters on this machine against the release chart. If every case passes, it pushes the qualification beside the release ([delivery](delivery.md#release-qualification)). It pulls the chart images with `docker pull`, so it reads `DOCKER_CONFIG` of the platform file. Each run takes longer than one hour, so each run gets a new registry token:
 
