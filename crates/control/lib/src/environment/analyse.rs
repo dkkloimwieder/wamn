@@ -55,6 +55,8 @@ pub struct Instance {
     pub requirement_type: String,
     pub enabled: bool,
     pub definition: Option<Value>,
+    pub credential_handle: Option<String>,
+    pub org_connection_name: Option<String>,
 }
 
 /// What the project database holds.
@@ -110,6 +112,7 @@ pub struct FloorArtifact {
 #[derive(Debug, Clone)]
 pub struct Authorities {
     pub release_name: String,
+    pub connections: BTreeMap<String, crate::org_connection::ResolvedConnection>,
     pub policy: Policy,
     pub row: Option<EnvironmentRow>,
     pub project: Option<ProjectState>,
@@ -151,6 +154,17 @@ pub async fn analyse(
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
+    let org_connections = if document.connections.values().any(|connection| {
+        matches!(
+            connection,
+            super::document::ConnectionDefinition::Org { .. }
+        )
+    }) {
+        crate::org_connection::snapshot(&system, &document.org).await?
+    } else {
+        BTreeMap::new()
+    };
+    let connections = resolve_connections(document, &org_connections)?;
     let policy = read_policy(&system, &document.org, &document.policy).await?;
     let row = read_row(&system, document).await?;
     let project = match &row {
@@ -169,6 +183,7 @@ pub async fn analyse(
     };
     let authorities = Authorities {
         release_name,
+        connections,
         policy,
         row,
         project,
@@ -188,6 +203,49 @@ pub async fn analyse(
         actor,
         plan,
     })
+}
+
+/// Resolve every reference from one org snapshot, retaining the inputs through apply.
+pub fn resolve_connections(
+    document: &EnvironmentDocument,
+    org_connections: &BTreeMap<String, crate::org_connection::ResolvedConnection>,
+) -> anyhow::Result<BTreeMap<String, crate::org_connection::ResolvedConnection>> {
+    use super::document::ConnectionDefinition;
+    let mut resolved = BTreeMap::new();
+    let mut names = BTreeSet::new();
+    for (alias, declaration) in &document.connections {
+        let connection = match declaration {
+            ConnectionDefinition::Inline {
+                requirement_type,
+                definition,
+            } => crate::org_connection::ResolvedConnection {
+                requirement_type: *requirement_type,
+                definition: definition.clone(),
+                credential_handle: super::expand::credential_handle(
+                    *requirement_type,
+                    definition,
+                    alias,
+                ),
+                org_connection_name: None,
+            },
+            ConnectionDefinition::Org { org: name } => {
+                ensure!(
+                    names.insert(name),
+                    "org connection {name} is referenced by two aliases"
+                );
+                let connection = org_connections
+                    .get(name)
+                    .with_context(|| format!("org {} has no connection {name}", document.org))?;
+                ensure!(
+                    connection.requirement_type == wamn_catalog::RequirementType::Http,
+                    "org connections support only http"
+                );
+                connection.clone()
+            }
+        };
+        resolved.insert(alias.clone(), connection);
+    }
+    Ok(resolved)
 }
 
 /// The declared floor versions of installed packages that the environment has
@@ -378,7 +436,7 @@ pub(crate) async fn read_project(
     for row in transaction
         .query(
             "SELECT i.instance_id, i.requirement_type, i.lifecycle_status = 'enabled', \
-                    g.definition_json \
+                    g.definition_json, g.credential_set_handle, to_jsonb(i)->>'org_connection_name' \
                FROM catalog.connection_instances i \
                LEFT JOIN catalog.connection_generations g \
                  ON g.tenant_id = i.tenant_id AND g.environment = i.environment \
@@ -395,6 +453,8 @@ pub(crate) async fn read_project(
                 requirement_type: row.get(1),
                 enabled: row.get(2),
                 definition: row.get(3),
+                credential_handle: row.get(4),
+                org_connection_name: row.get(5),
             },
         );
     }
@@ -793,6 +853,27 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 }
             }
         }
+        for component in &release.manifest.components {
+            for requirement in &component.descriptor.connections {
+                if let Some(connection) = authorities.connections.get(&requirement.store_alias)
+                    && !matches!(
+                        (connection.requirement_type, requirement.requirement_type),
+                        (
+                            wamn_catalog::RequirementType::Http,
+                            wamn_catalog::ComponentConnectionType::Http
+                        ) | (
+                            wamn_catalog::RequirementType::Blobstore,
+                            wamn_catalog::ComponentConnectionType::Blobstore
+                        )
+                    )
+                {
+                    refusals.push(format!(
+                        "connection {} has a different type from its release requirement",
+                        requirement.store_alias
+                    ));
+                }
+            }
+        }
         for alias in &release.required_connections {
             if !document.connections.contains_key(alias) {
                 refusals.push(format!(
@@ -865,12 +946,16 @@ fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String
         .project
         .as_ref()
         .map(|project| &project.instances);
-    for (instance, connection) in &document.connections {
+    for (instance, connection) in &authorities.connections {
         match instances.and_then(|instances| instances.get(instance)) {
             None => plan.push(format!("add connection {instance}")),
             Some(existing)
                 if !existing.enabled
-                    || existing.definition.as_ref() != Some(&connection.definition) =>
+                    || existing.definition.as_ref() != Some(&connection.definition)
+                    || existing.requirement_type
+                        != connection.requirement_type.descriptor().requirement_type
+                    || existing.credential_handle != connection.credential_handle
+                    || existing.org_connection_name != connection.org_connection_name =>
             {
                 plan.push(format!("update connection {instance}"));
             }
@@ -1001,6 +1086,7 @@ mod tests {
     fn authorities(floors: &[(&str, &str)]) -> Authorities {
         Authorities {
             release_name: "r-prod-0".to_owned(),
+            connections: BTreeMap::new(),
             policy: Policy {
                 name: "prod".to_owned(),
                 readiness_budget_seconds: 600,
@@ -1048,6 +1134,62 @@ mod tests {
                 .map(|(package, version)| ((*package).to_owned(), (*version).to_owned()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn org_resolution_refuses_missing_duplicate_and_wrong_type_references() {
+        use super::super::document::ConnectionDefinition;
+        let mut document = document(DeclaredRelease::None, &[]);
+        document.connections.insert(
+            "erp".to_owned(),
+            ConnectionDefinition::Org {
+                org: "shared".to_owned(),
+            },
+        );
+        let mut snapshot = BTreeMap::new();
+        assert!(resolve_connections(&document, &snapshot).is_err());
+        snapshot.insert("shared".to_owned(), crate::org_connection::ResolvedConnection {
+            requirement_type: wamn_catalog::RequirementType::Http,
+            definition: json!({"primary-authority": "https://erp.example", "tls-verification": "verify-authority"}),
+            credential_handle: Some("org:acme:shared".to_owned()),
+            org_connection_name: Some("shared".to_owned()),
+        });
+        let resolved = resolve_connections(&document, &snapshot).unwrap();
+        let mut state = authorities(&[]);
+        state.connections = resolved.clone();
+        let connection = &resolved["erp"];
+        state.project.as_mut().unwrap().instances.insert(
+            "erp".to_owned(),
+            Instance {
+                requirement_type: "http".to_owned(),
+                enabled: true,
+                definition: Some(connection.definition.clone()),
+                credential_handle: Some("old-project-handle".to_owned()),
+                org_connection_name: None,
+            },
+        );
+        assert!(plan(&document, &state).contains(&"update connection erp".to_owned()));
+        let instance = state
+            .project
+            .as_mut()
+            .unwrap()
+            .instances
+            .get_mut("erp")
+            .unwrap();
+        instance.credential_handle = connection.credential_handle.clone();
+        instance.org_connection_name = connection.org_connection_name.clone();
+        assert!(!plan(&document, &state).contains(&"update connection erp".to_owned()));
+        document.connections.insert(
+            "other".to_owned(),
+            ConnectionDefinition::Org {
+                org: "shared".to_owned(),
+            },
+        );
+        assert!(resolve_connections(&document, &snapshot).is_err());
+        document.connections.remove("other");
+        snapshot.get_mut("shared").unwrap().requirement_type =
+            wamn_catalog::RequirementType::Blobstore;
+        assert!(resolve_connections(&document, &snapshot).is_err());
     }
 
     #[test]

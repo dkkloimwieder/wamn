@@ -115,19 +115,34 @@ pub async fn expand(
                 }),
         );
     }
-    for (instance_id, declared) in &document.connections {
+    materialize_connections(
+        &project_url,
+        &tenant,
+        &document.env,
+        &analysis.authorities.connections,
+        &targets,
+    )
+    .await
+}
+
+/// Materialize one apply snapshot through the existing instance and bind paths.
+pub async fn materialize_connections(
+    project_url: &str,
+    tenant: &str,
+    environment: &str,
+    connections: &std::collections::BTreeMap<String, crate::org_connection::ResolvedConnection>,
+    targets: &[(String, String, String)],
+) -> anyhow::Result<()> {
+    for (instance_id, declared) in connections {
         let instance = ConnectionInstance {
-            database_url: project_url.clone(),
-            tenant: tenant.clone(),
-            environment: document.env.clone(),
+            database_url: project_url.to_owned(),
+            tenant: tenant.to_owned(),
+            environment: environment.to_owned(),
             instance_id: instance_id.clone(),
             requirement_type: declared.requirement_type,
             definition: declared.definition.clone(),
-            credential_handle: credential_handle(
-                declared.requirement_type,
-                &declared.definition,
-                instance_id,
-            ),
+            credential_handle: declared.credential_handle.clone(),
+            org_connection_name: declared.org_connection_name.clone(),
         };
         let bound: Vec<_> = targets
             .iter()
@@ -148,6 +163,7 @@ pub async fn expand(
                 requirement_type: instance.requirement_type,
                 definition: instance.definition.clone(),
                 credential_handle: instance.credential_handle.clone(),
+                org_connection_name: instance.org_connection_name.clone(),
                 manifest_digest: manifest_digest.clone(),
                 component_digest: component_digest.clone(),
                 store_alias: alias.clone(),
@@ -159,7 +175,7 @@ pub async fn expand(
     let unbound: Vec<&str> = targets
         .iter()
         .map(|(_, _, alias)| alias.as_str())
-        .filter(|alias| !document.connections.contains_key(*alias))
+        .filter(|alias| !connections.contains_key(*alias))
         .collect();
     ensure!(
         unbound.is_empty(),
@@ -171,7 +187,7 @@ pub async fn expand(
 /// The credential handle of a declared instance. Credentials are provisioned,
 /// never declared: a definition that needs a handle names the host-held
 /// credential set by its instance id.
-fn credential_handle(
+pub(super) fn credential_handle(
     requirement_type: RequirementType,
     definition: &serde_json::Value,
     instance_id: &str,

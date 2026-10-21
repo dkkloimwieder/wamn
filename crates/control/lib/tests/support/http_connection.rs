@@ -531,7 +531,8 @@ pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, diges
                 .collect();
             instance["requirement_type"] == "http"
                 && instance["active_generation"] == 1
-                && generation["definition_json"] == document.connections[*handle].definition
+                && generation["definition_json"]
+                    == json!(document.connections[*handle])["definition"]
                 && generation["credential_set_handle"] == *handle
                 && bindings.len() == if *handle == "upstream" { 2 } else { 1 }
                 && bindings.iter().all(|binding| {

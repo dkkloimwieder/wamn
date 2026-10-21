@@ -10,8 +10,12 @@ import regex
 
 schema Connection:
     """A connection definition. Credentials are provisioned, never declared."""
-    type: "blobstore" | "http"
-    definition: {str:any}
+    type?: "blobstore" | "http"
+    definition?: {str:any}
+    org?: str
+
+    check:
+        (org != Undefined and type == Undefined and definition == Undefined) or (org == Undefined and type != Undefined and definition != Undefined), "use an org reference or an inline definition"
 
 schema Environment:
     org: str

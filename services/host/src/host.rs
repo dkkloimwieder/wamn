@@ -1157,7 +1157,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let credentials = Arc::new(match (&application, &args.credentials_file) {
-        (Some(_), Some(path)) => WamnCredentials::from_file(path)?,
+        (Some(_), Some(path)) => {
+            release_scope(&args)?;
+            WamnCredentials::from_file(path)?
+                .with_org(args.org.as_deref().context("host org is absent")?)
+        }
         _ => WamnCredentials::empty(),
     });
     let operations = match application {

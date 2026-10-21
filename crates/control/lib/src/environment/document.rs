@@ -7,7 +7,7 @@
 //! which this module reads into [`EnvironmentDocument`]. Its canonical form is
 //! RFC 8785 JSON, as `wamn.json` is.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
 
@@ -39,11 +39,16 @@ pub struct EnvironmentDocument {
 
 /// A connection definition. Credentials are provisioned, never declared.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectionDefinition {
-    #[serde(rename = "type")]
-    pub requirement_type: RequirementType,
-    pub definition: Value,
+#[serde(untagged, deny_unknown_fields)]
+pub enum ConnectionDefinition {
+    Inline {
+        #[serde(rename = "type")]
+        requirement_type: RequirementType,
+        definition: Value,
+    },
+    Org {
+        org: String,
+    },
 }
 
 /// The `release` field: a full digest or `none`.
@@ -138,16 +143,29 @@ impl EnvironmentDocument {
             self.route_host
         );
         ensure!(!self.policy.is_empty(), "policy is empty");
+        let mut org_names = BTreeSet::new();
         for (instance, connection) in &self.connections {
             ensure!(
                 !instance.is_empty(),
                 "a connection has an empty instance id"
             );
-            if let Err(error) = connection
-                .requirement_type
-                .check_definition(&connection.definition)
-            {
-                bail!("connection {instance}: {error}");
+            match connection {
+                ConnectionDefinition::Inline {
+                    requirement_type,
+                    definition,
+                } => {
+                    if let Err(error) = requirement_type.check_definition(definition) {
+                        bail!("connection {instance}: {error}");
+                    }
+                }
+                ConnectionDefinition::Org { org } => {
+                    wamn_catalog::org_credential_handle(&self.org, org)
+                        .map_err(anyhow::Error::msg)?;
+                    ensure!(
+                        org_names.insert(org),
+                        "org connection {org} is referenced by two aliases"
+                    );
+                }
             }
         }
         for (package, version) in &self.floors {
@@ -192,13 +210,26 @@ impl EnvironmentDocument {
         }
         lines.push("    connections = {".to_owned());
         for (instance, connection) in &self.connections {
-            let kind = serde_json::to_value(connection.requirement_type)
-                .expect("a requirement type encodes");
-            lines.push(format!(
-                "        {} = {{type = {kind}, definition = {}}}",
-                quote(instance),
-                connection.definition
-            ));
+            match connection {
+                ConnectionDefinition::Inline {
+                    requirement_type,
+                    definition,
+                } => {
+                    let kind =
+                        serde_json::to_value(requirement_type).expect("a requirement type encodes");
+                    lines.push(format!(
+                        "        {} = {{type = {kind}, definition = {definition}}}",
+                        quote(instance)
+                    ));
+                }
+                ConnectionDefinition::Org { org } => {
+                    lines.push(format!(
+                        "        {} = {{org = {}}}",
+                        quote(instance),
+                        quote(org)
+                    ));
+                }
+            }
         }
         lines.push("    }".to_owned());
         lines.push("    floors = {".to_owned());
@@ -246,16 +277,64 @@ mod tests {
     }
 
     #[test]
+    fn org_references_round_trip_and_refuse_mixed_or_duplicate_forms() {
+        let mut value = http_document();
+        value["connections"]["erp"] = json!({"org": "shared_erp"});
+        let parsed = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            parsed.connections["erp"],
+            ConnectionDefinition::Org {
+                org: "shared_erp".to_owned()
+            }
+        );
+        let directory =
+            std::env::temp_dir().join(format!("wamn-org-connection-kcl-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let file = directory.join("environment.k");
+        let kcl = parsed.to_kcl();
+        std::fs::write(&file, &kcl).unwrap();
+        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), parsed);
+        std::fs::write(
+            &file,
+            kcl.replace(
+                "org = \"shared_erp\"",
+                "org = \"shared_erp\", type = \"http\", definition = {}",
+            ),
+        )
+        .unwrap();
+        assert!(EnvironmentDocument::compile(&file).is_err());
+        std::fs::remove_dir_all(&directory).unwrap();
+        for extra in [
+            json!({"type": "http"}),
+            json!({"definition": {}}),
+            json!({"secret": "forbidden"}),
+        ] {
+            let mut mixed = value.clone();
+            mixed["connections"]["erp"]
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(EnvironmentDocument::from_json(mixed.to_string().as_bytes()).is_err());
+        }
+        value["connections"]["second"] = json!({"org": "shared_erp"});
+        assert!(
+            EnvironmentDocument::from_json(value.to_string().as_bytes())
+                .unwrap_err()
+                .to_string()
+                .contains("two aliases")
+        );
+    }
+
+    #[test]
     fn reads_an_http_connection_and_refuses_an_unknown_type() {
         let mut value = http_document();
         let parsed = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap();
         assert_eq!(
-            parsed.connections["erp"].requirement_type,
-            RequirementType::Http
-        );
-        assert_eq!(
-            parsed.connections["erp"].definition,
-            value["connections"]["erp"]["definition"]
+            parsed.connections["erp"],
+            ConnectionDefinition::Inline {
+                requirement_type: RequirementType::Http,
+                definition: value["connections"]["erp"]["definition"].clone(),
+            }
         );
         value["connections"]["erp"]["type"] = json!("ftp");
         let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
@@ -263,7 +342,7 @@ mod tests {
             error
                 .root_cause()
                 .to_string()
-                .contains("unknown variant `ftp`, expected `blobstore` or `http`"),
+                .contains("did not match any variant"),
             "{error:#}"
         );
     }

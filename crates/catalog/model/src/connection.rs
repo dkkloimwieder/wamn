@@ -222,6 +222,9 @@ impl RequirementType {
         definition: &serde_json::Value,
         credential_handle: Option<&str>,
     ) -> Result<(), String> {
+        if credential_handle.is_some_and(|handle| handle.starts_with("org:")) {
+            return Err("the org: credential prefix is reserved for org connections".to_owned());
+        }
         let gcs = definition
             .get("provider")
             .and_then(serde_json::Value::as_str)
@@ -237,6 +240,42 @@ impl RequirementType {
             _ => Ok(()),
         }
     }
+}
+
+/// Derive the credential handle of an org connection.
+pub fn org_credential_handle(org: &str, name: &str) -> Result<String, String> {
+    let handle = format!("org:{org}:{name}");
+    parse_org_credential_handle(&handle)?;
+    Ok(handle)
+}
+
+/// Parse an org handle without accepting ambiguous or empty coordinates.
+pub fn parse_org_credential_handle(handle: &str) -> Result<(&str, &str), String> {
+    let invalid = || "invalid org credential handle; expected org:<org>:<name>".to_owned();
+    let (org, name) = handle
+        .strip_prefix("org:")
+        .and_then(|tail| tail.split_once(':'))
+        .ok_or_else(invalid)?;
+    if org.is_empty()
+        || org.len() > 40
+        || !org.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+        || org == "wamn"
+        || org.starts_with("wamn-")
+        || name.is_empty()
+        || name.len() > 63
+        || !name.as_bytes()[0].is_ascii_lowercase()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+    {
+        return Err(invalid());
+    }
+    Ok((org, name))
 }
 
 /// Versioned portable semantics for one connection type.
@@ -510,6 +549,38 @@ mod tests {
             "\"prefix\"",
         ] {
             assert!(json.contains(spelling), "missing {spelling} in {json}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod org_handle_tests {
+    use super::*;
+
+    #[test]
+    fn org_handles_round_trip_and_reserve_the_prefix() {
+        let handle = org_credential_handle("acme", "erp_main").unwrap();
+        assert_eq!(handle, "org:acme:erp_main");
+        assert_eq!(
+            parse_org_credential_handle(&handle).unwrap(),
+            ("acme", "erp_main")
+        );
+        assert!(
+            RequirementType::Http
+                .check_credential_handle(&serde_json::json!({}), Some(&handle))
+                .is_err()
+        );
+        for bad in [
+            "erp",
+            "org:",
+            "org::erp",
+            "org:acme:",
+            "org:acme:erp:other",
+            "org:ACME:erp",
+            "org:acme:1erp",
+            "org:wamn:erp",
+        ] {
+            assert!(parse_org_credential_handle(bad).is_err(), "{bad}");
         }
     }
 }

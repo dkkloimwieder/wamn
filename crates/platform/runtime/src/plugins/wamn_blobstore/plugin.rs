@@ -332,7 +332,7 @@ impl WamnBlobstore {
             } => {
                 let secret = self
                     .vault
-                    .lookup(&self.project, credential_handle)
+                    .lookup_connection(&self.project, credential_handle)
                     .ok_or_else(|| {
                         tracing::warn!(
                             store_alias,

@@ -54,6 +54,27 @@ Reference names remain valid. This pattern check cannot identify every arbitrary
 The platform supplies the complete connection semantics.
 Publication and activation refuse absent or incompatible bindings before executing effects.
 
+An org can declare an HTTP connection in `registry.org_connections` of the control database.
+The org and name identify its type and non-secret definition.
+An environment references it with `connections.<alias> = { org = "<name>" }`.
+An environment document refuses two aliases for the same org connection.
+
+Each `env apply` reads one snapshot of the org definitions.
+It binds that snapshot through the existing connection path in each project catalog.
+The instance records `org_connection_name`, so `env show` and rollback preserve the reference.
+Rollback reconciles the current org definition.
+A changed definition appends one generation in each environment at its next apply.
+An unchanged apply writes no generation, even if the definition changed and returned to the selected value between applies.
+
+The host derives the credential handle as `org:<org>:<name>`.
+It resolves that handle only when the org matches its trusted startup org.
+The version 2 credentials file holds separate `projects` and `orgs` maps.
+The legacy project map still works.
+Org lookup never falls back to project credentials.
+
+Route authentication keeps its project lookup.
+The file remains a process-lifetime snapshot, so secret rotation requires a host restart.
+
 Guest SQL, queue maintenance, HTTP admission, and event materialization use distinct authority classes.
 Private event binding files remain outside guest configuration, and workload configuration cannot replace them.
 Credential generations remain separate from invocation identity.

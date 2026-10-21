@@ -39,7 +39,7 @@ use wamn_runtime::connection_generation::definition_hash;
 use wamn_schema_control::connections::{
     activate_connection_generation_sql, insert_component_connection_binding_sql,
     insert_connection_generation_sql, insert_connection_instance_sql,
-    lock_connection_selection_sql, select_connection_instance_sql,
+    lock_connection_selection_sql, select_connection_instance_sql, set_org_connection_source_sql,
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
@@ -85,6 +85,8 @@ pub struct BindConnectionRequest {
     /// The host-held credential's handle. Never the credential. A `gcs`
     /// definition takes none, and every other definition needs one.
     pub credential_handle: Option<String>,
+    /// The org declaration that supplies this instance, when present.
+    pub org_connection_name: Option<String>,
 
     /// The release whose component is being bound, as its manifest digest.
     pub manifest_digest: String,
@@ -108,6 +110,8 @@ pub struct ConnectionInstance {
     pub requirement_type: RequirementType,
     pub definition: Value,
     pub credential_handle: Option<String>,
+    /// The org declaration that supplies this instance, when present.
+    pub org_connection_name: Option<String>,
 }
 
 impl From<&BindConnectionRequest> for ConnectionInstance {
@@ -120,6 +124,7 @@ impl From<&BindConnectionRequest> for ConnectionInstance {
             requirement_type: request.requirement_type,
             definition: request.definition.clone(),
             credential_handle: request.credential_handle.clone(),
+            org_connection_name: request.org_connection_name.clone(),
         }
     }
 }
@@ -131,10 +136,7 @@ impl From<&BindConnectionRequest> for ConnectionInstance {
 pub async fn ensure_instance(instance: &ConnectionInstance) -> anyhow::Result<(Option<i64>, i64)> {
     validate_definition(instance.requirement_type, &instance.definition)?;
     let descriptor = instance.requirement_type.descriptor();
-    instance
-        .requirement_type
-        .check_credential_handle(&instance.definition, instance.credential_handle.as_deref())
-        .map_err(anyhow::Error::msg)?;
+    validate_handle(instance)?;
     let (mut client, connection) = tokio_postgres::connect(&instance.database_url, NoTls)
         .await
         .context("connect to the project-environment database")?;
@@ -199,9 +201,7 @@ pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnectio
     let definition = &args.definition;
     validate_definition(args.requirement_type, definition)?;
     let descriptor = args.requirement_type.descriptor();
-    args.requirement_type
-        .check_credential_handle(definition, args.credential_handle.as_deref())
-        .map_err(anyhow::Error::msg)?;
+    validate_handle(&ConnectionInstance::from(args))?;
 
     let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
@@ -351,6 +351,54 @@ async fn bind_generation(
     descriptor: &ConnectionTypeDescriptor,
     definition: &Value,
 ) -> anyhow::Result<(Option<i64>, i64)> {
+    let generations = bind_generation_inputs(transaction, args, descriptor, definition).await?;
+    transaction
+        .execute(
+            set_org_connection_source_sql(),
+            &[
+                &args.tenant,
+                &args.environment,
+                &args.instance_id,
+                &args.org_connection_name,
+            ],
+        )
+        .await
+        .context("record the org connection source")?;
+    Ok(generations)
+}
+
+fn validate_handle(instance: &ConnectionInstance) -> anyhow::Result<()> {
+    match &instance.org_connection_name {
+        None => instance
+            .requirement_type
+            .check_credential_handle(&instance.definition, instance.credential_handle.as_deref())
+            .map_err(anyhow::Error::msg),
+        Some(name) => {
+            ensure!(
+                instance.requirement_type == RequirementType::Http,
+                "org connections support only http"
+            );
+            let handle = instance
+                .credential_handle
+                .as_deref()
+                .context("org connection requires its derived credential handle")?;
+            let (_, parsed_name) =
+                wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
+            ensure!(
+                parsed_name == name,
+                "org connection source and credential handle differ"
+            );
+            Ok(())
+        }
+    }
+}
+
+async fn bind_generation_inputs(
+    transaction: &tokio_postgres::Transaction<'_>,
+    args: &ConnectionInstance,
+    descriptor: &ConnectionTypeDescriptor,
+    definition: &Value,
+) -> anyhow::Result<(Option<i64>, i64)> {
     let coordinate: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
         [&args.tenant, &args.environment, &args.instance_id];
     let mut current = transaction
@@ -478,6 +526,17 @@ mod tests {
     }
 
     #[test]
+    fn local_instances_refuse_the_reserved_org_handle_before_reading_a_definition() {
+        let error = read_local_instance(&LocalInstanceInput {
+            requirement_type: RequirementType::Http,
+            definition: PathBuf::from("/unused/local-connection.json"),
+            credential_handle: "org:acme:erp".to_owned(),
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("prefix is reserved"));
+    }
+
+    #[test]
     fn a_blobstore_definition_needs_exactly_the_coordinates_the_plugin_reads() {
         blobstore(&serde_json::json!({
             "endpoint": "http://10.0.0.7:9000", "container": "labels", "prefix": "wms/"
@@ -579,6 +638,10 @@ pub fn read_local_instance(input: &LocalInstanceInput) -> anyhow::Result<Prepare
     ensure!(
         !input.credential_handle.is_empty(),
         "local credential handle must not be empty"
+    );
+    ensure!(
+        !input.credential_handle.starts_with("org:"),
+        "the org: credential prefix is reserved for org connections"
     );
     let definition: Value = serde_json::from_slice(
         &std::fs::read(&input.definition).context("read local instance definition")?,

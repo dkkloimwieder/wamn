@@ -67,6 +67,54 @@ The [WMS host values](../../deploy/platform/values-host-wms-pat.yaml) show the v
 `env apply` does not mount connection credentials.
 The operator supplies these host values through `WAMN_RELEASE_HOST_GROUP`.
 
+For a shared org connection, set `WAMN_CONTROL_DATABASE_URL` to the control database URL.
+Apply system migration `0027_org_connections.sql` with `upgrade-schema` before declaring the connection.
+Write the non-secret definition to `erp-definition.json`:
+
+```json
+{"primary-authority":"https://api.example.com/","tls-verification":"verify-authority"}
+```
+
+Declare the connection:
+
+```bash
+wamn-ctl connection declare --org acme --name erp \
+  --requirement-type http --definition erp-definition.json
+```
+
+The command accepts only HTTP connections and never accepts credential bytes.
+A repeated declaration updates only a changed definition.
+The connection type cannot change under an existing name.
+
+Use the version 2 credentials file to share one org secret:
+
+```json
+{
+  "version": 2,
+  "projects": {},
+  "orgs": {
+    "acme": {
+      "erp": "{\"headers\":{\"authorization\":\"Bearer <token>\"}}"
+    }
+  }
+}
+```
+
+Mount this file into each host that uses the connection.
+Keep project credentials under `projects` when both forms are needed.
+The old project-keyed file remains valid.
+Each host resolves `org:acme:erp` only when its startup org is `acme`.
+An absent org entry never uses a project entry as a fallback.
+Restart each host after changing secret bytes.
+
+Use `connections = { upstream = { org = "erp" } }` in each environment document.
+Each `env apply` uses one snapshot of the org definition.
+It applies project migration `0023_org_connection_source.sql` before connection writes, including when `release = "none"`.
+A changed definition creates one generation at the next apply of each environment.
+A repeated apply with the selected definition creates no generation.
+The command tests neither endpoint connectivity nor secret validity.
+`env show` preserves the org reference, and rollback uses the current org definition.
+
 Bind the release's `upstream` HTTP requirement with an `environment.k` document:
 
 ```python

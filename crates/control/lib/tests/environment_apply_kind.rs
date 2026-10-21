@@ -1167,18 +1167,21 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let mut connected = dev.clone();
     connected.connections.insert(
         "labels".to_owned(),
-        ConnectionDefinition {
+        ConnectionDefinition::Inline {
             requirement_type: wamn_catalog::RequirementType::Blobstore,
             definition: json!({"endpoint": "http://store.invalid", "container": "labels", "prefix": "a/"}),
         },
     );
     apply(&connected, "dev-connection").await?;
     let generation_one = generation(system.as_ref()).await?;
-    connected
+    let ConnectionDefinition::Inline { definition, .. } = connected
         .connections
         .get_mut("labels")
         .context("the labels connection")?
-        .definition =
+    else {
+        anyhow::bail!("the labels connection must be inline")
+    };
+    *definition =
         json!({"endpoint": "http://store.invalid", "container": "labels", "prefix": "b/"});
     apply(&connected, "dev-connection-changed").await?;
     let generation_two = generation(system.as_ref()).await?;
@@ -1225,7 +1228,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     ] {
         http.connections.insert(
             handle.to_owned(),
-            ConnectionDefinition {
+            ConnectionDefinition::Inline {
                 requirement_type: wamn_catalog::RequirementType::Http,
                 definition: json!({
                     "primary-authority": format!("{}/{}", http_connection::ORIGIN,
@@ -1824,7 +1827,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     qa_none.release = DeclaredRelease::None;
     qa_none.connections.insert(
         "labels".to_owned(),
-        ConnectionDefinition {
+        ConnectionDefinition::Inline {
             requirement_type: wamn_catalog::RequirementType::Blobstore,
             definition: json!({"endpoint": "http://store.invalid", "container": "labels", "prefix": "qa/"}),
         },

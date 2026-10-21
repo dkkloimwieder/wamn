@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use clap::{Args, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use wamn_catalog::RequirementType;
 use wamn_control::bind_connection::{self, BindConnectionRequest};
 
@@ -85,6 +85,7 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
         )?)
         .with_context(|| format!("{} is not JSON", args.definition.display()))?,
         credential_handle: args.credential_handle,
+        org_connection_name: None,
         manifest_digest: args.release_digest,
         component_digest: args.component_digest,
         store_alias: args.store_alias,
@@ -104,6 +105,61 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
         bound.validation_hash
     );
     Ok(())
+}
+
+/// Org connection administration.
+#[derive(Debug, Args)]
+pub struct ConnectionArgs {
+    #[command(subcommand)]
+    pub command: ConnectionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConnectionCommand {
+    /// Declare a non-secret HTTP connection shared by an org.
+    Declare(DeclareConnectionArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DeclareConnectionArgs {
+    #[arg(long, env = "WAMN_CONTROL_DATABASE_URL")]
+    pub system_database_url: String,
+    #[arg(long)]
+    pub org: String,
+    #[arg(long)]
+    pub name: String,
+    #[arg(long, value_enum)]
+    pub requirement_type: RequirementTypeArg,
+    #[arg(long, value_name = "PATH")]
+    pub definition: PathBuf,
+}
+
+pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
+    match args.command {
+        ConnectionCommand::Declare(args) => {
+            let definition =
+                serde_json::from_slice(&std::fs::read(&args.definition).with_context(|| {
+                    format!("read connection definition {}", args.definition.display())
+                })?)?;
+            let changed = wamn_control::org_connection::declare(
+                &wamn_control::org_connection::DeclareConnectionRequest {
+                    system_database_url: args.system_database_url,
+                    org: args.org.clone(),
+                    name: args.name.clone(),
+                    requirement_type: args.requirement_type.requirement_type(),
+                    definition,
+                },
+            )
+            .await?;
+            println!(
+                "org connection {}:{} {}",
+                args.org,
+                args.name,
+                if changed { "declared" } else { "unchanged" }
+            );
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

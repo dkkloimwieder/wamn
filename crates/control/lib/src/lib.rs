@@ -28,6 +28,7 @@ pub mod ident;
 pub mod identity_issuer;
 pub mod invite;
 pub mod kubectl;
+pub mod org_connection;
 pub mod owned_command;
 pub mod package_artifact;
 mod package_upgrade;

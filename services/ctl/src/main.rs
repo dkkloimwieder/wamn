@@ -90,6 +90,8 @@ enum Command {
     /// Bind one admitted component's declared connection alias to an
     /// environment-owned instance carrying a host-held credential handle.
     BindConnection(component_verbs::BindConnectionArgs),
+    /// Manage org connection declarations.
+    Connection(component_verbs::ConnectionArgs),
     /// Publish one immutable release from exact package-owned facts and push
     /// its manifest to the release repository.
     ///
@@ -159,6 +161,7 @@ async fn main() -> anyhow::Result<()> {
         Command::PushPackage(args) => package_verbs::push(args).await,
         Command::QualifyUpgrade(args) => package_verbs::qualify_upgrade(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,
+        Command::Connection(args) => component_verbs::connection(args).await,
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await
         }
@@ -183,6 +186,38 @@ mod tests {
     use clap::Parser as _;
 
     use super::{Cli, Command};
+
+    #[test]
+    fn connection_declare_parses_without_a_secret_argument() {
+        let args = [
+            "wamn-ctl",
+            "connection",
+            "declare",
+            "--org",
+            "acme",
+            "--name",
+            "erp",
+            "--requirement-type",
+            "http",
+            "--definition",
+            "/tmp/erp.json",
+            "--system-database-url",
+            "postgres://localhost/control",
+        ];
+        let parsed = Cli::try_parse_from(args).unwrap();
+        let Command::Connection(connection) = parsed.command else {
+            panic!("connection verb")
+        };
+        let wamn_ctl::component_verbs::ConnectionCommand::Declare(declare) = connection.command;
+        assert_eq!(declare.org, "acme");
+        assert_eq!(declare.name, "erp");
+        assert_eq!(
+            declare.requirement_type,
+            wamn_ctl::component_verbs::RequirementTypeArg::Http
+        );
+        assert_eq!(declare.definition, std::path::Path::new("/tmp/erp.json"));
+        assert!(Cli::try_parse_from(args.into_iter().chain(["--secret", "forbidden"])).is_err());
+    }
 
     #[test]
     fn project_environment_membership_verbs_parse_exact_scope() {

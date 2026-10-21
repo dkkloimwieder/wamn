@@ -42,7 +42,7 @@ pub use component_facts::{
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,
     ConnectionField, ConnectionFieldOwner, ConnectionFieldOwnership, ConnectionTypeDescriptor,
-    CredentialInjection, RequirementType,
+    CredentialInjection, RequirementType, org_credential_handle, parse_org_credential_handle,
 };
 pub use host_route::{
     HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteSet, host_route_package,

@@ -276,3 +276,17 @@ pub fn select_event_reader_sql() -> &'static str {
      FROM registry.event_readers \
      WHERE org = $1 AND project = $2 AND env = $3"
 }
+
+/// Declare an org connection. Equal definitions and different types write nothing.
+pub fn upsert_org_connection_sql() -> &'static str {
+    "INSERT INTO registry.org_connections (org, name, type, definition) \
+     VALUES ($1, $2, $3, $4::text::jsonb) \
+     ON CONFLICT (org, name) DO UPDATE SET definition = EXCLUDED.definition \
+     WHERE org_connections.type = EXCLUDED.type \
+       AND org_connections.definition IS DISTINCT FROM EXCLUDED.definition"
+}
+
+/// Read an org's connection definitions in one statement.
+pub fn select_org_connections_sql() -> &'static str {
+    "SELECT name, type, definition::text FROM registry.org_connections WHERE org = $1"
+}

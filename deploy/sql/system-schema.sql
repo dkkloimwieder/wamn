@@ -152,6 +152,14 @@ CREATE TABLE registry.orgs (
                    AND char_length(pool_cluster) <= 63))
 );
 
+CREATE TABLE registry.org_connections (
+    org text NOT NULL REFERENCES registry.orgs (id) ON DELETE CASCADE,
+    name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$'),
+    type text NOT NULL CHECK (type = 'http'),
+    definition jsonb NOT NULL CHECK (jsonb_typeof(definition) = 'object'),
+    PRIMARY KEY (org, name)
+);
+
 -- ---------------------------------------------------------------------------
 -- Env policies (D18, wamn-8df.3; ORG-SCOPED by wamn-8df.4) — each org's own
 -- environment configurations (crates/control/registry EnvPolicy, keyed per org as

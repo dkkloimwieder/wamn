@@ -3,11 +3,10 @@
 //! Portable effects resolve a credential handle selected by the admitted
 //! connection generation. Secret material never enters the guest or run facts.
 //!
-//! - Resolution is project-scoped by the host-owned project identity passed to
-//!   the native effect adapter.
-//! - The v1 SOURCE is a mounted static file (`WAMN_CREDENTIALS_FILE`, a JSON
-//!   object `{project: {name: secret}}` mounted from a K8s Secret). A live
-//!   per-Secret K8s read is the follow-up sharing wamn-5x0.1's client.
+//! - Ordinary handles use the host-owned project identity. Org handles use
+//!   the trusted host org and never fall back to project credentials.
+//! - `WAMN_CREDENTIALS_FILE` is a mounted static file. Version 2 carries
+//!   separate `projects` and `orgs` maps. Legacy project maps still parse.
 //! - No configured source is `unavailable`; a configured source missing the
 //!   selected handle is `not-found`.
 
@@ -22,7 +21,7 @@ enum CredentialError {
     Unavailable,
 }
 
-/// In-memory project-to-credential map loaded from the fixed Secret mount.
+/// Project and org credentials loaded from the fixed Secret mount.
 pub struct WamnCredentials {
     /// Whether ANY backing source was configured. Distinguishes `unavailable`
     /// (no source — retryable) from `not-found` (source present, name absent —
@@ -30,6 +29,8 @@ pub struct WamnCredentials {
     has_source: bool,
     /// project → { credential name → secret material }.
     projects: HashMap<String, HashMap<String, String>>,
+    orgs: HashMap<String, HashMap<String, String>>,
+    org: Option<String>,
 }
 
 impl std::fmt::Debug for WamnCredentials {
@@ -51,6 +52,8 @@ impl WamnCredentials {
         Self {
             has_source: false,
             projects: HashMap::new(),
+            orgs: HashMap::new(),
+            org: None,
         }
     }
 
@@ -59,6 +62,8 @@ impl WamnCredentials {
         Self {
             has_source: true,
             projects,
+            orgs: HashMap::new(),
+            org: None,
         }
     }
 
@@ -88,6 +93,55 @@ impl WamnCredentials {
             projects.insert(project.clone(), map);
         }
         Ok(projects)
+    }
+
+    /// Parse either the legacy project map or the version 2 credentials envelope.
+    pub fn from_json(text: &str) -> anyhow::Result<Self> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Envelope {
+            version: u32,
+            projects: HashMap<String, HashMap<String, String>>,
+            orgs: HashMap<String, HashMap<String, String>>,
+        }
+        let root: serde_json::Value =
+            serde_json::from_str(text).context("credentials file is not valid JSON")?;
+        if !root
+            .get("version")
+            .is_some_and(serde_json::Value::is_number)
+        {
+            return Ok(Self::from_projects(Self::projects_from_json(text)?));
+        }
+        let envelope: Envelope =
+            serde_json::from_value(root).context("invalid version 2 credentials file")?;
+        anyhow::ensure!(
+            envelope.version == 2,
+            "unsupported credentials file version"
+        );
+        Ok(Self {
+            has_source: true,
+            projects: envelope.projects,
+            orgs: envelope.orgs,
+            org: None,
+        })
+    }
+
+    /// Bind the trusted host org before sharing this process-lifetime snapshot.
+    pub fn with_org(mut self, org: &str) -> Self {
+        self.org = Some(org.to_owned());
+        self
+    }
+
+    /// Resolve an org handle only within the host org, without project fallback.
+    pub fn lookup_connection(&self, project: &str, handle: &str) -> Option<String> {
+        if handle.starts_with("org:") {
+            let (org, name) = wamn_catalog::parse_org_credential_handle(handle).ok()?;
+            if self.org.as_deref() != Some(org) {
+                return None;
+            }
+            return self.orgs.get(org)?.get(name).cloned();
+        }
+        self.lookup(project, handle)
     }
 
     /// A vault from the file at `path`. A MISSING file is a warn + empty
@@ -125,7 +179,7 @@ impl WamnCredentials {
         }
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("read credentials file {}", path.display()))?;
-        Ok(Self::from_projects(Self::projects_from_json(&text)?))
+        Self::from_json(&text)
     }
 
     /// Resolve a `(project, name)` secret for the native effect adapter.
@@ -233,5 +287,56 @@ mod tests {
         let resolved = vault.lookup("proj-a", "token");
         std::fs::remove_file(&path).expect("remove the test mount");
         assert_eq!(resolved.as_deref(), Some("generation-1"));
+    }
+}
+
+#[cfg(test)]
+mod org_tests {
+    use super::*;
+
+    #[test]
+    fn version_two_scopes_connections_and_keeps_route_lookup_project_only() {
+        let text = r#"{"version":2,"projects":{"p":{"token":"project","org:other:erp":"fallback","org:acme:missing":"fallback"}},"orgs":{"acme":{"erp":"shared"},"other":{"erp":"other-secret"}}}"#;
+        let unscoped = WamnCredentials::from_json(text).unwrap();
+        assert!(unscoped.lookup_connection("p", "org:acme:erp").is_none());
+        let vault = unscoped.with_org("acme");
+        assert_eq!(
+            vault.lookup_connection("p", "org:acme:erp").as_deref(),
+            Some("shared")
+        );
+        assert_eq!(
+            vault
+                .lookup_connection("another-project", "org:acme:erp")
+                .as_deref(),
+            Some("shared")
+        );
+        assert_eq!(
+            vault.lookup_connection("p", "token").as_deref(),
+            Some("project")
+        );
+        assert!(vault.lookup_connection("p", "org:other:erp").is_none());
+        assert!(vault.lookup_connection("p", "org:acme:missing").is_none());
+        assert!(vault.lookup_connection("p", "org:acme:erp:extra").is_none());
+        assert!(vault.lookup("p", "org:acme:erp").is_none());
+    }
+
+    #[test]
+    fn invalid_envelopes_and_missing_files_have_distinct_results() {
+        for text in [
+            r#"{"version":3,"projects":{},"orgs":{}}"#,
+            r#"{"version":2,"projects":{},"orgs":{"acme":{"erp":7}}}"#,
+            r#"{"version":2,"projects":{},"orgs":{},"extra":true}"#,
+        ] {
+            assert!(WamnCredentials::from_json(text).is_err());
+        }
+        let path =
+            std::env::temp_dir().join(format!("absent-org-credentials-{}", std::process::id()));
+        assert!(!path.exists());
+        assert!(
+            WamnCredentials::from_file(&path)
+                .unwrap()
+                .lookup_connection("p", "org:acme:erp")
+                .is_none()
+        );
     }
 }

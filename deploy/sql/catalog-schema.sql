@@ -188,6 +188,7 @@ CREATE TABLE catalog.connection_instances (
     contract          text        NOT NULL CHECK (contract <> ''),
     lifecycle_status  text        NOT NULL DEFAULT 'enabled'
         CHECK (lifecycle_status IN ('enabled', 'disabled')),
+    org_connection_name text,
     active_generation bigint,
     revision          bigint      NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at        timestamptz NOT NULL DEFAULT now(),

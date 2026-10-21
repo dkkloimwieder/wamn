@@ -128,3 +128,11 @@ pub(crate) fn prefixed_sha256(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// Set source metadata without changing the immutable generation.
+pub fn set_org_connection_source_sql() -> &'static str {
+    "UPDATE catalog.connection_instances \
+        SET org_connection_name = $4, revision = revision + 1 \
+      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+        AND org_connection_name IS DISTINCT FROM $4"
+}

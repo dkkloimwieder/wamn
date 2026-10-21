@@ -163,7 +163,7 @@ pub async fn stage(
 
 /// The `upgrade-schema` run of the stage on the project database at
 /// `project_url`: applied, never a first run with a baseline.
-fn schema_request(
+pub(super) fn schema_request(
     system_database_url: &str,
     project_url: &str,
 ) -> crate::upgrade_schema::UpgradeSchemaRequest {

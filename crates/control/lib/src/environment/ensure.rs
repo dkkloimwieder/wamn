@@ -146,6 +146,13 @@ pub async fn ensure(
     .await
     .context("reconcile the run plane")?;
 
+    crate::upgrade_schema::upgrade_schema(&super::stage::schema_request(
+        &platform.system_database_url,
+        &project_url,
+    ))
+    .await
+    .context("apply the pending project migrations before connections")?;
+
     // Generation a of each credential, only where its Secret is absent.
     for (family, project_database) in CREDENTIAL_FAMILIES {
         let name = wamn_control_provision::workload_secret_name(

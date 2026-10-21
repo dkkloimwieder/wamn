@@ -216,6 +216,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0026_remove_connection_requirement_copy.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0027_org_connections.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0027_org_connections.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -334,6 +338,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0022_record_history_relation_functions.sql",
         sql: include_str!(
             "../../../../deploy/sql/migrations/project/0022_record_history_relation_functions.sql"
+        ),
+    },
+    Migration {
+        relative_path: "migrations/project/0023_org_connection_source.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0023_org_connection_source.sql"
         ),
     },
 ];

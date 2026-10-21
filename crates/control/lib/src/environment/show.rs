@@ -56,24 +56,54 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
             if !existing.enabled {
                 continue;
             }
-            let requirement_type: RequirementType = serde_json::from_value(
-                serde_json::Value::String(existing.requirement_type.clone()),
-            )
-            .with_context(|| {
-                format!(
-                    "connection {instance} has type {}",
-                    existing.requirement_type
-                )
-            })?;
-            document.connections.insert(
-                instance,
-                ConnectionDefinition {
-                    requirement_type,
-                    definition: existing.definition.unwrap_or_default(),
-                },
-            );
+            document
+                .connections
+                .insert(instance, connection_definition(&existing)?);
         }
         document.floors = project.floors;
     }
     Ok(document)
+}
+
+/// Reconstruct the source form used by show and rollback.
+fn connection_definition(
+    existing: &super::analyse::Instance,
+) -> anyhow::Result<ConnectionDefinition> {
+    if let Some(org) = &existing.org_connection_name {
+        return Ok(ConnectionDefinition::Org { org: org.clone() });
+    }
+    let requirement_type: RequirementType =
+        serde_json::from_value(serde_json::Value::String(existing.requirement_type.clone()))
+            .context("read the connection type")?;
+    Ok(ConnectionDefinition::Inline {
+        requirement_type,
+        definition: existing.definition.clone().unwrap_or_default(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_metadata_preserves_org_references() {
+        let mut instance = super::super::analyse::Instance {
+            requirement_type: "http".to_owned(),
+            enabled: true,
+            definition: Some(
+                serde_json::json!({"primary-authority": "https://erp.example", "tls-verification": "verify-authority"}),
+            ),
+            credential_handle: Some("org:acme:erp".to_owned()),
+            org_connection_name: Some("erp".to_owned()),
+        };
+        assert_eq!(
+            serde_json::to_value(connection_definition(&instance).unwrap()).unwrap(),
+            serde_json::json!({"org": "erp"})
+        );
+        instance.org_connection_name = None;
+        assert!(matches!(
+            connection_definition(&instance).unwrap(),
+            ConnectionDefinition::Inline { .. }
+        ));
+    }
 }
