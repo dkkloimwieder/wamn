@@ -864,31 +864,9 @@ fn cloud_configuration(
     let mut steps = Vec::new();
     let key = checkout_key(&request.repository)?;
     let base = docker_arguments(&key, "Dockerfile", &format!("{supplement}/apps"));
-    for target in ["host", "runner", "gates", "identity", "roles"] {
-        // --build-context and --provenance are buildx flags, which the
-        // cloud-builders docker CLI rejects; this image ships buildx.
-        let mut args = vec!["buildx".to_owned()];
-        args.extend(base.iter().cloned());
-        args.extend(["--target".into(), target.into()]);
-        if target == "roles" {
-            args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
-        } else {
-            args.extend([
-                "--tag".into(),
-                format!("{}/wamn-{target}:{CHART_VERSION}", request.registry),
-                format!("--label=wamn.dev/source-head={head}"),
-                "--label=wamn.dev/build-profile=release".into(),
-            ]);
-        }
-        args.push(".".into());
-        steps.push(json!({"name": CLOUD_DOCKER_IMAGE, "args": args}));
-    }
-    // Every build finishes before the first push, as on the local path.
-    for target in ["host", "runner", "gates", "identity"] {
-        steps.push(json!({"name": "gcr.io/cloud-builders/docker", "args": ["push", format!("{}/wamn-{target}:{CHART_VERSION}", request.registry)]}));
-    }
     // The token is captured in memory, then written privately to the shared
     // credential volume. Neither the token nor its encoded form is logged.
+    // A token lasts an hour, so each push step gets a fresh one.
     let auth = r"import base64, json, os, subprocess, sys
 os.umask(0o077)
 token = subprocess.check_output(['gcloud', 'auth', 'print-access-token'], stderr=subprocess.DEVNULL).decode().strip()
@@ -896,11 +874,42 @@ with open('/cloud-auth/config.json', 'w') as output:
     json.dump({'auths': {sys.argv[1]: {'auth': base64.b64encode(('oauth2accesstoken:' + token).encode()).decode()}}}, output)
 ";
     let volume = json!([{"name": "cloud-auth", "path": "/cloud-auth"}]);
-    steps.push(json!({
+    let auth_step = json!({
         "name": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "entrypoint": "python3",
         "args": ["-c", auth, request.registry.split('/').next().context("registry host")?],
         "volumes": volume,
+    });
+    // The worker daemon's BuildKit lacks named build contexts, so buildx runs
+    // its own BuildKit in a container (docker-container driver).
+    steps.push(json!({
+        "name": CLOUD_DOCKER_IMAGE,
+        "args": ["buildx", "create", "--name", "wamn", "--driver", "docker-container"],
+        "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
     }));
+    for target in ["host", "runner", "gates", "identity", "roles"] {
+        let mut args: Vec<String> = vec!["buildx".into(), "--builder".into(), "wamn".into()];
+        args.extend(base.iter().cloned());
+        args.extend(["--target".into(), target.into()]);
+        if target == "roles" {
+            args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
+        } else {
+            steps.push(auth_step.clone());
+            args.extend([
+                "--tag".into(),
+                format!("{}/wamn-{target}:{CHART_VERSION}", request.registry),
+                format!("--label=wamn.dev/source-head={head}"),
+                "--label=wamn.dev/build-profile=release".into(),
+                // Owner ruling 2026-10-21: buildx pushes each image directly.
+                "--push".into(),
+            ]);
+        }
+        args.push(".".into());
+        steps.push(json!({
+            "name": CLOUD_DOCKER_IMAGE, "args": args,
+            "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
+        }));
+    }
+    steps.push(auth_step);
     for (file, role) in [
         ("http_route.wasm", "http"),
         ("materializer.wasm", "materializer"),
@@ -1053,11 +1062,32 @@ mod tests {
         };
         let config = cloud_configuration(&request, ".supplement", "head").unwrap();
         assert_eq!(config["options"]["logging"], "CLOUD_LOGGING_ONLY");
-        for step in &config["steps"].as_array().unwrap()[..5] {
-            assert_eq!(step["name"], CLOUD_DOCKER_IMAGE);
-            assert_eq!(step["args"][0], "buildx");
-            assert_eq!(step["args"][1], "build");
+        let steps = config["steps"].as_array().unwrap();
+        assert_eq!(steps[0]["args"][5], "docker-container");
+        let builds: Vec<_> = steps
+            .iter()
+            .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
+            .collect();
+        assert_eq!(builds.len(), 5);
+        let pushes = |step: &serde_json::Value| {
+            step["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg == "--push")
+        };
+        assert_eq!(
+            builds.iter().filter(|step| pushes(step)).count(),
+            4,
+            "every image target pushes, and roles exports locally"
+        );
+        // Each image build follows its own token step.
+        for (index, step) in steps.iter().enumerate() {
+            if pushes(step) {
+                assert_eq!(steps[index - 1]["entrypoint"], "python3");
+            }
         }
+        assert!(!steps.iter().any(|step| step["args"][0] == "push"));
     }
 
     #[test]

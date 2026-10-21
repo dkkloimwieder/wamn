@@ -133,10 +133,11 @@ wamn-ctl build-platform --cluster deploy/gcp/cluster.k --registry us-central1-do
 
 The command submits the same Dockerfile targets with `gcloud builds submit` in `us-central1`, on `E2_HIGHCPU_8`.
 It stages the source in `gs://<buckets.state>/build/source/`, so Cloud Build needs no staging bucket of its own.
-Each image build runs `docker buildx build` in `docker:28.5.1-cli`, and Cloud Build writes the build log to Cloud Logging only.
+Each image build runs `docker buildx build` in `docker:28.5.1-cli` on a `docker-container` builder, because the worker daemon's BuildKit has no named build contexts.
+Cloud Build writes the build log to Cloud Logging only.
 Read a failed build with `gcloud logging read 'resource.type="build" AND resource.labels.build_id="<id>"' --project wamn-dev`.
 If gcloud fails, the command prints the last 20 lines of its stderr.
-The generated configuration finishes every build before it pushes the four images and two role components under the same registry tags.
+Each of the four image builds pushes its image with `--push` when it finishes, with a fresh registry token. After the role export, the two role components are pushed under the same registry tag.
 The command waits for Cloud Build, then reads the pushed digests and stamps the chart.
 The local UI build and its recorded digest follow the local path.
 The `cloud-submit` stage prints start and end lines, including elapsed time.
