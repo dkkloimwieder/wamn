@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde_json::json;
-use wamn_package_artifact::{PackageRegistry, Repository};
+use wamn_package_artifact::PackageRegistry;
 use wamn_schema_generator::PackageManifest;
 
 use crate::delivery::environment::EnvironmentFile;
 use crate::environment::document::EnvironmentDocument;
-use crate::package_artifact::{PushPackageRequest, open_package, push_package};
+use crate::package_artifact::{
+    PackagePushDisposition, PushPackageRequest, open_package, push_package,
+};
 use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
@@ -163,19 +165,14 @@ pub(super) async fn apply(
         for package in read(repository, &path)? {
             let identity = &package.manifest.package;
             let tag = format!("{}-{}", identity.id, identity.version);
-            let artifact = Repository::open(registry, &tag)?.manifest().await?;
-            let digest = if let Some((_, digest)) = artifact {
-                digest
-            } else {
-                let pushed = push_package(&PushPackageRequest {
-                    package: package.root.clone(),
-                    registry: registry.clone(),
-                    component_artifact_base: artifact_base(registry, "components")?,
-                })
-                .await?;
-                changed = true;
-                pushed.digest
-            };
+            let pushed = push_package(&PushPackageRequest {
+                package: package.root.clone(),
+                registry: registry.clone(),
+                component_artifact_base: artifact_base(registry, "components")?,
+            })
+            .await?;
+            changed |= pushed.disposition == PackagePushDisposition::Pushed;
+            let digest = pushed.digest;
             tags.push(tag.clone());
             artifacts.push(digest.clone());
             let mut request = JobRequest {
