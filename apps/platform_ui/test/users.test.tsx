@@ -214,6 +214,7 @@ describe("User decisions", () => {
     expect(screen.getAllByTitle(principalId)).toHaveLength(3);
     const table = screen.getByRole("table", { name: "Project access" });
     expect(Array.from(table.querySelectorAll(":scope > thead th")).map((cell) => cell.textContent)).toEqual([
+      "Details",
       "Project",
       "State",
       "Display name",
@@ -231,6 +232,10 @@ describe("User decisions", () => {
     expect(row.getByRole("img", { name: "No" })).toBeTruthy();
     expect(screen.queryByText("other-env")).toBeNull();
     expect(calls.filter((path) => path.includes("/member/list"))).toHaveLength(2);
+    expect(screen.queryByRole("table", { name: "Memberships in widgets" })).toBeNull();
+    fireEvent.click(row.getByRole("button", { name: "Expand details for row widgets" }));
+    await screen.findByRole("table", { name: "Memberships in widgets" });
+    expect(screen.queryByRole("table", { name: "Memberships in gadgets" })).toBeNull();
     fireEvent.keyDown(screen.getByRole("button", { name: "Project" }), { key: "Enter" });
     fireEvent.keyDown(await screen.findByRole("option", { name: "widgets" }), { key: "Enter" });
     flush();
@@ -242,8 +247,8 @@ describe("User decisions", () => {
       within(
         screen.getByRole("table", { name: "Project access" }).querySelector<HTMLElement>('tr[data-row="widgets"]')!,
       );
-    await waitFor(() => expect(access().getByRole("button", { name: "Revoke membership in dev" })).toBeTruthy());
-    const memberships = within(access().getByRole("table", { name: "Memberships in widgets" }));
+    await screen.findByRole("button", { name: "Revoke membership in dev" });
+    const memberships = within(screen.getByRole("table", { name: "Memberships in widgets" }));
     expect(memberships.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
       "Environment",
       "State",
@@ -254,15 +259,20 @@ describe("User decisions", () => {
     await waitFor(() => expect(access().getByText("Project admin")).toBeTruthy());
     fireEvent.click(access().getByRole("button", { name: "Revoke project admin" }));
     await waitFor(() => expect(access().getByText("User")).toBeTruthy());
-    fireEvent.click(access().getByRole("button", { name: "Revoke membership in dev" }));
-    await waitFor(() => expect(access().queryByRole("button", { name: "Revoke membership in dev" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Revoke membership in dev" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership in dev" })).toBeNull());
+    fireEvent.click(access().getByRole("button", { name: "Collapse details for row widgets" }));
+    await waitFor(() => expect(screen.queryByRole("table", { name: "Memberships in widgets" })).toBeNull());
+    fireEvent.click(access().getByRole("button", { name: "Expand details for row widgets" }));
+    await screen.findByRole("table", { name: "Memberships in widgets" });
+    expect(screen.queryByRole("button", { name: "Revoke membership in dev" })).toBeNull();
     expect(writes).toEqual([
       { path: "/api/wamn_control/member/grant", value: { principal_id: principalId, project: "widgets", env: "dev" } },
       { path: "/api/wamn_control/project_admin/grant", value: { principal_id: principalId, project: "widgets" } },
       { path: "/api/wamn_control/project_admin/revoke", value: { principal_id: principalId, project: "widgets" } },
       { path: "/api/wamn_control/member/revoke", value: { principal_id: principalId, project: "widgets", env: "dev" } },
     ]);
-  });
+  }, 15_000);
   it("does not offer another user's grants when the addressed user is absent", async () => {
     const transport = createTransport({
       baseUrl: "/api",

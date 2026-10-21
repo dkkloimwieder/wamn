@@ -194,18 +194,18 @@ try {
   const access = page
     .getByRole("table", { name: "Project access", exact: true })
     .locator(`:scope > tbody > tr[data-row="${fixture.project}"]`);
-  await access.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).waitFor();
+  await access.getByRole("button", { name: `Expand details for row ${fixture.project}`, exact: true }).click();
+  const userMemberships = page.getByRole("table", { name: `Memberships in ${fixture.project}`, exact: true });
+  await userMemberships.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).waitFor();
   await capture(page, "user");
   await visit(page);
+  await access.getByRole("button", { name: `Expand details for row ${fixture.project}`, exact: true }).click();
   await access.getByRole("button", { name: "Grant project admin", exact: true }).click();
   await access.getByText("Project admin", { exact: true }).waitFor();
   await access.getByRole("button", { name: "Revoke project admin", exact: true }).click();
   await access.getByText("User", { exact: true }).waitFor();
-  await access.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).click();
-  await access
-    .getByRole("table", { name: `Memberships in ${fixture.project}`, exact: true })
-    .locator(":scope > tbody > tr[data-row]")
-    .waitFor({ state: "detached" });
+  await userMemberships.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).click();
+  await userMemberships.locator(":scope > tbody > tr[data-row]").waitFor({ state: "detached" });
   console.log(
     "PASS: Users invite, browser enrollment and sign-in, activate/deactivate, org-admin grant/revoke; User membership and project-admin grant/revoke, reload state",
   );
@@ -216,7 +216,9 @@ try {
   await page.getByRole("button", { name: "Grant membership", exact: true }).click();
   const person = page.locator(`tr[data-row="${fixture.principalId}"]`);
   await person.getByText("Member", { exact: true }).waitFor();
-  await person.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).waitFor();
+  await person.getByRole("button", { name: `Expand details for row ${fixture.principalId}`, exact: true }).click();
+  const memberEnvironments = page.getByRole("table", { name: `Memberships for ${fixture.email}`, exact: true });
+  await memberEnvironments.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).waitFor();
   await person.getByRole("button", { name: "Grant project admin", exact: true }).click();
   await person.getByText("Project admin", { exact: true }).waitFor();
 
@@ -257,7 +259,7 @@ try {
 
   await person.getByRole("button", { name: "Revoke project admin", exact: true }).click();
   await person.getByText("Member", { exact: true }).waitFor();
-  await person.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).click();
+  await memberEnvironments.getByRole("button", { name: `Revoke membership in ${fixture.env}`, exact: true }).click();
   await person.waitFor({ state: "detached" });
   await page.getByRole("button", { name: "Grant membership", exact: true }).click();
   await person.getByText("Member", { exact: true }).waitFor();

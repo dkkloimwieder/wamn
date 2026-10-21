@@ -14,6 +14,7 @@ The scope, address, permission, and query implementations therefore exist in bot
 Session renewal and the cookie transport retain one owner in `web/runtime`.
 DashboardShell and DashboardPanel frame each screen.
 FormView and TableView render forms and record lists through their application-owned bindings.
+Nested tables use TableView row details. The application owns expansion and child records.
 The sign-in, invitation, recovery, and reset pages use `@wfe/form` with FormView.
 Their rules also exist in both shells until M3.
 After sign-in, the audience choice replaces the form in the centered identity panel.
@@ -21,7 +22,7 @@ It uses wfe's [SidebarGroup](../../web/wfe/docs/layout.md#icon-sidebar) for expa
 Each org lists its held Control entry first, then its projects and held environments.
 One audience opens automatically.
 
-Each dashboard uses `Theme` from `@wfe/components` with its unchanged light defaults.
+Each dashboard uses `Theme` from wfe v0.0.4 with its unchanged light defaults.
 WFE owns the theme properties, styles, fonts, and licenses.
 This follows [Adopt the components](../../web/wfe/docs/adoption.md) and [Default theme](../../web/wfe/docs/theme.md).
 The application owns page height and removes the browser's body margin.

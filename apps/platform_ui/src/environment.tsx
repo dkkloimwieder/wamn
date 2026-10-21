@@ -4,7 +4,7 @@ import { Button, FieldError } from "@wfe/components/fields";
 import { environment, release } from "@wamn/control-org-client";
 import { Page } from "./page";
 import { DashboardPanel } from "@wfe/components/layout";
-import { Collapsible, Field, FieldValue, FormGrid, Label } from "@wfe/components";
+import { Field, FieldValue, FormGrid, Label } from "@wfe/components";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
@@ -106,22 +106,25 @@ export function Environment(props: ScreenProps): JSX.Element {
               rowKey={(workload) => workload.name}
               columns={[
                 { id: "name", header: "Workload", accessorKey: "name" },
-                { id: "conditions", header: "Conditions", size: 350 },
+                {
+                  id: "conditions",
+                  header: "Conditions",
+                  accessorFn: (workload) => workload.conditions.map((condition) => condition.type).join(", "),
+                  size: 350,
+                },
               ]}
-              cells={{
-                conditions: (cell) => (
-                  <Records
-                    id="conditions"
-                    title={`Conditions for ${cell.row.name}`}
-                    rows={cell.row.conditions}
-                    rowKey={(condition) => condition.type}
-                    columns={[
-                      { id: "type", header: "Condition", accessorKey: "type" },
-                      { id: "status", header: "Status", accessorKey: "status" },
-                    ]}
-                  />
-                ),
-              }}
+              details={(cell) => (
+                <Records
+                  id="conditions"
+                  title={`Conditions for ${cell.row.name}`}
+                  rows={cell.row.conditions}
+                  rowKey={(condition) => condition.type}
+                  columns={[
+                    { id: "type", header: "Condition", accessorKey: "type" },
+                    { id: "status", header: "Status", accessorKey: "status" },
+                  ]}
+                />
+              )}
             />
             <h3>Live releases</h3>
             <Records
@@ -153,67 +156,79 @@ export function Environment(props: ScreenProps): JSX.Element {
               columns={[{ id: "operation", header: "Operation", size: 950 }]}
               cells={{
                 operation: (cell) => (
-                  <Collapsible summary={`${cell.row.operation} (${cell.row.package}/${cell.row.component})`}>
-                    <Records
-                      id="reaches"
-                      title="Reaches"
-                      rows={cell.row.reaches}
-                      rowKey={(reach) => reach.package}
-                      columns={[
-                        { id: "reach", header: "Reach", size: 250 },
-                        { id: "statements", header: "Statements", size: 650 },
-                      ]}
-                      cells={{
-                        reach: (reach) => (
-                          <>
-                            {reach.row.package}: {reach.row.operations.join(", ")}
-                            {reach.row.imprecise ? " (imprecise)" : ""}
-                          </>
-                        ),
-                        statements: (reach) => (
-                          <Records
-                            id="statements"
-                            title="Statements"
-                            rows={reach.row.statements}
-                            rowKey={(statement) => statement.path}
-                            columns={[
-                              { id: "path", header: "Statement", size: 200 },
-                              { id: "relations", header: "Relations", size: 450 },
-                            ]}
-                            cells={{
-                              path: (statement) => (
-                                <>
-                                  {statement.row.path}
-                                  {statement.row.refused ? `: ${statement.row.refused}` : ""}
-                                </>
-                              ),
-                              relations: (statement) => (
-                                <Records
-                                  id="relations"
-                                  title="Relations"
-                                  rows={statement.row.relations}
-                                  rowKey={(relation) => relation.table}
-                                  columns={[{ id: "relation", header: "Relation", size: 430 }]}
-                                  cells={{
-                                    relation: (relation) => (
-                                      <>
-                                        {relation.row.table}: reads {relation.row.reads.join(", ") || "none"}; writes{" "}
-                                        {relation.row.writes.join(", ") || "none"}; locks{" "}
-                                        {relation.row.locks ? "yes" : "no"}; deletes{" "}
-                                        {relation.row.deletes ? "yes" : "no"}
-                                      </>
-                                    ),
-                                  }}
-                                />
-                              ),
-                            }}
-                          />
-                        ),
-                      }}
-                    />
-                  </Collapsible>
+                  <>
+                    {cell.row.operation} ({cell.row.package}/{cell.row.component})
+                  </>
                 ),
               }}
+              details={(cell) => (
+                <Records
+                  id="reaches"
+                  title="Reaches"
+                  rows={cell.row.reaches}
+                  rowKey={(reach) => reach.package}
+                  columns={[
+                    { id: "reach", header: "Reach", size: 250 },
+                    {
+                      id: "statements",
+                      header: "Statements",
+                      accessorFn: (reach) => reach.statements.map((statement) => statement.path).join(", "),
+                      size: 650,
+                    },
+                  ]}
+                  cells={{
+                    reach: (reach) => (
+                      <>
+                        {reach.row.package}: {reach.row.operations.join(", ")}
+                        {reach.row.imprecise ? " (imprecise)" : ""}
+                      </>
+                    ),
+                  }}
+                  details={(reach) => (
+                    <Records
+                      id="statements"
+                      title="Statements"
+                      rows={reach.row.statements}
+                      rowKey={(statement) => statement.path}
+                      columns={[
+                        { id: "path", header: "Statement", size: 200 },
+                        {
+                          id: "relations",
+                          header: "Relations",
+                          accessorFn: (statement) => statement.relations.map((relation) => relation.table).join(", "),
+                          size: 450,
+                        },
+                      ]}
+                      cells={{
+                        path: (statement) => (
+                          <>
+                            {statement.row.path}
+                            {statement.row.refused ? `: ${statement.row.refused}` : ""}
+                          </>
+                        ),
+                      }}
+                      details={(statement) => (
+                        <Records
+                          id="relations"
+                          title="Relations"
+                          rows={statement.row.relations}
+                          rowKey={(relation) => relation.table}
+                          columns={[{ id: "relation", header: "Relation", size: 430 }]}
+                          cells={{
+                            relation: (relation) => (
+                              <>
+                                {relation.row.table}: reads {relation.row.reads.join(", ") || "none"}; writes{" "}
+                                {relation.row.writes.join(", ") || "none"}; locks {relation.row.locks ? "yes" : "no"};
+                                deletes {relation.row.deletes ? "yes" : "no"}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
+                  )}
+                />
+              )}
             />
             <h3>Roles</h3>
             <Records

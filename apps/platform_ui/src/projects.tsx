@@ -248,7 +248,12 @@ export function Project(props: ScreenProps): JSX.Element {
           { id: "orgAdmin", header: "Org admin", accessorKey: "orgAdmin", size: 100 },
           { id: "role", header: "Role", size: 130 },
           { id: "admin", header: "Administration", size: 200 },
-          { id: "memberships", header: "Memberships", size: 420 },
+          {
+            id: "memberships",
+            header: "Memberships",
+            accessorFn: (person) => person.environments.join(", "),
+            size: 420,
+          },
         ]}
         formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol" }}
         cells={{
@@ -278,45 +283,45 @@ export function Project(props: ScreenProps): JSX.Element {
               </Button>
             </Show>
           ),
-          memberships: (cell) => (
-            <Records
-              id="member-environments"
-              title={`Memberships for ${cell.row.email}`}
-              rows={cell.row.environments}
-              rowKey={(env) => env}
-              columns={[
-                { id: "env", header: "Environment" },
-                { id: "revoke", header: "Action", size: 240 },
-              ]}
-              cells={{
-                env: (entry) => <>{entry.row}</>,
-                revoke: (entry) => (
-                  <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation)}>
-                    <Button
-                      disabled={pending() || form.pending}
-                      onClick={() =>
-                        void write(() =>
-                          member.revoke(props.transport, [
-                            {
-                              requestId: crypto.randomUUID(),
-                              value: {
-                                project: name,
-                                env: entry.row,
-                                principalId: cell.row.principalId,
-                              },
-                            },
-                          ]),
-                        )
-                      }
-                    >
-                      Revoke membership in {entry.row}
-                    </Button>
-                  </Show>
-                ),
-              }}
-            />
-          ),
         }}
+        details={(cell) => (
+          <Records
+            id="member-environments"
+            title={`Memberships for ${cell.row.email}`}
+            rows={cell.row.environments}
+            rowKey={(env) => env}
+            columns={[
+              { id: "env", header: "Environment" },
+              { id: "revoke", header: "Action", size: 240 },
+            ]}
+            cells={{
+              env: (entry) => <>{entry.row}</>,
+              revoke: (entry) => (
+                <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation)}>
+                  <Button
+                    disabled={pending() || form.pending}
+                    onClick={() =>
+                      void write(() =>
+                        member.revoke(props.transport, [
+                          {
+                            requestId: crypto.randomUUID(),
+                            value: {
+                              project: name,
+                              env: entry.row,
+                              principalId: cell.row.principalId,
+                            },
+                          },
+                        ]),
+                      )
+                    }
+                  >
+                    Revoke membership in {entry.row}
+                  </Button>
+                </Show>
+              ),
+            }}
+          />
+        )}
       />
     </Page>
   );

@@ -226,6 +226,7 @@ describe("Projects and Project", () => {
     expect(environments.getByRole("cell", { name: "inactive" })).toBeTruthy();
     const members = screen.getByRole("table", { name: "Members" });
     expect(Array.from(members.querySelectorAll(":scope > thead th")).map((cell) => cell.textContent)).toEqual([
+      "Details",
       "Display name",
       "Email",
       "User ID",
@@ -238,6 +239,9 @@ describe("Projects and Project", () => {
     expect(within(members).getByText("Project admin")).toBeTruthy();
     expect(within(members).getByRole("img", { name: "Yes" })).toBeTruthy();
     expect(within(members).getByTitle(principalId).textContent).toBe("12345678");
+    expect(screen.queryByRole("table", { name: "Memberships for alex@example.invalid" })).toBeNull();
+    fireEvent.click(within(members).getByRole("button", { name: `Expand details for row ${principalId}` }));
+    await screen.findByRole("table", { name: "Memberships for alex@example.invalid" });
     expect(within(members).getByRole("button", { name: "Revoke membership in dev" })).toBeTruthy();
     expect(calls.sort()).toEqual([
       "/api/wamn_control/environment/list",
