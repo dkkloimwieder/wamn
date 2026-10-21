@@ -560,6 +560,10 @@ fn wiring_components(root: &Path) -> anyhow::Result<BTreeMap<String, BTreeSet<St
             .into_iter()
             .flat_map(|nodes| nodes.values())
         {
+            // A cross-package node resolves through the release, not this package.
+            if node.get("operation-dependency").is_some() {
+                continue;
+            }
             let component = node
                 .get("component")
                 .and_then(serde_json::Value::as_str)
@@ -1438,6 +1442,16 @@ mod tests {
         assert!(
             error.contains("0 platform declarations name component label-render"),
             "{error}"
+        );
+
+        write(
+            &root,
+            "publication/wirings/shape.json",
+            b"{\"nodes\": {\"a\": {\"component\": \"consumer\", \"operation-dependency\": {\"alias\": \"consumer\", \"operation\": \"item.record\"}}}}\n",
+        );
+        assert!(
+            !wiring_components(&root).unwrap().contains_key("consumer"),
+            "a cross-package node resolves through the release"
         );
 
         std::fs::remove_file(root.join("publication/wirings/shape.json")).unwrap();
