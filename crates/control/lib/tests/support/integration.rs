@@ -112,6 +112,7 @@ pub async fn exercise(
         env: ENVIRONMENT.into(),
         release: DeclaredRelease::None,
         route_host: "integration.orders.example".into(),
+        client_package: None,
         policy: POLICY.into(),
         connections: BTreeMap::new(),
         floors: BTreeMap::new(),

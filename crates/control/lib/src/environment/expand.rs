@@ -132,7 +132,8 @@ pub async fn expand(
         &analysis.authorities.connections,
         &targets,
     )
-    .await
+    .await?;
+    Ok(clients)
 }
 
 /// Materialize one apply snapshot through the existing instance and bind paths.
@@ -191,7 +192,7 @@ pub async fn materialize_connections(
         unbound.is_empty(),
         "the release requires the connections {unbound:?}, which the document does not declare"
     );
-    Ok(clients)
+    Ok(())
 }
 
 /// The credential handle of a declared instance. Credentials are provisioned,
