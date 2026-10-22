@@ -97,6 +97,9 @@
 //! Before the epic closeout run, build the debug `wamn-ctl` and `wamn-cdc-reader`
 //! binaries. Build the packages `edge_device`, `platform/wamn_integration`,
 //! `rest_consumer_fixture` and `rest_connector` with `wamn build`.
+//! Build the pinned `http-route` guest in release mode at
+//! `apps/target/wasm32-wasip2/release/http_route.wasm`, or set
+//! `WAMN_FLOW_HTTP_COMPONENT` to those pinned guest bytes.
 //! `WAMN_RELEASE_CHART=<chart> cargo test --locked --offline -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
 
 use std::path::{Path, PathBuf};
@@ -117,7 +120,9 @@ use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
-use wamn_control::publish_release::push_manifest_bytes;
+use wamn_control::publish_release::{
+    PublishedRelease, compose_application, push_manifest_bytes, record_composed_entry,
+};
 use wamn_control::release_chart::{ImageSet, Target, image_set, release_name, stamp};
 use wamn_control_registry::{Template, Triple};
 use wamn_engine::release_manifest::release_label;
@@ -850,6 +855,14 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         http_connection::component(run, repository, &local, &version, PACKAGE, "http-page").await?;
     let manifest_http =
         http_connection::release(&manifest_h, &version, vec![transform, request, page])?;
+    let [manifest_h, manifest_http] = compose_http_releases(
+        run,
+        repository,
+        &local,
+        &device,
+        [manifest_h, manifest_http],
+    )
+    .await?;
     http_connection::deploy(run, repository).await?;
 
     wash_runtime::oci::set_extra_ca_certificates(&[work.join("ca.crt")])?;
@@ -2071,6 +2084,84 @@ async fn diagnostics(kubeconfig: &Path) -> Value {
         }
     }
     json!({"events": lines(events), "describe": lines(described), "logs": logs})
+}
+
+/// Publish one pinned HTTP entry and record its members in both fixture releases.
+async fn compose_http_releases(
+    run: &Run,
+    repository: &Path,
+    registry: &str,
+    device: &wamn_catalog::ComponentDescriptor,
+    mut manifests: [Vec<u8>; 2],
+) -> anyhow::Result<[Vec<u8>; 2]> {
+    let package = repository.join("apps").join(PACKAGE);
+    let output = wamn_schema_generator::output_root(&package);
+    let receipt = wamn_schema_generator::receipt::read(&output)?;
+    let component = receipt
+        .outputs
+        .components
+        .iter()
+        .find(|component| component.name == device.component)
+        .context("the fixture build contains its device component")?;
+    let declaration = wamn_control::component_declaration::render_declaration_document(
+        &package.join("publication/components/device.json.in"),
+        &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
+    )?;
+    let declaration_path = run.work.join("device-declaration.json");
+    std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
+    let admission = wamn_control::component_admission::admit_component(
+        wamn_control::component_admission::AdmitComponentRequest {
+            package,
+            component_bytes: output.join(&component.path),
+            declaration: declaration_path,
+            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
+            base_digests: std::collections::BTreeSet::new(),
+        },
+    )?;
+    ensure!(
+        admission.component_digest() == device.component_digest,
+        "the fixture device bytes differ from its pushed descriptor"
+    );
+    let route_path = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").map_or_else(
+        || repository.join("apps/target/wasm32-wasip2/release/http_route.wasm"),
+        PathBuf::from,
+    );
+    let route = std::fs::read(&route_path)
+        .with_context(|| format!("read the pinned HTTP route guest {}", route_path.display()))?;
+    let pin = format!(
+        "sha256:{}",
+        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
+            .split_whitespace()
+            .next()
+            .context("the HTTP route guest has a digest pin")?
+    );
+    let entry = compose_application(&admission, &route, &pin)?;
+    wash_runtime::oci::set_extra_ca_certificates(&[run.work.join("ca.crt")])?;
+    let entry_repository = format!("{registry}/wamn/entries");
+    let digest = wash_runtime::oci::push_component(
+        &format!(
+            "{entry_repository}:{}",
+            entry.digest().trim_start_matches("sha256:")
+        ),
+        entry.bytes(),
+        wash_runtime::oci::OciConfig::new_with_credentials(USER, PASSWORD),
+        None,
+    )
+    .await
+    .context("publish the fixture's composed HTTP entry")?;
+    let reference = format!("{entry_repository}@{digest}");
+    wamn_catalog::validate_component_start_reference(&reference)?;
+    for bytes in &mut manifests {
+        let (manifest, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
+        let mut published = PublishedRelease {
+            manifest,
+            digest,
+            canonical_bytes: std::mem::take(bytes),
+        };
+        record_composed_entry(&mut published, &entry, &reference)?;
+        *bytes = published.canonical_bytes;
+    }
+    Ok(manifests)
 }
 
 /// The canonical bytes of a fixture release: `template` with the package
