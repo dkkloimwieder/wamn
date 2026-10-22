@@ -225,6 +225,12 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             ),
             "browser did not complete the audience table assertions"
         );
+        ensure!(
+            String::from_utf8_lossy(&output.stdout).contains(
+                "PASS: application role create/delete, permission grant/revoke, user-role grant/revoke and reload state"
+            ),
+            "browser did not complete application administration"
+        );
         drop(admin);
         driver.await??;
         Ok::<_, anyhow::Error>(())

@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Breadcrumbs, DropdownMenu } from "@wfe/components";
+import { SidebarContextSwitcher } from "@wfe/components/layout";
 import { ControlNavigation } from "./control-navigation";
 import type { Transport } from "@wamn/web-runtime";
 import { Frame } from "./page";
@@ -19,6 +20,14 @@ export default function Layout(props: {
   signOut: () => Promise<void>;
   children: JSX.Element;
 }): JSX.Element {
+  const application = () => {
+    const parts = props.aud.split(":");
+    return parts[2] === "project-env" ? { org: parts[3]!, project: parts[4]!, env: parts[5]! } : undefined;
+  };
+  const projectPath = () => {
+    const scope = application()!;
+    return `/urn:wamn:control:${scope.org}/projects/${encodeURIComponent(scope.project)}`;
+  };
   const follow = (path: string, close?: () => void) => (event: MouseEvent) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -36,7 +45,14 @@ export default function Layout(props: {
   const scroll = () => selected()?.route.scroll ?? "main";
   const breadcrumbs = () => {
     const root = `/${props.aud}`;
-    const entries = [{ label: props.title, href: root }];
+    const scope = application();
+    const entries = scope
+      ? [
+          { label: scope.org, href: `/urn:wamn:control:${scope.org}/projects` },
+          { label: scope.project, href: projectPath() },
+          { label: scope.env, href: root },
+        ]
+      : [{ label: props.title, href: root }];
     const parts = props.address.url().pathname.split("/").slice(2).filter(Boolean);
     const routes = props.sections.flatMap((section) => [...section.screens, ...(section.routes ?? [])]);
     const selected = routes.find((route) => matchPath(route.path, parts.join("/")));
@@ -127,6 +143,24 @@ export default function Layout(props: {
                 }
                 fallback={
                   <div class="ui-dashboard-menu">
+                    <Show when={application()}>
+                      {(scope) => (
+                        <SidebarContextSwitcher
+                          value={{
+                            id: `/${props.aud}`,
+                            kind: "Environment",
+                            name: `${scope().project}/${scope().env}`,
+                          }}
+                          options={[]}
+                          parent={{ id: projectPath(), kind: "Project", name: scope().project }}
+                          compact={navigation.compact()}
+                          onValueChange={(context) => {
+                            props.address.navigate(context.id);
+                            navigation.close();
+                          }}
+                        />
+                      )}
+                    </Show>
                     <For each={props.sections}>
                       {(section) => (
                         <For each={section.screens}>

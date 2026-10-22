@@ -8,7 +8,7 @@ The runtime and compiler use Solid `2.0.0-rc.16`.
 The build refuses Solid 1 modules and imports from the old UI packages.
 
 The shell core owns addresses, permission filtering, navigation, and query values.
-Its tests port the Solid 1 assertions and use stub screens for later Control and administration work.
+Its tests cover the shell, Control screens, and application administration through generated clients.
 Receiving uses this shell with generated wfe descriptions. The WMS demo awaits a rebuild on wfe.
 The shell passes permitted route actions through `ScreenProps.actions`, with route parameters filled.
 Receiving renders those actions through the table `toolbarActions` binding.
@@ -38,6 +38,13 @@ SidebarContextSwitcher shows the current context, searches sibling choices, and 
 At the organization level, Projects expands to held projects from `control.mine`. Only org admins see Users.
 Project context shows expandable Environments and Members. Environment context shows Workloads, Live releases, Operations, Roles, and Members.
 Environment membership screens filter members and scope grants and revocations to the current environment.
+In an application audience, the environment pane shows Roles and Users when `permission.mine` grants access.
+Breadcrumbs name the organization, project, and environment in uppercase.
+The Roles grid reads served operations from `permission.list` for each role.
+Each checkbox sends one grant or revoke command and returns to its previous value after failure.
+The admin column is read-only, and admin-only operations are disabled.
+Create role and Grant role open form screens. Delete role and Revoke role require confirmation.
+The application Users table links each name to its roles table. Both tables use Records pagination.
 A viewer with one held project opens that project directly when entering Control. The parent action still returns to the organization.
 The Users group contains Project access and Memberships links for the addressed user.
 

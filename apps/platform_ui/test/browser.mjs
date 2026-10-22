@@ -616,14 +616,65 @@ try {
   await receiving.getByRole("button", { name: "User menu", exact: true }).click();
   await receiving.getByRole("menuitem", { name: "Sign out", exact: true }).waitFor();
   await receiving.keyboard.press("Escape");
-  assert.equal(new URL(receiving.url()).pathname, environmentPath);
-  await receiving.getByRole("heading", { name: "No screens available", exact: true }).waitFor();
-  assert.equal(await receiving.getByRole("navigation", { name: "Primary navigation" }).count(), 0);
-  assert.equal(
-    await receiving.getByRole("link", { name: "Choose an audience", exact: true }).getAttribute("href"),
-    "/",
-  );
+  await receiving.getByRole("table", { name: "Roles", exact: true }).waitFor();
+  assert.equal(new URL(receiving.url()).pathname, `${environmentPath}/administration/roles`);
+  await receiving.getByRole("button", { name: "Create role", exact: true }).click();
+  await receiving.getByRole("textbox", { name: "Role", exact: true }).fill("browser-clerk");
+  await receiving.getByRole("button", { name: "Create role", exact: true }).click();
+  const grid = receiving.getByRole("table", { name: "Roles", exact: true });
+  await grid.getByRole("columnheader", { name: "browser-clerk", exact: true }).waitFor();
+  const permissionCell = grid
+    .getByRole("checkbox", { name: / browser-clerk$/ })
+    .and(grid.locator("input:not(:disabled)"))
+    .first();
+  const permissionName = await permissionCell.getAttribute("aria-label");
+  // The wfe check control covers the visually hidden input, so a user clicks the control.
+  await permissionCell.locator("xpath=..").locator(".ui-check-control").click();
+  await receiving.getByRole("status").filter({ hasText: "Granted" }).waitFor();
+  assert.equal(await permissionCell.isChecked(), true);
+  await receiving.reload();
+  const savedCell = receiving.getByRole("checkbox", { name: permissionName, exact: true });
+  await savedCell.waitFor();
+  assert.equal(await savedCell.isChecked(), true);
+  await savedCell.locator("xpath=..").locator(".ui-check-control").click();
+  await receiving.getByRole("status").filter({ hasText: "Revoked" }).waitFor();
+  await capture(receiving, "application-roles");
+  await receiving
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "Users", exact: true })
+    .click();
+  // provision-org names the first admin by email; reusing it does not rename it to Developer.
+  const applicationUser = receiving
+    .getByRole("table", { name: "Users", exact: true })
+    .getByRole("row")
+    .filter({ has: receiving.getByRole("cell", { name: required("WAMN_BROWSER_EMAIL"), exact: true }) });
+  await applicationUser.getByRole("link").waitFor();
+  await capture(receiving, "application-users");
+  await applicationUser.getByRole("link").click();
+  await receiving.getByRole("button", { name: "Grant role", exact: true }).click();
+  await receiving.getByRole("button", { name: "Role", exact: true }).click();
+  await receiving.getByRole("option", { name: "browser-clerk", exact: true }).click();
+  await receiving.getByRole("button", { name: "Grant role", exact: true }).click();
+  await receiving.getByRole("button", { name: "Revoke role browser-clerk", exact: true }).waitFor();
+  await receiving.reload();
+  await receiving.getByRole("button", { name: "Revoke role browser-clerk", exact: true }).click();
+  await receiving
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Revoke role browser-clerk", exact: true })
+    .click();
+  await receiving.getByRole("button", { name: "Revoke role browser-clerk", exact: true }).waitFor({ state: "hidden" });
+  await receiving
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "Roles", exact: true })
+    .click();
+  await receiving.getByRole("button", { name: "Delete role browser-clerk", exact: true }).click();
+  await receiving
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete role browser-clerk", exact: true })
+    .click();
+  await grid.getByRole("columnheader", { name: "browser-clerk", exact: true }).waitFor({ state: "hidden" });
   await capture(receiving, "receiving-layout");
+  console.log("PASS: application role create/delete, permission grant/revoke, user-role grant/revoke and reload state");
   await receiving.close();
   console.log(
     "PASS: audience table replaces sign-in; Control first; org/project/environment rows enter their audiences",
@@ -662,6 +713,8 @@ try {
       "users",
       "user",
       "receiving-layout",
+      "application-roles",
+      "application-users",
       "not-found",
     ].sort(),
   );

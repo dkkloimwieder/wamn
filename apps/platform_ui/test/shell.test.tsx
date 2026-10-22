@@ -21,7 +21,7 @@ describe("the app shell", () => {
     const { fetch } = identity(true);
     window.history.pushState({}, "", `/${aud}`);
     const { container } = render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
-    expect(await screen.findByText(aud === CONTROL ? "ACME" : "STUB APP")).toBeDefined();
+    expect(await screen.findByText(aud === CONTROL ? "ACME" : "DEV")).toBeDefined();
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
     expect(container.querySelector("nav .ui-dashboard-panel")).toBeNull();
     expect(screen.getByRole("heading", { name: "No screens available" })).toBeTruthy();
@@ -131,7 +131,7 @@ describe("the app shell", () => {
     const location = within(screen.getByRole("navigation", { name: "Platform location" }));
     expect(
       location.getAllByRole("listitem").map((item) => item.querySelector("a, [aria-current]")?.textContent),
-    ).toEqual(["STUB APP", "PALLETS", "A/B", "UPDATE"]);
+    ).toEqual(["ACME", "WIDGETS", "DEV", "PALLETS", "A/B", "UPDATE"]);
     expect(location.getByText("UPDATE").getAttribute("aria-current")).toBe("page");
     fireEvent.click(location.getByRole("link", { name: "A/B" }));
     await screen.findByText("pallet a/b record");

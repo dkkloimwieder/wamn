@@ -3,6 +3,7 @@ import { createTable, type NativeColumnDef } from "@wfe/components/table";
 import { ValueDisplay } from "@wfe/components";
 import { Button, FieldError } from "@wfe/components/fields";
 import { TableView, type ColumnPresentation, type CustomCellProps } from "@wfe/generator";
+import type { JSX } from "@solidjs/web";
 
 /** Application-owned rows and columns, presented by the shared table. */
 export function Records<Row>(props: {
@@ -15,6 +16,7 @@ export function Records<Row>(props: {
   cells?: Readonly<Record<string, Component<{ row: Row }>>>;
   details?: Component<{ row: Row }>;
   create?: { label: string; run: () => void };
+  toolbarActions?: JSX.Element;
   refresh: () => void | Promise<void>;
 }) {
   const [trouble, setTrouble] = createSignal<string>();
@@ -57,7 +59,10 @@ export function Records<Row>(props: {
   const page = createMemo(() => Math.min(requestedPage(), pageCount() - 1));
   const rows = createMemo(() => props.rows.slice(page() * pageSize, (page() + 1) * pageSize));
   const ToolbarActions = () => (
-    <Show when={props.create}>{(action) => <Button onClick={() => action().run()}>{action().label}</Button>}</Show>
+    <>
+      <Show when={props.create}>{(action) => <Button onClick={() => action().run()}>{action().label}</Button>}</Show>
+      {props.toolbarActions}
+    </>
   );
   const columns = untrack(() => props.columns);
   const cells = untrack(() =>
