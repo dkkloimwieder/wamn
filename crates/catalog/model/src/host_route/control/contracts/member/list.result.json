@@ -36,6 +36,18 @@
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "next_cursor",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "total",
+      "type": "int32",
+      "nullable": true,
+      "values": []
     }
   ]
 }

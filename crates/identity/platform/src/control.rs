@@ -22,11 +22,12 @@ const CONTROL_PROJECTS_SQL: &str = "SELECT r.project FROM identity.project_roles
     JOIN identity.principals p ON p.id = r.principal_id \
     WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
     AND p.type = 'user' AND p.status = 'active' \
-    ORDER BY r.project";
+    AND ($4::text IS NULL OR r.project > $4) ORDER BY r.project LIMIT $5";
 
 const ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.project_envs e \
     WHERE e.org = p.org AND e.project = p.id AND e.status = 'active') \
-    THEN 'active' ELSE 'inactive' END FROM registry.projects p WHERE p.org = $1 ORDER BY p.id";
+    THEN 'active' ELSE 'inactive' END FROM registry.projects p WHERE p.org = $1 \
+    AND ($2::text IS NULL OR p.id > $2) ORDER BY p.id LIMIT $3";
 
 const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
@@ -94,13 +95,30 @@ pub async fn control_projects(
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<Vec<String>, IdentityError> {
+    control_projects_page(client, principal_id, org, None, None).await
+}
+
+/// Read a keyset page, or all rows when the limit is absent.
+pub async fn control_projects_page(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    after: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<String>, IdentityError> {
     if !valid_org(org) {
         return Err(invalid_org());
     }
     Ok(client
         .query(
             CONTROL_PROJECTS_SQL,
-            &[&principal_id.as_str(), &org, &PROJECT_ADMIN_ROLE],
+            &[
+                &principal_id.as_str(),
+                &org,
+                &PROJECT_ADMIN_ROLE,
+                &after,
+                &limit,
+            ],
         )
         .await
         .map_err(|error| database_error(&error))?
@@ -166,11 +184,21 @@ pub async fn org_projects(
     client: &(impl GenericClient + Sync),
     org: &str,
 ) -> Result<Vec<ProjectSummary>, IdentityError> {
+    org_projects_page(client, org, None, None).await
+}
+
+/// Read a keyset page, or all rows when the limit is absent.
+pub async fn org_projects_page(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    after: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<ProjectSummary>, IdentityError> {
     if !valid_org(org) {
         return Err(invalid_org());
     }
     Ok(client
-        .query(ORG_PROJECTS_SQL, &[&org])
+        .query(ORG_PROJECTS_SQL, &[&org, &after, &limit])
         .await
         .map_err(|error| database_error(&error))?
         .iter()

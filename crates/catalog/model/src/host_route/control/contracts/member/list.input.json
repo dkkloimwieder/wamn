@@ -6,6 +6,20 @@
       "nullable": false,
       "values": [],
       "label": "Project"
+    },
+    {
+      "path": "limit",
+      "type": "int32",
+      "nullable": false,
+      "required": false,
+      "values": []
+    },
+    {
+      "path": "cursor",
+      "type": "text",
+      "nullable": false,
+      "required": false,
+      "values": []
     }
   ]
 }

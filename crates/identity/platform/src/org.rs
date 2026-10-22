@@ -402,7 +402,8 @@ const ORG_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, m.statu
     EXISTS (SELECT 1 FROM identity.org_roles o \
         WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $2) \
     FROM identity.org_memberships m JOIN identity.principals p ON p.id = m.principal_id \
-    WHERE m.org = $1 ORDER BY p.email";
+    WHERE m.org = $1 AND ($3::text IS NULL OR (p.email, p.id) > ($3, $4::text::uuid)) \
+    ORDER BY p.email, p.id LIMIT $5";
 
 /// The grants an invitation asks for, beside the org membership.
 #[derive(Debug, Default)]
@@ -533,9 +534,23 @@ pub async fn org_users(
     client: &(impl GenericClient + Sync),
     org: &str,
 ) -> Result<Vec<OrgUser>, IdentityError> {
+    org_users_page(client, org, None, None, None).await
+}
+
+/// Read a keyset page, or all rows when the limit is absent.
+pub async fn org_users_page(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    after: Option<&str>,
+    after_id: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<OrgUser>, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     client
-        .query(ORG_USERS_SQL, &[&org, &ORG_ADMIN_ROLE])
+        .query(
+            ORG_USERS_SQL,
+            &[&org, &ORG_ADMIN_ROLE, &after, &after_id, &limit],
+        )
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -704,8 +719,8 @@ pub async fn user_contact(
     Ok((email, row.get(1)))
 }
 
-const PROJECT_ENVS_SQL: &str =
-    "SELECT env, status FROM registry.project_envs WHERE org = $1 AND project = $2 ORDER BY env";
+const PROJECT_ENVS_SQL: &str = "SELECT env, status FROM registry.project_envs WHERE org = $1 AND project = $2 \
+    AND ($3::text IS NULL OR env > $3) ORDER BY env LIMIT $4";
 
 /// The environments of one project of `org`.
 pub async fn project_envs(
@@ -713,10 +728,21 @@ pub async fn project_envs(
     org: &str,
     project: &str,
 ) -> Result<Vec<EnvironmentSummary>, IdentityError> {
+    project_envs_page(client, org, project, None, None).await
+}
+
+/// Read a keyset page, or all rows when the limit is absent.
+pub async fn project_envs_page(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+    after: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<EnvironmentSummary>, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
     Ok(client
-        .query(PROJECT_ENVS_SQL, &[&org, &project])
+        .query(PROJECT_ENVS_SQL, &[&org, &project, &after, &limit])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -741,7 +767,8 @@ const PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, \
         WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2) \
     OR EXISTS (SELECT 1 FROM identity.project_roles r \
         WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2)) \
-    ORDER BY p.email";
+    AND ($5::text IS NULL OR (p.email, p.id) > ($5, $6::text::uuid)) \
+    ORDER BY p.email, p.id LIMIT $7";
 
 /// One user of a project.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -766,6 +793,18 @@ pub async fn project_members(
     org: &str,
     project: &str,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
+    project_members_page(client, org, project, None, None, None).await
+}
+
+/// Read a keyset page, or all rows when the limit is absent.
+pub async fn project_members_page(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+    after: Option<&str>,
+    after_id: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<ProjectMember>, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
     client
@@ -776,6 +815,9 @@ pub async fn project_members(
                 &project,
                 &control::PROJECT_ADMIN_ROLE,
                 &ORG_ADMIN_ROLE,
+                &after,
+                &after_id,
+                &limit,
             ],
         )
         .await

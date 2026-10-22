@@ -347,7 +347,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
         Ok(
-            json!({"projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
+            json!({"next_cursor": null, "total": 2, "projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
         )
     );
 
@@ -418,7 +418,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     assert_eq!(identity.requests.recv().await.unwrap().0, "/identity/users");
     assert_eq!(
         call(&delivery, "user/list", boss, json!({})).await,
-        Ok(json!({"users": [
+        Ok(json!({"next_cursor": null, "total": 3, "users": [
             {"principal_id": ann.as_str(), "email": "ann@example.test", "display_name": "Ann", "status": "active", "org_admin": false},
             {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss", "status": "active", "org_admin": true},
             {"principal_id": cat.as_str(), "email": "cat@example.test", "display_name": "Cat", "status": "active", "org_admin": false},
@@ -592,7 +592,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     // A project admin reads the org's users, and holds no other org route.
     assert_eq!(
         call(&delivery, "user/list", cat, json!({})).await,
-        Ok(json!({"users": [
+        Ok(json!({"next_cursor": null, "total": 3, "users": [
             {"principal_id": ann, "email": "ann@example.test", "display_name": "Ann", "status": "active", "org_admin": false},
             {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss", "status": "active", "org_admin": true},
             {"principal_id": cat, "email": "cat@example.test", "display_name": "Cat", "status": "active", "org_admin": false},
@@ -610,7 +610,9 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing"})
         )
         .await,
-        Ok(json!({"environments": [{"name": "dev", "state": "active"}]}))
+        Ok(
+            json!({"next_cursor": null, "total": 1, "environments": [{"name": "dev", "state": "active"}]})
+        )
     );
     // A status read names an environment of the project before it reads
     // Kubernetes.
@@ -644,7 +646,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     );
     assert_eq!(
         call(&delivery, "member/list", cat, json!({"project": "billing"})).await,
-        Ok(json!({"members": [
+        Ok(json!({"next_cursor": null, "total": 3, "members": [
             {"principal_id": ann, "email": "ann@example.test", "display_name": "Ann",
              "org_admin": false, "project_admin": false, "environments": ["dev"]},
             {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss",
@@ -1040,12 +1042,14 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
         Ok(
-            json!({"projects": [{"name": "billing", "state": "inactive"}, {"name": "shop", "state": "inactive"}]})
+            json!({"next_cursor": null, "total": 2, "projects": [{"name": "billing", "state": "inactive"}, {"name": "shop", "state": "inactive"}]})
         )
     );
     assert_eq!(
         call(&delivery, "environment/list", boss, shop_project.clone()).await,
-        Ok(json!({"environments": [{"name": "dev", "state": "inactive"}]}))
+        Ok(
+            json!({"next_cursor": null, "total": 1, "environments": [{"name": "dev", "state": "inactive"}]})
+        )
     );
     assert_eq!(
         call(&delivery, "environment/activate", boss, billing_dev.clone()).await,
@@ -1119,7 +1123,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
         Ok(
-            json!({"projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
+            json!({"next_cursor": null, "total": 2, "projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
         ),
         "an inactive environment does not hide an active environment"
     );
@@ -1132,7 +1136,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         )
         .await,
         Ok(
-            json!({"environments": [{"name": "dev", "state": "active"}, {"name": "other", "state": "inactive"}]})
+            json!({"next_cursor": null, "total": 2, "environments": [{"name": "dev", "state": "active"}, {"name": "other", "state": "inactive"}]})
         )
     );
     let _ = std::fs::remove_dir_all(&logins);
@@ -1278,7 +1282,10 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     )
     .await
     .expect("an org admin lists the environments of ledger");
-    assert_eq!(listed, json!({"environments": []}));
+    assert_eq!(
+        listed,
+        json!({"next_cursor": null, "total": 0, "environments": []})
+    );
     let mut admins: Vec<String> = admin
         .query(
             "SELECT principal_id::text FROM identity.project_roles \

@@ -1,6 +1,17 @@
 {
   "cases": [
     {
+      "literal": "invalid_input",
+      "from": [
+        "malformed_input"
+      ],
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
       "literal": "permission_denied",
       "from": "permission_denied",
       "detail": {

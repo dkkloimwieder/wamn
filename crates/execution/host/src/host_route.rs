@@ -22,11 +22,12 @@ use wamn_engine::router_delivery::{
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::auth_changes::AuthChanges;
-use wamn_platform_identity::control::{control_projects, is_org_admin, org_projects};
+use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
+use wamn_platform_identity::paging::Order;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 use crate::application_route::ApplicationRoutes;
-use crate::control_route::{ControlRoutes, Refusal};
+use crate::control_route::{ControlRoutes, Refusal, control_page};
 
 /// What the handlers of one host read.
 pub enum HostRouteHandlers {
@@ -141,22 +142,35 @@ impl HostRouteDelivery {
             }
             (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
                 let org_admin = is_org_admin(control.as_ref(), &principal, org).await?;
+                let page =
+                    control_page(payload, attachment, &principal, org, None, Order::Project)?;
                 let projects = if org_admin {
-                    org_projects(control.as_ref(), org)
+                    org_projects_page(control.as_ref(), org, page.after(0), page.read_limit())
                         .await?
                         .into_iter()
                         .map(|entry| entry.name)
                         .collect()
                 } else {
-                    control_projects(control.as_ref(), &principal, org).await?
+                    control_projects_page(
+                        control.as_ref(),
+                        &principal,
+                        org,
+                        page.after(0),
+                        page.read_limit(),
+                    )
+                    .await?
                 };
-                Ok(json!({
-                    "org_admin": org_admin,
-                    "projects": projects
+                let mut answer = page.answer("projects", projects, |project| json!([project]));
+                answer["projects"] = Value::Array(
+                    answer["projects"]
+                        .as_array()
+                        .expect("page rows are an array")
                         .iter()
-                        .map(|project| json!({ "project": project, "project_admin": true }))
-                        .collect::<Vec<_>>(),
-                }))
+                        .map(|project| json!({"project": project, "project_admin": true}))
+                        .collect(),
+                );
+                answer["org_admin"] = json!(org_admin);
+                Ok(answer)
             }
             (
                 _,

@@ -26,6 +26,7 @@ pub mod application;
 pub mod auth_changes;
 pub mod control;
 pub mod org;
+pub mod paging;
 pub mod password;
 pub mod password_login;
 pub mod session_keys;

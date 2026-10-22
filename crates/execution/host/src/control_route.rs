@@ -59,14 +59,16 @@ use wamn_platform_identity::application::{
 };
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::{
-    control_projects, is_org_admin, is_project_admin, org_projects,
+    control_projects_page, is_org_admin, is_project_admin, org_projects_page,
 };
 use wamn_platform_identity::org::{
     EnvironmentStatus, MemberGrants, create_project, deactivate_org_membership, grant_member,
-    grant_org_admin, grant_project_admin, invite_member, org_environments, org_users, project_envs,
-    project_members, reactivate_org_membership, revoke_member, revoke_org_admin,
-    revoke_project_admin, set_environment_status, status_environments, user_contact,
+    grant_org_admin, grant_project_admin, invite_member, org_environments, org_users_page,
+    project_envs, project_envs_page, project_members_page, reactivate_org_membership,
+    revoke_member, revoke_org_admin, revoke_project_admin, set_environment_status,
+    status_environments, user_contact,
 };
+use wamn_platform_identity::paging::{ListPage, Order};
 use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
 };
@@ -231,7 +233,7 @@ impl ControlRoutes<'_> {
             // of a project of the org.
             HostRouteAuthority::Member => {
                 self.admits(self.control, caller, None).await?
-                    || !control_projects(self.control, caller, self.org)
+                    || !control_projects_page(self.control, caller, self.org, None, Some(1))
                         .await?
                         .is_empty()
             }
@@ -246,10 +248,31 @@ impl ControlRoutes<'_> {
         }
         match attachment.route.handler {
             HostHandler::UserList => {
-                Ok(json!({ "users": org_users(self.control, self.org).await? }))
+                let page = control_page(
+                    payload,
+                    attachment,
+                    caller,
+                    self.org,
+                    None,
+                    Order::Principal,
+                )?;
+                let users = org_users_page(
+                    self.control,
+                    self.org,
+                    page.after(0),
+                    page.after(1),
+                    page.read_limit(),
+                )
+                .await?;
+                Ok(page.answer("users", users, |row| json!([row.email, row.principal_id])))
             }
             HostHandler::ProjectList => {
-                Ok(json!({ "projects": org_projects(self.control, self.org).await? }))
+                let page =
+                    control_page(payload, attachment, caller, self.org, None, Order::Project)?;
+                let projects =
+                    org_projects_page(self.control, self.org, page.after(0), page.read_limit())
+                        .await?;
+                Ok(page.answer("projects", projects, |row| json!([row.name])))
             }
             HostHandler::UserInvite => self.invite(attachment, caller, payload).await,
             HostHandler::UserActivate => {
@@ -302,9 +325,24 @@ impl ControlRoutes<'_> {
                 Ok(json!({ "principal_id": principal.as_str(), "org_admin": false }))
             }
             HostHandler::EnvironmentList => {
-                let request: ProjectRequest = parse(payload)?;
-                let environments = project_envs(self.control, self.org, &request.project).await?;
-                Ok(json!({ "environments": environments }))
+                let request: ProjectScope = parse(payload)?;
+                let page = control_page(
+                    payload,
+                    attachment,
+                    caller,
+                    self.org,
+                    Some(&request.project),
+                    Order::Environment,
+                )?;
+                let environments = project_envs_page(
+                    self.control,
+                    self.org,
+                    &request.project,
+                    page.after(0),
+                    page.read_limit(),
+                )
+                .await?;
+                Ok(page.answer("environments", environments, |row| json!([row.name])))
             }
             HostHandler::EnvironmentStatus => {
                 let request: EnvironmentRequest = parse(payload)?;
@@ -385,9 +423,27 @@ impl ControlRoutes<'_> {
                 }
             }
             HostHandler::MemberList => {
-                let request: ProjectRequest = parse(payload)?;
-                let members = project_members(self.control, self.org, &request.project).await?;
-                Ok(json!({ "members": members }))
+                let request: ProjectScope = parse(payload)?;
+                let page = control_page(
+                    payload,
+                    attachment,
+                    caller,
+                    self.org,
+                    Some(&request.project),
+                    Order::Principal,
+                )?;
+                let members = project_members_page(
+                    self.control,
+                    self.org,
+                    &request.project,
+                    page.after(0),
+                    page.after(1),
+                    page.read_limit(),
+                )
+                .await?;
+                Ok(page.answer("members", members, |row| {
+                    json!([row.email, row.principal_id])
+                }))
             }
             HostHandler::MemberGrant => {
                 let request: MemberRequest = parse(payload)?;
@@ -1077,6 +1133,32 @@ async fn write_status(
     result
 }
 
+/// Bind a list cursor to this operation and the current authorization scope.
+pub(crate) fn control_page(
+    payload: &str,
+    attachment: &HostAttachment,
+    caller: &PrincipalId,
+    org: &str,
+    project: Option<&str>,
+    order: Order,
+) -> Result<ListPage, Refusal> {
+    let input: Value = parse(payload)?;
+    let Some(fields) = input.as_object() else {
+        return Err(Refusal::Delivery(DeliveryError::InvalidPayload));
+    };
+    if fields.keys().any(|key| {
+        !(matches!(key.as_str(), "limit" | "cursor") || key == "project" && project.is_some())
+    }) {
+        return Err(Refusal::Delivery(DeliveryError::InvalidPayload));
+    }
+    Ok(ListPage::new(
+        &input,
+        &attachment.operation,
+        json!({"principal": caller.as_str(), "org": org, "project": project}),
+        order,
+    )?)
+}
+
 /// The request of a route, or the delivery refusal of a payload that is not
 /// one.
 pub(crate) fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
@@ -1111,6 +1193,87 @@ fn denied(attachment: &HostAttachment) -> Refusal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_paging_binds_routes_and_reports_declared_fields() {
+        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+        for (handler, order, project, wrapper) in [
+            (HostHandler::ProjectList, Order::Project, None, "projects"),
+            (HostHandler::UserList, Order::Principal, None, "users"),
+            (
+                HostHandler::EnvironmentList,
+                Order::Environment,
+                Some("widgets"),
+                "environments",
+            ),
+            (
+                HostHandler::MemberList,
+                Order::Principal,
+                Some("widgets"),
+                "members",
+            ),
+            (HostHandler::ControlMine, Order::Project, None, "projects"),
+        ] {
+            let attachment = wamn_catalog::HostRouteSet::Control
+                .attachments()
+                .find(|(_, attachment)| attachment.route.handler == handler)
+                .unwrap()
+                .1;
+            let page = control_page(
+                "{\"limit\":1}",
+                attachment,
+                &principal,
+                "acme",
+                project,
+                order,
+            )
+            .unwrap();
+            let key = if order == Order::Principal {
+                json!(["a@example.invalid", principal.as_str()])
+            } else {
+                json!(["a"])
+            };
+            let first = page.answer(wrapper, vec![key.clone(), key], Clone::clone);
+            assert!(first["total"].is_null());
+            let request = json!({"cursor":first["next_cursor"]}).to_string();
+            assert!(
+                control_page(&request, attachment, &principal, "other", project, order).is_err()
+            );
+            if project.is_some() {
+                assert!(
+                    control_page(
+                        &request,
+                        attachment,
+                        &principal,
+                        "acme",
+                        Some("other"),
+                        order
+                    )
+                    .is_err()
+                );
+            }
+            let last = control_page(&request, attachment, &principal, "acme", project, order)
+                .unwrap()
+                .answer(wrapper, Vec::<Value>::new(), Clone::clone);
+            assert!(last["next_cursor"].is_null());
+            assert!(last["total"].is_null());
+            for (input, field) in [
+                ("{\"limit\":0}", "limit"),
+                ("{\"cursor\":\"bad\"}", "cursor"),
+            ] {
+                assert!(
+                    matches!(control_page(input, attachment, &principal, "acme", project, order),
+                    Err(Refusal::Declared {code: "invalid_input", detail}) if detail == json!({"field":field}))
+                );
+            }
+            assert_eq!(
+                control_page("{}", attachment, &principal, "acme", project, order)
+                    .unwrap()
+                    .read_limit(),
+                None
+            );
+        }
+    }
 
     #[tokio::test]
     async fn status_answers_when_count_reads_fail() {

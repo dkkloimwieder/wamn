@@ -147,6 +147,21 @@ An application refusal is a declared error of its route, with `field` in its det
 The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
 The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through that client and write no database directly.
 The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
+The control lists `project.list`, `user.list`, `environment.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.
+Either member starts paging. `limit` accepts integers from 1 through 100 and defaults to 100 in paging mode.
+Explicit nulls refuse. A request with neither member returns every row.
+Each answer adds nullable `next_cursor` and `total` members. `control.mine` repeats `org_admin` on every page.
+`total` is the full count only when a first page exhausts the set, or a whole-result request reads everything.
+Later pages return null totals, even on the last page. No list runs a count query.
+
+A cursor is an opaque token for the next page. Each query resumes after its last key and reads at most `limit + 1` rows.
+Projects sort by project identifier. Environments sort by environment name within the project.
+Users and members sort by email, then principal UUID. SQL comparisons use the same database collation as the order.
+Cursors encode canonical compact JSON as unpadded base64url and bind the operation, authenticated principal, org, applicable project, and order.
+Malformed or mismatched cursors return `invalid_input` with `detail.field` set to `cursor`. Bad limits name `limit` in that field.
+Every page repeats authorization. Pages reflect current data, so an email change can move a user between pages.
+The contracts retain version 0.9.0. `environment.status` and `release.profile` retain their whole-result contracts.
+
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
 Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.

@@ -649,7 +649,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         deliver(&delivery, &route, Some(caller))
             .await
             .expect("the host answers"),
-        json!({"org_admin": false, "projects": [{"project": PROJECT, "project_admin": true}]})
+        json!({"next_cursor": null, "total": 1, "org_admin": false, "projects": [{"project": PROJECT, "project_admin": true}]})
     );
 
     // A cookie read needs the CSRF claim. A PAT is never a control credential.
@@ -732,7 +732,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         deliver(&delivery, &route, Some(caller))
             .await
             .expect("the host answers"),
-        json!({"org_admin": true, "projects": projects
+        json!({"next_cursor": null, "total": 2, "org_admin": true, "projects": projects
             .iter()
             .map(|project| json!({"project": project, "project_admin": true}))
             .collect::<Vec<_>>()})
