@@ -62,8 +62,12 @@ pub async fn exercise(
         .collect::<anyhow::Result<_>>()?;
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let consumers = registration_consumers(&scope, &tenant, &manifests);
+    // Each connector run gets its own broker directory, because the broker
+    // refuses an existing one.
+    let broker_work = run.work.join(connector);
+    std::fs::create_dir(&broker_work)?;
     let broker = event_broker::prepare(
-        &run.work,
+        &broker_work,
         &scope,
         &tenant,
         &source,
