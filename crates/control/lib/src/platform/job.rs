@@ -12,6 +12,9 @@ use serde_json::{Value, json};
 use crate::{kubectl, release_chart::Target};
 
 const OUTPUT_FILE: &str = "/out/secret.json";
+// env apply passes the policy's 600 s readiness budget to Helm. Allow 900 s
+// here so Helm can report its own timeout and finish its cleanup first.
+const INSTALL_DEADLINE: Duration = Duration::from_secs(900);
 const HANDOFF: &str = r#"umask 077
 /usr/local/bin/wamn-ctl "$@"
 waited=0
@@ -828,7 +831,7 @@ pub async fn run(
             )
             .await?;
         }
-        let deadline = Instant::now() + Duration::from_secs(600);
+        let deadline = Instant::now() + INSTALL_DEADLINE;
         loop {
             let status: Value = kubectl::get(
                 &target.kubeconfig,
@@ -858,8 +861,9 @@ pub async fn run(
             }
             ensure!(
                 Instant::now() < deadline,
-                "install Job {} did not complete in 600s",
-                request.name
+                "install Job {} did not complete in {}s",
+                request.name,
+                INSTALL_DEADLINE.as_secs()
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -867,7 +871,13 @@ pub async fn run(
     .await;
     let cleanup = finish(target, work_directory, request).await;
     let output = cleanup?;
-    result?;
+    result.with_context(|| {
+        let path = work_directory
+            .join("jobs")
+            .join(format!("{}.log", request.name));
+        let log = std::fs::read_to_string(&path).unwrap_or_default();
+        format!("install Job log saved at {}:\n{log}", path.display())
+    })?;
     let mut data: BTreeMap<_, _> = [("digest".into(), digest)].into();
     if request.capture_output {
         data.insert("output".into(), output);
