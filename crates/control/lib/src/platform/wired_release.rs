@@ -185,7 +185,7 @@ pub async fn publish_wired_release(
         &request.release_artifact_base,
     )
     .await
-    .map_err(|_| anyhow::anyhow!("publish wired release failed"))?;
+    .context("publish wired release failed")?;
     Ok(digest.to_string())
 }
 
