@@ -46,7 +46,8 @@ describe("Environment tiles", () => {
     render(() => (
       <EnvironmentTiles status={{ ...status, digest: null, usersWithRole: null, roles: null, memberships: null }} />
     ));
-    for (const label of ["Release", "Users with a role", "Roles", "Memberships"]) tile(label, "Unknown", "unknown");
+    for (const label of ["Release", "Users with a role", "Roles", "Memberships", "Workloads"])
+      tile(label, "Unknown", "unknown");
   });
 
   it("preserves measured zeros", () => {

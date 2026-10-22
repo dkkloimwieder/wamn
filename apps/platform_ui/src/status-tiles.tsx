@@ -14,7 +14,8 @@ export function EnvironmentTiles(props: { status?: environment.EnvironmentStatus
   };
   const workloads = createMemo(() => {
     const entries = props.status?.workloads;
-    if (!entries) return undefined;
+    // Without a release there are no workloads to judge, so the tile is unknown.
+    if (!entries || !props.status?.digest) return undefined;
     const ready = entries.filter((entry) =>
       entry.conditions.some((condition) => condition.type === "Ready" && condition.status === "True"),
     ).length;

@@ -148,7 +148,9 @@ async function assertTiles(scope, status) {
       ["Roles", status.roles],
       ["Memberships", status.memberships],
     ].map(([label, count]) => [label, String(count ?? "Unknown"), count == null ? "unknown" : "ok"]),
-    ["Workloads", `${ready} ready / ${notReady} not ready`, notReady ? "warning" : "ok"],
+    status.digest
+      ? ["Workloads", `${ready} ready / ${notReady} not ready`, notReady ? "warning" : "ok"]
+      : ["Workloads", "Unknown", "unknown"],
   ];
   const row = scope.getByRole("region", { name: "Environment status", exact: true });
   for (const [label, value, state] of expected) {
