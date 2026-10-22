@@ -1026,6 +1026,27 @@ async fn serving_chart(
     let saved = work.join("qualification-chart");
     std::fs::rename(&chart, &saved)?;
     release_chart::stamp(&saved, &images, Some(&qualification), &chart)?;
+    // The image set holds no edge image, so the stamp keeps the built one.
+    // Mirror it like the host and point the chart at the serving registry.
+    let values_path = chart.join("values.yaml");
+    let mut values: Value = serde_yaml::from_slice(&std::fs::read(&values_path)?)?;
+    let edge = values["platform"]["edge"]["image"]
+        .as_str()
+        .context("fixture chart edge image")?
+        .to_owned();
+    let rest = edge
+        .strip_prefix(&source.registry)
+        .context("fixture edge image is outside its source registry")?;
+    let tagged = edge.split('@').next().unwrap_or(&edge);
+    let mirrored = format!(
+        "{}/{path}{}",
+        source.registry,
+        rest.split('@').next().unwrap_or(rest)
+    );
+    docker(&["tag", tagged, &mirrored])?;
+    docker(&["push", &mirrored])?;
+    values["platform"]["edge"]["image"] = format!("{}{rest}", serving.registry).into();
+    std::fs::write(&values_path, serde_yaml::to_string(&values)?)?;
     let mirrors = work.join(format!("{}.registry", source.cluster_name));
     let destination = mirrors.join(
         serving
