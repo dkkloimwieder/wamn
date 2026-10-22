@@ -5,7 +5,7 @@
 //! The runner exports CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent and
 //! DOCKER_CONFIG pointing to a config.json with the GCP gcloud credential helper.
 //! The fixture reads deploy/gcp/cluster.k and requires its registry to hold all
-//! six images of Chart.yaml's version. It copies them to its registry:2 container
+//! seven images of Chart.yaml's version. It copies them to its registry:2 container
 //! and stamps them. It never builds images or needs image build tools.
 //! Network access to the GCP registry and public registries is required.
 //! No external database, bucket or DNS is required. The test keeps its input,
@@ -13,7 +13,7 @@
 //! A TLS artifact registry serves Receiving, WMS, and their unqualified releases.
 //! WMS publishes through the native gate sidecar with an in-memory PAT.
 //! WMS stays unqualified and must refuse. The host qualifies Receiving, then
-//! the test applies only Receiving through 4.19.1 and requires an unchanged rerun.
+//! the test applies only Receiving through the Rust edge in 4.20 and requires an unchanged rerun.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -529,6 +529,7 @@ cluster.Cluster {{
         "4.19.1 Control credentials",
         "4.19.1 Control host",
         "4.19.1 Owner invite",
+        "4.20 Rust edge",
     ] {
         ensure!(
             applied
@@ -586,6 +587,53 @@ cluster.Cluster {{
             && control["status"]["availableReplicas"] == 1,
         "control host did not roll out"
     );
+    require_edge_skip(&applied)?;
+    let edge: Value = kubectl::get(&kubeconfig, &context, "edge", "deployment", "wamn-edge-web")
+        .await?
+        .context("missing Rust edge Deployment")?;
+    ensure!(
+        edge["status"]["observedGeneration"] == edge["metadata"]["generation"]
+            && edge["status"]["updatedReplicas"] == 1
+            && edge["status"]["availableReplicas"] == 1,
+        "Rust edge did not roll out"
+    );
+    ensure!(
+        edge["spec"]["template"]["spec"]["containers"][0]["image"]
+            == chart["platform"]["edge"]["image"],
+        "Rust edge does not use the stamped image"
+    );
+    ensure!(
+        edge["spec"]["template"]["spec"]["serviceAccountName"] == "wamn-edge-web",
+        "Rust edge has another service account"
+    );
+    let service: Value = kubectl::get(&kubeconfig, &context, "edge", "service", "wamn-edge-web")
+        .await?
+        .context("missing Rust edge Service")?;
+    ensure!(
+        service["spec"]["selector"] == edge["spec"]["template"]["metadata"]["labels"],
+        "Rust edge Service selects another workload"
+    );
+    let access: Value = kubectl::get(&kubeconfig, &context, "hosts", "role", "wamn-edge-web")
+        .await?
+        .context("missing Rust edge Role")?;
+    ensure!(
+        access["rules"][0]["verbs"] == json!(["get"])
+            && access["rules"][0]["resources"] == json!(["configmaps"]),
+        "Rust edge can read beyond the release ConfigMaps"
+    );
+    let control_row: Value = kubectl::get(&kubeconfig, &context, "hosts", "configmap", "c-test")
+        .await?
+        .context("missing chart-owned control release row")?;
+    let control_row: Value = serde_json::from_str(
+        control_row["data"]["release.json"]
+            .as_str()
+            .context("control release JSON")?,
+    )?;
+    ensure!(
+        control_row["platformVersion"] == version
+            && control_row["host"] == document.route_hosts.control,
+        "control release row does not select the installed platform UI"
+    );
     let invite_log_path = work.join("jobs/platform-invite-test.log");
     let invite_log = std::fs::read_to_string(&invite_log_path)?;
     ensure!(
@@ -624,6 +672,7 @@ cluster.Cluster {{
         "4.19.1 Control credentials",
         "4.19.1 Control host",
         "4.19.1 Owner invite",
+        "4.20 Rust edge",
     ] {
         ensure!(
             repeated
@@ -634,6 +683,47 @@ cluster.Cluster {{
     }
     require_web_skip(&repeated)?;
     require_platform_ui_skip(&repeated)?;
+    require_edge_skip(&repeated)?;
+    let edge_after: Value =
+        kubectl::get(&kubeconfig, &context, "edge", "deployment", "wamn-edge-web")
+            .await?
+            .context("Rust edge Deployment disappeared")?;
+    ensure!(
+        edge_after["metadata"]["resourceVersion"] == edge["metadata"]["resourceVersion"],
+        "unchanged apply rewrote the Rust edge Deployment"
+    );
+    let edge_check: Option<Value> = kubectl::get(
+        &kubeconfig,
+        &context,
+        "edge",
+        "configmap",
+        "wamn-install-platform-edge-check",
+    )
+    .await?;
+    ensure!(
+        edge_check.is_none() && !work.join("jobs/platform-edge-check.log").exists(),
+        "kind started a bucket check Job"
+    );
+    let edge_jobs: Value = serde_json::from_str(
+        &kubectl::kubectl(
+            &kubeconfig,
+            &context,
+            "edge",
+            &["get", "jobs", "-o", "json"],
+            None,
+        )
+        .await?,
+    )?;
+    ensure!(
+        !edge_jobs["items"]
+            .as_array()
+            .context("edge Jobs")?
+            .iter()
+            .any(|job| job["metadata"]["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("platform-edge-check"))),
+        "kind retains a bucket check Job"
+    );
     ensure!(
         std::fs::read_to_string(&invite_log_path)? == invite_log
             && std::fs::metadata(&invite_log_path)?.modified()? == invite_modified,
@@ -1063,6 +1153,16 @@ async fn serving_credentials(
     Ok(())
 }
 
+fn require_edge_skip(lines: &[String]) -> anyhow::Result<()> {
+    ensure!(
+        lines
+            .iter()
+            .any(|line| line == "4.20 Edge bucket check: skipped: no bucket"),
+        "missing edge no-bucket skip"
+    );
+    Ok(())
+}
+
 fn require_web_skip(lines: &[String]) -> anyhow::Result<()> {
     for action in ["upload", "check"] {
         ensure!(
@@ -1192,7 +1292,13 @@ async fn secret_versions(kubeconfig: &Path, context: &str) -> anyhow::Result<Vec
 }
 
 async fn copy_images(source: &str, destination: &str, version: &str) -> anyhow::Result<()> {
-    for name in ["wamn-host", "wamn-runner", "wamn-gates", "wamn-identity"] {
+    for name in [
+        "wamn-host",
+        "wamn-runner",
+        "wamn-gates",
+        "wamn-identity",
+        "wamn-edge-web",
+    ] {
         let from = format!("{source}/{name}:{version}");
         let to = format!("{destination}/{name}:{version}");
         docker(&["pull", &from])?;
