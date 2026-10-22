@@ -95,8 +95,12 @@ The guest does not supply an endpoint or credential.
 The host resolves the admitted requirement and confines the request to that connection.
 
 The `http-request` palette node sends one request through this contract.
-The `http-page` node sends GET requests and emits one array on `main` after it collects all pages.
+The `http-page` node emits one array on `main` after it collects all pages.
 Its parameters are `requirement`, `path-and-query`, optional `headers`, `page`, `items`, and optional `carry-input-pointer`.
+The optional `method` defaults to GET and accepts GET, HEAD, POST, PUT, DELETE, OPTIONS, and PATCH, as `http-request` does.
+The optional `body-input-pointer` selects a value from the node input through a JSON pointer, a path into a JSON value.
+Each request sends that value as JSON with `Content-Type: application/json`, which replaces any configured content type.
+A missing body target returns a terminal error. A selected JSON null is a valid body.
 When `carry-input-pointer` is set, the output is `{"items":[…],"carry":<value>}`.
 The JSON pointer selects the carried value from the node input, including for an empty item array.
 A missing target returns a terminal error.
@@ -104,6 +108,10 @@ Without that parameter, the output remains the plain item array.
 The `items` parameter is a JSON pointer to each response's item array.
 Offset paging uses `page = {"style":"offset","limit":"limit","offset":"offset"}` and reads the positive limit from `path-and-query`.
 A short page ends offset paging.
+The offset and limit remain query parameters for POST requests, including an initial `offset=0` when no offset is supplied.
+An optional `page.has-more`, for example `"/hasMore"`, replaces the short-page rule with a boolean from each response.
+False ends the loop after that page, without another request. True continues even after a short page.
+A missing or nonboolean value returns an `invalid-page` terminal error.
 Cursor paging uses `{"style":"cursor","pointer":"/next","param":"cursor"}` and stops on an absent, null, or empty cursor.
 Link paging uses `{"style":"link-header"}` and follows relative links with `rel="next"` unchanged.
 Absolute next links return a terminal error, because the guest does not see the binding's origin (`wamn-62h0t`).

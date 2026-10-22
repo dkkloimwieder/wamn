@@ -11,7 +11,7 @@ fn run(config: &Value, pages: Vec<Response>) -> (Result<Vec<Value>, NodeError>, 
     let mut paths = Vec::new();
     let mut pages = pages.into_iter();
     let result = {
-        let future = collect_pages(config, Vec::new(), |request| {
+        let future = collect_pages(config, &Value::Null, Vec::new(), |request| {
             assert_eq!(request.method, "GET");
             assert!(request.body.is_none());
             paths.push(request.path_and_query);
@@ -186,4 +186,187 @@ fn carry_preserves_the_selected_input_and_empty_pages() {
         super::carried_input(&config, &json!({"due": null})).unwrap(),
         Some(serde_json::Value::Null)
     );
+}
+
+fn run_with_input(
+    config: &Value,
+    input: &Value,
+    pages: Vec<Response>,
+) -> (Result<Vec<Value>, NodeError>, Vec<Request>) {
+    let mut requests = Vec::new();
+    let mut pages = pages.into_iter();
+    let result = {
+        let future = collect_pages(
+            config,
+            input,
+            configured_headers(config).unwrap(),
+            |request| {
+                requests.push(request);
+                core::future::ready(Ok(pages.next().expect("unexpected page request")))
+            },
+        );
+        match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
+            Poll::Ready(result) => result,
+            Poll::Pending => panic!("pure send closure must complete"),
+        }
+    };
+    assert!(pages.next().is_none(), "unused response");
+    (result, requests)
+}
+
+#[test]
+fn post_carries_json_and_query_parameters_until_has_more_is_false() {
+    for initial_offset in [None, Some(4)] {
+        let mut cfg = config(&json!({
+            "style":"offset", "limit":"limit", "offset":"offset", "has-more":"/hasMore"
+        }));
+        cfg["method"] = json!("POST");
+        cfg["body-input-pointer"] = json!("/query");
+        cfg["carry-input-pointer"] = json!("/due");
+        cfg["headers"] = json!({"Prefer":"transient", "Content-Type":"text/plain"});
+        cfg["path-and-query"] = json!(match initial_offset {
+            Some(offset) => format!("/services/rest/query/v1/suiteql?limit=2&offset={offset}"),
+            None => "/services/rest/query/v1/suiteql?limit=2".into(),
+        });
+        let input = json!({"query":{"q":"SELECT id FROM customer ORDER BY id"}, "due":"2026-10-22T12:00:00Z"});
+        let (result, requests) = run_with_input(
+            &cfg,
+            &input,
+            vec![
+                response(&json!({"items":[1,2], "hasMore":true})),
+                response(&json!({"items":[3,4], "hasMore":false})),
+            ],
+        );
+        assert_eq!(
+            page_output(result.unwrap(), carried_input(&cfg, &input).unwrap()),
+            json!({"items":[1,2,3,4], "carry":input["due"]})
+        );
+        assert_eq!(requests.len(), 2);
+        for (index, request) in requests.iter().enumerate() {
+            assert_eq!(request.method, "POST");
+            assert_eq!(
+                request.path_and_query,
+                format!(
+                    "/services/rest/query/v1/suiteql?limit=2&offset={}",
+                    initial_offset.unwrap_or(0) + index * 2
+                )
+            );
+            assert_eq!(
+                serde_json::from_slice::<Value>(request.body.as_ref().unwrap()).unwrap(),
+                input["query"]
+            );
+            let content_types: Vec<_> = request
+                .headers
+                .iter()
+                .filter(|header| header.name.eq_ignore_ascii_case("content-type"))
+                .map(|header| header.value.as_slice())
+                .collect();
+            assert_eq!(content_types, [b"application/json".as_slice()]);
+            assert!(
+                request
+                    .headers
+                    .iter()
+                    .any(|header| header.name == "prefer" && header.value == b"transient")
+            );
+        }
+    }
+}
+
+#[test]
+fn has_more_true_continues_after_a_short_page() {
+    let (result, paths) = run(
+        &config(
+            &json!({"style":"offset", "limit":"limit", "offset":"offset", "has-more":"/hasMore"}),
+        ),
+        vec![
+            response(&json!({"items":[1], "hasMore":true})),
+            response(&json!({"items":[2], "hasMore":false})),
+        ],
+    );
+    assert_eq!(result.unwrap(), vec![json!(1), json!(2)]);
+    assert_eq!(paths, ["/items?limit=2", "/items?limit=2&offset=2"]);
+}
+
+#[test]
+fn missing_or_nonboolean_has_more_is_terminal_even_on_a_short_page() {
+    for last in [
+        json!({"items":[]}),
+        json!({"items":[], "hasMore":null}),
+        json!({"items":[], "hasMore":"false"}),
+        json!({"items":[], "hasMore":0}),
+    ] {
+        let (result, paths) = run(
+            &config(
+                &json!({"style":"offset", "limit":"limit", "offset":"offset", "has-more":"/hasMore"}),
+            ),
+            vec![
+                response(&json!({"items":[1,2], "hasMore":true})),
+                response(&last),
+            ],
+        );
+        let Err(NodeError::Terminal(detail)) = result else {
+            panic!("expected terminal error")
+        };
+        assert_eq!(detail.code.as_deref(), Some("invalid-page"));
+        assert_eq!(detail.message, "has-more pointer must select a boolean");
+        assert_eq!(paths.len(), 2);
+    }
+}
+
+#[test]
+fn missing_body_target_is_terminal_before_sending() {
+    let mut cfg = config(&json!({"style":"offset", "limit":"limit", "offset":"offset"}));
+    cfg["method"] = json!("POST");
+    cfg["body-input-pointer"] = json!("/absent");
+    let (result, requests) = run_with_input(&cfg, &json!({"query":{}}), vec![]);
+    let Err(NodeError::Terminal(detail)) = result else {
+        panic!("expected terminal error")
+    };
+    assert_eq!(detail.code.as_deref(), Some("invalid-input-pointer"));
+    assert_eq!(
+        detail.message,
+        "body-input-pointer has no target in the input"
+    );
+    assert!(requests.is_empty());
+}
+
+#[test]
+fn body_pointer_accepts_root_and_null_values() {
+    for (pointer, input, expected) in [
+        (
+            "",
+            json!({"q":"SELECT id FROM customer ORDER BY id"}),
+            json!({"q":"SELECT id FROM customer ORDER BY id"}),
+        ),
+        ("/query", json!({"query":null}), Value::Null),
+    ] {
+        let mut cfg = config(&json!({"style":"link-header"}));
+        cfg["method"] = json!("POST");
+        cfg["body-input-pointer"] = json!(pointer);
+        let (result, requests) = run_with_input(&cfg, &input, vec![response(&json!({"items":[]}))]);
+        assert!(result.unwrap().is_empty());
+        assert_eq!(
+            serde_json::from_slice::<Value>(requests[0].body.as_ref().unwrap()).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn nonstring_paging_parameters_are_invalid_configuration() {
+    let cfg = config(&json!({"style":"offset", "limit":"limit", "offset":"offset"}));
+    for pointer in ["/method", "/body-input-pointer", "/page/has-more"] {
+        let mut cfg = cfg.clone();
+        if pointer == "/page/has-more" {
+            cfg["page"]["has-more"] = json!(false);
+        } else {
+            cfg[pointer.trim_start_matches('/')] = json!(false);
+        }
+        let (result, requests) = run_with_input(&cfg, &Value::Null, vec![]);
+        let Err(NodeError::Terminal(detail)) = result else {
+            panic!("expected terminal error")
+        };
+        assert_eq!(detail.code.as_deref(), Some("invalid-config"));
+        assert!(requests.is_empty());
+    }
 }

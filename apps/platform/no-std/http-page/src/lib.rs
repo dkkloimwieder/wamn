@@ -1,4 +1,4 @@
-//! Paginated HTTP GET palette component.
+//! Paginated HTTP palette component.
 
 #![no_std]
 
@@ -56,7 +56,7 @@ impl Guest for Component {
         if let Some(tracestate) = context.tracestate {
             push_header_unless_present(&mut headers, "tracestate", tracestate.into_bytes());
         }
-        let items = collect_pages(&config, headers, async |request| {
+        let items = collect_pages(&config, &input, headers, async |request| {
             bindings::wamn::connection::http::send(request)
                 .await
                 .map_err(classify_connection_error)
@@ -203,7 +203,8 @@ bindings::export!(Component with_types_in bindings);
 /// Collect pages without retaining any transport or run state between calls.
 async fn collect_pages<F, Fut>(
     config: &serde_json::Value,
-    headers: Vec<Header>,
+    input: &serde_json::Value,
+    mut headers: Vec<Header>,
     mut send: F,
 ) -> Result<Vec<serde_json::Value>, NodeError>
 where
@@ -211,6 +212,28 @@ where
     Fut: core::future::Future<Output = Result<Response, NodeError>>,
 {
     let requirement = required_string(config, "requirement")?;
+    let method = if config.get("method").is_some() {
+        required_string(config, "method")?.to_ascii_uppercase()
+    } else {
+        "GET".into()
+    };
+    let request_body = if config.get("body-input-pointer").is_some() {
+        let pointer = required_string(config, "body-input-pointer")?;
+        let value = input.pointer(&pointer).ok_or_else(|| {
+            terminal(
+                "invalid-input-pointer",
+                "body-input-pointer has no target in the input",
+            )
+        })?;
+        headers.retain(|header| !header.name.eq_ignore_ascii_case("content-type"));
+        headers.push(Header {
+            name: "content-type".into(),
+            value: b"application/json".to_vec(),
+        });
+        Some(value.to_string().into_bytes())
+    } else {
+        None
+    };
     let mut path = required_string(config, "path-and-query")?;
     if !path.starts_with('/') || path.starts_with("//") {
         return Err(terminal(
@@ -224,6 +247,7 @@ where
     let mut offset = 0_u64;
     let mut limit = 0_usize;
     let mut offset_param = String::new();
+    let mut has_more_pointer = None;
     match style.as_str() {
         "offset" => {
             let limit_param = required_string(page, "limit")?;
@@ -241,6 +265,11 @@ where
                 offset = value.parse().map_err(|_| {
                     terminal("invalid-config", "offset must be an unsigned integer")
                 })?;
+            } else if method == "POST" {
+                path = set_query(&path, &offset_param, "0");
+            }
+            if page.get("has-more").is_some() {
+                has_more_pointer = Some(required_string(page, "has-more")?);
             }
         }
         "cursor" => {
@@ -254,10 +283,10 @@ where
     loop {
         let response = send(Request {
             requirement: requirement.clone(),
-            method: "GET".into(),
+            method: method.clone(),
             path_and_query: path.clone(),
             headers: headers.clone(),
-            body: None,
+            body: request_body.clone(),
             idempotency_key: None,
         })
         .await?;
@@ -282,7 +311,16 @@ where
         collected.extend(items.iter().cloned());
         match style.as_str() {
             "offset" => {
-                if count < limit {
+                let has_more = match &has_more_pointer {
+                    Some(pointer) => body
+                        .pointer(pointer)
+                        .and_then(serde_json::Value::as_bool)
+                        .ok_or_else(|| {
+                            terminal("invalid-page", "has-more pointer must select a boolean")
+                        })?,
+                    None => count >= limit,
+                };
+                if !has_more {
                     break;
                 }
                 offset = offset

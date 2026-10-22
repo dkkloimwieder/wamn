@@ -30,6 +30,22 @@
           "required": true
         },
         {
+          "name": "method",
+          "schema": {
+            "type": "string",
+            "enum": ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+            "default": "GET"
+          },
+          "required": false
+        },
+        {
+          "name": "body-input-pointer",
+          "schema": {
+            "type": "string"
+          },
+          "required": false
+        },
+        {
           "name": "path-and-query",
           "schema": {
             "type": "string",
@@ -71,6 +87,9 @@
                   "offset": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "has-more": {
+                    "type": "string"
                   }
                 }
               },
