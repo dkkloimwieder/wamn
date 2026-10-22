@@ -9,6 +9,7 @@ packages:
   - web/wfe/packages/components
   - web/wfe/packages/form
   - web/wfe/packages/generator
+  - web/wfe/packages/shell
 
 # Install scripts that pnpm may run. esbuild places its platform binary for
 # Vite, and @parcel/watcher builds the file watcher of the Tailwind CLI.

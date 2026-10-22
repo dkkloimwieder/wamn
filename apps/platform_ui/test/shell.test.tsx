@@ -27,6 +27,9 @@ describe("the app shell", () => {
     expect(screen.getByRole("heading", { name: "No screens available" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Choose an audience" }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Navigation" })).toBeNull();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.queryByRole("combobox", { name: "Audience" })).toBeNull();
     expect(screen.queryByText("This address names no page.")).toBeNull();
     window.history.pushState({}, "", `/${aud}/unknown`);
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -38,6 +41,21 @@ describe("the app shell", () => {
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(await screen.findByRole("button", { name: "User menu" })).toBeDefined();
     expect(screen.queryByText("This address names no page.")).toBeNull();
+  });
+
+  it("closes navigation after browser history changes the accepted page", async () => {
+    const { fetch } = identity(true);
+    open(`/${AUD}/pallets`, fetch);
+    await screen.findByText("pallets screen");
+    const toggle = screen.getByRole("button", { name: "Navigation" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("true"));
+    window.history.pushState({}, "", `/${AUD}/products`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await screen.findByText("products screen");
+    await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("false"));
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Audience" })).toBeNull();
   });
 
   it("refuses an address that names an environment of another org", async () => {

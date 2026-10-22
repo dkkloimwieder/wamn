@@ -210,6 +210,9 @@ importers:
       '@wfe/generator':
         specifier: workspace:*
         version: link:../../web/wfe/packages/generator
+      '@wfe/shell':
+        specifier: workspace:*
+        version: link:../../web/wfe/packages/shell
       solid-js:
         specifier: 2.0.0-rc.16
         version: 2.0.0-rc.16
@@ -393,6 +396,18 @@ importers:
       '@wfe/form':
         specifier: workspace:*
         version: link:../form
+      solid-js:
+        specifier: '>=2.0.0-rc.16 <3.0.0'
+        version: 2.0.0-rc.16
+
+  web/wfe/packages/shell:
+    dependencies:
+      '@solidjs/web':
+        specifier: '>=2.0.0-rc.16 <3.0.0'
+        version: 2.0.0-rc.16(solid-js@2.0.0-rc.16)
+      '@wfe/components':
+        specifier: workspace:*
+        version: link:../components
       solid-js:
         specifier: '>=2.0.0-rc.16 <3.0.0'
         version: 2.0.0-rc.16

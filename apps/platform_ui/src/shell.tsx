@@ -10,10 +10,10 @@ import {
   type SessionState,
   type Transport,
 } from "@wamn/web-runtime";
-import { audienceKind, createAddress, matchPath, queryValues, type Address, type Kind } from "./address";
+import { audienceKind, createAddress, type Address, type Kind } from "./address";
 import type { Scope } from "./scope";
 import { identityPage, SignInForm } from "./identity";
-import { EntryPage, Frame, MissingPage, NavigationLink, NotFound, NotFoundBoundary, Page } from "./page";
+import { EntryPage, Frame, NotFound, NotFoundBoundary } from "./page";
 
 const Layout = lazy(() => import("./layout"));
 
@@ -276,84 +276,11 @@ function Session(
               transport={transport}
               address={props.address}
               signOut={() => keeper.signOut()}
-            >
-              <Destination {...props} sections={sections} view={shown()} transport={transport} />
-            </Layout>
+              routes={sections}
+            />
           </NotFoundBoundary>
         )}
       </Show>
-    </Show>
-  );
-}
-
-function Destination(props: {
-  aud: string;
-  kind: Kind;
-  address: Address;
-  sections: readonly ShellSection[];
-  view: View;
-  transport: Transport;
-}): JSX.Element {
-  const path = () => props.address.url().pathname.split("/").slice(2).join("/");
-  const selected = () => {
-    for (const section of props.sections)
-      for (const route of [...section.screens, ...(section.routes ?? [])]) {
-        const params = matchPath(route.path, path());
-        if (!params || !props.view.holds(route.operation, params.project)) continue;
-        params.aud = props.aud;
-        return { route, home: section.screens[0], params };
-      }
-    return undefined;
-  };
-  return (
-    <Show
-      when={selected()}
-      keyed
-      fallback={
-        <Show
-          when={path() !== ""}
-          fallback={
-            <Page title="No screens available">
-              <p>This audience has no available screens.</p>
-              <NavigationLink href="/" navigate={props.address.navigate}>
-                Choose an audience
-              </NavigationLink>
-            </Page>
-          }
-        >
-          <MissingPage />
-        </Show>
-      }
-    >
-      {({ route, home, params }) => {
-        const open = (path: string) => props.address.navigate(`/${props.aud}/${path}`, false, true);
-        const close = () =>
-          window.history.state?.opened === true
-            ? window.history.back()
-            : props.address.navigate(
-                `/${props.aud}/${home && props.view.holds(home.operation) ? home.path : (props.view.sections[0]?.screens[0]?.path ?? "")}`,
-                true,
-              );
-        return (
-          <>
-            <route.component
-              actions={(route.actions ?? [])
-                .filter((action) => props.view.holds(action.operation))
-                .map((action) => ({
-                  ...action,
-                  path: action.path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? "")),
-                }))}
-              transport={props.transport}
-              holds={(operation, project) => props.view.holds(operation, project ?? params.project)}
-              controlMine={props.view.controlMine}
-              params={params}
-              search={queryValues(props.address.url().searchParams)}
-              open={open}
-              close={close}
-            />
-          </>
-        );
-      }}
     </Show>
   );
 }

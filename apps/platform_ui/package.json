@@ -12,6 +12,7 @@
     "@wfe/components": "workspace:*",
     "@wfe/form": "workspace:*",
     "@wfe/generator": "workspace:*",
+    "@wfe/shell": "workspace:*",
     "@solidjs/web": "2.0.0-rc.16",
     "solid-js": "2.0.0-rc.16"
   },
