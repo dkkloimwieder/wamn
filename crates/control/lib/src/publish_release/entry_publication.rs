@@ -62,17 +62,13 @@ pub(super) async fn publish(
     candidates.sort_by_key(|(_, bytes)| std::cmp::Reverse(bytes.len()));
     let mut selected = None;
     for (application, bytes) in candidates {
-        let entry = super::compose_verified_application(application, &bytes, &route, &pin)?;
-        if published.manifest.routes.iter().all(|route| {
-            published.manifest.components.iter().any(|component| {
-                component.package_id == route.package_id
-                    && component.descriptor.component == route.component
-                    && entry
-                        .application_digests
-                        .contains(&component.descriptor.component_digest)
-            })
-        }) {
-            selected = Some(entry);
+        if super::covers_routes(published, application, &bytes)? {
+            selected = Some(super::compose_verified_application(
+                application,
+                &bytes,
+                &route,
+                &pin,
+            )?);
             break;
         }
     }

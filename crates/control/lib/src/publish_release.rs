@@ -455,18 +455,7 @@ fn compose_verified_application(
     wamn_engine::statement_instances::statement_instances(&bytes)
         .context("validate composed application statement ownership")?;
     let digest = wamn_engine::component_admission::component_digest(&bytes);
-    let mut application_digests =
-        BTreeSet::from([application.component_digest.as_str().to_owned()]);
-    for payload in wasmparser::Parser::new(0).parse_all(application_bytes) {
-        if let wasmparser::Payload::ComponentSection {
-            unchecked_range, ..
-        } = payload?
-        {
-            let member = &application_bytes
-                [usize::try_from(unchecked_range.start)?..usize::try_from(unchecked_range.end)?];
-            application_digests.insert(wamn_engine::component_admission::component_digest(member));
-        }
-    }
+    let application_digests = application_digests(application, application_bytes)?;
     Ok(ComposedApplication {
         bytes: bytes.into_boxed_slice(),
         digest,
@@ -478,6 +467,45 @@ fn compose_verified_application(
         },
         application_digests,
     })
+}
+
+/// The digests of an admitted application and of the members it embeds.
+fn application_digests(
+    application: &AdmittedComponent,
+    application_bytes: &[u8],
+) -> anyhow::Result<BTreeSet<String>> {
+    let mut digests = BTreeSet::from([application.component_digest.as_str().to_owned()]);
+    for payload in wasmparser::Parser::new(0).parse_all(application_bytes) {
+        if let wasmparser::Payload::ComponentSection {
+            unchecked_range, ..
+        } = payload?
+        {
+            let member = &application_bytes
+                [usize::try_from(unchecked_range.start)?..usize::try_from(unchecked_range.end)?];
+            digests.insert(wamn_engine::component_admission::component_digest(member));
+        }
+    }
+    Ok(digests)
+}
+
+/// Whether one application, with the members it embeds, serves every release route.
+///
+/// Publish selects the application by this test before it composes, so a
+/// released component that is no HTTP application, such as a workflow node,
+/// is never composed with the route layer.
+fn covers_routes(
+    published: &PublishedRelease,
+    application: &AdmittedComponent,
+    application_bytes: &[u8],
+) -> anyhow::Result<bool> {
+    let digests = application_digests(application, application_bytes)?;
+    Ok(published.manifest.routes.iter().all(|route| {
+        published.manifest.components.iter().any(|component| {
+            component.package_id == route.package_id
+                && component.descriptor.component == route.component
+                && digests.contains(component.descriptor.component_digest.as_str())
+        })
+    }))
 }
 
 /// Record the exact composed entry before publication hashes the release.
@@ -540,18 +568,8 @@ pub fn compose_release_entry(
     let mut candidates = admissions.iter().collect::<Vec<_>>();
     candidates.sort_by_key(|admission| std::cmp::Reverse(admission.bytes().len()));
     for application in candidates {
-        let entry = compose_application(application, route_bytes, &pin)?;
-        let covers_routes = published.manifest.routes.iter().all(|route| {
-            published.manifest.components.iter().any(|component| {
-                component.package_id == route.package_id
-                    && component.descriptor.component == route.component
-                    && entry
-                        .application_digests
-                        .contains(&component.descriptor.component_digest)
-            })
-        });
-        if covers_routes {
-            return Ok(entry);
+        if covers_routes(published, application.facts(), application.bytes())? {
+            return compose_application(application, route_bytes, &pin);
         }
     }
     anyhow::bail!("release routes have no composed application covering their members")

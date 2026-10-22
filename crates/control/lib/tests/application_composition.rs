@@ -77,22 +77,49 @@ fn application(extra: &str) -> Vec<u8> {
 }
 
 fn admit(bytes: &[u8]) -> anyhow::Result<ComponentAdmission> {
+    admit_declared(bytes, &[])
+}
+
+/// Admit `bytes` under the fixture declaration with the `extra` operations added.
+fn admit_declared(bytes: &[u8], extra: &[&str]) -> anyhow::Result<ComponentAdmission> {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let path = std::env::temp_dir().join(format!(
-        "wamn-application-composition-{}-{}.wasm",
+    let stem = std::env::temp_dir().join(format!(
+        "wamn-application-composition-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
+    let path = stem.with_extension("wasm");
     std::fs::write(&path, bytes).expect("save fixture component");
     let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
+    let mut declaration: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(package.join("component.json")).expect("read fixture declaration"),
+    )
+    .expect("parse fixture declaration");
+    for operation in extra {
+        // A platform node operation registers no operation of its own.
+        let mut entry = declaration["operations"][OPERATION].clone();
+        entry
+            .as_object_mut()
+            .expect("an operation declaration")
+            .remove("registered-operation");
+        declaration["operations"][*operation] = entry;
+    }
+    let declaration_path = stem.with_extension("json");
+    std::fs::write(&declaration_path, declaration.to_string()).expect("save fixture declaration");
     let result = admit_component(AdmitComponentRequest {
-        declaration: package.join("component.json"),
+        declaration: declaration_path.clone(),
         package,
         component_bytes: path.clone(),
-        admitted_platform_packages: Vec::new(),
+        // A platform node operation needs its platform package admitted.
+        admitted_platform_packages: if extra.is_empty() {
+            Vec::new()
+        } else {
+            vec!["wamn:node".to_owned()]
+        },
         base_digests: BTreeSet::new(),
     });
     std::fs::remove_file(path).expect("remove fixture component");
+    std::fs::remove_file(declaration_path).expect("remove fixture declaration");
     result
 }
 
@@ -187,6 +214,67 @@ fn publication_records_the_exact_entry_and_members() {
         ServingManifest::from_canonical_bytes(&published.canonical_bytes).unwrap(),
         (published.manifest, published.digest)
     );
+}
+
+#[test]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT built from the http-route guest"]
+fn publication_composes_only_the_application_that_covers_the_routes() {
+    use wamn_catalog::{PackageCoordinate, ServingComponent, ServingManifest, ServingRelease};
+    use wamn_control::publish_release::{PublishedRelease, compose_release_entry};
+
+    let app_bytes = application("");
+    // A released workflow node is larger than the application in WMS, and
+    // the real jsonata, blob-put and label-render nodes refuse composition
+    // with the route layer ("package `wamn:node@0.1.0` creates a dependency
+    // cycle", platform_apply_kind 4.14). Publish selects by route coverage
+    // first, so it composes only the application.
+    let node_bytes = application("export wamn:node/handler@0.1.0;");
+    assert!(node_bytes.len() > app_bytes.len());
+    let app = admit(&app_bytes).unwrap();
+    let node = admit_declared(&node_bytes, &["wamn:node/handler@0.1.0"]).unwrap();
+    let route = std::fs::read(
+        std::env::var_os("WAMN_FLOW_HTTP_COMPONENT")
+            .expect("set WAMN_FLOW_HTTP_COMPONENT to the pinned http-route guest"),
+    )
+    .expect("read the built HTTP route guest");
+    let pin = component_digest(&route);
+    let error = compose_application(&node, &route, &pin).expect_err("a node does not compose");
+    assert!(
+        format!("{error:#}").contains("dependency cycle"),
+        "{error:#}"
+    );
+    let expected = compose_application(&app, &route, &pin).unwrap();
+
+    let fact = app.facts();
+    let manifest = ServingManifest::new(
+        ServingRelease {
+            packages: BTreeSet::from([PackageCoordinate::new(
+                &fact.scope.package_id,
+                &fact.scope.package_version,
+            )
+            .unwrap()]),
+        },
+        BTreeSet::from([ServingComponent::project(fact, Vec::new()).unwrap()]),
+        BTreeSet::from([serde_json::from_value(serde_json::json!({
+            "package-id": fact.scope.package_id.as_str(),
+            "component": fact.component.as_str(),
+            "operation": OPERATION,
+            "type": "get",
+        }))
+        .unwrap()]),
+        BTreeSet::new(),
+        BTreeMap::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let published = PublishedRelease {
+        digest: manifest.digest(),
+        canonical_bytes: manifest.canonical_bytes(),
+        manifest,
+    };
+    let entry = compose_release_entry(&published, &[node, app], &route)
+        .expect("publish selects the covering application");
+    assert_eq!(entry.digest(), expected.digest());
 }
 
 #[test]
