@@ -1,0 +1,21 @@
+[package]
+name = "netsuite"
+version.workspace = true
+edition.workspace = true
+description = "NetSuite wirings with a composed integration state adapter"
+license = "Apache-2.0"
+
+[dependencies]
+serde_json.workspace = true
+wit-bindgen.workspace = true
+
+[dev-dependencies]
+jsonata-expression = { path = "../../platform/execution/jsonata" }
+
+[lib]
+crate-type = ["cdylib"]
+test = true
+bench = false
+
+[lints]
+workspace = true

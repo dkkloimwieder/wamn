@@ -1,0 +1,126 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "netsuite_pull",
+  "version": 1,
+  "entry": "begin",
+  "nodes": {
+    "begin": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "[{\"key\": \"last_synced_at\", \"carry\": due}]",
+        "port": "items"
+      }
+    },
+    "read": {
+      "component": "netsuite",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
+      "params": {
+        "operation": "setting.read"
+      }
+    },
+    "window": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "($assert($count($) = 1 and $exists($[0].value), \"checkpoint read failed\"); $state := $[0].value; $lower := $state.value != null ? $state.value : \"1970-01-01T00:00:00Z\"; $due := $state.carry; $assert($toMillis($lower) < $toMillis($due), \"window must advance\"); $stamp := function($t) { $replace($substring($fromMillis($toMillis($t)), 0, 19), \"T\", \" \") }; {\"due\": $due, \"body\": {\"q\": \"SELECT id, entityid AS name FROM customer WHERE lastmodifieddate >= TO_DATE('\" & $stamp($lower) & \"', 'YYYY-MM-DD HH24:MI:SS') AND lastmodifieddate < TO_DATE('\" & $stamp($due) & \"', 'YYYY-MM-DD HH24:MI:SS') ORDER BY id\"}})"
+      }
+    },
+    "page": {
+      "component": "http-page",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
+      "params": {
+        "requirement": "upstream",
+        "method": "POST",
+        "path-and-query": "/services/rest/query/v1/suiteql?limit=1000",
+        "body-input-pointer": "/body",
+        "carry-input-pointer": "/due",
+        "headers": {
+          "Prefer": "transient"
+        },
+        "page": {
+          "style": "offset",
+          "limit": "limit",
+          "offset": "offset",
+          "has-more": "/hasMore"
+        },
+        "items": "/items"
+      }
+    },
+    "rows": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "[{\"request_id\": carry, \"value\": {\"idempotency_key\": carry, \"items\": [items.{\"key\": $string(id), \"name\": name}]}}]",
+        "port": "items"
+      }
+    },
+    "record": {
+      "component": "rest_consumer_fixture",
+      "interface-version": "0.1.0",
+      "operation": "rest-consumer-fixture:item/record",
+      "operation-dependency": {
+        "alias": "consumer",
+        "operation": "item.record"
+      }
+    },
+    "finish": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "($assert($count($) = 1 and $type($lookup($[0].value, \"keys\")) = \"array\" and $not($exists($[0].error)), \"consumer command did not succeed\"); [{\"request_id\": $[0].request_id, \"value\": {\"idempotency_key\": $[0].request_id, \"key\": \"last_synced_at\", \"value\": $[0].request_id}}])",
+        "port": "items"
+      }
+    },
+    "write": {
+      "component": "netsuite",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
+      "params": {
+        "operation": "setting.write"
+      }
+    }
+  },
+  "edges": [
+    {
+      "from": "begin",
+      "to": "read",
+      "from-port": "items"
+    },
+    {
+      "from": "read",
+      "to": "window",
+      "to-port": "input"
+    },
+    {
+      "from": "window",
+      "to": "page"
+    },
+    {
+      "from": "page",
+      "to": "rows",
+      "to-port": "input"
+    },
+    {
+      "from": "rows",
+      "to": "record",
+      "from-port": "items"
+    },
+    {
+      "from": "record",
+      "to": "finish",
+      "to-port": "items"
+    },
+    {
+      "from": "finish",
+      "to": "write",
+      "from-port": "items"
+    }
+  ]
+}

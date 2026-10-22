@@ -1,0 +1,44 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "suiteql_query",
+  "version": 1,
+  "entry": "map",
+  "nodes": {
+    "map": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "($assert($type(q) = \"string\" and $contains($lowercase(q), \"order by id\"), \"SuiteQL must order by the stable id key\"); {\"body\": {\"q\": q}, \"due\": null})"
+      }
+    },
+    "page": {
+      "component": "http-page",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
+      "params": {
+        "requirement": "upstream",
+        "method": "POST",
+        "path-and-query": "/services/rest/query/v1/suiteql?limit=1000",
+        "body-input-pointer": "/body",
+        "carry-input-pointer": "/due",
+        "headers": {
+          "Prefer": "transient"
+        },
+        "page": {
+          "style": "offset",
+          "limit": "limit",
+          "offset": "offset",
+          "has-more": "/hasMore"
+        },
+        "items": "/items"
+      }
+    }
+  },
+  "edges": [
+    {
+      "from": "map",
+      "to": "page"
+    }
+  ]
+}

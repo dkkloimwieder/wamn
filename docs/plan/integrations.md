@@ -200,6 +200,9 @@ Node parameter decisions (agent, under ruling D):
 
 - `http-request.path-input-pointer` overrides `path-and-query` for one request, with the same confinement. A missing or non-string target is a terminal error.
 - `http-request.body-input-pointer` sends the selected value as the JSON body. Without it, the node sends the input bytes as before.
+- `wamn_integration` `setting.read` takes an optional `carry` and returns it unchanged (owner ruling E of 2026-10-22). The NetSuite pull carries the schedule's due time through it.
+- `jsonata` takes an optional `parameters` object, bound to `$parameters`, and an optional `port-input-pointer` that sends the selected result on `main` or `items`. Without them, the node is unchanged.
+- The generator admits one component with no local operation when the package owns no model and uses only base SQL. NetSuite's setting adapter forwards the base's setting operations and holds no vendor logic.
 
 Per-issue budget: build, clippy and unit tests. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
 

@@ -9,7 +9,8 @@
   "operations": {
     "wamn:node/handler@0.1.0": {
       "input-ports": [
-        { "name": "input", "schema": {} }
+        { "name": "input", "schema": {} },
+        { "name": "items", "schema": { "type": "array" } }
       ],
       "output-ports": [
         { "name": "main", "schema": {} },
@@ -24,6 +25,16 @@
         {
           "name": "port",
           "schema": { "type": "string", "enum": ["main", "items"] },
+          "required": false
+        },
+        {
+          "name": "parameters",
+          "schema": { "type": "object" },
+          "required": false
+        },
+        {
+          "name": "port-input-pointer",
+          "schema": { "type": "string" },
           "required": false
         }
       ]

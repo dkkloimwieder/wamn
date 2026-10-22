@@ -21,8 +21,8 @@ manifest.Package {
         "setting.read" = manifest.Projection("setting.read") {
             permission = None
             visibility = "private"
-            input.fields = [{path = "key", type = "text"}]
-            result = {class = "one", fields = [{path = "value", type = "json", nullable = True}]}
+            input.fields = [{path = "key", type = "text"}, {path = "carry", type = "json", nullable = True}]
+            result = {class = "one", fields = [{path = "value", type = "json", nullable = True}, {path = "carry", type = "json", nullable = True}]}
             errors = ["invalid_input", "retry", "timeout", "internal_error"]
             statements = {
                 read_setting = manifest.Statement("command/setting", "read") {

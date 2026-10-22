@@ -1,0 +1,40 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "record_get",
+  "version": 1,
+  "entry": "map",
+  "nodes": {
+    "map": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "($assert($type(id) = \"string\" and $length(id) > 0, \"id must be a nonempty string\"); {\"path\": \"/services/rest/record/v1/\" & $encodeUrlComponent($parameters.record_type) & \"/\" & $encodeUrlComponent(id), \"body\": null})",
+        "parameters": {
+          "record_type": "customer"
+        }
+      }
+    },
+    "request": {
+      "component": "http-request",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
+      "params": {
+        "requirement": "upstream",
+        "method": "GET",
+        "path-and-query": "/services/rest/record/v1/customer",
+        "path-input-pointer": "/path",
+        "body-input-pointer": "/body",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    }
+  },
+  "edges": [
+    {
+      "from": "map",
+      "to": "request"
+    }
+  ]
+}

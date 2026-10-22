@@ -18,6 +18,10 @@ path = "tests/create_user_live.rs"
 required-features = ["ops"]
 
 [[test]]
+name = "netsuite_publication"
+path = "../../../apps/netsuite/tests/publication.rs"
+
+[[test]]
 name = "rest_connector_publication"
 path = "../../../apps/rest_connector/tests/publication.rs"
 

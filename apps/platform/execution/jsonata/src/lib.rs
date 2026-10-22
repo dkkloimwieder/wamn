@@ -32,7 +32,7 @@ mod bindings {
 
 use bindings::exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
 use bindings::wamn::node::types::ErrorDetail;
-use jsonata_core::evaluator::Evaluator;
+use jsonata_core::evaluator::{Context, Evaluator};
 use jsonata_core::parser;
 use jsonata_core::value::JValue;
 
@@ -64,12 +64,25 @@ impl EvaluationError {
 
 /// Evaluate `expression` on `input` and return the result as JSON text.
 pub fn evaluate(expression: &str, input: &serde_json::Value) -> Result<String, EvaluationError> {
+    evaluate_with_parameters(expression, input, &serde_json::Value::Null)
+}
+
+/// Evaluate with the node's optional parameters bound to `$parameters`.
+pub fn evaluate_with_parameters(
+    expression: &str,
+    input: &serde_json::Value,
+    parameters: &serde_json::Value,
+) -> Result<String, EvaluationError> {
     let ast = parser::parse(expression).map_err(|error| EvaluationError {
         type_: EvaluationErrorType::Expression,
         message: error.to_string(),
     })?;
     let data = JValue::from(input.clone());
-    let result = Evaluator::new()
+    let mut context = Context::new();
+    if !parameters.is_null() {
+        context.bind("parameters".to_owned(), JValue::from(parameters.clone()));
+    }
+    let result = Evaluator::with_context(context)
         .evaluate(&ast, &data)
         .map_err(|error| EvaluationError {
             type_: EvaluationErrorType::Evaluation,
@@ -107,15 +120,28 @@ impl Guest for Component {
                     })
             })
             .transpose()?;
-        let payload = evaluate(expression, &input).map_err(|error| match error.error_type() {
-            EvaluationErrorType::Expression => terminal(
-                "invalid_expression",
-                format!("the expression does not parse: {}", error.message()),
-            ),
-            EvaluationErrorType::Evaluation => {
-                terminal("evaluation_failed", error.message().to_owned())
-            }
-        })?;
+        if config
+            .get("parameters")
+            .is_some_and(|value| !value.is_object())
+        {
+            return Err(terminal(
+                "invalid_config",
+                "parameters must be an object".into(),
+            ));
+        }
+        let payload = evaluate_with_parameters(expression, &input, &config["parameters"]).map_err(
+            |error| match error.error_type() {
+                EvaluationErrorType::Expression => terminal(
+                    "invalid_expression",
+                    format!("the expression does not parse: {}", error.message()),
+                ),
+                EvaluationErrorType::Evaluation => {
+                    terminal("evaluation_failed", error.message().to_owned())
+                }
+            },
+        )?;
+        let selected_port = select_port(&config, &payload)?;
+        let port = selected_port.as_deref().or(port);
         if port == Some(ITEMS_PORT) && !is_item_array(&payload) {
             return Err(terminal(
                 "not_an_item_array",
@@ -127,6 +153,32 @@ impl Guest for Component {
             port: port.map(str::to_owned),
         })
     }
+}
+
+/// Select an existing output port from the expression result.
+fn select_port(config: &serde_json::Value, payload: &str) -> Result<Option<String>, NodeError> {
+    let Some(pointer) = config.get("port-input-pointer") else {
+        return Ok(None);
+    };
+    let pointer = pointer.as_str().ok_or_else(|| {
+        terminal(
+            "invalid_config",
+            "port-input-pointer must be a string".into(),
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(payload)
+        .map_err(|error| terminal("invalid_result", error.to_string()))?;
+    let port = value
+        .pointer(pointer)
+        .and_then(serde_json::Value::as_str)
+        .filter(|port| [MAIN_PORT, ITEMS_PORT].contains(port))
+        .ok_or_else(|| {
+            terminal(
+                "invalid_port",
+                "port-input-pointer must select main or items".into(),
+            )
+        })?;
+    Ok(Some(port.to_owned()))
 }
 
 /// The output port whose schema admits any JSON.
@@ -146,6 +198,7 @@ fn terminal(code: &str, message: String) -> NodeError {
     })
 }
 
+#[cfg(target_arch = "wasm32")]
 bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]
@@ -153,6 +206,38 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{EvaluationErrorType, evaluate, is_item_array};
+
+    #[test]
+    fn parameters_are_bound_without_changing_the_input() {
+        let output = super::evaluate_with_parameters(
+            "{\"key\": key, \"type\": $parameters.record_type}",
+            &json!({"key":"1"}),
+            &json!({"record_type":"customer"}),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&output).unwrap(),
+            json!({"key":"1", "type":"customer"})
+        );
+    }
+
+    #[test]
+    fn port_pointer_selects_only_existing_ports() {
+        let config = json!({"port-input-pointer":"/0/port"});
+        for port in ["main", "items"] {
+            assert_eq!(
+                super::select_port(&config, &json!([{"port":port}]).to_string())
+                    .unwrap()
+                    .as_deref(),
+                Some(port)
+            );
+        }
+        for input in [json!([]), json!([{"port":42}]), json!([{"port":"unknown"}])] {
+            assert!(super::select_port(&config, &input.to_string()).is_err());
+        }
+        assert!(super::select_port(&json!({"port-input-pointer":7}), "[]").is_err());
+        assert_eq!(super::select_port(&json!({}), "[]").unwrap(), None);
+    }
 
     /// The WMS label workflow's shape expression (docs/plan/workflow-feature.md
     /// 4.4): a move row becomes one label-render item keyed by its command,

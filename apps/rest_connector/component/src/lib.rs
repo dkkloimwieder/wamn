@@ -94,6 +94,7 @@ impl exports::wamn::node::async_handler::Guest for Component {
             vec![read::ReadItem {
                 input: Ok(read::ReadRequest {
                     key: "last_synced_at".into(),
+                    carry: None,
                 }),
             }],
         )

@@ -153,6 +153,37 @@ fn a_custom_operation_refuses_the_page_result_class() {
 }
 
 #[test]
+fn a_single_base_adapter_needs_no_new_operation_interface() {
+    let mut adapter = manifest();
+    adapter["models"] = json!({});
+    adapter["base_dependencies"] = json!({"integration": {
+        "package": "wamn_integration", "version": "0.1.0",
+        "digest": format!("sha256:{}", "a".repeat(64)),
+        "operations": ["setting.read", "setting.write"]
+    }});
+    validate_operation_vocabulary(&parsed_manifest(&adapter)).unwrap();
+    adapter["base_dependencies"] = json!({});
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&adapter))
+            .unwrap_err()
+            .error_type(),
+        GenerateErrorType::InvalidComponent
+    );
+    adapter["base_dependencies"] = json!({"integration": {
+        "package": "wamn_integration", "version": "0.1.0",
+        "digest": format!("sha256:{}", "a".repeat(64)), "operations": ["setting.read"]
+    }});
+    adapter["connections"] = json!(["postgres", "reporting"]);
+    adapter["components"]["reporting"] = json!({"connections": ["reporting"]});
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&adapter))
+            .unwrap_err()
+            .error_type(),
+        GenerateErrorType::InvalidComponent
+    );
+}
+
+#[test]
 fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     let single = parsed_manifest(&manifest());
     assert_eq!(

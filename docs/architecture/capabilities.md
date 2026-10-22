@@ -108,6 +108,15 @@ A missing body target returns a terminal error. JSON null is a valid body.
 Without that parameter, the node sends the original input bytes as its body.
 Headers retain their configured values in both forms.
 
+The `jsonata` node accepts optional `parameters`, an object bound to `$parameters` during evaluation.
+The input remains unchanged.
+Its optional `port-input-pointer` selects `main` or `items` from the expression result through a JSON pointer.
+A missing target, a non-string target, or an unknown port returns a terminal error.
+Without that pointer, the existing `port` parameter supplies the output port.
+The `items` output still requires an array.
+The `items` input port accepts an array with the same handler as `input`.
+Edges into either input port name that port explicitly.
+
 The `http-page` node emits one array on `main` after it collects all pages.
 Its parameters are `requirement`, `path-and-query`, optional `headers`, `page`, `items`, and optional `carry-input-pointer`.
 The optional `method` defaults to GET and accepts GET, HEAD, POST, PUT, DELETE, OPTIONS, and PATCH, as `http-request` does.

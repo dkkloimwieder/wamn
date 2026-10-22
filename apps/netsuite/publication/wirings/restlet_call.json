@@ -1,0 +1,41 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "restlet_call",
+  "version": 1,
+  "entry": "map",
+  "nodes": {
+    "map": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "{\"path\": \"/app/site/hosting/restlet.nl?script=\" & $encodeUrlComponent($parameters.script) & \"&deploy=\" & $encodeUrlComponent($parameters.deploy), \"body\": body}",
+        "parameters": {
+          "script": "customscript_integration",
+          "deploy": "customdeploy_integration"
+        }
+      }
+    },
+    "request": {
+      "component": "http-request",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
+      "params": {
+        "requirement": "upstream",
+        "method": "POST",
+        "path-and-query": "/app/site/hosting/restlet.nl",
+        "path-input-pointer": "/path",
+        "body-input-pointer": "/body",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    }
+  },
+  "edges": [
+    {
+      "from": "map",
+      "to": "request"
+    }
+  ]
+}

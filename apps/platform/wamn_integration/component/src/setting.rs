@@ -29,9 +29,13 @@ mod write_sql {
     ));
 }
 
-fn read_value(row: Option<read_sql::ReadSettingRow>) -> read_contract::ReadResult {
+fn read_value(
+    row: Option<read_sql::ReadSettingRow>,
+    carry: Option<String>,
+) -> read_contract::ReadResult {
     read_contract::ReadResult {
         value: row.map(|row| row.value.0),
+        carry,
     }
 }
 
@@ -44,7 +48,7 @@ async fn read(
         .await
         .map_err(super::statement_error)?;
     transaction.commit().await.map_err(super::statement_error)?;
-    Ok(read_value(row))
+    Ok(read_value(row, request.carry))
 }
 
 async fn write(
@@ -83,20 +87,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn carry_survives_absent_and_present_settings() {
+        for row in [
+            None,
+            Some(read_sql::ReadSettingRow {
+                value: Json("null".into()),
+            }),
+        ] {
+            let carry = Some(r#"{"due":"2026-10-22T12:00:00Z"}"#.to_owned());
+            assert_eq!(read_value(row, carry.clone()).carry, carry);
+        }
+    }
+
+    #[test]
     fn absent_settings_differ_from_json_null() {
-        assert_eq!(read_value(None).value, None);
+        assert_eq!(read_value(None, None).value, None);
         assert_eq!(
-            read_value(Some(read_sql::ReadSettingRow {
-                value: Json("null".into())
-            }))
+            read_value(
+                Some(read_sql::ReadSettingRow {
+                    value: Json("null".into())
+                }),
+                None
+            )
             .value
             .as_deref(),
             Some("null")
         );
         assert_eq!(
-            read_value(Some(read_sql::ReadSettingRow {
-                value: Json("\"2026-10-21T12:00:00Z\"".into())
-            }))
+            read_value(
+                Some(read_sql::ReadSettingRow {
+                    value: Json("\"2026-10-21T12:00:00Z\"".into())
+                }),
+                None
+            )
             .value
             .as_deref(),
             Some("\"2026-10-21T12:00:00Z\"")

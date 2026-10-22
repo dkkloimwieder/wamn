@@ -24,3 +24,6 @@ Set `DATABASE_URL` to a PostgreSQL 18 server as [building](../../../docs/operati
 Run component unit tests in the apps workspace with `cargo test --manifest-path apps/Cargo.toml -p wamn-integration --lib`.
 Run the SQL test with `cargo test -p wamn-control --test wamn_integration_live`.
 The SQL test uses the [test database fixture](../../../docs/operations/running-tests.md) and the generated application grants.
+
+`setting.read` accepts optional JSON `carry` and returns it unchanged beside `value`.
+This field retains schedule context without storing it.

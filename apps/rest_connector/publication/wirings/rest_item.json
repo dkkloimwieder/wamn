@@ -56,7 +56,8 @@
     },
     {
       "from": "page",
-      "to": "rows"
+      "to": "rows",
+      "to-port": "input"
     },
     {
       "from": "rows",

@@ -13,6 +13,7 @@ members = [
     "edge_samples/component",
     "platform_fixture/component",
     "rest_connector/component",
+    "netsuite/component",
     "rest_consumer_fixture/component",
     "platform/wamn_integration/component",
     "platform_fixture_overlay/component",
