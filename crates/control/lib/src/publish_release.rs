@@ -1854,12 +1854,10 @@ fn project_routes(
         });
     }
     // Workflow nodes also use these contracts to begin item transactions and
-    // claim their keys. An HTTP attachment is not required to call an operation.
+    // claim their keys, for private and registered commands alike. An HTTP
+    // attachment is not required to call an operation.
     for component in components.iter() {
-        for (operation, fact) in &component.operations {
-            if fact.registered_operation.is_none() {
-                continue;
-            }
+        for operation in component.operations.keys() {
             let Some(contract) =
                 route_contracts.get(&(component.package_id.clone(), operation.clone()))
             else {
