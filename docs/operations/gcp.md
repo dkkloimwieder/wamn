@@ -120,6 +120,13 @@ The owner supplies these inputs. The install stops at the first step that reads 
 
 `build-platform` uses these owner inputs and never creates their grants or budget. Missing access causes the cloud operation to fail.
 
+14. The edge NEG zone in `deploy/gcp/project.k`, currently `us-central1-a`, must match the zone reported by step 4.20.
+    The fixed NEG name is `wamn-edge`.
+    DNS for every route host must point to the global address that OpenTofu creates.
+    The owner supplies a firewall rule for TCP port 8443 from `35.191.0.0/16` and `130.211.0.0/22` to the cluster nodes.
+    Before step 4.20 creates the NEG, target only the cluster and node pools in the section 4.2 plan and apply.
+    After the NEG exists, apply the full rendered project as described in section 4.20.
+
 ## 2. Project resources
 
 The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:
@@ -130,7 +137,7 @@ The teardown keeps these resources, and the install expects them. [Install histo
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
 - The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone.
 - The Google service account `wamn-blob`, its bucket binding and its `roles/artifactregistry.reader` binding on `wamn`.
-- The load balancer: address, health check, firewall rule, backend bucket, backend service, URL map, proxy, forwarding rule and certificate entry. Also the role `wamnEdgeCert` and its binding.
+- The firewall rule that permits load balancer traffic to nginx on TCP port 8443. OpenTofu owns the load balancer objects in section 4.20.
 
 Make sure that they exist:
 
@@ -160,7 +167,7 @@ The disks of the volumes of `wamn-pg-1` and `data-evt-nats-0` stay after the del
 gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central1-a --quiet
 ```
 
-The network endpoint group `wamn-edge` stays, because the backend service `wamn-edge-platform` names it. Section 4.20 replaces it.
+The network endpoint group `wamn-edge` stays while a backend service names it. Before cluster replacement, the owner must detach and remove the old group. Platform apply refuses a missing new NEG status.
 
 The work directory of section 4.1 holds the files of the deleted cluster. These are the event NATS users, the gate logins, the release digests, the stamped chart and the platform file. Section 4 makes them again, and it refuses a directory that exists. Stop the port-forwards of the old cluster and remove the work directory:
 
@@ -220,7 +227,7 @@ Review the plan for the existing cluster and pools:
 ```bash
 (
   cd "$W/project"
-  "$TOFU" plan
+  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool
 )
 ```
 
@@ -229,7 +236,7 @@ Apply the plan:
 ```bash
 (
   cd "$W/project"
-  "$TOFU" apply
+  "$TOFU" apply -target=google_container_cluster.cluster -target=google_container_node_pool
 )
 ```
 
@@ -238,7 +245,7 @@ After the apply, make sure that the plan shows no changes:
 ```bash
 (
   cd "$W/project"
-  "$TOFU" plan
+  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool
 )
 ```
 
@@ -869,18 +876,7 @@ It stops when any environment still declares `release = "none"`.
 Commit the printed lines in the environment files, then rerun the verb for step 4.17.
 The verb never edits a committed file.
 
-Each environment document names its release digest. The edge values and the URL map name the bucket path of each web client, which holds the digest hex. Write the new digests into the four files:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-for project in receiving wms; do
-  NEW=$(cat $W/release-$project)
-  OLD=$(sed -n 's/^    release = "\(sha256:[0-9a-f]*\)"/\1/p' deploy/gcp/environments/dkk--$project--dev.k)
-  sed -i "s/$OLD/$NEW/" deploy/gcp/environments/dkk--$project--dev.k
-  sed -i "s/${OLD#sha256:}/${NEW#sha256:}/g" deploy/gcp/values-edge.yaml deploy/gcp/url-map.yaml
-done
-git diff --stat
-```
+The Rust edge reads each live release row. No edge values or URL map contains a copied release digest.
 
 Commit every change of `deploy/gcp` from sections 4.6, 4.11 and 4.16 in one commit, and push it.
 
@@ -998,52 +994,61 @@ Unversioned page paths also return `no-cache`.
 The nginx chart proxies web paths to `http://wamn-edge-web.edge.svc.cluster.local` with the original Host header.
 It proxies `/api/` and `/password/` to their existing services.
 It reads no bucket and needs no static digest or `bucketPath`.
-The load balancer procedure below still installs the nginx chart.
+Platform apply also installs the nginx chart below.
 
 The verb runs a Job that requires HTTP 200 for `/` and `/config.json` on every declared host through the Rust Service.
 With an empty `buckets.web`, this step prints `4.20 Edge bucket check: skipped: no bucket` and starts no Job.
 The Rust edge still installs and rolls out.
 
 
-The edge chart annotates its Service with `neg: true`, so GKE makes the network endpoint group `wamn-edge`. The group of the deleted cluster carries the old cluster UID, and the new cluster's controller refuses it (`found conflicting description in neg wamn-edge`). Install the edge, take the old group off the backend service, delete it, wait for the new group, and add it back. The new group exists some seconds before it is ready, and `add-backend` refuses it until then (`is not ready`), so the add repeats:
+Platform apply renders nginx values from the control host and environment documents.
+It installs the `wamn-edge` release in `edge` and waits for its Deployment.
+An unchanged release skips the Helm write.
+On GCP, the Service requests the fixed network endpoint group (NEG) `wamn-edge` for HTTPS port 443.
+The verb reads `cloud.google.com/neg-status` from that Service with `kubectl` and reports its name and zones.
+A missing status after rollout refuses the install and names the annotation.
+Kind prints `4.20 Edge NEG: skipped: kind`.
 
-```bash
-helm install wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml
-gcloud compute backend-services remove-backend wamn-edge-platform --project wamn-dev --global \
-  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a
-gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
-until gcloud compute network-endpoint-groups describe wamn-edge --zone us-central1-a --project wamn-dev >/dev/null 2>&1; do sleep 10; done
-until gcloud compute backend-services add-backend wamn-edge-platform --project wamn-dev --global \
-  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a \
-  --balancing-mode RATE --max-rate-per-endpoint 100; do sleep 10; done
-kubectl -n edge rollout status deploy/wamn-edge --timeout=600s
-gcloud compute url-maps import wamn-edge --global --project wamn-dev --source deploy/gcp/url-map.yaml --quiet
-```
+The project document declares a global TCP load balancer that sends all traffic to this NEG.
+OpenTofu renders its health check, TCP backend service, target TCP proxy, global address, and forwarding rule on port 443.
+It reads the NEG by its fixed name and declared zone.
+It reads no environment files and renders no host rules, backend bucket, URL map, or certificate.
+The connection target is 1,000 concurrent connections per endpoint.
 
-The CronJob `edge/edge-cert` copies a renewed certificate to the load balancer every day ([edge-cert.yaml](../../deploy/gcp/edge-cert.yaml)). Its role and binding stay after a teardown. Install it and run it once. The run uploads the certificate of section 4.3 and moves the proxy to it:
+The order is platform apply, owner OpenTofu apply, then platform apply again.
+The first run creates the NEG before the load balancer can use it.
+The owner renders `deploy/gcp/project.k` as in section 4.2 and applies that rendered directory.
+The diagnostic `tofu apply deploy/gcp` names this owner step.
+The next platform apply skips unchanged resources and runs the final HTTPS checks.
+The verb never runs OpenTofu or `gcloud compute`.
 
-```bash
-kubectl apply -f deploy/gcp/edge-cert.yaml
-kubectl -n edge create job edge-cert-1 --from=cronjob/edge-cert
-kubectl -n edge wait job/edge-cert-1 --for=condition=Complete --timeout=300s
-kubectl -n edge logs job/edge-cert-1
-```
+nginx terminates TLS with `edge/wamn-edge-tls`.
+On GCP, cert-manager issues that Secret through `deploy/gcp/letsencrypt.yaml`.
+On kind, the existing `edge-self-signed` issuer supplies the same Secret.
+The load balancer holds no certificate and there is no certificate-copy CronJob.
 
 ### 4.21 Check
 
-Run these from this machine. The load balancer can take some minutes to use a new group and a new URL map:
+Platform apply runs this step last.
+For every route host, `/` and `/config.json` must answer 200 when `buckets.web` is set.
+A protected API route must answer 401 without credentials.
+Each response must present the certificate serial in `edge/wamn-edge-tls`.
+The verb reads only the public certificate from the Secret.
+A failure names the host and the failing check.
+On GCP, HTTPS connection failures and unexpected status codes also name `tofu apply deploy/gcp` as a likely missing step.
 
-```bash
-for h in receiving.wamn.dev wms.wamn.dev control.wamn.dev; do
-  curl -s -o /dev/null -w "$h / %{http_code}\n" https://$h/
-  curl -s -o /dev/null -w "$h /config.json %{http_code}\n" https://$h/config.json
-done
-curl -s -w ' %{http_code}\n' https://receiving.wamn.dev/api/purchase_order/query
-curl -s -w ' %{http_code}\n' -X POST -H 'content-type: application/json' -d '{}' https://wms.wamn.dev/api/inventory/move
-openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev </dev/null 2>/dev/null | openssl x509 -noout -serial -enddate
-```
+On kind, curl Jobs reach the edge Service through the cluster while retaining the route hostname for TLS and HTTP.
+They trust the public certificate from the Secret and compare the served serial.
+They use no port-forward.
+The public load balancer prints `skipped: kind`.
+An empty web bucket prints `skipped: no bucket` for `/` and `/config.json`.
+The protected API checks still run.
 
-`/` and `/config.json` answer `200` on all three hosts. The two API calls answer `401` with `{"error":{"code":"unauthorized"}}`, because they carry no session. The serial is the serial of the Secret `edge/wamn-edge-tls`. The install is done. To stop the cost of the nodes, run section 5.2.
+A ConfigMap in `platform`, `wamn-install-platform-https-check`, records successful statuses, serials, skips, and the input digest.
+An unchanged rerun preserves that record and starts no HTTPS Job.
+Changes to the document, release rows, proxy, or certificate require the checks again.
+Install Jobs allow 900 seconds so Helm can report its 600-second timeout first.
+The verb retains Job logs under the work directory's `jobs` directory, including failures.
 
 ## 5. Operations
 

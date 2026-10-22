@@ -561,11 +561,21 @@ The owner invite Job must run once with `--org-admin`.
 The test requires one invitation and no invitation link or secret in the logs.
 The rerun must skip the invite and leave its saved Job log and mail file unchanged.
 It must preserve the control Secrets and remove the temporary Job-owned Secrets.
-The final rerun must skip every implemented step through the Rust edge in 4.20 and report 4.15 and 4.16 as owner steps.
+The final rerun must skip every implemented step through 4.21 and report 4.15 and 4.16 as owner steps.
 Step 4.20 must install `edge/wamn-edge-web` with the stamped image and wait for its Deployment to become available.
 Its service account can get only the named release ConfigMaps in `hosts`.
-The empty bucket must print `4.20 Edge bucket check: skipped: no bucket` without a bucket Job.
-The unchanged rerun must skip the Rust edge and preserve the Deployment resource version.
+The empty bucket must start no bucket Job.
+The nginx Service must expose HTTPS without a GCP NEG annotation on kind.
+Its Deployment must mount `wamn-edge-tls` and the identity CA.
+
+Step 4.21 uses the existing pinned curl image in Jobs that reach nginx through its cluster Service.
+These Jobs add a public image pull to the fixture requirements.
+They preserve the route hostname and trust the public certificate from the self-signed Secret.
+The stored result must contain one API status of 401 and a matching certificate serial for each host.
+It must record skips for the public load balancer and absent web bucket.
+The test reads these objects after the phase and makes no new assertion on progress or log text.
+The unchanged rerun must preserve the proxy Deployment and HTTPS completion record, including their resource versions.
+It must leave no HTTPS Job running.
 Both phases retain the PAT, database credential, and unchanged Secret assertions.
 The GCP greenfield covers uploads to a real bucket.
 
