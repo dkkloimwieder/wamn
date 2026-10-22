@@ -10,7 +10,7 @@ export function Records<Row>(props: {
   title: string;
   rows: readonly Row[];
   rowKey: (row: Row) => string;
-  columns: readonly NativeColumnDef<Row>[];
+  columns: readonly (NativeColumnDef<Row> & Pick<ColumnPresentation, "sortable" | "filterable">)[];
   formats?: Readonly<Record<string, ColumnPresentation["format"]>>;
   cells?: Readonly<Record<string, Component<{ row: Row }>>>;
   details?: Component<{ row: Row }>;
@@ -89,7 +89,15 @@ export function Records<Row>(props: {
     columns,
   });
   const presentation = Object.fromEntries(
-    columns.map((column) => [column.id, { label: String(column.header ?? column.id), renderer: column.id }]),
+    columns.map((column) => [
+      column.id,
+      {
+        label: String(column.header ?? column.id),
+        renderer: column.id,
+        sortable: column.sortable,
+        filterable: column.filterable,
+      },
+    ]),
   );
   return (
     <>

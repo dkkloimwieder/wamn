@@ -115,6 +115,13 @@ describe("uniform record screens", () => {
       await screen.findByRole("button", { name: title }, { timeout: 5000 });
       const cancel = screen.getByRole("button", { name: "Cancel" });
       expect(cancel.closest("form.ui-form")?.contains(screen.getByRole("button", { name: title }))).toBe(true);
+      const form = cancel.closest("form.ui-form")!;
+      const rows = form.querySelectorAll(":scope > .ui-form-actions");
+      expect(rows).toHaveLength(1);
+      expect(within(rows[0] as HTMLElement).getAllByRole("button")).toEqual([
+        screen.getByRole("button", { name: title }),
+        cancel,
+      ]);
       expect(screen.queryByRole("table")).toBeNull();
       fireEvent.click(cancel);
       await screen.findByRole("table", { name: table });

@@ -331,7 +331,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 }
                 columns={[
                   { id: "env", header: "Environment" },
-                  { id: "revoke", header: "Action", size: 200 },
+                  { id: "revoke", header: "Action", size: 200, sortable: false, filterable: false },
                 ]}
                 cells={{
                   env: (cell) => (

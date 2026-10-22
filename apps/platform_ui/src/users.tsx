@@ -366,7 +366,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     { id: "project", header: "Project" },
                     { id: "env", header: "Environment" },
                     { id: "state", header: "State", accessorKey: "state" },
-                    { id: "revoke", header: "Action", size: 200 },
+                    { id: "revoke", header: "Action", size: 200, sortable: false, filterable: false },
                   ]}
                   cells={{
                     project: (cell) => (

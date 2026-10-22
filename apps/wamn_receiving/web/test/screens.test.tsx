@@ -48,6 +48,20 @@ function props(invoke: Transport["invoke"]): ScreenProps {
   };
 }
 
+function expectFormActions(submitLabel: string) {
+  const submit = screen.getByRole("button", { name: submitLabel });
+  const form = submit.closest("form")!;
+  const rows = form.querySelectorAll(":scope > .ui-form-actions");
+  expect(rows).toHaveLength(1);
+  expect(within(rows[0] as HTMLElement).getAllByRole("button")).toEqual([
+    submit,
+    within(form).getByRole("button", { name: "Cancel" }),
+  ]);
+  expect(submit.getAttribute("type")).toBe("submit");
+  expect(within(form).getByRole("button", { name: "Cancel" }).getAttribute("type")).toBe("button");
+  expect(form.lastElementChild).toBe(rows[0]);
+}
+
 describe("Receiving descriptions and bindings", () => {
   it("shows each filterable heading once and keeps its input accessible", async () => {
     const invoke = vi.fn<Transport["invoke"]>(async () => ({
@@ -75,9 +89,7 @@ describe("Receiving descriptions and bindings", () => {
     );
   });
 
-  // wamn-4xdfb: WFE v0.0.6 still renders the disabled Actions sort button.
-  // it.fails flips to a failure once a wfe tag carries the per-column sort control; then make it a plain it().
-  it.fails("never sorts or filters the Actions column", async () => {
+  it("never sorts or filters the Actions column", async () => {
     const invoke: Transport["invoke"] = async () => ({ status: "completed", value: { rows: [] } });
     render(() => (
       <Records
@@ -92,6 +104,7 @@ describe("Receiving descriptions and bindings", () => {
     const header = table.querySelector<HTMLElement>('th[data-column-header="actions"]')!;
     expect(within(header).queryByRole("textbox")).toBeNull();
     expect(within(header).queryByRole("button", { name: "Sort by Actions" })).toBeNull();
+    expect(within(table).getByRole<HTMLButtonElement>("button", { name: "Sort by Order number" }).disabled).toBe(false);
   });
 
   it("selects human fields from the generated descriptions", () => {
@@ -347,6 +360,7 @@ describe("Receiving descriptions and bindings", () => {
       name: PurchaseOrderUpdateForm.fields[0].label,
     });
     await waitFor(() => expect(input.value).toBe("SUPPLIER-BROWSER"));
+    expectFormActions(PurchaseOrderUpdateForm.submit.label);
     fireEvent.focus(input);
     fireEvent.click(input);
     fireEvent.click(await screen.findByRole("option", { name: "SUPPLIER-BROWSER" }));
@@ -435,6 +449,7 @@ describe("Receiving descriptions and bindings", () => {
     });
     const view = props(invoke);
     render(() => <SupplierForm {...view} />);
+    expectFormActions(SupplierCreateForm.title);
     fireEvent.submit(screen.getByRole("button", { name: SupplierCreateForm.title }).closest("form")!);
     await screen.findByText("Enter a value.");
     expect(invoke).not.toHaveBeenCalled();
@@ -498,6 +513,7 @@ describe("Receiving descriptions and bindings", () => {
       />
     ));
     const submit = () => fireEvent.submit(screen.getByRole("button", { name: "Record a receipt" }).closest("form")!);
+    expectFormActions("Record a receipt");
     submit();
     await screen.findByText("Try again");
     submit();

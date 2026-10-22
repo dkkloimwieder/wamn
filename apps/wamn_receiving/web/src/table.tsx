@@ -124,7 +124,9 @@ export function Records(props: {
       ...Object.fromEntries(
         Object.entries(props.description.columns).map(([id, column]) => [id, { ...column, renderer: id }]),
       ),
-      ...(actions.length ? { actions: { label: "Actions", renderer: "actions" } } : {}),
+      ...(actions.length
+        ? { actions: { label: "Actions", renderer: "actions", sortable: false, filterable: false } }
+        : {}),
     },
     controls: { filtering: false, search: false, grouping: false },
   };
