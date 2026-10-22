@@ -99,7 +99,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-edge \
+ && cargo build --locked --release -p wamn-edge --features web \
  && install -D -m 0755 target/release/wamn-edge /native-output/wamn-edge
 
 FROM debian:trixie-slim AS edge-web

@@ -53,4 +53,5 @@ pub mod samples;
 pub mod serial;
 pub mod serve;
 pub mod status;
+#[cfg(feature = "web")]
 pub mod web;

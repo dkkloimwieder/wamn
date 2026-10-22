@@ -44,11 +44,16 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-object_store = { workspace = true, features = ["gcp"] }
+# The cluster web edge reads release bundles from the web bucket. Only the
+# amd64 `edge-web` image turns on `web`; the box never links object_store.
+object_store = { workspace = true, features = ["gcp"], optional = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
 # RUST_LOG selects the log level.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[features]
+web = ["dep:object_store"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }

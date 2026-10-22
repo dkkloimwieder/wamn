@@ -36,9 +36,11 @@ async fn main() -> anyhow::Result<()> {
     } else {
         std::env::var_os(CONFIG_VARIABLE).map(PathBuf::from)
     };
+    #[cfg(feature = "web")]
     if args.as_slice() == ["web"] {
         return wamn_edge::web::serve(path.as_deref().context("web requires --config")?).await;
     }
+    #[cfg(feature = "web")]
     if args.as_slice() == ["web-check"] {
         return wamn_edge::web::check(path.as_deref().context("web-check requires --config")?)
             .await;
