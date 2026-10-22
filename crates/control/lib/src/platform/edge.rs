@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use serde::Serialize;
+use serde::{Deserialize as _, Serialize};
 use serde_json::{Value, json};
 
 use super::document::{ClusterDocument, Provider};
@@ -13,6 +13,136 @@ use crate::environment::document::EnvironmentDocument;
 use crate::{kubectl, release_chart::Target};
 
 const NAME: &str = "wamn-edge-web";
+const NEG: &str = "wamn-edge";
+const NEG_STATUS: &str = "cloud.google.com/neg-status";
+
+fn proxy_values(document: &ClusterDocument, routes: &BTreeMap<String, String>) -> Value {
+    json!({
+        "tlsSecret": "wamn-edge-tls",
+        "identity": "https://identity.identity.svc.cluster.local",
+        "identityCaConfigMap": "identity-ca",
+        "neg": document.provider == Provider::Gcp,
+        "applications": routes.iter().map(|(host, release)| json!({
+            "host": host, "api": format!("http://{release}-http.hosts.svc.cluster.local")
+        })).collect::<Vec<_>>()
+    })
+}
+
+/// Reconcile nginx and read the endpoint group that GKE created for its Service.
+pub(super) async fn proxy(
+    target: &Target,
+    document: &ClusterDocument,
+    environments: &Path,
+    repository: &Path,
+    directory: &Path,
+    mut progress: impl FnMut(&str) -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    let environments = super::broker::documents(environments)?
+        .into_iter()
+        .map(|(_, document)| document)
+        .collect::<Vec<_>>();
+    let routes = routes(document, &environments)?;
+    let values = directory.join("values-edge.yaml");
+    std::fs::write(
+        &values,
+        serde_yaml::to_string(&proxy_values(document, &routes))?,
+    )?;
+    let chart = repository.join("deploy/platform/edge");
+    let edge = Target {
+        namespace: "edge".into(),
+        ..target.clone()
+    };
+    let rendered = super::install::helm(
+        &edge,
+        &[
+            "template".as_ref(),
+            NEG.as_ref(),
+            chart.as_os_str(),
+            "--namespace".as_ref(),
+            "edge".as_ref(),
+            "-f".as_ref(),
+            values.as_os_str(),
+        ],
+    )
+    .await?;
+    let source = std::str::from_utf8(&rendered)?;
+    let objects = serde_yaml::Deserializer::from_str(source)
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut changed = false;
+    for object in objects.iter().filter(|object| !object.is_null()) {
+        let kind = object["kind"].as_str().context("edge manifest kind")?;
+        let name = object["metadata"]["name"]
+            .as_str()
+            .context("edge manifest name")?;
+        let live: Option<Value> =
+            kubectl::get(&edge.kubeconfig, &edge.context, "edge", kind, name).await?;
+        changed |= live
+            .as_ref()
+            .is_none_or(|live| !super::manifests::already_applied(object, live));
+    }
+    if changed {
+        crate::release_chart::upgrade(
+            &edge,
+            &chart,
+            NEG,
+            &values,
+            std::time::Duration::from_secs(600),
+            "platform edge",
+        )
+        .await?;
+    }
+    kubectl::kubectl(
+        &edge.kubeconfig,
+        &edge.context,
+        "edge",
+        &[
+            "rollout",
+            "status",
+            "deployment/wamn-edge",
+            "--timeout=600s",
+        ],
+        None,
+    )
+    .await?;
+    if document.provider == Provider::Kind {
+        progress("4.20 Edge NEG: skipped: kind")?;
+    } else {
+        let service: Value = kubectl::get(&edge.kubeconfig, &edge.context, "edge", "service", NEG)
+            .await?
+            .context("missing edge/wamn-edge Service")?;
+        for zone in neg_zones(&service)? {
+            progress(&format!("4.20 Edge NEG: {NEG} zone {zone}"))?;
+        }
+    }
+    Ok(changed)
+}
+
+fn neg_zones(service: &Value) -> anyhow::Result<Vec<String>> {
+    let annotation = service["metadata"]["annotations"][NEG_STATUS]
+        .as_str()
+        .with_context(|| {
+            format!("edge/wamn-edge Service has no {NEG_STATUS} annotation after rollout")
+        })?;
+    let status: Value = serde_json::from_str(annotation)
+        .with_context(|| format!("decode edge/wamn-edge {NEG_STATUS}"))?;
+    ensure!(
+        status["network_endpoint_groups"]["443"] == NEG,
+        "edge/wamn-edge {NEG_STATUS} does not name {NEG} for HTTPS port 443"
+    );
+    let zones = status["zones"]
+        .as_array()
+        .context("edge NEG status has no zones")?
+        .iter()
+        .map(|zone| {
+            zone.as_str()
+                .map(str::to_owned)
+                .context("edge NEG zone is not a string")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    ensure!(!zones.is_empty(), "edge/wamn-edge {NEG_STATUS} has no zone");
+    Ok(zones)
+}
 
 #[derive(Serialize)]
 struct Configuration<'a> {
@@ -181,6 +311,38 @@ pub(super) async fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proxy_uses_routes_and_only_gcp_requests_a_neg() {
+        let mut document = document();
+        let routes = routes(&document, &[]).unwrap();
+        let values = proxy_values(&document, &routes);
+        assert_eq!(
+            values["applications"],
+            json!([{
+                "host": "control.example.com", "api": "http://c-acme-http.hosts.svc.cluster.local"
+            }])
+        );
+        assert_eq!(values["neg"], true);
+        assert_eq!(values["tlsSecret"], "wamn-edge-tls");
+        document.provider = Provider::Kind;
+        assert_eq!(proxy_values(&document, &routes)["neg"], false);
+    }
+
+    #[test]
+    fn neg_status_requires_the_https_group_and_a_zone() {
+        assert!(neg_zones(&json!({})).is_err());
+        let mut status =
+            json!({"network_endpoint_groups": {"443": "wamn-edge"}, "zones": ["us-central1-a"]});
+        let service =
+            |status: &Value| json!({"metadata": {"annotations": {NEG_STATUS: status.to_string()}}});
+        assert_eq!(neg_zones(&service(&status)).unwrap(), ["us-central1-a"]);
+        status["zones"] = json!([]);
+        assert!(neg_zones(&service(&status)).is_err());
+        status["zones"] = json!(["us-central1-a"]);
+        status["network_endpoint_groups"]["443"] = "other".into();
+        assert!(neg_zones(&service(&status)).is_err());
+    }
 
     fn document() -> ClusterDocument {
         serde_json::from_value(json!({"provider": "gcp", "project_id": "project", "zone": "zone", "cluster_name": "test",

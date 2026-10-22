@@ -193,7 +193,22 @@ pub async fn apply(
         &mut progress,
     )
     .await?;
-    progress("The load balancer and step 4.21 come later.")?;
+    let started = Instant::now();
+    progress("4.20 Edge proxy: starting")?;
+    let changed = super::edge::proxy(
+        &target,
+        document,
+        environments,
+        repository,
+        work_directory,
+        &mut progress,
+    )
+    .await?;
+    progress(&format!(
+        "4.20 Edge proxy: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
     Ok(())
 }
 
