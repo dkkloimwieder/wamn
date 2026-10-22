@@ -211,7 +211,10 @@ impl Web {
                 let content_type = result
                     .attributes
                     .get(&object_store::Attribute::ContentType)
-                    .map_or_else(|| content_type(file).to_owned(), ToString::to_string);
+                    .map_or_else(
+                        || content_type(file).to_owned(),
+                        |value| value.as_ref().to_owned(),
+                    );
                 let file = File {
                     bytes: result.bytes().await?,
                     content_type,
