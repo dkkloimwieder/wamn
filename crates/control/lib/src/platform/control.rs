@@ -18,13 +18,15 @@ const PROVISION: &str = r#"prepare() {
   trap 'rm -rf "$scratch"' EXIT
   database=$(cat /etc/wamn/postgres/uri)
   export WAMN_SYSTEM_ADMIN_URL="${database%/*}/wamn_system"
-  if [ -z "$(kubectl -n hosts get secret "wamn-control-$ORG" --ignore-not-found -o name)" ]; then
+  existing=$(kubectl -n hosts get secret "wamn-control-$ORG" --ignore-not-found -o name) || return 1
+  if [ -z "$existing" ]; then
     /usr/local/bin/wamn-ctl provision-org --org "$ORG" --template trials --pool wamn-pg \
       --admin "$OWNER_EMAIL" --prepare-control-generation a --namespace hosts \
       --db-host "$DATABASE_HOST" --emit-control-secret "$scratch/control.json" || return 1
     kubectl apply --server-side -f "$scratch/control.json" || return 1
   fi
-  if [ -z "$(kubectl -n hosts get secret "wamn-control-administration-$ORG" --ignore-not-found -o name)" ]; then
+  existing=$(kubectl -n hosts get secret "wamn-control-administration-$ORG" --ignore-not-found -o name) || return 1
+  if [ -z "$existing" ]; then
     /usr/local/bin/wamn-ctl provision-org --org "$ORG" --template trials --pool wamn-pg \
       --admin "$OWNER_EMAIL" --namespace hosts \
       --emit-control-administration-secret "$scratch/administration.json" || return 1
@@ -247,10 +249,13 @@ pub(super) async fn release(
     document: &ClusterDocument,
     repository: &Path,
     directory: &Path,
+    registry: &wamn_package_artifact::PackageRegistry,
 ) -> anyhow::Result<bool> {
     let chart = directory.join("release-chart");
     let values = directory.join("values-control.yaml");
-    std::fs::write(&values, serde_yaml::to_string(&host_values(&document.org))?)?;
+    let mut desired = host_values(&document.org);
+    let mut changed = registry_ca(target, &document.org, registry, &mut desired).await?;
+    std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
     let name = format!("c-{}", document.org);
     let rendered = super::install::helm(
         target,
@@ -269,7 +274,7 @@ pub(super) async fn release(
     let objects = serde_yaml::Deserializer::from_str(source)
         .map(Value::deserialize)
         .collect::<Result<Vec<_>, _>>()?;
-    let mut changed = false;
+    let mut release_changed = false;
     for object in objects.iter().filter(|object| !object.is_null()) {
         let kind = object["kind"].as_str().context("control manifest kind")?;
         let object_name = object["metadata"]["name"]
@@ -283,11 +288,11 @@ pub(super) async fn release(
             object_name,
         )
         .await?;
-        changed |= live
+        release_changed |= live
             .as_ref()
             .is_none_or(|live| !super::manifests::already_applied(object, live));
     }
-    if changed {
+    if release_changed {
         let hosts = Target {
             namespace: "hosts".into(),
             ..target.clone()
@@ -302,6 +307,7 @@ pub(super) async fn release(
         )
         .await?;
     }
+    changed |= release_changed;
     let stamped: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
     for object in service_objects(repository, document, &stamped)? {
         changed |= super::install::apply_object(target, &object).await?;
@@ -320,4 +326,99 @@ pub(super) async fn release(
     )
     .await?;
     Ok(changed)
+}
+
+async fn registry_ca(
+    target: &Target,
+    org: &str,
+    registry: &wamn_package_artifact::PackageRegistry,
+    values: &mut Value,
+) -> anyhow::Result<bool> {
+    if registry.oci_ca_paths.is_empty() {
+        return Ok(false);
+    }
+    let name = format!("control-oci-ca-{org}");
+    let mut data = serde_json::Map::new();
+    let mut paths = Vec::new();
+    for (index, path) in registry.oci_ca_paths.iter().enumerate() {
+        let key = format!("ca-{index}.crt");
+        data.insert(key.clone(), std::fs::read_to_string(path)?.into());
+        paths.push(format!("/etc/wamn/oci-ca/{key}"));
+    }
+    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    group["ociCaPaths"] = json!(paths);
+    group["volumes"]
+        .as_array_mut()
+        .context("control volumes")?
+        .push(json!({"name": "oci-ca", "configMap": {"name": name}}));
+    group["volumeMounts"]
+        .as_array_mut()
+        .context("control mounts")?
+        .push(json!({"name": "oci-ca", "mountPath": "/etc/wamn/oci-ca", "readOnly": true}));
+    super::install::apply_object(
+        target,
+        &json!({
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": name, "namespace": "hosts"}, "data": data
+        }),
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn document() -> ClusterDocument {
+        serde_json::from_value(json!({
+            "provider": "kind", "project_id": "", "zone": "", "cluster_name": "test",
+            "org": "acme", "owner_email": "owner@example.com", "registry": "localhost:5000",
+            "buckets": {"web": "", "otel": "", "state": ""},
+            "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn control_objects_follow_the_org_route_and_stamped_image() {
+        let document = document();
+        let values = host_values(&document.org);
+        let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
+        assert_eq!(group["name"], "c-acme");
+        assert_eq!(group["extraArgs"], json!(["--control", "--org=acme"]));
+        let chart = json!({"platform": {"roles": {"http": {"image": "registry/http@sha256:abc"}}}});
+        let objects = service_objects(
+            Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../..")),
+            &document,
+            &chart,
+        )
+        .unwrap();
+        let workload = &objects[1];
+        assert_eq!(objects[0]["metadata"]["name"], "c-acme-http");
+        assert_eq!(
+            workload["spec"]["template"]["spec"]["components"][0]["image"],
+            "registry/http@sha256:abc"
+        );
+        assert_eq!(
+            workload["spec"]["template"]["spec"]["hostInterfaces"][0]["config"]["host"],
+            "control.example.com"
+        );
+        let mut live = workload.clone();
+        live["metadata"]["resourceVersion"] = "12".into();
+        assert!(super::super::manifests::already_applied(workload, &live));
+        live["spec"]["template"]["spec"]["components"][0]["image"] = "old".into();
+        assert!(!super::super::manifests::already_applied(workload, &live));
+    }
+
+    #[test]
+    fn control_preparation_mounts_credentials_and_never_exports_them() {
+        let request = provision_request(&document(), "registry/runner@sha256:abc");
+        assert!(request.once);
+        assert!(!request.emits_secret);
+        assert!(!request.capture_output);
+        assert_eq!(request.secret_mounts[0].name, "wamn-pg-superuser");
+        assert_eq!(request.secret_mounts[0].keys, ["uri"]);
+        assert_eq!(request.permissions[0].namespace, "hosts");
+        assert!(!request.environment.contains_key("WAMN_SYSTEM_ADMIN_URL"));
+    }
 }

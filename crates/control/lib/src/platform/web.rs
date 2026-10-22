@@ -200,6 +200,42 @@ pub(super) async fn platform_ui(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn empty_platform_bucket_reports_both_skips_without_reading_inputs() {
+        let document = serde_json::from_value(json!({
+            "provider": "kind", "project_id": "", "zone": "", "cluster_name": "test",
+            "org": "test", "owner_email": "owner@example.com", "registry": "localhost:5000",
+            "buckets": {"web": "", "otel": "", "state": ""},
+            "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
+        }))
+        .unwrap();
+        let target = Target {
+            kubeconfig: "/absent".into(),
+            context: "absent".into(),
+            namespace: "platform".into(),
+        };
+        let mut lines = Vec::new();
+        platform_ui(
+            &target,
+            &document,
+            Path::new("/absent"),
+            Path::new("/absent"),
+            |line| {
+                lines.push(line.to_owned());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            lines,
+            [
+                "4.19.1 Platform UI upload: skipped: no bucket",
+                "4.19.1 Platform UI check: skipped: no bucket"
+            ]
+        );
+    }
+
     #[test]
     fn upload_uses_the_release_bucket_and_existing_identity_without_event_nats() {
         let environment: EnvironmentDocument = serde_json::from_value(json!({

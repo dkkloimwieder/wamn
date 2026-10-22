@@ -551,7 +551,13 @@ These changes affect only temporary fixture files.
 A separate environment directory selects qualified Receiving for the remaining install and its unchanged rerun.
 Step 4.17 must serve that release, and step 4.18 must log `registration loaded` and `walsender session open`.
 Step 4.19 must report `skipped: no bucket` for the upload and its check, with no web Job or completion record.
-The final rerun must skip every implemented step and report 4.15 and 4.16 as owner steps.
+Step 4.19.1 must roll out the control host and report `skipped: no bucket` for the platform UI upload and its check.
+The fixture selects identity's private local mail file in a memory volume, so the invite sends no external email.
+The owner invite Job must run once with `--org-admin`.
+The test requires one invitation and no invitation link or secret in the logs.
+The rerun must skip the invite and leave its saved Job log and mail file unchanged.
+It must preserve the control Secrets and remove the temporary Job-owned Secrets.
+The final rerun must skip every implemented step through 4.19.1 and report 4.15 and 4.16 as owner steps.
 Both phases retain the PAT, database credential, and unchanged Secret assertions.
 The GCP greenfield covers uploads to a real bucket.
 

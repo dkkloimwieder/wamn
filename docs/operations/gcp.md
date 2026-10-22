@@ -266,8 +266,8 @@ Step 4.14 publishes each release through a Job.
 For a wired release, one pod runs the gate, authorship, and publication with an in-memory PAT.
 The verb prints release lines for the owner to commit, then resumes at 4.17 on a rerun.
 Qualification stays on the build machine in section 4.15.
-The verb also runs sections 4.18 and 4.19.
-Run section 4.19.1 onward by hand with the commands below.
+The verb also runs sections 4.18 through 4.19.1.
+Run section 4.20 onward by hand with the commands below.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 

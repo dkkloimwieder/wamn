@@ -13,7 +13,7 @@
 //! A TLS artifact registry serves Receiving, WMS, and their unqualified releases.
 //! WMS publishes through the native gate sidecar with an in-memory PAT.
 //! WMS stays unqualified and must refuse. The host qualifies Receiving, then
-//! the test applies only Receiving through 4.19 and requires an unchanged rerun.
+//! the test applies only Receiving through 4.19.1 and requires an unchanged rerun.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -519,6 +519,7 @@ cluster.Cluster {{
         input.with_extension("json"),
         selected_input.with_extension("json"),
     )?;
+    local_owner_mail(&kubeconfig, &context).await?;
     let mut applied = Vec::new();
     install::apply(
         &serving,
@@ -535,7 +536,13 @@ cluster.Cluster {{
         },
     )
     .await?;
-    for title in ["4.17 Apply with the release", "4.18 CDC readers"] {
+    for title in [
+        "4.17 Apply with the release",
+        "4.18 CDC readers",
+        "4.19.1 Control credentials",
+        "4.19.1 Control host",
+        "4.19.1 Owner invite",
+    ] {
         ensure!(
             applied
                 .iter()
@@ -576,7 +583,37 @@ cluster.Cluster {{
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     };
     require_web_skip(&applied)?;
-    let secrets = secret_versions(&kubeconfig, &context).await?;
+    require_platform_ui_skip(&applied)?;
+    let control: Value = kubectl::get(
+        &kubeconfig,
+        &context,
+        "hosts",
+        "deployment",
+        "hostgroup-c-test",
+    )
+    .await?
+    .context("missing control host Deployment")?;
+    ensure!(
+        control["status"]["observedGeneration"] == control["metadata"]["generation"]
+            && control["status"]["updatedReplicas"] == 1
+            && control["status"]["availableReplicas"] == 1,
+        "control host did not roll out"
+    );
+    let invite_log_path = work.join("jobs/platform-invite-test.log");
+    let invite_log = std::fs::read_to_string(&invite_log_path)?;
+    ensure!(
+        invite_log == "owner invitation accepted",
+        "invite Job did not complete"
+    );
+    let invite_modified = std::fs::metadata(&invite_log_path)?.modified()?;
+    let mail = owner_mail(&kubeconfig, &context).await?;
+    ensure!(
+        mail.lines().count() == 1,
+        "the owner did not receive exactly one invitation"
+    );
+    let mut secrets = secret_versions(&kubeconfig, &context).await?;
+    let control_secrets = control_secret_versions(&kubeconfig, &context).await?;
+    secrets.extend(control_secrets.clone());
     let mut repeated = Vec::new();
     install::apply(
         &serving,
@@ -594,7 +631,13 @@ cluster.Cluster {{
     )
     .await?;
     require_steps(&repeated, "skipped")?;
-    for title in ["4.17 Apply with the release", "4.18 CDC readers"] {
+    for title in [
+        "4.17 Apply with the release",
+        "4.18 CDC readers",
+        "4.19.1 Control credentials",
+        "4.19.1 Control host",
+        "4.19.1 Owner invite",
+    ] {
         ensure!(
             repeated
                 .iter()
@@ -603,6 +646,50 @@ cluster.Cluster {{
         );
     }
     require_web_skip(&repeated)?;
+    require_platform_ui_skip(&repeated)?;
+    ensure!(
+        std::fs::read_to_string(&invite_log_path)? == invite_log
+            && std::fs::metadata(&invite_log_path)?.modified()? == invite_modified,
+        "unchanged apply reran the invite Job"
+    );
+    ensure!(
+        owner_mail(&kubeconfig, &context).await? == mail,
+        "unchanged apply sent another invitation"
+    );
+    for ((name, before), (_, after)) in control_secrets
+        .iter()
+        .zip(control_secret_versions(&kubeconfig, &context).await?)
+    {
+        ensure!(
+            before["metadata"]["resourceVersion"] == after["metadata"]["resourceVersion"],
+            "unchanged apply rewrote control Secret {name}"
+        );
+    }
+    for name in [
+        "platform-control-credentials-test-files",
+        "platform-control-operator-test-files",
+        "platform-invite-test-files",
+        "platform-owner-state-test-files",
+    ] {
+        let secret: Option<Value> =
+            kubectl::get(&kubeconfig, &context, "platform", "secret", name).await?;
+        ensure!(
+            secret.is_none(),
+            "the Job-owned Secret {name} remains after deletion"
+        );
+    }
+    let ui_completion: Option<Value> = kubectl::get(
+        &kubeconfig,
+        &context,
+        "platform",
+        "configmap",
+        "wamn-install-platform-ui-test",
+    )
+    .await?;
+    ensure!(
+        ui_completion.is_none() && !work.join("jobs/platform-ui-test.log").exists(),
+        "kind started a platform UI Job"
+    );
     for line in [
         "4.15 Qualification: skipped: qualify-release on the build machine",
         "4.16 Record the releases: skipped: owner input",
@@ -664,11 +751,127 @@ cluster.Cluster {{
     .await?
     .context("fixture registry Secret")?;
     require_private_logs(&work, &logs, &secrets)?;
+    let invitation: Value = serde_json::from_str(mail.trim())
+        .map_err(|_| anyhow::anyhow!("invalid local invitation mail"))?;
+    let invitation_text = invitation["text"]
+        .as_str()
+        .context("invitation has no text")?;
+    let mut all_logs = logs.clone();
+    for entry in std::fs::read_dir(work.join("jobs"))? {
+        all_logs.push_str(&std::fs::read_to_string(entry?.path())?);
+    }
+    ensure!(
+        !all_logs.contains(invitation_text),
+        "invitation mail reached a log"
+    );
+    let code = invitation_text
+        .lines()
+        .find_map(|line| line.strip_prefix("Invitation code: "))
+        .context("local invitation has no code")?;
+    let (_, secret) = code
+        .split_once(':')
+        .context("local invitation has no secret")?;
+    ensure!(
+        !all_logs.contains(code) && !all_logs.contains(secret),
+        "an invitation code or secret reached a log"
+    );
     require_private_logs(
         &work,
         &logs,
         &[("platform-fixture-registry".into(), registry_secret)],
     )?;
+    Ok(())
+}
+
+// The released identity binary already supports private local mail. Change only
+// this disposable Deployment after the earlier install phase; no provider code changes.
+async fn local_owner_mail(kubeconfig: &Path, context: &str) -> anyhow::Result<()> {
+    let deployment: Value = kubectl::get(kubeconfig, context, "identity", "deployment", "identity")
+        .await?
+        .context("identity Deployment")?;
+    let mut args = deployment["spec"]["template"]["spec"]["containers"][0]["args"].clone();
+    args.as_array_mut().context("identity arguments")?.extend([
+        json!("--local-mail"),
+        json!("/var/run/wamn-fixture-mail/mail.jsonl"),
+    ]);
+    let patch = json!([
+        {"op": "replace", "path": "/spec/template/spec/containers/0/args", "value": args},
+        {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {
+            "name": "fixture-mail", "mountPath": "/var/run/wamn-fixture-mail"
+        }},
+        {"op": "add", "path": "/spec/template/spec/volumes/-", "value": {
+            "name": "fixture-mail", "emptyDir": {"medium": "Memory"}
+        }}
+    ]);
+    kubectl::kubectl(
+        kubeconfig,
+        context,
+        "identity",
+        &[
+            "patch",
+            "deployment",
+            "identity",
+            "--type=json",
+            "--patch-file=/dev/stdin",
+        ],
+        Some(&serde_json::to_vec(&patch)?),
+    )
+    .await?;
+    kubectl::kubectl(
+        kubeconfig,
+        context,
+        "identity",
+        &["rollout", "status", "deployment/identity", "--timeout=300s"],
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn owner_mail(kubeconfig: &Path, context: &str) -> anyhow::Result<String> {
+    kubectl::kubectl(
+        kubeconfig,
+        context,
+        "identity",
+        &[
+            "exec",
+            "deployment/identity",
+            "--",
+            "cat",
+            "/var/run/wamn-fixture-mail/mail.jsonl",
+        ],
+        Some(&[]),
+    )
+    .await
+}
+
+async fn control_secret_versions(
+    kubeconfig: &Path,
+    context: &str,
+) -> anyhow::Result<Vec<(String, Value)>> {
+    let mut secrets = Vec::new();
+    for name in [
+        "wamn-control-test",
+        "wamn-control-administration-test",
+        "operator-test",
+    ] {
+        let secret = kubectl::get(kubeconfig, context, "hosts", "secret", name)
+            .await?
+            .with_context(|| format!("missing control Secret {name}"))?;
+        secrets.push((name.into(), secret));
+    }
+    Ok(secrets)
+}
+
+fn require_platform_ui_skip(lines: &[String]) -> anyhow::Result<()> {
+    for action in ["upload", "check"] {
+        ensure!(
+            lines
+                .iter()
+                .any(|line| line == &format!("4.19.1 Platform UI {action}: skipped: no bucket")),
+            "missing platform UI {action} no-bucket skip"
+        );
+    }
     Ok(())
 }
 
@@ -903,7 +1106,10 @@ fn require_private_logs(
             let decoded = STANDARD.decode(encoded).context("decode fixture Secret")?;
             let value = std::str::from_utf8(&decoded).context("fixture Secret is not UTF-8")?;
             let mut private = Vec::new();
-            if matches!(key.as_str(), "password" | "api-key" | "url") {
+            if matches!(
+                key.as_str(),
+                "password" | "api-key" | "url" | "uri" | "tls.key"
+            ) {
                 private.push(value.to_owned());
                 if key == "url" {
                     private_url_password(value, &mut private);
