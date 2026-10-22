@@ -502,3 +502,33 @@ Issue 2 moved auth into the memory of the host. A get makes 2 statements per req
 | `wamn.write_log.finish` | | 3.0 |
 | `wamn.operation.commit` | | 6.7 |
 | `wamn.route.deliver` | 8.8 | 22.8 |
+
+## Composed entry, A5
+
+Issue `wamn-l5sus.3` ([plan](../plan/perf-arch.md), A5) moved base routes into the composed entry at 0.1.81.
+The paired local run compares the parent `58681131a` (0.1.80) with `4de455732` (0.1.81) plus the `wamn dev up` fix.
+It ran `local.sh --no-edge --call get --call update --call query` four times, in the order parent, A5, A5, parent, on 2026-10-22 from 18:06 to 18:24 UTC.
+The other agents held their local work, and the load average was 7 to 9.
+The local edge does not start on 0.1.80 or later, because its nginx configuration names `wamn-edge-web`.
+The results are in [`tests/bench/a5-paired`](../../tests/bench/a5-paired).
+
+| c16, mean of 2 runs | parent 0.1.80 | A5 0.1.81 | A5 / parent |
+| --- | --- | --- | --- |
+| get throughput | 2888/s | 2278/s | 0.79 |
+| get p50, p99 | 5.04 ms, 16.2 ms | 6.50 ms, 18.6 ms | 1.29, 1.15 |
+| get statements per request | 1 | 2 | 2.00 |
+| get `host_cpu_ms_per_request` | 1.24 | 1.52 | 1.23 |
+| update throughput | 1122/s | 1120/s | 1.00 |
+| update p50, p99 | 13.98 ms, 23.8 ms | 14.08 ms, 23.7 ms | 1.01, 0.99 |
+| update statements per request | 7 | 6 | 0.86 |
+| update `host_cpu_ms_per_request` | 1.82 | 1.78 | 0.98 |
+| query throughput | 1763/s | 1300/s | 0.74 |
+| query p50, p99 | 8.76 ms, 16.9 ms | 11.98 ms, 21.1 ms | 1.37, 1.25 |
+| query statements per request | 2 | 3 | 1.50 |
+| query `host_cpu_ms_per_request` | 2.18 | 2.92 | 1.34 |
+
+Each pair of runs on one side differs by less than 3% in throughput, and no run has errors.
+Update is unchanged, and it makes one statement fewer per request.
+Get and query now open an operation for each read, so the session settings statement runs once per request.
+That statement is `set_config('statement_timeout', ...)` with `search_path`, at 0.015 ms mean execution time.
+The read cost is the extra round-trip and the guest work, and `wamn-cg5e4` holds the large stream case.

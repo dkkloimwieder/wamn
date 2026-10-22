@@ -1,0 +1,36 @@
+{
+  "concurrency": 16,
+  "get": {
+    "throughput_per_sec": 2268.6065709875215,
+    "p50_ms": 6.524,
+    "p95_ms": 11.899,
+    "p99_ms": 18.311,
+    "calls": 136126,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 2.0,
+    "host_cpu_ms_per_request": 1.5263799714969954,
+    "lines": 1
+  },
+  "update": {
+    "throughput_per_sec": 1122.5509292897907,
+    "p50_ms": 14.065,
+    "p95_ms": 19.371,
+    "p99_ms": 23.609,
+    "calls": 67360,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 6.0,
+    "host_cpu_ms_per_request": 1.7752375296912113,
+    "lines": 1
+  },
+  "query": {
+    "throughput_per_sec": 1309.506156699472,
+    "p50_ms": 11.907,
+    "p95_ms": 17.029,
+    "p99_ms": 20.625,
+    "calls": 78580,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 3.0,
+    "host_cpu_ms_per_request": 2.9095189615678287,
+    "lines": 1
+  }
+}
