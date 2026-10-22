@@ -621,11 +621,14 @@ try {
   await receiving.getByRole("button", { name: "Create role", exact: true }).click();
   await receiving.getByRole("textbox", { name: "Role", exact: true }).fill("browser-clerk");
   await receiving.getByRole("button", { name: "Create role", exact: true }).click();
-  const grid = receiving.getByRole("table", { name: "Roles", exact: true });
-  await grid.getByRole("columnheader", { name: "browser-clerk", exact: true }).waitFor();
-  const permissionCell = grid
+  const roles = receiving.getByRole("table", { name: "Roles", exact: true });
+  await roles.getByRole("link", { name: "browser-clerk", exact: true }).waitFor();
+  await capture(receiving, "application-roles");
+  await roles.getByRole("link", { name: "browser-clerk", exact: true }).click();
+  const permissions = receiving.getByRole("table", { name: "Permissions for browser-clerk", exact: true });
+  const permissionCell = permissions
     .getByRole("checkbox", { name: / browser-clerk$/ })
-    .and(grid.locator("input:not(:disabled)"))
+    .and(permissions.locator("input:not(:disabled)"))
     .first();
   const permissionName = await permissionCell.getAttribute("aria-label");
   // The wfe check control covers the visually hidden input, so a user clicks the control.
@@ -636,27 +639,41 @@ try {
   const savedCell = receiving.getByRole("checkbox", { name: permissionName, exact: true });
   await savedCell.waitFor();
   assert.equal(await savedCell.isChecked(), true);
-  await savedCell.locator("xpath=..").locator(".ui-check-control").click();
-  await receiving.getByRole("status").filter({ hasText: "Revoked" }).waitFor();
-  await capture(receiving, "application-roles");
+  await capture(receiving, "application-role-permissions");
   await receiving
     .getByRole("navigation", { name: "Primary navigation" })
     .getByRole("link", { name: "Users", exact: true })
     .click();
-  // provision-org names the first admin by email; reusing it does not rename it to Developer.
+  await receiving.getByRole("button", { name: "Grant to user", exact: true }).click();
+  await receiving.getByRole("button", { name: "User", exact: true }).click();
+  // provision-org names the first admin by email.
+  await receiving.getByRole("option", { name: required("WAMN_BROWSER_EMAIL"), exact: true }).click();
+  await receiving.getByRole("button", { name: "Grant to user", exact: true }).click();
+  const roleUsers = receiving.getByRole("table", { name: "Users with browser-clerk", exact: true });
+  await roleUsers.getByRole("link", { name: required("WAMN_BROWSER_EMAIL"), exact: true }).waitFor();
+  await receiving.reload();
+  await roleUsers.getByRole("link", { name: required("WAMN_BROWSER_EMAIL"), exact: true }).waitFor();
+  await capture(receiving, "application-role-users");
+  await receiving
+    .getByRole("navigation", { name: "Platform location" })
+    .getByRole("link", { name: "ROLES", exact: true })
+    .click();
+  await receiving
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "Users", exact: true })
+    .click();
   const applicationUser = receiving
     .getByRole("table", { name: "Users", exact: true })
-    .getByRole("row")
-    .filter({ has: receiving.getByRole("cell", { name: required("WAMN_BROWSER_EMAIL"), exact: true }) });
-  await applicationUser.getByRole("link").waitFor();
+    .getByRole("link", { name: required("WAMN_BROWSER_EMAIL"), exact: true });
+  await applicationUser.waitFor();
   await capture(receiving, "application-users");
-  await applicationUser.getByRole("link").click();
-  await receiving.getByRole("button", { name: "Grant role", exact: true }).click();
-  await receiving.getByRole("button", { name: "Role", exact: true }).click();
-  await receiving.getByRole("option", { name: "browser-clerk", exact: true }).click();
-  await receiving.getByRole("button", { name: "Grant role", exact: true }).click();
-  await receiving.getByRole("button", { name: "Revoke role browser-clerk", exact: true }).waitFor();
-  await receiving.reload();
+  await applicationUser.click();
+  const roleRow = receiving
+    .getByRole("row")
+    .filter({ has: receiving.getByRole("link", { name: "browser-clerk", exact: true }) });
+  await roleRow.locator("[data-subtable-toggle]").click();
+  await receiving.getByRole("table", { name: "Granted operations for browser-clerk", exact: true }).waitFor();
+  await capture(receiving, "application-user");
   await receiving.getByRole("button", { name: "Revoke role browser-clerk", exact: true }).click();
   await receiving
     .getByRole("alertdialog")
@@ -665,14 +682,32 @@ try {
   await receiving.getByRole("button", { name: "Revoke role browser-clerk", exact: true }).waitFor({ state: "hidden" });
   await receiving
     .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "Permissions overview", exact: true })
+    .click();
+  const overview = receiving.getByRole("table", { name: "Permissions overview", exact: true });
+  await overview.getByRole("columnheader", { name: "browser-clerk", exact: true }).waitFor();
+  assert.equal(await overview.getByRole("checkbox").count(), 0);
+  await capture(receiving, "application-permissions-overview");
+  await receiving
+    .getByRole("navigation", { name: "Primary navigation" })
     .getByRole("link", { name: "Roles", exact: true })
+    .click();
+  await roles.getByRole("link", { name: "browser-clerk", exact: true }).click();
+  await savedCell.waitFor();
+  await savedCell.locator("xpath=..").locator(".ui-check-control").click();
+  await receiving.getByRole("status").filter({ hasText: "Revoked" }).waitFor();
+  await receiving
+    .getByRole("navigation", { name: "Platform location" })
+    .getByRole("link", { name: "ROLES", exact: true })
     .click();
   await receiving.getByRole("button", { name: "Delete role browser-clerk", exact: true }).click();
   await receiving
     .getByRole("alertdialog")
     .getByRole("button", { name: "Delete role browser-clerk", exact: true })
     .click();
-  await grid.getByRole("columnheader", { name: "browser-clerk", exact: true }).waitFor({ state: "hidden" });
+  await roles.getByRole("link", { name: "browser-clerk", exact: true }).waitFor({ state: "hidden" });
+  // The table reloads after the delete; capture it once the remaining role is back.
+  await roles.getByRole("link", { name: "admin", exact: true }).waitFor();
   await capture(receiving, "receiving-layout");
   console.log("PASS: application role create/delete, permission grant/revoke, user-role grant/revoke and reload state");
   await receiving.close();
@@ -714,7 +749,11 @@ try {
       "user",
       "receiving-layout",
       "application-roles",
+      "application-role-permissions",
+      "application-role-users",
       "application-users",
+      "application-user",
+      "application-permissions-overview",
       "not-found",
     ].sort(),
   );

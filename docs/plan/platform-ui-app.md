@@ -66,12 +66,25 @@ Authority is server-side. The client reads `control.mine` and `permission.mine` 
 | Screen | Address | Reads | Writes |
 | --- | --- | --- | --- |
 | Splash | `/urn:wamn:project-env:<org>:<project>:<env>:<id>` | `permission.mine`, `environment.status` | — |
-| Roles | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/roles` | `role.list`, `permission.list` per role | `role.create`, `role.delete`, `permission.grant`, `permission.revoke` |
-| Users | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/users` | `user.list` | `user-role.grant`, `user-role.revoke` |
+| Roles | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/roles` | `role.list`, `permission.list` per role | `role.delete` |
+| Create role | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/roles/create` | None | `role.create` |
+| Role Permissions (default Role screen) | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/roles/<role>/permissions` | `role.list`, `permission.list` for the role | `permission.grant`, `permission.revoke` |
+| Role Users | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/roles/<role>/users` | `role.list`, `user.list` filtered by role | `user-role.revoke` |
+| Grant to user | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/roles/<role>/users/grant` | `role.list`, `user.list` | `user-role.grant` |
+| Users | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/users` | `user.list` | None |
+| User | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/users/<principal>` | `user.list`, `permission.list` per held role | `user-role.revoke` |
+| Grant role | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/users/<principal>/grant` | `user.list`, `role.list` | `user-role.grant` |
+| Permissions overview | `/urn:wamn:project-env:<org>:<project>:<env>:<id>/administration/permissions` | `role.list`, `permission.list` per role | None |
 
-These are `wamn-control:*` operations in the Application set. `user.list` here is `wamn-control:user/list@0.9.0` served by the application release (`crates/catalog/model/src/host_route.rs:552`).
+These are `wamn-control:*` operations in the Application set. The application release serves `wamn-control:user/list@0.9.0`. Service principals have no route yet.
 
-The roles screen is a grid. `permission.list` per role gives served and grantable for every operation the release serves, and that is the row source. `release.profile` is not used by the grid. The grid has one row per operation the release serves, one column per role, one checkbox per cell. `admin` is a read-only column. `admin_only` rows render disabled. Save is per cell, one command per change, as today.
+The environment hierarchy contains Roles, Users, and Permissions overview. Roles has one row per role, with a linked name and a granted-operation count. Each non-admin row has a Delete role action with a modal confirmation. Create role opens its own form and returns to Roles.
+
+Each role has separate Permissions and Users screens. Permissions uses the served operations from `permission.list`, with one operation and one granted checkbox per row. Each change sends one `permission.grant` or `permission.revoke` command. A failed change restores the previous value and shows the error. The admin role is read-only, and `admin_only` rows are disabled. Role Users derives its rows from roles in `user.list` and offers modal revocation and a separate Grant to user form.
+
+Users links each user name to a table of that user's roles. Each role name links to its Role screen, and each row has a read-only sub-table of granted operations. Revoke requires a modal confirmation. Grant role opens its own form and returns to the User screen.
+
+Permissions overview is a read-only grid with one served operation per row and one role per column. Cells show granted marks without edit controls. The grid has no delete buttons and does not use `release.profile`. Each growing table fills its own screen and uses paged Records. Toolbar actions use `toolbarActions`, and forms use FormActions.
 
 ### 4.3 Application screens
 

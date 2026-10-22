@@ -1,24 +1,24 @@
-import { createSignal, For, onCleanup, Show, untrack } from "solid-js";
+import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { Checkbox } from "@wfe/components";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
 import { permission, role } from "@wamn/control-client";
 import { ConfirmAction } from "./confirm-action";
-import { Page } from "./page";
+import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
 
 export const rolesPath = "administration/roles";
+export const rolePath = (name: string) => `${rolesPath}/${encodeURIComponent(name)}`;
 type Operation = permission.PermissionListResult["operations"][number];
+export const grantedOperations = (list: permission.PermissionListResult) =>
+  list.operations.filter((op) => op.served && (list.admin || op.selected));
 
-export function ApplicationRoles(props: ScreenProps) {
-  const [roles, setRoles] = createSignal<readonly string[]>([]);
+export function ApplicationRoles(props: ScreenProps & { overview?: boolean }) {
   const [permissions, setPermissions] = createSignal<permission.PermissionListResult[]>([]);
-  const [pending, setPending] = createSignal<ReadonlySet<string>>(new Set());
   const [trouble, setTrouble] = createSignal<string>();
-  const [result, setResult] = createSignal<string>();
   let active = true;
   onCleanup(() => {
     active = false;
@@ -28,10 +28,7 @@ export function ApplicationRoles(props: ScreenProps) {
     const lists = await Promise.all(
       names.map(async (name) => value(await permission.list(props.transport, [{ role: name }]))),
     );
-    if (active) {
-      setPermissions(lists);
-      setRoles(names);
-    }
+    if (active) setPermissions(lists);
   };
   void untrack(refresh).catch((error: unknown) => {
     if (active) setTrouble(String(error));
@@ -43,29 +40,128 @@ export function ApplicationRoles(props: ScreenProps) {
       ),
     ).values(),
   ];
-  const selected = (name: string, operation: string) => {
-    const list = permissions().find((entry) => entry.role === name);
-    return list?.admin || (list?.operations.find((op) => op.operation === operation)?.selected ?? false);
+  return (
+    <div class="platform-table-screen">
+      <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+      <Show
+        when={!props.overview}
+        fallback={
+          <Show when={permissions()} keyed>
+            {(lists) => (
+              <Records<Operation>
+                id="application-permissions-overview"
+                title="Permissions overview"
+                rows={rows()}
+                rowKey={(op) => op.operation}
+                refresh={refresh}
+                columns={[
+                  { id: "operation", header: "Operation", accessorKey: "operation", size: 420 },
+                  ...lists.map((list) => ({
+                    id: `role:${list.role}`,
+                    header: list.role,
+                    size: 150,
+                    accessorFn: (op: Operation) =>
+                      list.admin || !!list.operations.find((entry) => entry.operation === op.operation)?.selected,
+                  })),
+                ]}
+                formats={Object.fromEntries(lists.map((list) => [`role:${list.role}`, "boolean-symbol" as const]))}
+              />
+            )}
+          </Show>
+        }
+      >
+        <Records
+          id="application-roles"
+          title="Roles"
+          rows={permissions()}
+          rowKey={(list) => list.role}
+          refresh={refresh}
+          create={{ label: "Create role", run: () => props.open(`${rolesPath}/create`) }}
+          columns={[
+            { id: "role", header: "Role", accessorKey: "role" },
+            { id: "operations", header: "Granted operations", accessorFn: (list) => grantedOperations(list).length },
+            { id: "actions", header: "Actions" },
+          ]}
+          cells={{
+            role: (cell) => (
+              <RecordLink screen={props} path={`${rolePath(cell.row.role)}/permissions`}>
+                {cell.row.role}
+              </RecordLink>
+            ),
+            actions: (cell) => (
+              <Show when={cell.row.role !== "admin"}>
+                <ConfirmAction
+                  label={`Delete role ${cell.row.role}`}
+                  description={`Delete the role ${cell.row.role} and its permissions?`}
+                  run={async () => {
+                    value(
+                      await role.delete_(props.transport, [
+                        { requestId: crypto.randomUUID(), value: { role: cell.row.role } },
+                      ]),
+                    );
+                    await refresh();
+                  }}
+                />
+              </Show>
+            ),
+          }}
+        />
+      </Show>
+    </div>
+  );
+}
+
+export function PermissionsOverview(props: ScreenProps) {
+  return <ApplicationRoles {...props} overview />;
+}
+
+export function RolePermissions(props: ScreenProps) {
+  const name = untrack(() => props.params.role!);
+  const [list, setList] = createSignal<permission.PermissionListResult>();
+  const [missing, setMissing] = createSignal(false);
+  const [pending, setPending] = createSignal<ReadonlySet<string>>(new Set());
+  const [trouble, setTrouble] = createSignal<string>();
+  const [result, setResult] = createSignal<string>();
+  let active = true;
+  onCleanup(() => {
+    active = false;
+  });
+  const refresh = async () => {
+    if (pending().size) return;
+    const names = value(await role.list(props.transport, [{}])).roles;
+    const next = names.includes(name) ? value(await permission.list(props.transport, [{ role: name }])) : undefined;
+    if (active) {
+      setMissing(!next);
+      setList(next);
+    }
   };
-  const setSelected = (name: string, operation: string, checked: boolean) =>
-    setPermissions((lists) =>
-      lists.map((list) =>
-        list.role === name
-          ? {
-              ...list,
-              operations: list.operations.map((op) => (op.operation === operation ? { ...op, selected: checked } : op)),
-            }
-          : list,
-      ),
+  void untrack(refresh).catch((error: unknown) => {
+    if (active) setTrouble(String(error));
+  });
+  const selected = (op: Operation) => !!list()?.admin || op.selected;
+  const setSelected = (operation: string, checked: boolean) =>
+    setList(
+      (previous) =>
+        previous && {
+          ...previous,
+          operations: previous.operations.map((op) => (op.operation === operation ? { ...op, selected: checked } : op)),
+        },
     );
-  const change = async (name: string, op: Operation, checked: boolean) => {
-    const key = JSON.stringify([name, op.operation]);
-    const previous = selected(name, op.operation);
-    if (name === "admin" || op.adminOnly || !op.grantable || pending().has(key) || previous === checked) return;
-    setPending((keys) => new Set([...keys, key]));
+  const change = async (op: Operation, checked: boolean) => {
+    const previous = selected(op);
+    if (
+      list()?.admin ||
+      name === "admin" ||
+      op.adminOnly ||
+      !op.grantable ||
+      pending().has(op.operation) ||
+      previous === checked
+    )
+      return;
+    setPending((keys) => new Set([...keys, op.operation]));
     setTrouble(undefined);
     setResult(undefined);
-    setSelected(name, op.operation, checked);
+    setSelected(op.operation, checked);
     try {
       value(
         await (checked ? permission.grant : permission.revoke)(props.transport, [
@@ -75,76 +171,46 @@ export function ApplicationRoles(props: ScreenProps) {
       if (active) setResult(`${checked ? "Granted" : "Revoked"} ${op.operation} ${checked ? "to" : "from"} ${name}.`);
     } catch (error) {
       if (active) {
-        setSelected(name, op.operation, previous);
+        setSelected(op.operation, previous);
         setTrouble(String(error));
       }
     } finally {
-      if (active) setPending((keys) => new Set([...keys].filter((entry) => entry !== key)));
+      if (active) setPending((keys) => new Set([...keys].filter((entry) => entry !== op.operation)));
     }
   };
   return (
-    <div class="platform-table-screen">
-      <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-      <Show when={result()}>{(text) => <p role="status">{text()}</p>}</Show>
-      <Show when={roles()} keyed>
-        {(names) => (
-          <Records<Operation>
-            id="application-roles"
-            title="Roles"
-            rows={rows()}
-            rowKey={(op) => op.operation}
-            refresh={async () => {
-              if (!pending().size) await refresh();
-            }}
-            create={{ label: "Create role", run: () => props.open(`${rolesPath}/create`) }}
-            toolbarActions={
-              <For each={names.filter((name) => name !== "admin")}>
-                {(name) => (
-                  <ConfirmAction
-                    label={`Delete role ${name}`}
-                    description={`Delete the role ${name} and its permissions?`}
-                    run={async () => {
-                      value(
-                        await role.delete_(props.transport, [
-                          { requestId: crypto.randomUUID(), value: { role: name } },
-                        ]),
-                      );
-                      await refresh();
-                    }}
-                  />
-                )}
-              </For>
-            }
-            columns={[
-              { id: "operation", header: "Operation", accessorKey: "operation", size: 420 },
-              ...names.map((name) => ({ id: `role:${name}`, header: name, size: 150 })),
-            ]}
-            cells={Object.fromEntries(
-              names.map((name) => [
-                `role:${name}`,
-                (cell: { row: Operation }) => (
-                  <Checkbox
-                    checked={selected(name, cell.row.operation)}
-                    readOnly={name === "admin"}
-                    disabled={
-                      cell.row.adminOnly ||
-                      !cell.row.grantable ||
-                      pending().has(JSON.stringify([name, cell.row.operation]))
-                    }
-                    onChange={(checked) => void change(name, cell.row, checked)}
-                  >
-                    <Checkbox.Input aria-label={`${cell.row.operation} ${name}`} />
-                    <Checkbox.Control>
-                      <Checkbox.Indicator />
-                    </Checkbox.Control>
-                  </Checkbox>
-                ),
-              ]),
-            )}
-          />
-        )}
-      </Show>
-    </div>
+    <Show when={!missing()} fallback={<MissingPage />}>
+      <div class="platform-table-screen">
+        <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+        <Show when={result()}>{(text) => <p role="status">{text()}</p>}</Show>
+        <Records<Operation>
+          id="application-role-permissions"
+          title={`Permissions for ${name}`}
+          rows={list()?.operations.filter((op) => op.served) ?? []}
+          rowKey={(op) => op.operation}
+          refresh={refresh}
+          columns={[
+            { id: "operation", header: "Operation", accessorKey: "operation", size: 420 },
+            { id: "granted", header: "Granted", size: 150 },
+          ]}
+          cells={{
+            granted: (cell) => (
+              <Checkbox
+                checked={selected(cell.row)}
+                readOnly={name === "admin" || list()?.admin}
+                disabled={cell.row.adminOnly || !cell.row.grantable || pending().has(cell.row.operation)}
+                onChange={(checked) => void change(cell.row, checked)}
+              >
+                <Checkbox.Input aria-label={`${cell.row.operation} ${name}`} />
+                <Checkbox.Control>
+                  <Checkbox.Indicator />
+                </Checkbox.Control>
+              </Checkbox>
+            ),
+          }}
+        />
+      </div>
+    </Show>
   );
 }
 

@@ -2,17 +2,19 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { role, user, userRole } from "@wamn/control-client";
+import { permission, role, user, userRole } from "@wamn/control-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
+import { grantedOperations, rolePath } from "./application-roles";
 
 export const applicationUsersPath = "administration/users";
 
 export function ApplicationUsers(props: ScreenProps) {
   const [users, setUsers] = createSignal<user.UserListResult["users"]>([]);
+  const [permissions, setPermissions] = createSignal<permission.PermissionListResult[]>([]);
   const [loaded, setLoaded] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;
@@ -21,7 +23,12 @@ export function ApplicationUsers(props: ScreenProps) {
   });
   const refresh = async () => {
     const next = value(await user.list(props.transport, [{}]));
+    const person = next.users.find((entry) => entry.id === props.params.principal);
+    const lists = await Promise.all(
+      (person?.roles ?? []).map(async (name) => value(await permission.list(props.transport, [{ role: name }]))),
+    );
     if (active) {
+      setPermissions(lists);
       setUsers(next.users);
       setLoaded(true);
     }
@@ -30,6 +37,10 @@ export function ApplicationUsers(props: ScreenProps) {
     if (active) setTrouble(String(error));
   });
   const person = () => users().find((entry) => entry.id === props.params.principal);
+  const operations = (name: string) => {
+    const list = permissions().find((entry) => entry.role === name);
+    return list ? grantedOperations(list) : [];
+  };
   return (
     <div class="platform-table-screen">
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
@@ -73,7 +84,22 @@ export function ApplicationUsers(props: ScreenProps) {
                 { id: "role", header: "Role", accessorFn: (name) => name },
                 { id: "actions", header: "Actions" },
               ]}
+              details={(cell) => (
+                <Records
+                  id="application-user-role-operations"
+                  title={`Granted operations for ${cell.row}`}
+                  rows={operations(cell.row)}
+                  rowKey={(op) => op.operation}
+                  refresh={refresh}
+                  columns={[{ id: "operation", header: "Operation", accessorKey: "operation" }]}
+                />
+              )}
               cells={{
+                role: (cell) => (
+                  <RecordLink screen={props} path={`${rolePath(cell.row)}/permissions`}>
+                    {cell.row}
+                  </RecordLink>
+                ),
                 actions: (cell) => (
                   <Show when={!(cell.row === "admin" && current().adminCovered)}>
                     <ConfirmAction
