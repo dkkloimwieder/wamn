@@ -22,7 +22,7 @@ export const API_BASE = "/api";
 export interface ScreenProps {
   readonly transport: Transport;
   readonly holds: Holds;
-  readonly controlMine?: control.ControlMineResult;
+  readonly controlMine?: Pick<control.ControlMineResult, "orgAdmin" | "projects">;
   readonly params: Readonly<Record<string, string | undefined>>;
   readonly search: Readonly<Record<string, string | undefined>>;
   readonly open: (path: string) => void;
@@ -60,7 +60,7 @@ type Holds = (operation: string, project?: string) => boolean;
 interface View {
   readonly holds: Holds;
   readonly sections: readonly ShellSection[];
-  readonly controlMine?: control.ControlMineResult;
+  readonly controlMine?: Pick<control.ControlMineResult, "orgAdmin" | "projects">;
 }
 
 function reference(operation: string): string {
@@ -85,7 +85,7 @@ async function applicationView(transport: Transport, sections: readonly ShellSec
   };
 }
 
-export function controlHolds(mine: control.ControlMineResult): Holds {
+export function controlHolds(mine: Pick<control.ControlMineResult, "orgAdmin" | "projects">): Holds {
   const projectOperations = new Set([
     environment.ENVIRONMENT_LIST_ROUTE.operation,
     environment.ENVIRONMENT_STATUS_ROUTE.operation,

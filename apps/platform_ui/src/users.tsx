@@ -1,9 +1,9 @@
-import { createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, FieldError, Input } from "@wfe/components/fields";
 import { Field, FieldValue, FormGrid, Icon, Label } from "@wfe/components";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
-import { Records } from "./records";
+import { createServerPage, Records } from "./records";
 import { emailError } from "./email";
 import { createForm } from "@wfe/form";
 import { environment, member, orgAdmin, project, projectAdmin, user } from "@wamn/control-org-client";
@@ -14,22 +14,19 @@ import { value } from "./outcome";
 import type { ScreenProps, ShellSection } from "./shell";
 
 export function Users(props: ScreenProps): JSX.Element {
-  const [users, setUsers] = createSignal<readonly user.UserListResultUsers[]>([]);
-  const [trouble, setTrouble] = createSignal<string>();
-  let active = true;
-  onCleanup(() => {
-    active = false;
+  const page = createServerPage<user.UserListResultUsers>(async (input) => {
+    const result = value(await user.list(props.transport, [input]));
+    return { ...result, rows: result.users };
   });
-  const refresh = async () => {
-    const next = value(await user.list(props.transport, [{}])).users;
-    if (active) setUsers(next);
-  };
-  void untrack(refresh).catch((error: unknown) => {
-    if (active) setTrouble(String(error));
-  });
+  const refresh = () => page.refresh();
+  createEffect(
+    () => props.transport,
+    () => {
+      void refresh().catch(() => {});
+    },
+  );
   return (
     <div class="platform-table-screen">
-      <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
       <Show when={props.search.invitation === "invited" || props.search.invitation === "enrolled"}>
         <span role="status">
           {props.search.invitation === "invited" ? "User invited." : "User is already enrolled."}
@@ -37,6 +34,7 @@ export function Users(props: ScreenProps): JSX.Element {
       </Show>
       <Records
         refresh={refresh}
+        paging={page}
         id="users"
         title="Users"
         create={
@@ -44,7 +42,7 @@ export function Users(props: ScreenProps): JSX.Element {
             ? { label: "Invite user", run: () => props.open("invite-user") }
             : undefined
         }
-        rows={users()}
+        rows={page.rows()}
         rowKey={(person) => person.principalId}
         columns={[
           { id: "name", header: "Display name", size: 180 },
@@ -135,32 +133,20 @@ interface ProjectAccess {
 }
 
 export function User(props: ScreenProps & { table?: "projects" | "memberships" }): JSX.Element {
-  const principalId = untrack(() => props.params.principal!);
-  const base = `users/${encodeURIComponent(principalId)}`;
+  const principalId = () => props.params.principal!;
+  const base = () => `users/${encodeURIComponent(principalId())}`;
   const [person, setPerson] = createSignal<user.UserListResultUsers>();
   const [projects, setProjects] = createSignal<readonly ProjectAccess[]>([]);
   const [missing, setMissing] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
   const [pending, setPending] = createSignal(false);
   let active = true;
+  let refreshGeneration = 0;
   onCleanup(() => {
     active = false;
   });
-  const refresh = async () => {
-    const found = value(await user.list(props.transport, [{}])).users.find(
-      (entry) => entry.principalId === principalId,
-    );
-    if (!active) return;
-    setMissing(!found);
-    if (!found) return;
-    setPerson(found);
-    if (!props.table) return;
-    const listed = value(await project.list(props.transport, [{}])).projects;
-    if (props.params.project && !listed.some((entry) => entry.name === props.params.project)) {
-      setMissing(true);
-      return;
-    }
-    const access = await Promise.all(
+  const readAccess = async (listed: readonly project.ProjectListResultProjects[]) => {
+    return Promise.all(
       listed
         .filter((entry) => !props.params.project || entry.name === props.params.project)
         .map(async ({ name, state }) => {
@@ -172,15 +158,52 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
             project: name,
             state,
             environments: value(environments).environments,
-            member: value(members).members.find((entry) => entry.principalId === principalId),
+            member: value(members).members.find((entry) => entry.principalId === principalId()),
           };
         }),
     );
-    if (active) setProjects(access);
   };
-  void untrack(refresh).catch((error: unknown) => {
-    if (active) setTrouble(String(error));
+  const projectPage = createServerPage<ProjectAccess>(async (input) => {
+    const result = value(await project.list(props.transport, [input]));
+    return { ...result, rows: await readAccess(result.projects) };
   });
+  const refresh = async () => {
+    const current = ++refreshGeneration;
+    setTrouble(undefined);
+    const found = value(await user.list(props.transport, [{}])).users.find(
+      (entry) => entry.principalId === principalId(),
+    );
+    if (!active || current !== refreshGeneration) return;
+    setMissing(!found);
+    if (!found) return;
+    setPerson(found);
+    if (!props.table) return;
+    if (props.table === "projects") {
+      await projectPage.refresh();
+      return;
+    }
+    const listed = value(await project.list(props.transport, [{}])).projects;
+    if (props.params.project && !listed.some((entry) => entry.name === props.params.project)) {
+      setMissing(true);
+      return;
+    }
+    const access = await readAccess(listed);
+    if (active && current === refreshGeneration) setProjects(access);
+  };
+  createEffect(
+    () => [props.transport, props.params.principal, props.params.project, props.table],
+    () => {
+      let current = true;
+      projectPage.reset();
+      void refresh().catch((error: unknown) => {
+        if (active && current) setTrouble(String(error));
+      });
+      return () => {
+        current = false;
+        refreshGeneration++;
+      };
+    },
+  );
   const write = async (invoke: () => Promise<Outcome<unknown>>) => {
     if (pending()) return;
     setPending(true);
@@ -196,7 +219,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
   };
   const access = () => projects().find((entry) => entry.project === props.params.project);
   const membershipPath = () =>
-    props.params.project ? `${base}/projects/${encodeURIComponent(props.params.project)}` : `${base}/memberships`;
+    props.params.project ? `${base()}/projects/${encodeURIComponent(props.params.project)}` : `${base()}/memberships`;
   return (
     <Show when={!missing()} fallback={<MissingPage />}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
@@ -220,7 +243,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                         onClick={() =>
                           void write(() =>
                             (current().status === "active" ? user.deactivate : user.activate)(props.transport, [
-                              { requestId: crypto.randomUUID(), value: { principalId } },
+                              { requestId: crypto.randomUUID(), value: { principalId: principalId() } },
                             ]),
                           )
                         }
@@ -240,7 +263,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                         onClick={() =>
                           void write(() =>
                             (current().orgAdmin ? orgAdmin.revoke : orgAdmin.grant)(props.transport, [
-                              { requestId: crypto.randomUUID(), value: { principalId } },
+                              { requestId: crypto.randomUUID(), value: { principalId: principalId() } },
                             ]),
                           )
                         }
@@ -269,9 +292,10 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
               <div class="platform-table-screen">
                 <Records
                   refresh={refresh}
+                  paging={projectPage}
                   id="project-access"
                   title="Project access"
-                  rows={projects()}
+                  rows={projectPage.rows()}
                   rowKey={(entry) => entry.project}
                   columns={[
                     { id: "project", header: "Project", accessorKey: "project" },
@@ -304,7 +328,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                   formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol", projectAdmin: "boolean-symbol" }}
                   cells={{
                     project: (cell) => (
-                      <RecordLink screen={props} path={`${base}/projects/${encodeURIComponent(cell.row.project)}`}>
+                      <RecordLink screen={props} path={`${base()}/projects/${encodeURIComponent(cell.row.project)}`}>
                         {cell.row.project}
                       </RecordLink>
                     ),
@@ -332,7 +356,12 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                             void write(() =>
                               (entry().member?.projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(
                                 props.transport,
-                                [{ requestId: crypto.randomUUID(), value: { project: entry().project, principalId } }],
+                                [
+                                  {
+                                    requestId: crypto.randomUUID(),
+                                    value: { project: entry().project, principalId: principalId() },
+                                  },
+                                ],
                               ),
                             )
                           }
@@ -394,7 +423,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                               member.revoke(props.transport, [
                                 {
                                   requestId: crypto.randomUUID(),
-                                  value: { project: cell.row.project, env: cell.row.name, principalId },
+                                  value: { project: cell.row.project, env: cell.row.name, principalId: principalId() },
                                 },
                               ]),
                             )

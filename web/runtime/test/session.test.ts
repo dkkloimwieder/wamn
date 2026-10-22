@@ -5,7 +5,16 @@
 
 import { describe, expect, it } from "vitest";
 
-import { environments, keepSession, renew, signIn, signOut, type Clock, type SessionState } from "../src/session.js";
+import {
+  environmentPage,
+  environments,
+  keepSession,
+  renew,
+  signIn,
+  signOut,
+  type Clock,
+  type SessionState,
+} from "../src/session.js";
 import { createTransport, type BearerOptions, type CookieOptions, type TransportOptions } from "../src/transport.js";
 import type { ResponseContract } from "../src/wire.js";
 
@@ -347,5 +356,44 @@ describe("the session keeper", () => {
     await settle();
     expect(states).toEqual([{ status: "signedOut" }]);
     expect(clock.pending()).toEqual([]);
+  });
+});
+
+describe("audience paging", () => {
+  it("sends the page request and preserves unknown totals", async () => {
+    const stub = stubFetch([
+      () =>
+        new Response(
+          JSON.stringify({ environments: [{ aud: "control", org: "acme" }], next_cursor: "next", total: null }),
+        ),
+    ]);
+    expect(
+      await environmentPage(
+        "a@example.test",
+        "password",
+        { org: "acme", project: "widgets" },
+        { limit: 25, cursor: "previous" },
+        stub,
+      ),
+    ).toEqual({
+      environments: [{ aud: "control", org: "acme" }],
+      nextCursor: "next",
+      total: null,
+    });
+    expect(bodyOf(stub.seen[0])).toEqual({
+      email: "a@example.test",
+      password: "password",
+      org: "acme",
+      project: "widgets",
+      limit: 25,
+      cursor: "previous",
+    });
+  });
+  it("reports the login throttle without automatically retrying", async () => {
+    const stub = stubFetch([() => new Response("", { status: 429, headers: { "retry-after": "60" } })]);
+    await expect(environmentPage("a@example.test", "password", { org: "acme" }, { limit: 25 }, stub)).rejects.toThrow(
+      "Retry after 60 seconds.",
+    );
+    expect(stub.seen).toHaveLength(1);
   });
 });

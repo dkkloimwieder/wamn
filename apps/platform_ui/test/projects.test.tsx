@@ -66,6 +66,60 @@ describe("control holds", () => {
 });
 
 describe("Projects and Project", () => {
+  it.each(["environments", "members"] as const)("requests %s by project and cursor", async (table) => {
+    const requests: unknown[] = [];
+    const transport = createTransport({
+      baseUrl: "",
+      fetch: async (url) => {
+        const address = new URL(String(url), "http://fixture");
+        if (address.pathname.endsWith("/project/list"))
+          return new Response(
+            JSON.stringify([
+              { value: { projects: [{ name: "widgets", state: "active" }], next_cursor: null, total: 1 } },
+            ]),
+          );
+        const input = Object.fromEntries([...address.searchParams].map(([name, value]) => [name, JSON.parse(value)]));
+        requests.push(input);
+        const label = input.cursor ? "Second" : "First";
+        const rows =
+          table === "environments"
+            ? [{ name: label, state: "active" }]
+            : [
+                {
+                  principal_id: label,
+                  email: `${label}@example.invalid`,
+                  display_name: label,
+                  org_admin: false,
+                  project_admin: false,
+                  environments: [],
+                },
+              ];
+        return new Response(
+          JSON.stringify([{ value: { [table]: rows, next_cursor: input.cursor ? null : "next", total: null } }]),
+        );
+      },
+    });
+    render(() => (
+      <Project
+        transport={transport}
+        holds={admin}
+        params={{ project: "widgets" }}
+        search={{}}
+        open={() => {}}
+        close={() => {}}
+        table={table}
+      />
+    ));
+    await screen.findByRole("link", { name: "First" });
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByRole("link", { name: "Second" });
+    expect(screen.queryByRole("link", { name: "First" })).toBeNull();
+    expect(requests).toEqual([
+      { project: "widgets", limit: 25 },
+      { project: "widgets", limit: 25, cursor: "next" },
+    ]);
+  });
+
   it("lists only control.mine projects for a project admin without calling project.list", async () => {
     const session = identity(true, [], undefined, {
       org_admin: false,
@@ -94,9 +148,15 @@ describe("Projects and Project", () => {
     ]);
     expect(table.getByRole("img", { name: "Yes" })).toBeTruthy();
     expect(table.getByRole("img", { name: "No" })).toBeTruthy();
-    expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
+    expect(session.state.calls).toEqual([
+      "/password/renew",
+      "/api/wamn_control/control/mine",
+      "/api/wamn_control/control/mine",
+    ]);
+    expect(session.state.queries[1]).toEqual({});
+    expect(session.state.queries[2]).toEqual({ limit: "25" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
-    await waitFor(() => expect(session.state.calls.filter((call) => call.endsWith("/control/mine"))).toHaveLength(2));
+    await waitFor(() => expect(session.state.calls.filter((call) => call.endsWith("/control/mine"))).toHaveLength(3));
   });
   it("lands Control on its splash and reads control.mine once", async () => {
     const session = identity(true);
@@ -270,11 +330,7 @@ describe("Projects and Project", () => {
     fireEvent.click(within(members).getByRole("link", { name: "Alex" }));
     expect(opened).toBe(`projects/widgets/members/${principalId}`);
     expect(members.querySelector("table")).toBeNull();
-    expect(calls.sort()).toEqual([
-      "/api/wamn_control/environment/list",
-      "/api/wamn_control/member/list",
-      "/api/wamn_control/project/list",
-    ]);
+    expect(calls.sort()).toEqual(["/api/wamn_control/member/list", "/api/wamn_control/project/list"]);
   });
 });
 

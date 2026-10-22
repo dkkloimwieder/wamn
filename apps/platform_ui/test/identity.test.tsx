@@ -91,6 +91,49 @@ describe("identity pages", () => {
     ]);
   });
 
+  it("pages audiences, retains rows on 429, and never treats a partial page as the only audience", async () => {
+    const session = identity(false);
+    const requests: Record<string, unknown>[] = [];
+    let refuse = true;
+    const fetch: typeof globalThis.fetch = async (url, init) => {
+      if (String(url) !== "/password/environments") return session.fetch(url, init);
+      const body = JSON.parse(String(init?.body));
+      requests.push(body);
+      if (body.cursor && refuse) {
+        refuse = false;
+        return new Response("", { status: 429, headers: { "retry-after": "60" } });
+      }
+      return new Response(
+        JSON.stringify(
+          body.cursor
+            ? { environments: [{ aud: CONTROL, org: "acme" }], next_cursor: null, total: null }
+            : { environments: ONE, next_cursor: "control-page", total: null },
+        ),
+      );
+    };
+    open("/", fetch);
+    await signIn();
+    const table = await screen.findByRole("table", { name: "Audiences" });
+    expect(within(table).getByRole("link", { name: "dev" })).toBeTruthy();
+    expect(session.state.calls).not.toContain("/password/session");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText(/Retry after 60 seconds/);
+    expect(within(table).getByRole("link", { name: "dev" })).toBeTruthy();
+    expect(requests).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await within(table).findByRole("link", { name: "Control" });
+    expect(within(table).queryByRole("link", { name: "dev" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    await within(table).findByRole("link", { name: "dev" });
+    expect(requests.map(({ limit, cursor }) => ({ limit, cursor }))).toEqual([
+      { limit: 25, cursor: undefined },
+      { limit: 25, cursor: "control-page" },
+      { limit: 25, cursor: "control-page" },
+      { limit: 25, cursor: undefined },
+    ]);
+  });
+
   it("signs in at the root, and the one environment of the org opens the first screen", async () => {
     const { fetch } = identity(false);
     open("/", fetch);
@@ -120,6 +163,7 @@ describe("identity pages", () => {
       email: "someone@wamn.dev",
       password: "a long password string",
       org: "acme",
+      limit: 25,
     });
     fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
     await waitFor(() => expect(state.calls.filter((path) => path === "/password/environments")).toHaveLength(2));
@@ -161,19 +205,19 @@ describe("identity pages", () => {
             .map((cell) => cell.textContent),
         ),
     ).toEqual([
-      ["acme", "", "Control"],
       ["acme", "widgets", "dev"],
       ["acme", "widgets", "prod"],
       ["acme", "gadgets", "dev"],
       ["acme", "gadgets", "prod"],
       ["other", "widgets", "dev"],
+      ["acme", "", "Control"],
     ]);
     expect(audiences.querySelector("details")).toBeNull();
     const links = within(audiences).getAllByRole("link");
     expect(links.map((link) => link.getAttribute("href")).sort()).toEqual(
       listed.map((entry) => `/${entry.aud}`).sort(),
     );
-    fireEvent.click(links[5]!);
+    fireEvent.click(links[4]!);
     // Selection uses the returned audience; the shell still enforces this deploy's org.
     expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe("/urn:wamn:project-env:other:widgets:dev:q8w4e2r6"));

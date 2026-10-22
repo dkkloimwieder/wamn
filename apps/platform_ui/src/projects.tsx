@@ -1,9 +1,9 @@
-import { createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Icon } from "@wfe/components";
 import { Button, FieldError } from "@wfe/components/fields";
 import { FormView, type FormDescription } from "@wfe/generator";
-import { Records } from "./records";
+import { createServerPage, Records } from "./records";
 import { createForm } from "@wfe/form";
 import { control, environment, member, project, projectAdmin, release } from "@wamn/control-org-client";
 import type { Outcome } from "@wamn/web-runtime";
@@ -15,54 +15,40 @@ import { Environment } from "./environment";
 import type { ScreenProps, ShellSection } from "./shell";
 
 export function Projects(props: ScreenProps): JSX.Element {
-  const [projects, setProjects] = createSignal<readonly { name: string; state?: string; projectAdmin?: boolean }[]>(
-    untrack(
-      () =>
-        props.controlMine?.projects
-          .filter((entry) => entry.projectAdmin)
-          .map((entry) => ({
-            name: entry.project,
-            projectAdmin: entry.projectAdmin,
-          })) ?? [],
-    ),
-  );
-  const [trouble, setTrouble] = createSignal<string>();
-  let active = true;
-  onCleanup(() => {
-    active = false;
-  });
-  const refresh = async () => {
+  const page = createServerPage<{ name: string; state?: string; projectAdmin?: boolean }>(async (input) => {
     if (!props.holds(project.PROJECT_LIST_ROUTE.operation)) {
-      const mine = value(await control.mine(props.transport, [{}]));
-      if (active)
-        setProjects(
-          mine.projects
-            .filter((entry) => entry.projectAdmin)
-            .map((entry) => ({ name: entry.project, projectAdmin: entry.projectAdmin })),
-        );
-      return;
+      const mine = value(await control.mine(props.transport, [input]));
+      return {
+        ...mine,
+        rows: mine.projects
+          .filter((entry) => entry.projectAdmin)
+          .map((entry) => ({ name: entry.project, projectAdmin: entry.projectAdmin })),
+      };
     }
-    const result = value(await project.list(props.transport, [{}]));
-    if (active)
-      setProjects(
-        result.projects.map((entry) => ({
-          ...entry,
-          projectAdmin: props.controlMine?.projects.find((held) => held.project === entry.name)?.projectAdmin,
-        })),
-      );
-  };
-  if (untrack(() => props.holds(project.PROJECT_LIST_ROUTE.operation)))
-    void untrack(refresh).catch((error: unknown) => {
-      if (active) setTrouble(String(error));
-    });
+    const result = value(await project.list(props.transport, [input]));
+    return {
+      ...result,
+      rows: result.projects.map((entry) => ({
+        ...entry,
+        projectAdmin: props.controlMine?.projects.find((held) => held.project === entry.name)?.projectAdmin,
+      })),
+    };
+  });
+  const refresh = () => page.refresh();
+  createEffect(
+    () => props.transport,
+    () => {
+      void refresh().catch(() => {});
+    },
+  );
   return (
     <div class="platform-table-screen">
-      <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
       <Show when={props.search.created === "1"}>
         <span role="status">Project created.</span>
       </Show>
       <Records
         refresh={refresh}
+        paging={page}
         id="projects"
         title="Projects"
         create={
@@ -70,7 +56,7 @@ export function Projects(props: ScreenProps): JSX.Element {
             ? { label: "Create project", run: () => props.open("create-project") }
             : undefined
         }
-        rows={projects()}
+        rows={page.rows()}
         rowKey={(entry) => entry.name}
         columns={[
           { id: "project", header: "Project" },
@@ -129,10 +115,21 @@ export function CreateProject(props: ScreenProps): JSX.Element {
 }
 
 export function Project(props: ScreenProps & { table?: "environments" | "members" }): JSX.Element {
-  const name = untrack(() => props.params.project!);
-  const projectBase = `projects/${encodeURIComponent(name)}`;
-  const base = props.params.env ? `${projectBase}/${encodeURIComponent(props.params.env)}` : projectBase;
-  const [environments, setEnvironments] = createSignal<readonly environment.EnvironmentListResultEnvironments[]>([]);
+  const name = () => props.params.project!;
+  const projectBase = () => `projects/${encodeURIComponent(name())}`;
+  const base = () => (props.params.env ? `${projectBase()}/${encodeURIComponent(props.params.env)}` : projectBase());
+  const environmentPage = createServerPage<environment.EnvironmentListResultEnvironments>(async (input) => {
+    const result = value(await environment.list(props.transport, [{ project: name(), ...input }]));
+    return { ...result, rows: result.environments };
+  });
+  const memberPage = createServerPage<member.MemberListResultMembers>(async (input) => {
+    const result = value(await member.list(props.transport, [{ project: name(), ...input }]));
+    return {
+      ...result,
+      total: props.params.env ? null : result.total,
+      rows: result.members.filter((person) => !props.params.env || person.environments.includes(props.params.env)),
+    };
+  });
   const [state, setState] = createSignal<"active" | "inactive">();
   const [members, setMembers] = createSignal<readonly member.MemberListResultMembers[]>([]);
   const [missing, setMissing] = createSignal(false);
@@ -140,40 +137,71 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
   const [trouble, setTrouble] = createSignal<string>();
   const [pending, setPending] = createSignal(false);
   let active = true;
+  let refreshGeneration = 0;
   onCleanup(() => {
     active = false;
   });
   const refresh = async () => {
+    const current = ++refreshGeneration;
+    setTrouble(undefined);
     if (props.holds(project.PROJECT_LIST_ROUTE.operation)) {
-      const found = value(await project.list(props.transport, [{}])).projects.find((entry) => entry.name === name);
-      if (!active) return;
+      const found = value(await project.list(props.transport, [{}])).projects.find((entry) => entry.name === name());
+      if (!active || current !== refreshGeneration) return;
       setMissing(!found);
       if (!found) return;
       setState(found.state);
     }
-    const [envs, people] = await Promise.all([
-      environment.list(props.transport, [{ project: name }]),
-      member.list(props.transport, [{ project: name }]),
-    ]);
-    if (!active) return;
-    if ([envs, people].some((result) => result.status === "refused" && result.code === "project_not_found")) {
-      setMissing(true);
-      return;
+    if (props.table === "environments") {
+      await environmentPage.refresh();
+    } else if (props.table === "members") {
+      // The environment lookup needs the complete set, even beyond page one.
+      if (props.params.env) {
+        const listed = value(await environment.list(props.transport, [{ project: name() }])).environments;
+        if (!active || current !== refreshGeneration) return;
+        if (!listed.some((env) => env.name === props.params.env)) {
+          setMissing(true);
+          return;
+        }
+      }
+      await memberPage.refresh();
+    } else {
+      const [envs, people] = await Promise.all([
+        environment.list(props.transport, [{ project: name() }]),
+        member.list(props.transport, [{ project: name() }]),
+      ]);
+      if (!active || current !== refreshGeneration) return;
+      if ([envs, people].some((result) => result.status === "refused" && result.code === "project_not_found")) {
+        setMissing(true);
+        return;
+      }
+      const listed = value(envs).environments;
+      if (props.params.env && !listed.some((env) => env.name === props.params.env)) {
+        setMissing(true);
+        return;
+      }
+      setMembers(
+        value(people).members.filter((person) => !props.params.env || person.environments.includes(props.params.env)),
+      );
     }
-    const listed = value(envs).environments;
-    if (props.params.env && !listed.some((env) => env.name === props.params.env)) {
-      setMissing(true);
-      return;
-    }
-    setEnvironments(listed);
-    setMembers(
-      value(people).members.filter((person) => !props.params.env || person.environments.includes(props.params.env)),
-    );
-    setLoaded(true);
+    if (active && current === refreshGeneration) setLoaded(true);
   };
-  void untrack(refresh).catch((error: unknown) => {
-    if (active) setTrouble(String(error));
-  });
+  createEffect(
+    () => [props.transport, props.params.project, props.params.env, props.params.principal, props.table],
+    () => {
+      let current = true;
+      environmentPage.reset();
+      memberPage.reset();
+      setMissing(false);
+      setLoaded(false);
+      void refresh().catch((error: unknown) => {
+        if (active && current) setTrouble(String(error));
+      });
+      return () => {
+        current = false;
+        refreshGeneration++;
+      };
+    },
+  );
   const write = async (invoke: () => Promise<Outcome<unknown>>) => {
     if (pending()) return;
     setPending(true);
@@ -181,7 +209,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
     try {
       value(await invoke());
       await refresh();
-      if (active && !missing() && props.params.principal && !person()) props.open(`${base}/members`);
+      if (active && !missing() && props.params.principal && !person()) props.open(`${base()}/members`);
     } catch (error) {
       if (active) setTrouble(String(error));
     } finally {
@@ -194,7 +222,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
       <Show when={!props.table && !props.params.principal}>
         <Page
-          title={name}
+          title={name()}
           actions={
             <Show
               when={
@@ -211,7 +239,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 onClick={() =>
                   void write(() =>
                     (state() === "active" ? project.inactivate : project.activate)(props.transport, [
-                      { requestId: crypto.randomUUID(), value: { project: name } },
+                      { requestId: crypto.randomUUID(), value: { project: name() } },
                     ]),
                   )
                 }
@@ -230,9 +258,10 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
         <div class="platform-table-screen">
           <Records
             refresh={refresh}
+            paging={environmentPage}
             id="environments"
             title="Environments"
-            rows={environments()}
+            rows={environmentPage.rows()}
             rowKey={(env) => env.name}
             columns={[
               { id: "environment", header: "Environment" },
@@ -240,7 +269,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
             ]}
             cells={{
               environment: (cell) => (
-                <RecordLink screen={props} path={`${base}/${encodeURIComponent(cell.row.name)}`}>
+                <RecordLink screen={props} path={`${base()}/${encodeURIComponent(cell.row.name)}`}>
                   {cell.row.name}
                 </RecordLink>
               ),
@@ -252,13 +281,14 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
         <div class="platform-table-screen">
           <Records
             refresh={refresh}
+            paging={memberPage}
             id="members"
             title="Members"
-            rows={members()}
+            rows={memberPage.rows()}
             rowKey={(entry) => entry.principalId}
             create={
               props.holds(member.MEMBER_GRANT_ROUTE.operation)
-                ? { label: "Grant membership", run: () => props.open(`${base}/members/grant`) }
+                ? { label: "Grant membership", run: () => props.open(`${base()}/members/grant`) }
                 : undefined
             }
             columns={[
@@ -277,7 +307,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
             formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol", projectAdmin: "boolean-symbol" }}
             cells={{
               displayName: (cell) => (
-                <RecordLink screen={props} path={`${base}/members/${encodeURIComponent(cell.row.principalId)}`}>
+                <RecordLink screen={props} path={`${base()}/members/${encodeURIComponent(cell.row.principalId)}`}>
                   {cell.row.displayName}
                 </RecordLink>
               ),
@@ -305,7 +335,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                         (current().projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(props.transport, [
                           {
                             requestId: crypto.randomUUID(),
-                            value: { project: name, principalId: current().principalId },
+                            value: { project: name(), principalId: current().principalId },
                           },
                         ]),
                       )
@@ -327,7 +357,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                   props.holds(member.MEMBER_GRANT_ROUTE.operation)
                     ? {
                         label: "Grant membership",
-                        run: () => props.open(`${base}/members/${encodeURIComponent(current().principalId)}/grant`),
+                        run: () => props.open(`${base()}/members/${encodeURIComponent(current().principalId)}/grant`),
                       }
                     : undefined
                 }
@@ -353,7 +383,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                             member.revoke(props.transport, [
                               {
                                 requestId: crypto.randomUUID(),
-                                value: { project: name, env: cell.row, principalId: current().principalId },
+                                value: { project: name(), env: cell.row, principalId: current().principalId },
                               },
                             ]),
                           )

@@ -6,7 +6,7 @@ import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
 import { GrantMembership } from "../src/membership";
 import { NotFoundBoundary } from "../src/page";
-import { InviteUser, User, userSections } from "../src/users";
+import { InviteUser, User, Users, userSections } from "../src/users";
 import { CONTROL, identity, input } from "./fixtures";
 
 const admin = controlHolds({ orgAdmin: true, projects: [] });
@@ -58,6 +58,34 @@ describe("Users authority", () => {
 });
 
 describe("Users decisions", () => {
+  it("requests user pages from the server and reloads from the first cursor", async () => {
+    const requests: unknown[] = [];
+    const transport = createTransport({
+      baseUrl: "",
+      fetch: async (url) => {
+        const query = new URL(String(url), "http://fixture").searchParams;
+        const input = {
+          limit: Number(query.get("limit")),
+          ...(query.has("cursor") ? { cursor: JSON.parse(query.get("cursor")!) } : {}),
+        };
+        requests.push(input);
+        return completed({
+          users: [{ ...person, display_name: input.cursor ? "Next User" : "First User" }],
+          next_cursor: input.cursor ? null : "users-next",
+          total: null,
+        });
+      },
+    });
+    render(() => <Users {...props} transport={transport} />);
+    await screen.findByRole("link", { name: "First User" });
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByRole("link", { name: "Next User" });
+    expect(screen.queryByRole("link", { name: "First User" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
+    await screen.findByRole("link", { name: "First User" });
+    expect(requests).toEqual([{ limit: 25 }, { limit: 25, cursor: "users-next" }, { limit: 25 }]);
+  });
+
   it.each([true, false])("invites without implicit grants and reports delivery=%s", async (delivered) => {
     const writes: unknown[] = [];
     let invited = false;

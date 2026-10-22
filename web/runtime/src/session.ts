@@ -68,16 +68,37 @@ export async function environments(
   scope: { readonly org: string; readonly project?: string },
   options: SessionOptions = {},
 ): Promise<Environment[]> {
+  return (await environmentPage(email, password, scope, {}, options)).environments;
+}
+
+/** One authorized audience page. Each request shares the login rate limit. */
+export async function environmentPage(
+  email: string,
+  password: string,
+  scope: { readonly org: string; readonly project?: string },
+  paging: { readonly limit?: number; readonly cursor?: string },
+  options: SessionOptions = {},
+): Promise<{ environments: Environment[]; nextCursor: string | null; total: number | null }> {
   const response = await post(
     "/password/environments",
-    { email, password, org: scope.org, project: scope.project },
+    { email, password, org: scope.org, project: scope.project, ...paging },
     options,
   );
   if (!response.ok) {
+    const retry = response.status === 429 ? response.headers.get("retry-after") : null;
+    if (retry) throw new Error(`/password/environments answered 429. Retry after ${retry} seconds.`);
     throw refusedBy("/password/environments", response);
   }
-  const document = (await response.json()) as { environments?: Environment[] };
-  return document.environments ?? [];
+  const document = (await response.json()) as {
+    environments: Environment[];
+    next_cursor: string | null;
+    total: number | null;
+  };
+  return {
+    environments: document.environments ?? [],
+    nextCursor: document.next_cursor ?? null,
+    total: document.total ?? null,
+  };
 }
 
 /**

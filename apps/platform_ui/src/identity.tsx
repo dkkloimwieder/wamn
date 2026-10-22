@@ -1,13 +1,13 @@
-import { createSignal, onCleanup, Show, type Component } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { FieldError, Input } from "@wfe/components/fields";
-import { Records } from "./records";
+import { createServerPage, Records } from "./records";
 import { createForm, type FormContext } from "@wfe/form";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
 import { emailError } from "./email";
 import {
   enroll,
-  environments,
+  environmentPage,
   recover,
   resetPassword,
   signIn,
@@ -93,7 +93,20 @@ export function SignInForm(props: {
 /** Identity names the reachable audiences; the session reads their permissions. */
 function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element {
   const [credentials, setCredentials] = createSignal<{ email: string; password: string } | null>(null);
-  const [reachable, setReachable] = createSignal<readonly Environment[]>([]);
+  let login: Credentials | undefined;
+  const page = createServerPage<Environment>(async (input) => {
+    if (!login) throw new Error("Enter your email and password.");
+    const result = await environmentPage(login.email, login.password, props.scope, input, props.options);
+    return { ...result, rows: result.environments };
+  });
+  createEffect(
+    () => props.scope.org,
+    () => {
+      login = undefined;
+      setCredentials(null);
+      page.reset();
+    },
+  );
   const [trouble, setTrouble] = createSignal<string | null>(null);
   const [entering, setEntering] = createSignal(false);
   let active = true;
@@ -112,7 +125,7 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
   };
   return (
     <Show
-      when={credentials() === null || reachable().length > 0}
+      when={credentials() === null || page.rows().length > 0}
       fallback={
         <EntryPage title="No access">
           <p>No access has been granted.</p>
@@ -136,10 +149,10 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
               address={props.address}
               trouble={null}
               submit={async (email, password, context) => {
-                const found = await environments(email, password, props.scope, props.options);
-                if (context.signal.aborted) return;
-                setReachable(found);
-                const only = found.length === 1 ? found[0] : undefined;
+                login = { email, password };
+                const found = await page.refresh();
+                if (context.signal.aborted || !found) return;
+                const only = found.rows.length === 1 && found.nextCursor === null ? found.rows[0] : undefined;
                 if (only) await enter(email, password, only.aud, context.signal);
                 else setCredentials({ email, password });
               }}
@@ -177,15 +190,11 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
             <Frame header={<span>Choose an audience</span>} scroll="content">
               <div class="platform-table-screen">
                 <Records
-                  refresh={async () => {
-                    const next = await environments(held().email, held().password, props.scope, props.options);
-                    if (active) setReachable(next);
-                  }}
+                  refresh={page.refresh}
+                  paging={page}
                   id="audiences"
                   title="Audiences"
-                  rows={[...reachable()].sort(
-                    (a, b) => Number(a.project !== undefined) - Number(b.project !== undefined),
-                  )}
+                  rows={page.rows()}
                   rowKey={(entry) => entry.aud}
                   columns={[
                     { id: "org", header: "Org", accessorKey: "org" },

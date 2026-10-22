@@ -33,7 +33,7 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
     const transport = as(cat);
     expect(await control.mine(transport, [{}])).toEqual({
       status: "completed",
-      value: { orgAdmin: false, projects: [{ project: "billing", projectAdmin: true }] },
+      value: { nextCursor: null, total: 1, orgAdmin: false, projects: [{ project: "billing", projectAdmin: true }] },
     });
     expect(await user.list(transport, [{}])).toMatchObject({
       status: "completed",
@@ -56,6 +56,8 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
     expect(await user.list(transport, [{}])).toEqual({
       status: "completed",
       value: {
+        nextCursor: null,
+        total: 3,
         users: [
           { principalId: annId, email: "ann@example.test", displayName: "Ann", status: "active", orgAdmin: false },
           { principalId: bossId, email: "boss@example.test", displayName: "Boss", status: "active", orgAdmin: true },
@@ -66,6 +68,8 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
     expect(await project.list(transport, [{}])).toEqual({
       status: "completed",
       value: {
+        nextCursor: null,
+        total: 2,
         projects: [
           { name: "billing", state: "active" },
           { name: "shop", state: "active" },

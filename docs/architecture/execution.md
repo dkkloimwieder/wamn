@@ -107,10 +107,10 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
 | `wamn-control:user/activate@0.9.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
 | `wamn-control:user/deactivate@0.9.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
-| `wamn-control:project/list@0.9.0` | `projects`: every project of the org as `{name, state}`. |
+| `wamn-control:project/list@0.9.0` | `projects`: projects of the org as `{name, state}`. |
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
-| `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: every environment of the project as `{name, state}`. |
+| `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
 | `wamn-control:environment/status@0.9.0` | Answers the digest, rollout, workload conditions, and live set of one environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the tables it reads, writes, deletes and locks, derived from the release's SQL over the environment's table columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. Writes nothing. |
@@ -897,7 +897,13 @@ A table that can grow fills its panel, places its actions in `toolbarActions`, a
 The [table screen style](../../apps/platform_ui/src/page.css) fills the available space without outer padding.
 [Table routes](../../apps/platform_ui/src/projects.tsx) use `scroll="content"`.
 [Records](../../apps/platform_ui/src/records.tsx) supplies wfe `TableView` with toolbar actions and pagination, the controls that select a page of rows.
-It selects 25 rows per page from the returned array and reports the total row count.
+The project, user, environment, member, control-project, and audience lists request `limit: 25` from their servers.
+The application keeps prior cursors for Previous and replaces rows only after a successful request.
+A scope change or reload starts a new traversal. Pending requests disable the page controls.
+The UI passes `totalRows` only when the server supplies a non-null total. Unknown totals show only the current page number.
+Whole-result reference tables retain local paging over their complete arrays.
+The shell bootstrap keeps a whole `control.mine` call, and environment lookups by name keep whole calls.
+Audience selection opens a single audience automatically only when the first response has no continuation.
 [TableView](../../web/wfe/packages/generator/src/TableView.tsx) passes these bindings to the wfe table.
 
 Each column shows one fact. Growing lists appear as counts in parent rows.

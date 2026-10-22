@@ -173,6 +173,7 @@ export function identity(
     signedIn,
     calls: [] as string[],
     bodies: [] as unknown[],
+    queries: [] as Record<string, string>[],
     requests: [] as (RequestInit | undefined)[],
   };
   const times = () =>
@@ -181,7 +182,9 @@ export function identity(
       { status: 200 },
     );
   const fetch = (url: string | URL | Request, init?: RequestInit) => {
-    const path = String(url);
+    const address = new URL(String(url), "http://fixture");
+    const path = address.pathname;
+    state.queries.push(Object.fromEntries(address.searchParams));
     state.calls.push(path);
     state.requests.push(init);
     state.bodies.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)));
@@ -190,11 +193,19 @@ export function identity(
     }
     // A control session calls its host with no prefix.
     if (path.startsWith("/api/wamn_control/control/mine")) {
-      return Promise.resolve(new Response(JSON.stringify([{ value: control }]), { status: 200 }));
+      return Promise.resolve(
+        new Response(JSON.stringify([{ value: { ...(control as object), next_cursor: null, total: null } }]), {
+          status: 200,
+        }),
+      );
     }
     switch (path) {
       case "/password/environments":
-        return Promise.resolve(new Response(JSON.stringify({ environments: listed }), { status: 200 }));
+        return Promise.resolve(
+          new Response(JSON.stringify({ environments: listed, next_cursor: null, total: listed.length }), {
+            status: 200,
+          }),
+        );
       case "/password/session":
         state.signedIn = true;
         return Promise.resolve(times());
