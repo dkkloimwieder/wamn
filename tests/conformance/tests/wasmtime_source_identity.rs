@@ -9,8 +9,8 @@ use std::sync::OnceLock;
 
 const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
 // The lockfile resolution and the workspace requirement are separate facts.
-// Upstream 2.10.3 declares 48.0.3; a later lockfile-only patch can resolve higher.
-const WASMTIME_RESOLVED: &str = "48.0.5";
+// Upstream 2.11.0 requires 48.0.7, above the compatible workspace requirement.
+const WASMTIME_RESOLVED: &str = "48.0.7";
 const WASMTIME_REQUIREMENT: &str = "48.0.5";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 

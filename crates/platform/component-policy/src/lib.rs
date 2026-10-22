@@ -3,11 +3,11 @@
 //! MVP outcome: egress confinement (import allowlist, tested with mutations).
 //!
 //! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
-//! publication. It is stronger than, and independent of, the pinned vanilla
-//! wasmCloud v2.8.0 runtime defense: WAMN installs the centralized
-//! `SocketPolicy` with `EgressMode::Enforce`, but tenant artifacts never reach
-//! that path because this admission rule rejects the package outright. There
-//! is no WAMN raw-socket opt-in. `AllowedIPNameLookups`, `allowed_hosts`, and
+//! publication. WAMN installs the runtime's `SocketPolicy` with
+//! `EgressMode::Count`, which records policy refusals and allows traffic.
+//! Tenant artifacts never reach that path because admission rejects the
+//! package outright. There is no WAMN raw-socket opt-in.
+//! `AllowedIPNameLookups`, `allowed_hosts`, and
 //! the vanilla address-range defaults remain runtime policy layers; none grants
 //! publication authority. See
 //! `docs/architecture/native-alignment.md` for current upstream ownership

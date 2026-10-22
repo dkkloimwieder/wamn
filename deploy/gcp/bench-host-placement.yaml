@@ -1,7 +1,7 @@
 # The Receiving host of dkk/receiving/dev runs alone on the node of pool
 # `bench` (docs/operations/gcp.md section 4.2). The pool's taint
 # role=bench-host:NoSchedule keeps every other pod off that node. The
-# runtime-operator 2.10.3 chart renders the host Deployment with no
+# runtime-operator 2.11.0 chart renders the host Deployment with no
 # nodeSelector or tolerations field, so the host group file cannot carry them.
 # This policy adds both to the host pod when the API server admits it.
 # r-dev-ee95c37ee965257ff856 is the release name of dkk/receiving/dev and its

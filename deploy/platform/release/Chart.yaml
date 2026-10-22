@@ -9,5 +9,5 @@ dependencies:
   # operator release owns. The pin is the operator release's
   # (tests/conformance/tests/chart_seam_governance.rs EXPECTED_CHART_VERSION).
   - name: runtime-operator
-    version: 2.10.3
+    version: 2.11.0
     repository: oci://ghcr.io/wasmcloud/charts

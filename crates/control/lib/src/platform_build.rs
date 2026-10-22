@@ -916,7 +916,7 @@ with open('/cloud-auth/config.json', 'w') as output:
     ] {
         steps.push(json!({
             // This release uses the same wash-runtime revision as Cargo.toml.
-            "name": "ghcr.io/wasmcloud/wash:2.10.3", "entrypoint": "/usr/local/bin/wash",
+            "name": "ghcr.io/wasmcloud/wash:2.11.0", "entrypoint": "/usr/local/bin/wash",
             "args": ["oci", "push", format!("{}/wamn/{role}:{CHART_VERSION}", request.registry), format!("/workspace/roles/{file}")],
             "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
         }));

@@ -88,14 +88,14 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 assert_is_empty = "allow"
 
 [workspace.dependencies]
-# Direct upstream v2.10.3, with zero patches. Source identity and evidence
+# Direct upstream v2.11.0, with zero patches. Source identity and evidence
 # are recorded in docs/architecture/native-alignment.md.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # No `oci` here, because wamn-engine must not link it. A crate that uses the
 # OCI registry source turns `oci` on in its own manifest.
 # wamn and wash-runtime resolve one crates.io Wasmtime 48.0.x family from the
 # compatible 48.x requirements; enforce that source identity in conformance.
-wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "548bb21b65ac8cc03776f73656c4bf7be2f96992", default-features = false }
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", tag = "v2.11.0", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
 # parallel-compilation is a wasmtime DEFAULT that default-features=false drops.
 # Without it Cranelift compiles every component on one core: receiving took

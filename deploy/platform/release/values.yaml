@@ -55,6 +55,12 @@ runtime-operator:
       # so Wasmtime currently retains stacks independently of this value.
       - name: WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT
         value: "8192"
+    resources:
+      guestMemoryMode: count
+      requests:
+        memory: "64Mi"
+      limits:
+        memory: "768Mi"
     # The install values supply the one host group, named after the release.
     hostGroups: []
     # Every host runs as the platform-owned ServiceAccount `wamn-host`, which the

@@ -13,10 +13,12 @@ use wamn_engine::engine::{build_engine_with_host_memory, host_memory_budgets};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
+use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::host::HostRef;
 use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::PluginBindings;
+use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::types::{Component, Workload};
 use wasmtime::component::{Accessor, Instance};
 
@@ -238,7 +240,9 @@ async fn assert_deadline(case: Case) {
         slots,
     )
     .expect("bounded native budgets");
-    let engine = build_engine_with_host_memory(&[], budgets).expect("production WAMN engine");
+    let engine =
+        build_engine_with_host_memory(&[], budgets, GuestMemoryMode::Count, EgressMode::Count)
+            .expect("production WAMN engine");
     let start_loop = "(func $start (loop br 0)) (start $start)";
     let components = match case {
         Case::RootStart | Case::NativeDeadline => vec![component(

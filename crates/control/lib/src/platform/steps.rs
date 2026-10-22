@@ -154,7 +154,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.4", title: "Namespaces, runtime operator and internal CA",
             runs: Runner::Verb("Helm SDK, Kubernetes API"),
-            inputs: vec![("namespaces", "platform, identity, hosts, edge".into()), ("operator release", "platform/wamn (runtime-operator 2.10.3); watches hosts".into()), ("CA Secret and issuer", "platform/wasmcloud-ca, cert-manager/wasmcloud-ca; ClusterIssuer wasmcloud-ca".into()), ("runtime certificates", "hosts/wasmcloud-runtime-tls, hosts/wasmcloud-data-tls".into()), ("scheduler NATS", "nats://nats.platform.svc.cluster.local:4222".into())],
+            inputs: vec![("namespaces", "platform, identity, hosts, edge".into()), ("operator release", "platform/wamn (runtime-operator 2.11.0); watches hosts".into()), ("CA Secret and issuer", "platform/wasmcloud-ca, cert-manager/wasmcloud-ca; ClusterIssuer wasmcloud-ca".into()), ("runtime certificates", "hosts/wasmcloud-runtime-tls, hosts/wasmcloud-data-tls".into()), ("scheduler NATS", "nats://nats.platform.svc.cluster.local:4222".into())],
             owner_inputs: vec![],
         },
         InstallStep {

@@ -27,8 +27,10 @@ use wamn_engine::router_delivery::RouterDelivery;
 use wamn_run_state_sqlite::{SqliteIntentStore, StoreClosed};
 use wamn_session::file_keys::FileKeys;
 use wamn_session::verifier::SessionVerifier;
+use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::host::http::Ingress;
 use wash_runtime::host::{Host, HostApi as _, HostBuilder};
+use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::types::{
     Component, LocalResources, Workload, WorkloadStartRequest, WorkloadState,
 };
@@ -163,6 +165,8 @@ fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime:
     build_engine_with_host_memory_and_compilation_cache(
         &[],
         host_memory_budgets(EDGE_MEMORY_CAP_BYTES, core_instances)?,
+        GuestMemoryMode::Count,
+        EgressMode::Count,
         &compile_cache_dir(db)?,
     )
 }

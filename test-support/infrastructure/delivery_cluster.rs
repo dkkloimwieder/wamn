@@ -37,7 +37,7 @@ pub const NAMESPACE: &str = "wamn-system";
 pub const REGISTRY_SECRET: &str = "delivery-registry";
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
 /// The pin of tests/conformance/tests/chart_seam_governance.rs.
-const OPERATOR_VERSION: &str = "2.10.3";
+const OPERATOR_VERSION: &str = "2.11.0";
 const REGISTRY_USER: &str = "delivery";
 /// socat on Alpine, the database proxy. Unpinned, as the journeys' service
 /// images are.

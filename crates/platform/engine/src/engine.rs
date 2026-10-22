@@ -9,6 +9,7 @@ use wash_runtime::engine::guest_memory::GuestMemoryMode;
 pub use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::engine::{Engine, WasmProposal};
 use wash_runtime::host::egress_policy::EgressAddressPolicy;
+use wash_runtime::host::quota::PolicyMeters;
 use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
 
 /// Platform heap ceiling (S1 acceptance: 256 MiB, enforced).
@@ -81,36 +82,23 @@ pub fn default_host_memory_budgets() -> HostMemoryBudgets {
 /// wasmCloud enables epoch interruption and owns its ticker. WAMN configures
 /// only its manual stores' deadlines.
 pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
-    build_engine_with_socket_policy(proposals, host_socket_policy())
+    build_engine_with_socket_policy(proposals, host_socket_policy(EgressMode::Count))
 }
 
 /// The host-level socket policy every wamn engine installs.
 ///
-/// Upstream's `SocketPolicy::default()` carries [`EgressMode::Count`]: it
-/// evaluates the policy, logs and counts what it WOULD refuse, then allows the
-/// connection anyway, so that turning the gate on cannot sever a live host's
-/// traffic. wamn takes [`EgressMode::Enforce`] instead (`wamn-0h0g.15.142`).
+/// The host's `--socket-egress` selects the mode. The owner ruling of
+/// 2026-10-21 for `wamn-upgrade-2.11` makes Count the default: it records
+/// egress refusals and allows traffic while operators size policy. WAMN
+/// admission still rejects tenant components importing `wasi:sockets`.
 ///
-/// WAMN admission rejects tenant components importing `wasi:sockets`, while
-/// host-owned guests use the same declared-host policy as every other guest.
-/// Enforcing here therefore keeps the public policy authoritative without a
-/// fork-only raw-socket opt-in.
-///
-/// Enforce activates BOTH egress layers, and wamn narrows the second one
-/// (`wamn-d0w4`). Upstream's [`EgressAddressPolicy::default`] already denies
-/// loopback, link-local — the IPv4 metadata address with it — the IPv6
-/// metadata address, unspecified, multicast, and documentation ranges, but it
-/// PERMITS private ranges, because reaching a sibling service on a private
-/// address is the ordinary wasmCloud case. It is not the ordinary wamn case: a
-/// guest reaches Postgres through `wamn:postgres` and HTTP through
-/// `wamn:connection/http`, so a raw socket to the cluster service network is
-/// the Kubernetes API, not a sibling. Denying private ranges makes the address
-/// layer a default-deny FLOOR and leaves a guest's declared `allowed_hosts` an
-/// opt-in on top of it rather than the sole confinement. Both layers judge
-/// `to_canonical()`, so `::ffff:10.0.0.1` is refused as `10.0.0.1`.
-fn host_socket_policy() -> SocketPolicy {
+/// The address policy keeps private and special ranges outside the allowed
+/// set. Count records these refusals without blocking connections. Enforce
+/// applies this same narrowing, including canonical IPv4-mapped addresses.
+fn host_socket_policy(egress_mode: EgressMode) -> SocketPolicy {
     SocketPolicy {
-        egress_mode: EgressMode::Enforce,
+        egress_mode,
+        meters: Some(PolicyMeters::default().into_metered()),
         egress_addrs: EgressAddressPolicy {
             deny_special: true,
             allow_private: false,
@@ -128,6 +116,7 @@ pub fn build_engine_with_socket_policy(
         proposals,
         socket_policy,
         default_host_memory_budgets(),
+        GuestMemoryMode::Count,
         None,
     )
 }
@@ -140,8 +129,16 @@ pub fn build_engine_with_socket_policy(
 pub fn build_engine_with_host_memory(
     proposals: &[WasmProposal],
     host_memory: HostMemoryBudgets,
+    guest_memory_mode: GuestMemoryMode,
+    egress_mode: EgressMode,
 ) -> anyhow::Result<Engine> {
-    build_engine_inner(proposals, host_socket_policy(), host_memory, None)
+    build_engine_inner(
+        proposals,
+        host_socket_policy(egress_mode),
+        host_memory,
+        guest_memory_mode,
+        None,
+    )
 }
 
 /// Build the serving engine with a persistent compiled-component cache.
@@ -151,6 +148,8 @@ pub fn build_engine_with_host_memory(
 pub fn build_engine_with_host_memory_and_compilation_cache(
     proposals: &[WasmProposal],
     host_memory: HostMemoryBudgets,
+    guest_memory_mode: GuestMemoryMode,
+    egress_mode: EgressMode,
     compilation_cache_dir: &Path,
 ) -> anyhow::Result<Engine> {
     let mut cache_config = wasmtime::CacheConfig::new();
@@ -163,13 +162,20 @@ pub fn build_engine_with_host_memory_and_compilation_cache(
     })?;
     let mut config = wasmtime::Config::new();
     config.cache(Some(cache));
-    build_engine_inner(proposals, host_socket_policy(), host_memory, Some(config))
+    build_engine_inner(
+        proposals,
+        host_socket_policy(egress_mode),
+        host_memory,
+        guest_memory_mode,
+        Some(config),
+    )
 }
 
 fn build_engine_inner(
     proposals: &[WasmProposal],
     socket_policy: SocketPolicy,
     host_memory: HostMemoryBudgets,
+    guest_memory_mode: GuestMemoryMode,
     config: Option<wasmtime::Config>,
 ) -> anyhow::Result<Engine> {
     validate_pooling_capacity_environment(std::env::vars_os().map(|(key, _)| key))?;
@@ -201,7 +207,7 @@ fn build_engine_inner(
 
     let mut builder = Engine::builder()
         .with_host_memory(host_memory)
-        .with_guest_memory_mode(GuestMemoryMode::Count)
+        .with_guest_memory_mode(guest_memory_mode)
         .with_pooling_allocator(true)
         .with_socket_policy(Arc::new(socket_policy));
     if let Some(config) = config {
@@ -287,7 +293,8 @@ mod tests {
     use wash_runtime::host::http::{HostHandler, NullServer};
     use wash_runtime::observability::{MeterKind, Meters};
     use wash_runtime::plugin::PluginBindings;
-    use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
+    use wash_runtime::sockets::resolved_names::ResolvedNames;
+    use wash_runtime::sockets::{AddrDecision, DenyReason, Plane, SocketAddrUse};
     use wash_runtime::wasmtime::component::Component;
     use wash_runtime::wasmtime::{Instance, Linker, Memory, Module, Store};
     use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
@@ -380,11 +387,12 @@ mod tests {
         text.parse().expect("a test allowed-host entry parses")
     }
 
-    /// The production policy as a guest that opted in to every host sees it.
+    /// The address and allowlist policy with enforcement enabled for refusal tests.
     fn opted_in(entries: &[&str]) -> SocketPolicy {
         SocketPolicy {
             allowed_hosts: entries.iter().copied().map(allowed_host).collect(),
-            ..host_socket_policy()
+            egress_mode: EgressMode::Enforce,
+            ..host_socket_policy(EgressMode::Count)
         }
     }
 
@@ -400,7 +408,11 @@ mod tests {
         let policy = opted_in(&["*"]);
         for (label, text) in FLOOR_DENIED {
             let addr = socket_addr(text);
-            match policy.decide(SocketAddrUse::TcpConnect, addr) {
+            match policy.decide_for_store(
+                SocketAddrUse::TcpConnect,
+                addr,
+                &ResolvedNames::default(),
+            ) {
                 AddrDecision::Deny(DenyReason::BlockedRange) => {}
                 AddrDecision::Deny(other) => panic!(
                     "{label} ({text}) must be refused by the address floor, not as {other:?}"
@@ -420,14 +432,22 @@ mod tests {
     fn a_declared_allowlist_still_gates_what_the_address_floor_permits() {
         let policy = opted_in(&["93.184.216.34:443"]);
 
-        match policy.decide(SocketAddrUse::TcpConnect, socket_addr("93.184.216.34:443")) {
+        match policy.decide_for_store(
+            SocketAddrUse::TcpConnect,
+            socket_addr("93.184.216.34:443"),
+            &ResolvedNames::default(),
+        ) {
             AddrDecision::Allow(_) => {}
             AddrDecision::Deny(why) => panic!(
                 "a routable address the guest declared must stay reachable; refused as {why:?}"
             ),
         }
 
-        match policy.decide(SocketAddrUse::TcpConnect, socket_addr("1.1.1.1:443")) {
+        match policy.decide_for_store(
+            SocketAddrUse::TcpConnect,
+            socket_addr("1.1.1.1:443"),
+            &ResolvedNames::default(),
+        ) {
             AddrDecision::Deny(DenyReason::NotPermitted) => {}
             AddrDecision::Deny(other) => panic!(
                 "an undeclared routable address is refused by the allowlist layer, not {other:?}"
@@ -438,33 +458,32 @@ mod tests {
         }
     }
 
-    /// wamn-0h0g.15.142: the host-level egress mode ENFORCES rather than counts.
-    ///
-    /// Driven through `decide` rather than by reading `egress_mode` back — the
-    /// refusal across every raw-egress operation is the property; the field is
-    /// only how it is spelled.
+    /// Count allows real egress and records the policy refusal for each operation.
     #[test]
-    fn the_host_socket_policy_enforces_egress_rather_than_counting_it() {
-        let unlisted = SocketAddr::from(([93, 184, 216, 34], 443));
-        let policy = host_socket_policy();
-        for operation in [
+    fn the_host_socket_policy_counts_egress_refusals_and_allows_traffic() {
+        let policy = host_socket_policy(EgressMode::Count);
+        let meters = policy
+            .meters
+            .as_ref()
+            .expect("the host counts policy refusals");
+        let names = ResolvedNames::default();
+        for (index, operation) in [
             SocketAddrUse::TcpConnect,
             SocketAddrUse::UdpConnect,
             SocketAddrUse::UdpOutgoingDatagram,
-        ] {
-            match policy.decide(operation, unlisted) {
-                AddrDecision::Deny(DenyReason::NotPermitted) => {}
-                AddrDecision::Deny(other) => {
-                    panic!(
-                        "the {operation:?} refusal must come from the allowlist layer, not \
-                         {other:?}"
-                    )
-                }
-                AddrDecision::Allow(_) => panic!(
-                    "an address no allowlist entry grants must be refused for {operation:?}; \
-                     allowing it is EgressMode::Count"
-                ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            match policy.decide_for_store(operation, socket_addr("93.184.216.34:443"), &names) {
+                AddrDecision::Allow(allowed) => assert_eq!(allowed.plane, Plane::Host),
+                AddrDecision::Deny(why) => panic!("count must allow {operation:?}: {why:?}"),
             }
+            assert_eq!(
+                meters.would_deny(DenyReason::NotPermitted),
+                index as u64 + 1
+            );
+            assert_eq!(meters.denied(DenyReason::NotPermitted), 0);
         }
     }
 
@@ -548,9 +567,6 @@ interface tcp-create-socket {
           (then (return (i32.or (i32.const 0x100) (i32.load8_u (i32.const 33))))))
         i32.const 0))"#;
 
-    /// The error-code case index of `access-denied`.
-    const ACCESS_DENIED: u32 = 1;
-
     fn socket_guest_bytes() -> Vec<u8> {
         let mut resolve = Resolve::new();
         resolve
@@ -633,28 +649,29 @@ interface tcp-create-socket {
         code
     }
 
-    /// wamn-qk15: every production builder installs the enforcing socket
-    /// policy on the engine it returns.
-    ///
-    /// The policy test above checks `host_socket_policy` itself. This test
-    /// checks the engines: a guest on each one asks to connect to a routable
-    /// address that no allowlist entry grants. An engine built with
-    /// `SocketPolicy::default()` counts that connect and allows it.
+    /// Every production builder passes the Count policy to guest stores.
     #[tokio::test]
-    async fn every_production_engine_refuses_an_unlisted_guest_connect() {
+    async fn every_production_engine_allows_an_unlisted_guest_connect() {
         let cache_dir = cache_test_path();
         let engines = [
             ("build_engine", build_engine(&[]).expect("build_engine")),
             (
                 "build_engine_with_host_memory",
-                build_engine_with_host_memory(&[], default_host_memory_budgets())
-                    .expect("build_engine_with_host_memory"),
+                build_engine_with_host_memory(
+                    &[],
+                    default_host_memory_budgets(),
+                    GuestMemoryMode::Count,
+                    EgressMode::Count,
+                )
+                .expect("build_engine_with_host_memory"),
             ),
             (
                 "build_engine_with_host_memory_and_compilation_cache",
                 build_engine_with_host_memory_and_compilation_cache(
                     &[],
                     default_host_memory_budgets(),
+                    GuestMemoryMode::Count,
+                    EgressMode::Count,
                     &cache_dir,
                 )
                 .expect("build_engine_with_host_memory_and_compilation_cache"),
@@ -667,10 +684,8 @@ interface tcp-create-socket {
         drop(engines);
         for (builder, code) in results {
             assert_eq!(
-                code,
-                0x100 | ACCESS_DENIED,
-                "{builder}: start-connect to 93.184.216.34:443 must fail with access-denied \
-                 (0x101); 0 means the engine allowed it, 0x2xx means socket creation failed"
+                code, 0,
+                "{builder}: Count must allow start-connect; 0x1xx is a connect error, 0x2xx is a creation error"
             );
         }
     }
@@ -720,6 +735,8 @@ interface tcp-create-socket {
         let engine = build_engine_with_host_memory_and_compilation_cache(
             &[],
             default_host_memory_budgets(),
+            GuestMemoryMode::Count,
+            EgressMode::Count,
             &cache_dir,
         )
         .expect("build the cached serving engine");
@@ -737,6 +754,8 @@ interface tcp-create-socket {
         let error = build_engine_with_host_memory_and_compilation_cache(
             &[],
             default_host_memory_budgets(),
+            GuestMemoryMode::Count,
+            EgressMode::Count,
             Path::new("relative-cache"),
         )
         .expect_err("a relative cache path must be refused before host startup");
@@ -754,7 +773,9 @@ interface tcp-create-socket {
             "the configured cap must differ from the default to test the override"
         );
         let budgets = host_memory_budgets(cap_bytes, 4).expect("configured native budgets");
-        let engine = build_engine_with_host_memory(&[], budgets).expect("a resized pooling engine");
+        let engine =
+            build_engine_with_host_memory(&[], budgets, GuestMemoryMode::Count, EgressMode::Count)
+                .expect("a resized pooling engine");
         assert_memory_ceiling(&engine, cap_bytes);
         assert_eq!(engine.host_memory(), budgets);
         assert_eq!(engine.total_core_instances(), Some(4));
@@ -767,7 +788,8 @@ interface tcp-create-socket {
     fn configured_slots_bound_concurrent_live_instances() {
         let budgets = host_memory_budgets(1 << 20, 1).expect("one-slot native budgets");
         let engine =
-            build_engine_with_host_memory(&[], budgets).expect("a one-slot pooling engine");
+            build_engine_with_host_memory(&[], budgets, GuestMemoryMode::Count, EgressMode::Count)
+                .expect("a one-slot pooling engine");
         let wasm = wat::parse_str("(module (memory 1))").expect("encode a one-memory module");
         let module = Module::new(engine.inner(), &wasm).expect("one page fits the configured cap");
 
@@ -805,8 +827,13 @@ interface tcp-create-socket {
 
     #[test]
     fn count_mode_accounts_for_concurrent_stores_and_keeps_the_heap_ceiling() {
-        let engine = build_engine_with_host_memory(&[], memory_budgets(2))
-            .expect("build the production Count engine");
+        let engine = build_engine_with_host_memory(
+            &[],
+            memory_budgets(2),
+            GuestMemoryMode::Count,
+            EgressMode::Count,
+        )
+        .expect("build the production Count engine");
         let cloned = engine.clone();
         let budget = engine.guest_memory();
         let (mut first, first_memory) = memory_store(&engine);
@@ -832,36 +859,54 @@ interface tcp-create-socket {
 
     #[test]
     fn enforce_mode_refuses_aggregate_growth_until_another_store_releases_memory() {
-        let engine = Engine::builder()
-            .with_host_memory(memory_budgets(3))
-            .with_guest_memory_mode(GuestMemoryMode::Enforce)
-            .with_pooling_allocator(true)
-            .build()
-            .expect("build the disposable Enforce engine");
-        let budget = engine.guest_memory();
-        let (mut first, first_memory) = memory_store(&engine);
-        let (mut second, second_memory) = memory_store(&engine);
-        first_memory.grow(&mut first, 1).unwrap();
-        assert_eq!(budget.in_use(), 3 * PAGE as u64);
+        let cache_dir = cache_test_path();
+        for engine in [
+            build_engine_with_host_memory(
+                &[],
+                memory_budgets(3),
+                GuestMemoryMode::Enforce,
+                EgressMode::Count,
+            )
+            .expect("build the production Enforce engine"),
+            build_engine_with_host_memory_and_compilation_cache(
+                &[],
+                memory_budgets(3),
+                GuestMemoryMode::Enforce,
+                EgressMode::Count,
+                &cache_dir,
+            )
+            .expect("build the cached production Enforce engine"),
+        ] {
+            let budget = engine.guest_memory();
+            let (mut first, first_memory) = memory_store(&engine);
+            let (mut second, second_memory) = memory_store(&engine);
+            first_memory.grow(&mut first, 1).unwrap();
+            assert_eq!(budget.in_use(), 3 * PAGE as u64);
 
-        second_memory
-            .grow(&mut second, 1)
-            .expect_err("both stores charge the same aggregate ceiling");
-        assert_eq!(second_memory.size(&second), 1);
-        assert_eq!(budget.refused(), 1);
-        assert_eq!(budget.in_use(), 3 * PAGE as u64);
-        drop(first);
-        assert_eq!(budget.in_use(), PAGE as u64);
-        second_memory.grow(&mut second, 2).unwrap();
-        assert_eq!(budget.in_use(), 3 * PAGE as u64);
-        drop(second);
-        assert_eq!(budget.in_use(), 0);
+            second_memory
+                .grow(&mut second, 1)
+                .expect_err("both stores charge the same aggregate ceiling");
+            assert_eq!(second_memory.size(&second), 1);
+            assert_eq!(budget.refused(), 1);
+            assert_eq!(budget.in_use(), 3 * PAGE as u64);
+            drop(first);
+            assert_eq!(budget.in_use(), PAGE as u64);
+            second_memory.grow(&mut second, 2).unwrap();
+            assert_eq!(budget.in_use(), 3 * PAGE as u64);
+            drop(second);
+            assert_eq!(budget.in_use(), 0);
+        }
     }
 
     #[tokio::test]
     async fn cancelling_a_guest_waiting_in_a_host_call_releases_its_memory() {
-        let engine = build_engine_with_host_memory(&[], memory_budgets(2))
-            .expect("build the production Count engine");
+        let engine = build_engine_with_host_memory(
+            &[],
+            memory_budgets(2),
+            GuestMemoryMode::Count,
+            EgressMode::Count,
+        )
+        .expect("build the production Count engine");
         let bytes = wat::parse_str(
             r#"(module
                 (import "host" "wait" (func $wait))
@@ -906,8 +951,13 @@ interface tcp-create-socket {
 
     #[tokio::test]
     async fn dropping_a_store_after_epoch_interruption_releases_its_memory() {
-        let engine = build_engine_with_host_memory(&[], memory_budgets(2))
-            .expect("build the production Count engine");
+        let engine = build_engine_with_host_memory(
+            &[],
+            memory_budgets(2),
+            GuestMemoryMode::Count,
+            EgressMode::Count,
+        )
+        .expect("build the production Count engine");
         let bytes = wat::parse_str(
             r#"(module
                 (memory 2)
@@ -959,8 +1009,13 @@ interface tcp-create-socket {
 
     #[tokio::test]
     async fn dropping_a_store_after_a_guest_start_trap_releases_its_memory() {
-        let engine = build_engine_with_host_memory(&[], memory_budgets(2))
-            .expect("build the production Count engine");
+        let engine = build_engine_with_host_memory(
+            &[],
+            memory_budgets(2),
+            GuestMemoryMode::Count,
+            EgressMode::Count,
+        )
+        .expect("build the production Count engine");
         let bytes = wat::parse_str("(module (memory 1) (func $start unreachable) (start $start))")
             .expect("encode a guest that traps after allocating memory");
         let module = Module::new(engine.inner(), bytes).expect("compile the trapping guest");
@@ -993,8 +1048,9 @@ interface tcp-create-socket {
             max_guest_memory: 0,
             ..default_host_memory_budgets()
         };
-        let error = build_engine_with_host_memory(&[], invalid)
-            .expect_err("a direct invalid native budget must be refused");
+        let error =
+            build_engine_with_host_memory(&[], invalid, GuestMemoryMode::Count, EgressMode::Count)
+                .expect_err("a direct invalid native budget must be refused");
         assert_eq!(
             error.to_string(),
             "max guest memory must be greater than zero"

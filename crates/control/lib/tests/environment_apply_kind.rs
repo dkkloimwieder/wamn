@@ -133,7 +133,7 @@ mod session_issuer;
 const NAMESPACE: &str = "wamn-system";
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
 /// The pin of tests/conformance/tests/chart_seam_governance.rs.
-const OPERATOR_VERSION: &str = "2.10.3";
+const OPERATOR_VERSION: &str = "2.11.0";
 const PG_CLUSTER: &str = "wamn-pg";
 const PLATFORM_DOMAIN: &str = "example.invalid";
 const USER: &str = "apply";

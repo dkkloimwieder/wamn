@@ -13,11 +13,12 @@ use url::Host;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::allowed_ip_name::{AllowedIpName, check_allowed_ip_name};
 use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
+use wash_runtime::sockets::resolved_names::ResolvedNames;
 use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
 use wash_runtime::types::LocalResources;
 
-pub(super) const EXPECTED_VERSION: &str = "2.10.3";
-pub(super) const EXPECTED_REVISION: &str = "548bb21b65ac8cc03776f73656c4bf7be2f96992";
+pub(super) const EXPECTED_VERSION: &str = "2.11.0";
+pub(super) const EXPECTED_REVISION: &str = "bc5acfb8e15f7d6d199ca940354d82e590c2d5ff";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -96,7 +97,7 @@ fn denial(
     operation: SocketAddrUse,
     target: SocketAddr,
 ) -> Option<DenyReason> {
-    match policy.decide(operation, target) {
+    match policy.decide_for_store(operation, target, &ResolvedNames::default()) {
         AddrDecision::Deny(reason) => Some(reason),
         AddrDecision::Allow(_) => None,
     }
@@ -174,15 +175,15 @@ fn local_resources_default_is_an_empty_deny_all_lookup_policy() {
 }
 
 #[test]
-fn pinned_runtime_is_direct_upstream_v2_10_3() {
+fn pinned_runtime_is_direct_upstream_v2_11_0() {
     let package = runtime_package();
     assert_eq!(package.version, EXPECTED_VERSION);
     assert_eq!(
         package.source,
         format!(
-            "git+https://github.com/wasmCloud/wasmCloud?rev={EXPECTED_REVISION}#{EXPECTED_REVISION}"
+            "git+https://github.com/wasmCloud/wasmCloud?tag=v{EXPECTED_VERSION}#{EXPECTED_REVISION}"
         ),
-        "wash-runtime must resolve directly to upstream v2.10.3 revision {EXPECTED_REVISION}"
+        "wash-runtime must resolve directly to upstream v2.11.0 revision {EXPECTED_REVISION}"
     );
 }
 

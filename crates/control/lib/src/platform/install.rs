@@ -21,7 +21,7 @@ use super::steps::{InstallStep, install_steps};
 use super::{build, lock};
 
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
-const OPERATOR_VERSION: &str = "2.10.3";
+const OPERATOR_VERSION: &str = "2.11.0";
 
 /// Apply steps 4.3 through 4.19.1 under the install lock, excluding owner steps.
 ///
@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn operator_skip_requires_the_named_release_version_and_equal_values() {
-        let releases = json!([{"name": "wamn", "chart": "runtime-operator-2.10.3"}]);
+        let releases = json!([{"name": "wamn", "chart": "runtime-operator-2.11.0"}]);
         let desired = json!({"operator": {"watchNamespaces": ["hosts"]}});
         assert!(skip_operator(&releases, Some(&desired), &desired));
         assert!(!skip_operator(&json!([]), Some(&desired), &desired));
@@ -1105,7 +1105,7 @@ mod tests {
             &desired
         ));
         assert!(!skip_operator(
-            &json!([{"name": "other", "chart": "runtime-operator-2.10.3"}]),
+            &json!([{"name": "other", "chart": "runtime-operator-2.11.0"}]),
             Some(&desired),
             &desired
         ));

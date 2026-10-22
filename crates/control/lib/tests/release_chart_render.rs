@@ -240,6 +240,26 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // observability.md R6: the host exports to the cluster's collector, each
     // variable once.
     let variables = host["env"].as_sequence().expect("host variables");
+    // Owner ruling 2026-10-21: count guest growth, keep the chart's 64Mi request.
+    assert_eq!(
+        host["resources"]["requests"]["memory"].as_str(),
+        Some("64Mi")
+    );
+    assert_eq!(
+        host["resources"]["limits"]["memory"].as_str(),
+        Some("768Mi")
+    );
+    let guest_modes: Vec<&Value> = variables
+        .iter()
+        .filter(|variable| variable["name"] == "WASH_GUEST_MEMORY_MODE")
+        .collect();
+    assert_eq!(guest_modes.len(), 1);
+    assert_eq!(guest_modes[0]["value"].as_str(), Some("count"));
+    assert!(
+        variables
+            .iter()
+            .all(|variable| variable["name"] != "WASH_HOST_MAX_GUEST_MEMORY")
+    );
     for (name, value) in wamn_control::release_chart::TELEMETRY_VARIABLES {
         let set: Vec<&Value> = variables
             .iter()

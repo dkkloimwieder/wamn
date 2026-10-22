@@ -16,7 +16,7 @@
 # Install, in this order — the CRDs must exist before any host release or
 # WorkloadDeployment is applied:
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
 #     -f deploy/infra/values-wamn.yaml
 #   # then this environment's host base plus its application/release overlay
 #
@@ -40,8 +40,8 @@
 #
 # WHERE THE 365 COMES FROM, measured not repeated: the chart hard-codes it,
 # `{{- $ca = genCA "wasmcloud CA" 365 }}` at
-# charts/runtime-operator/templates/certificates.yaml:31, pinned upstream rev 548bb21b
-# = chart 2.10.3. No value exposes it. The four leaves this release signs —
+# charts/runtime-operator/templates/certificates.yaml:31, pinned upstream rev bc5acfb8
+# = chart 2.11.0. No value exposes it. The four leaves this release signs —
 # `wasmcloud-operator-tls`, `wasmcloud-nats-tls`, `wasmcloud-runtime-tls`,
 # `wasmcloud-data-tls` — are `genSignedCert … 365 $ca` at :44, :52, :60 and :81,
 # so THEY EXPIRE ON THE SAME DAY as the CA that signed them, not staggered.
@@ -66,7 +66,7 @@
 #     wasmcloud-ca wasmcloud-operator-tls wasmcloud-nats-tls \
 #     wasmcloud-runtime-tls wasmcloud-data-tls
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
 #     -f deploy/infra/values-wamn.yaml          # re-mints all five
 #   # every pod holding the old PEM in memory must be restarted. NATS first —
 #   # nothing can register against a server still presenting the old cert:
@@ -117,7 +117,7 @@
 # unset: hard-coding it would add a second place to forget, and the published
 # chart's own appVersion is by construction the tag that exists. Move this pin
 # with an upstream release cutover, together with
-# `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`, and re-run
+# `workspace.dependencies.wash-runtime.tag` in the root `Cargo.toml`, and re-run
 # the seam re-verification below when you do.
 #
 # [wamn-0h0g.15.54] CHART SEAM RECORD — reinspect on every upstream release change.
@@ -128,25 +128,25 @@
 # The host groups use these native passthrough keys for registry credentials:
 #   runtime.hostGroups[].volumes      -> {{- with .volumes }}
 #   runtime.hostGroups[].volumeMounts -> {{- with .volumeMounts }}
-# Both expressions remain in templates/runtime/deployment.yaml at upstream
-# 548bb21b65ac8cc03776f73656c4bf7be2f96992, the v2.10.3 release commit.
-# The same source passes group env entries through unchanged. Resource blocks
-# replace the chart-wide block and remove defaultHeapMemory, coreInstances,
-# guestMemoryMode and maxConcurrentStarts before rendering Kubernetes resources.
-# The four fields reach the host through their native WASH_* environment names.
+# Both expressions remain in templates/runtime/deployment.yaml:178,457 at upstream
+# bc5acfb8e15f7d6d199ca940354d82e590c2d5ff, the v2.11.0 release commit.
+# The same source passes group env entries through unchanged (:266-268). Resource blocks
+# replace the chart-wide block (:35) and remove defaultHeapMemory, coreInstances,
+# guestMemoryMode and maxConcurrentStarts before rendering Kubernetes resources (:475).
+# The four fields reach the host through their native WASH_* environment names (:239-265).
 #
 # Historical records at 735b5798 and 2eadd937 inspected the v2.8.0 chart through
 # a fork checkout. The current dependency points directly to upstream and
 # carries no fork patches. Release manifests arrive over OCI, not ConfigMaps.
 #
 # Reinspect the exact source:
-#   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' 548bb21b65ac8cc03776f73656c4bf7be2f96992 -- charts/runtime-operator/templates/runtime/deployment.yaml
+#   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' bc5acfb8e15f7d6d199ca940354d82e590c2d5ff -- charts/runtime-operator/templates/runtime/deployment.yaml
 # Distributed render and image identity requirements: wamn-0h0g.15.54.
 # Live stage 4 tests remain separate and unexecuted by this source inspection.
 
 # Deprecated HTTP gateway off, and never adopted: HTTP exposure rides
 # operator-managed EndpointSlices on standard Services (chart
-# values.yaml:205-210), and the gateway's NodePort would collide with workload
+# values.yaml:238-243), and the gateway's NodePort would collide with workload
 # Services on 30950.
 gateway:
   enabled: false
@@ -164,11 +164,11 @@ operator:
   # scopes its workload informer cache to the same set
   # (runtime-operator/cmd/main.go:252-255). A WorkloadDeployment in any other
   # namespace is then not seen at all. Chart default is `[]` = watch every
-  # namespace (chart values.yaml:157-158).
+  # namespace (chart values.yaml:182-183).
   watchNamespaces:
     - wamn-system
   # -- The namespaces where host Pods run, so the operator's Pod informer cache
-  # and per-namespace Pod RBAC cover them (chart values.yaml:159-164, default
+  # and per-namespace Pod RBAC cover them (chart values.yaml:184-189, default
   # `[]`). The chart also derives this set from `runtime.hostGroups[].namespace`
   # (templates/_helpers.tpl:143-152) — but only from host groups in the SAME
   # release, and this release deliberately has none, so every environment
@@ -180,13 +180,13 @@ operator:
   hostNamespaces:
     - wamn-system
   # -- THE WRONG-TARGET LOCK. This ships TRUE, and the chart's own values file
-  # calls that default "permissive across tenants" (chart values.yaml:165-180):
+  # calls that default "permissive across tenants" (chart values.yaml:190-205):
   # with it on, a WorkloadDeployment in one namespace can schedule onto hosts in
   # another just by naming `spec.template.spec.environment`. False locks
   # scheduling to the workload's own namespace and refuses any other environment
   # with a `CrossEnvironmentSchedulingDenied` Warning Event plus a
   # `HostSelection=False` condition
-  # (runtime-operator/internal/controller/runtime/workload_controller.go:144-158).
+  # (runtime-operator/internal/controller/runtime/workload_controller.go:144-164).
   allowSharedHosts: false
 
 runtime:
@@ -194,8 +194,8 @@ runtime:
   # per environment (ruling wamn-0h0g.13.50), and its values live in
   # deploy/platform/values-host-<environment>.yaml. `runtime.image` — the
   # chart-wide host image, which is the carriage our `wamn-host` image actually
-  # rides (chart values.yaml:285-289; `hostGroups[].image` is only an optional
-  # per-group override, chart values.yaml:414-419) — moved there with them.
+  # rides (chart values.yaml:380-384; `hostGroups[].image` is only an optional
+  # per-group override, chart values.yaml:669-674) — moved there with them.
   #
   # Every chart template that touches host groups reaches them through `range`,
   # so an empty list renders nothing rather than failing.

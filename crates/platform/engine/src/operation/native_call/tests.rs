@@ -10,11 +10,13 @@ use crate::engine::{build_engine_with_host_memory, host_memory_budgets};
 use tokio::time::{Instant, timeout_at};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::dispatch::DispatchTarget;
+use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::host::HostRef;
 use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
+use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::types::{Component, Workload};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
@@ -122,8 +124,10 @@ struct Fixture {
 
 async fn load_fixture(case: Case) -> Fixture {
     let budgets = host_memory_budgets(4 * PAGE, 1).expect("bounded readiness memory");
-    let engine =
-        Arc::new(build_engine_with_host_memory(&[], budgets).expect("production native engine"));
+    let engine = Arc::new(
+        build_engine_with_host_memory(&[], budgets, GuestMemoryMode::Count, EgressMode::Count)
+            .expect("production native engine"),
+    );
     let observer = Arc::new(Observer {
         engine: Arc::clone(&engine),
         starts: Arc::default(),

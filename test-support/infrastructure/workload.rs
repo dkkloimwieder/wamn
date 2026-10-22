@@ -693,8 +693,8 @@ fn validate_releases(releases: &Value, namespace: &str) -> anyhow::Result<()> {
                 .filter(|release| release["name"] == name
                     && release["namespace"] == namespace
                     && release["status"] == "deployed"
-                    && release["chart"] == "runtime-operator-2.10.3"
-                    && release["app_version"] == "2.10.3")
+                    && release["chart"] == "runtime-operator-2.11.0"
+                    && release["app_version"] == "2.11.0")
                 .count()
                 == 1,
             "the declared runtime-operator release is missing or ambiguous"

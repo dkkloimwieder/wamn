@@ -10,15 +10,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use clap::Args;
+use clap::builder::TypedValueParser as _;
 use opentelemetry::global;
 use tokio_postgres::NoTls;
 use wash_runtime::engine::WasmProposal;
+use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::host::http::{ConnectionLimit, HostHandler as _, Ingress};
 use wash_runtime::host::probes::{self, Liveness, ProbeState};
 use wash_runtime::host::{HostApi, HostConfig};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
+use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::ClusterHostBuilder;
 
 use wamn_catalog::ServingManifest;
@@ -227,10 +230,8 @@ pub struct HostArgs {
     )]
     pub component_reclaim_window_seconds: i32,
 
-    /// Total guest-memory budget reported by the host.
-    ///
-    /// The cgroup is the aggregate enforcement boundary; wash-runtime uses
-    /// this value for budget diagnostics.
+    /// Total guest-memory budget, applied according to guest-memory-mode.
+    /// The separate process memory limit remains enforced in either mode.
     #[arg(long = "max-guest-memory", env = "WASH_HOST_MAX_GUEST_MEMORY")]
     pub max_guest_memory: Option<String>,
 
@@ -250,9 +251,25 @@ pub struct HostArgs {
     )]
     pub core_instances: u32,
 
-    /// Guest memory accounting mode. Production uses the native count mode.
-    #[arg(long, env = "WASH_GUEST_MEMORY_MODE", default_value = "count", value_parser = ["count"])]
-    pub guest_memory_mode: String,
+    /// Guest memory accounting mode. Count records growth without enforcing the guest budget.
+    #[arg(
+        long,
+        env = "WASH_GUEST_MEMORY_MODE",
+        default_value = "count",
+        value_parser = clap::builder::PossibleValuesParser::new(["count", "enforce"])
+            .map(|mode| if mode == "enforce" { GuestMemoryMode::Enforce } else { GuestMemoryMode::Count })
+    )]
+    pub guest_memory_mode: GuestMemoryMode,
+
+    /// Raw-socket egress mode. Count records policy refusals and allows the
+    /// connection. The chart renders this flag from `networking.socketEgress`.
+    #[arg(
+        long,
+        default_value = "count",
+        value_parser = clap::builder::PossibleValuesParser::new(["count", "enforce"])
+            .map(|mode| if mode == "enforce" { EgressMode::Enforce } else { EgressMode::Count })
+    )]
+    pub socket_egress: EgressMode,
 
     /// Registry/repository holding this environment's release-manifest
     /// artifacts, paired with [`HostArgs::release_manifest_digest`].
@@ -1058,10 +1075,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             build_engine_with_host_memory_and_compilation_cache(
                 &args.wasm_proposals,
                 host_memory,
+                args.guest_memory_mode,
+                args.socket_egress,
                 compilation_cache_dir,
             )?
         } else {
-            build_engine_with_host_memory(&args.wasm_proposals, host_memory)?
+            build_engine_with_host_memory(
+                &args.wasm_proposals,
+                host_memory,
+                args.guest_memory_mode,
+                args.socket_egress,
+            )?
         },
     );
     // wamn-0h0g.22.8.3: the host NAMES its own credential sources here rather
@@ -3121,18 +3145,30 @@ mod tests {
             "7",
         ];
         let mut cli = parse(arguments).expect("the native memory flags parse");
-        assert_eq!(cli.args.guest_memory_mode, "count");
-        for mode in ["enforce", "off"] {
-            let invalid = arguments.iter().map(|argument| {
-                if *argument == "--guest-memory-mode=count" {
-                    format!("--guest-memory-mode={mode}")
-                } else {
-                    (*argument).to_owned()
-                }
-            });
-            let error = parse(invalid).unwrap_err();
-            assert!(error.to_string().contains("--guest-memory-mode"));
-        }
+        assert_eq!(cli.args.guest_memory_mode, GuestMemoryMode::Count);
+        assert_eq!(
+            parse(["wamn-host", "--guest-memory-mode=enforce"])
+                .unwrap()
+                .args
+                .guest_memory_mode,
+            GuestMemoryMode::Enforce
+        );
+        assert_eq!(
+            parse(["wamn-host"]).unwrap().args.guest_memory_mode,
+            GuestMemoryMode::Count
+        );
+        let error = parse(["wamn-host", "--guest-memory-mode=off"]).unwrap_err();
+        assert!(error.to_string().contains("--guest-memory-mode"));
+        assert_eq!(cli.args.socket_egress, EgressMode::Count);
+        assert_eq!(
+            parse(["wamn-host", "--socket-egress=enforce"])
+                .unwrap()
+                .args
+                .socket_egress,
+            EgressMode::Enforce
+        );
+        let error = parse(["wamn-host", "--socket-egress=off"]).unwrap_err();
+        assert!(error.to_string().contains("--socket-egress"));
         assert_eq!(
             host_memory(&cli.args).expect("memory settings resolve"),
             HostMemoryBudgets {

@@ -908,6 +908,10 @@ fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> H
             format!("{}s", runtime[field].as_u64().expect("chart timeout")),
         ]);
     }
+    args.extend([
+        "--socket-egress".to_owned(),
+        crate::release_chart::SOCKET_EGRESS.to_owned(),
+    ]);
     if runtime["probes"]["endpoint"]["enabled"].as_bool() == Some(true) {
         args.extend(["--probe-addr".to_owned(), LOOPBACK_HTTP_BIND.to_owned()]);
     }
@@ -1018,7 +1022,6 @@ fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> H
     }
     let resources = &group["resources"];
     for (name, value) in [
-        ("WASH_HOST_MAX_GUEST_MEMORY", &resources["limits"]["memory"]),
         ("WASH_DEFAULT_HEAP_MEMORY", &resources["defaultHeapMemory"]),
         ("WASH_CORE_INSTANCES", &resources["coreInstances"]),
         ("WASH_GUEST_MEMORY_MODE", &resources["guestMemoryMode"]),
@@ -2554,6 +2557,8 @@ mod tests {
             "5s",
             "--nats-connect-timeout",
             "60s",
+            "--socket-egress",
+            "count",
             "--probe-addr",
             "127.0.0.1:0",
         ]
@@ -2639,7 +2644,6 @@ mod tests {
                     "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT".to_owned(),
                     "64".to_owned()
                 ),
-                ("WASH_HOST_MAX_GUEST_MEMORY".to_owned(), "4Gi".to_owned()),
                 ("WASH_DEFAULT_HEAP_MEMORY".to_owned(), "256MiB".to_owned()),
                 ("WASH_CORE_INSTANCES".to_owned(), "512".to_owned()),
                 ("WASH_GUEST_MEMORY_MODE".to_owned(), "count".to_owned()),

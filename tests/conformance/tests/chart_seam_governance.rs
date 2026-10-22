@@ -28,9 +28,9 @@ const VALUES: &str = "deploy/infra/values-wamn.yaml";
 const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
 const EVENTS_RBAC: &str = "deploy/platform/runtime-operator-events-rbac.example.yaml";
 const SOCKPROBE: &str = "apps/platform/fixtures/sockprobe/src/main.rs";
-const EXPECTED_CHART_VERSION: &str = "2.10.3";
+const EXPECTED_CHART_VERSION: &str = "2.11.0";
 static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-const EXPECTED_RUNTIME_REVISION: &str = "548bb21b";
+const EXPECTED_RUNTIME_REVISION: &str = "bc5acfb8";
 const DEPLOYMENT: (&str, &str) = ("apps/v1", "Deployment");
 const NETWORK_POLICY: (&str, &str) = ("networking.k8s.io/v1", "NetworkPolicy");
 const ROLE: (&str, &str) = ("rbac.authorization.k8s.io/v1", "Role");
@@ -217,7 +217,6 @@ fn assert_native_host_controls(
     assert_eq!(deployment["metadata"]["namespace"], "wamn-system");
     assert_eq!(pod["terminationGracePeriodSeconds"], 70);
     for (name, expected) in [
-        ("WASH_HOST_MAX_GUEST_MEMORY", "4Gi"),
         ("WASH_DEFAULT_HEAP_MEMORY", "256MiB"),
         ("WASH_CORE_INSTANCES", "512"),
         ("WASH_GUEST_MEMORY_MODE", "count"),
@@ -232,6 +231,14 @@ fn assert_native_host_controls(
         assert_eq!(entries.len(), 1, "host must set {name} exactly once");
         assert_eq!(entries[0]["value"], expected, "wrong host {name}");
     }
+    assert!(
+        container["env"]
+            .as_array()
+            .expect("host environment is an array")
+            .iter()
+            .all(|entry| entry["name"] != "WASH_HOST_MAX_GUEST_MEMORY"),
+        "the host derives its guest budget from the cgroup limit"
+    );
     assert_eq!(
         container["resources"],
         serde_json::json!({

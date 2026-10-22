@@ -1,10 +1,9 @@
 //! socket-test — the E13a publish-time egress-guard refusal gate.
 //!
-//! The runtime links `wasi:sockets` on every workload linker. Vanilla v2.8's
-//! centralized `SocketPolicy`, installed by WAMN with `EgressMode::Enforce`,
-//! denies undeclared raw TCP/UDP at runtime. Publish must still reject components
-//! that import the package: runtime denial is not a substitute for keeping the
-//! raw DB-bypass surface out of published worlds.
+//! The runtime links `wasi:sockets` on every workload linker. WAMN installs
+//! `SocketPolicy` with `EgressMode::Count`, so it records policy refusals and
+//! allows raw TCP/UDP traffic. Publish rejects components that import the
+//! package to keep the raw DB-bypass surface out of published worlds.
 //! `wamn_component_policy` is that build/publish-side enforcement.
 //!
 //! This gate tests that enforcement HERMETICALLY — it synthesizes its fixtures

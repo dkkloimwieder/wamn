@@ -308,6 +308,11 @@ pub struct ValuesInput {
     pub host_group: Mapping,
 }
 
+/// The host group's raw-socket egress mode. Chart 2.11.0 defaults it to
+/// enforce. The owner ruling of 2026-10-21 (wamn-upgrade-2.11) keeps count
+/// unless the host group body names a mode.
+pub const SOCKET_EGRESS: &str = "count";
+
 /// Render the install values of one environment.
 pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     let name = release_name(&input.org, &input.project, &input.env)?;
@@ -356,6 +361,13 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             format!("--environment={}", input.env).into(),
         ]),
     );
+    group
+        .entry("networking".into())
+        .or_insert_with(|| Value::Mapping(Mapping::new()))
+        .as_mapping_mut()
+        .context("the host group body's `networking` is not a mapping")?
+        .entry("socketEgress".into())
+        .or_insert_with(|| SOCKET_EGRESS.into());
     let roles = input
         .roles
         .iter()
@@ -639,6 +651,7 @@ mod tests {
             ))
             .expect("yaml")
         );
+        assert_eq!(group["networking"]["socketEgress"].as_str(), Some("count"));
         assert!(runtime.get("image").is_none());
         assert_eq!(values["audit"]["actor"].as_str(), Some("ops"));
         assert!(values.get("platform").is_none());
