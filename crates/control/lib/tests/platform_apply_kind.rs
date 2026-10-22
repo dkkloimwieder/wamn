@@ -597,9 +597,12 @@ cluster.Cluster {{
             && edge["status"]["availableReplicas"] == 1,
         "Rust edge did not roll out"
     );
+    // The verb installs from the serving chart, whose images the fixture moved.
+    let serving_values: Value =
+        serde_yaml::from_slice(&std::fs::read(work.join("release-chart/values.yaml"))?)?;
     ensure!(
         edge["spec"]["template"]["spec"]["containers"][0]["image"]
-            == chart["platform"]["edge"]["image"],
+            == serving_values["platform"]["edge"]["image"],
         "Rust edge does not use the stamped image"
     );
     ensure!(
