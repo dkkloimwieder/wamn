@@ -19,8 +19,9 @@ use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerC
 use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::{
     IdentityErrorType, PrincipalId,
-    control::{control_audience, control_orgs},
+    control::{control_audience, control_audience_org, control_orgs_page},
     create_or_reuse_user,
+    paging::{ListPage, Order},
     password::{
         Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause,
         authenticate_password, enroll_password, issue_invitation, issue_reset, password_work,
@@ -93,6 +94,29 @@ struct EnvironmentsRequest {
     org: Option<String>,
     #[serde(default)]
     project: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    limit: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    cursor: Option<serde_json::Value>,
+}
+
+fn present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(deserializer).map(Some)
+}
+
+impl EnvironmentsRequest {
+    fn paging_input(&self) -> serde_json::Value {
+        let mut input = serde_json::Map::new();
+        if let Some(limit) = &self.limit {
+            input.insert("limit".into(), limit.clone());
+        }
+        if let Some(cursor) = &self.cursor {
+            input.insert("cursor".into(), cursor.clone());
+        }
+        input.into()
+    }
 }
 
 /// The org and project that `/password/environments` lists. A missing value
@@ -112,6 +136,19 @@ impl Scope {
                 .as_deref()
                 .is_none_or(|wanted| wanted == project)
     }
+}
+
+fn discovery_page(
+    input: &serde_json::Value,
+    principal: &PrincipalId,
+    scope: &Scope,
+) -> Result<ListPage, wamn_platform_identity::IdentityError> {
+    ListPage::new(
+        input,
+        "/password/environments",
+        serde_json::json!({"principal":principal.as_str(), "org":scope.org, "project":scope.project}),
+        Order::Audience,
+    )
 }
 
 /// One audience the login may select. A control audience has no project
@@ -350,11 +387,12 @@ async fn handle(
             }
         }
         "/password/session" | "/password/environments" => {
-            let (email, password, audience, carrier, scope) =
+            let (email, password, audience, carrier, scope, paging) =
                 if parts.uri.path() == "/password/environments" {
                     let Ok(request) = serde_json::from_slice::<EnvironmentsRequest>(&bytes) else {
                         return invalid();
                     };
+                    let paging = request.paging_input();
                     let scope = Scope {
                         org: request.org,
                         project: request.project,
@@ -365,6 +403,7 @@ async fn handle(
                         None,
                         Carrier::Bearer,
                         scope,
+                        paging,
                     )
                 } else {
                     let Ok(request) = serde_json::from_slice::<LoginRequest>(&bytes) else {
@@ -376,6 +415,7 @@ async fn handle(
                         Some(request.aud),
                         request.carrier,
                         Scope::default(),
+                        serde_json::json!({}),
                     )
                 };
             let Ok(password) = Password::new(password) else {
@@ -417,35 +457,70 @@ async fn handle(
                 Err(error) => return password_failure(&error),
             };
             let Some(audience) = audience else {
+                let Ok(page) = discovery_page(&paging, principal.principal().id(), &scope) else {
+                    return invalid();
+                };
                 let mut environments = Vec::new();
-                for configured in inner.targets.values() {
-                    let target = &configured.binding;
-                    let triple = target.triple();
-                    if !scope.holds(&triple.org, &triple.project) {
-                        continue;
-                    }
-                    match session::authorized_roles(inner, &principal, configured).await {
-                        Ok(_) => {
-                            environments.push(Environment {
-                                aud: target.audience().into(),
-                                org: &triple.org,
-                                project: Some(&triple.project),
-                                env: Some(triple.env.as_str()),
-                            });
+                let read_limit = page
+                    .read_limit()
+                    .map(|limit| usize::try_from(limit).expect("read limit is at most 101"));
+                if page.after_kind() != Some(1) {
+                    let after = page
+                        .after(1)
+                        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+                    for (_, configured) in inner
+                        .targets
+                        .range::<str, _>((after, std::ops::Bound::Unbounded))
+                    {
+                        let target = &configured.binding;
+                        let triple = target.triple();
+                        if !scope.holds(&triple.org, &triple.project) {
+                            continue;
                         }
-                        Err(error) => match error.kind {
-                            session::FailureKind::Unauthorized => (),
-                            session::FailureKind::Unavailable => return unavailable(),
-                        },
+                        match session::authorized_roles(inner, &principal, configured).await {
+                            Ok(_) => {
+                                environments.push(Environment {
+                                    aud: target.audience().into(),
+                                    org: &triple.org,
+                                    project: Some(&triple.project),
+                                    env: Some(triple.env.as_str()),
+                                });
+                                if read_limit.is_some_and(|limit| environments.len() >= limit) {
+                                    break;
+                                }
+                            }
+                            Err(error) => match error.kind {
+                                session::FailureKind::Unauthorized => (),
+                                session::FailureKind::Unavailable => return unavailable(),
+                            },
+                        }
                     }
                 }
-                let Ok(orgs) = control_orgs(&tx, principal.principal().id()).await else {
-                    return unavailable();
+                let remaining = page.read_limit().map(|limit| {
+                    limit - i64::try_from(environments.len()).expect("a page has at most 101 rows")
+                });
+                let after_org = if page.after_kind() == Some(1) {
+                    page.after(1).and_then(control_audience_org)
+                } else {
+                    None
                 };
-                for org in orgs
-                    .iter()
-                    .filter(|org| scope.org.as_deref().is_none_or(|wanted| wanted == *org))
-                {
+                let orgs = if remaining == Some(0) {
+                    Vec::new()
+                } else {
+                    match control_orgs_page(
+                        &tx,
+                        principal.principal().id(),
+                        scope.org.as_deref(),
+                        after_org,
+                        remaining,
+                    )
+                    .await
+                    {
+                        Ok(orgs) => orgs,
+                        Err(_) => return unavailable(),
+                    }
+                };
+                for org in &orgs {
                     let Ok(aud) = control_audience(org) else {
                         return unavailable();
                     };
@@ -456,8 +531,10 @@ async fn handle(
                         env: None,
                     });
                 }
-                return match serde_json::to_vec(&serde_json::json!({"environments": environments}))
-                {
+                let answer = page.answer("environments", environments, |entry| {
+                    serde_json::json!([u8::from(entry.project.is_none()), entry.aud])
+                });
+                return match serde_json::to_vec(&answer) {
                     Ok(bytes) => response(StatusCode::OK, "application/json", bytes),
                     Err(_) => unavailable(),
                 };
@@ -998,6 +1075,112 @@ mod tests {
         assert!(!scope.holds("dkk", "receiving"));
         assert!(!scope.holds("other", "wms"));
         assert!(Scope::default().holds("dkk", "receiving"));
+    }
+
+    #[test]
+    fn discovery_pages_bind_principal_filters_and_preserve_complete_totals() {
+        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+        let scope = Scope {
+            org: Some("acme".into()),
+            project: Some("widgets".into()),
+        };
+        let rows = vec![
+            json!([0, "app-a"]),
+            json!([0, "app-b"]),
+            json!([1, "urn:wamn:control:acme"]),
+        ];
+        let first = discovery_page(&json!({"limit":1}), &principal, &scope).unwrap();
+        let answer = first.answer("environments", rows[..2].to_vec(), Clone::clone);
+        assert_eq!(answer["environments"], json!([rows[0]]));
+        assert!(answer["total"].is_null());
+        let next = discovery_page(
+            &json!({"limit":1,"cursor":answer["next_cursor"]}),
+            &principal,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(next.after_kind(), Some(0));
+        assert_eq!(next.after(1), Some("app-a"));
+        let answer = next.answer("environments", rows[1..].to_vec(), Clone::clone);
+        let last =
+            discovery_page(&json!({"cursor":answer["next_cursor"]}), &principal, &scope).unwrap();
+        let answer = last.answer("environments", rows[2..].to_vec(), Clone::clone);
+        assert_eq!(answer["environments"], json!([rows[2]]));
+        assert!(answer["next_cursor"].is_null());
+        assert!(answer["total"].is_null());
+        for input in [json!({}), json!({"limit":100})] {
+            let answer = discovery_page(&input, &principal, &scope).unwrap().answer(
+                "environments",
+                rows.clone(),
+                Clone::clone,
+            );
+            assert_eq!(answer["total"], 3);
+            assert!(answer["next_cursor"].is_null());
+        }
+        let controls = first.answer(
+            "environments",
+            vec![
+                json!([1, "urn:wamn:control:acme"]),
+                json!([1, "urn:wamn:control:other"]),
+            ],
+            Clone::clone,
+        );
+        let input = json!({"cursor":controls["next_cursor"]});
+        let control = discovery_page(&input, &principal, &scope).unwrap();
+        assert_eq!(control.after_kind(), Some(1));
+        assert_eq!(
+            control.after(1).and_then(control_audience_org),
+            Some("acme")
+        );
+        assert!(discovery_page(&input, &principal, &Scope::default()).is_err());
+        assert!(
+            discovery_page(
+                &input,
+                &principal,
+                &Scope {
+                    org: scope.org.clone(),
+                    project: None
+                }
+            )
+            .is_err()
+        );
+        let other: PrincipalId = "00000000-0000-0000-0000-000000000002".parse().unwrap();
+        assert!(discovery_page(&input, &other, &scope).is_err());
+    }
+
+    #[tokio::test]
+    async fn discovery_refuses_bad_paging_and_retains_throttle_response() {
+        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+        for input in [
+            json!({"limit":null}),
+            json!({"limit":0}),
+            json!({"limit":101}),
+            json!({"limit":1.5}),
+            json!({"limit":"25"}),
+            json!({"cursor":null}),
+            json!({"cursor":""}),
+            json!({"cursor":"bad"}),
+        ] {
+            let mut body = input;
+            body["email"] = json!("a@example.invalid");
+            body["password"] = json!("password");
+            let request: EnvironmentsRequest = serde_json::from_value(body).unwrap();
+            assert!(
+                discovery_page(&request.paging_input(), &principal, &Scope::default()).is_err()
+            );
+        }
+        let response = invalid();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &response.into_body().collect().await.unwrap().to_bytes()
+            )
+            .unwrap(),
+            json!({"error":"password request refused"})
+        );
+        let response = throttled();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()["retry-after"], "60");
     }
 
     #[tokio::test]

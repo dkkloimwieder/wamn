@@ -627,7 +627,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .expect_redacted("remove the memberships");
     assert_eq!(
         discover(&https).await,
-        json!({"environments": []}),
+        json!({"environments": [], "next_cursor": null, "total": 0}),
         "a member with no access is offered no environment"
     );
 }

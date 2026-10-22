@@ -46,7 +46,8 @@ const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
     WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $2) \
     OR EXISTS (SELECT 1 FROM identity.org_roles r \
     WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $3)) \
-    ORDER BY o.id";
+    AND ($4::text IS NULL OR o.id = $4) AND ($5::text IS NULL OR o.id > $5) \
+    ORDER BY o.id LIMIT $6";
 
 const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.principals p \
     WHERE p.id = $1::text::uuid AND p.type = 'user' AND p.status = 'active' \
@@ -215,10 +216,28 @@ pub async fn control_orgs(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
 ) -> Result<Vec<String>, IdentityError> {
+    control_orgs_page(client, principal_id, None, None, None).await
+}
+
+/// Authorized orgs after a key, restricted by the discovery filter.
+pub async fn control_orgs_page(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: Option<&str>,
+    after: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<String>, IdentityError> {
     Ok(client
         .query(
             CONTROL_ORGS_SQL,
-            &[&principal_id.as_str(), &PROJECT_ADMIN_ROLE, &ORG_ADMIN_ROLE],
+            &[
+                &principal_id.as_str(),
+                &PROJECT_ADMIN_ROLE,
+                &ORG_ADMIN_ROLE,
+                &org,
+                &after,
+                &limit,
+            ],
         )
         .await
         .map_err(|error| database_error(&error))?

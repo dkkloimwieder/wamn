@@ -1756,7 +1756,7 @@ async fn password_environment_discovery_requires_current_authority() {
             .json(&credentials)
     };
     let expected = |indices: &[usize]| {
-        json!({"environments": indices.iter().map(|index| {
+        json!({"next_cursor": null, "total": indices.len(), "environments": indices.iter().map(|index| {
         let target = &fixture.targets[*index];
         json!({"aud":target.audience(), "org":target.triple().org, "project":"widgets", "env":target.triple().env.as_str()})
     }).collect::<Vec<_>>()})
