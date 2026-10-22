@@ -14,7 +14,7 @@ use crate::{kubectl, release_chart::Target};
 const OUTPUT_FILE: &str = "/out/secret.json";
 // env apply passes the policy's 600 s readiness budget to Helm. Allow 900 s
 // here so Helm can report its own timeout and finish its cleanup first.
-const INSTALL_DEADLINE: Duration = Duration::from_secs(900);
+const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
 const HANDOFF: &str = r#"umask 077
 /usr/local/bin/wamn-ctl "$@"
 waited=0
