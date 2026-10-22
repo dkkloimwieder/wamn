@@ -541,10 +541,29 @@ The `/widget_maker/list` projection also used twenty SQL calls: ten application 
 The test counted every statement from the guest database roles, including transaction and configuration statements.
 The test is `route_interface_live::composed_reads_use_one_statement_plus_optional_wal` in `tests/integration`.
 
-Trips per request remain unmeasured for all three routes.
-The host queues the optional WAL read before the application read in one pipeline on the same connection.
-The sampler in `tools/bench/db-profile.sh` samples `pg_stat_activity` every 100 ms and cannot count individual trips.
-Use protocol tracing of isolated, warmed requests to count client waits between requests and server responses.
-For the next throughput comparison, run `tools/bench/local.sh --no-edge --call get --call query`.
-Retain its wait-event logs and statement CSV files.
-No new throughput benchmark ran for this change.
+The fix ran `local.sh --no-edge --call get --call update --call query` two times at 0.1.90 on 2026-10-22, from 23:24 to 23:37 UTC.
+No agent held its work, and the load average was 19 to 30, so the times do not compare with the runs above.
+The results are `local-0.1.90-5-F.json` and `local-0.1.90-6-F.json` in [`tests/bench/a5-paired`](../../tests/bench/a5-paired).
+
+| c16, mean of 2 runs | parent 0.1.80 | A5 0.1.81 | fix 0.1.90 |
+| --- | --- | --- | --- |
+| get statements per request | 1 | 2 | 1 |
+| get samples idle in a transaction | not recorded | 36% | 0% |
+| get throughput | 2888/s | 2278/s | 976/s |
+| get `host_cpu_ms_per_request` | 1.24 | 1.52 | 1.70 |
+| update statements per request | 7 | 6 | 7 |
+| update throughput | 1122/s | 1120/s | 458/s |
+| update `host_cpu_ms_per_request` | 1.82 | 1.78 | 2.27 |
+| query statements per request | 2 | 3 | 2 |
+| query samples idle in a transaction | not recorded | 58% | 0% |
+| query throughput | 1763/s | 1300/s | 382/s |
+| query `host_cpu_ms_per_request` | 2.18 | 2.92 | 3.54 |
+
+Get runs only its read, and query runs its read and `pg_current_wal_lsn()`, as on the parent.
+The `set_config` statement is gone from both reads.
+Update runs the same seven statements as the A5 run, so the 6 in the A5 summary is a counting difference, not a change.
+The samples idle in a transaction are the share of `pg_stat_activity` samples of the application role in `idle in transaction`.
+That state means that Postgres waits for the next client message inside an open transaction.
+At 0% the read holds no transaction between messages, so each read is one trip.
+Under this load, CPU per request rose for all three calls, and by 28% for the unchanged update.
+Query throughput fell more than get and update throughput, and `wamn-cg5e4` holds the stream case.
