@@ -88,6 +88,8 @@ platform:
     image: ""
   identity:
     image: ""
+  edge:
+    image: ""
 
 # Install values. `wamn_control::release_chart::values` writes them.
 release:

@@ -92,6 +92,22 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
  && mkdir -p /native-output \
  && aarch64-linux-gnu-strip -o /native-output/wamn-edge target/aarch64-unknown-linux-gnu/release/wamn-edge
 
+# ---- cluster web edge: linux/amd64, separate from the edge box target -------
+FROM root-source AS build-edge-web
+ARG WAMN_CHECKOUT_KEY
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-edge \
+ && install -D -m 0755 target/release/wamn-edge /native-output/wamn-edge
+
+FROM debian:trixie-slim AS edge-web
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build-edge-web /native-output/wamn-edge /usr/local/bin/wamn-edge
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-edge"]
+
 # ---- locked component outputs shared by every embedding image --------------
 FROM toolchain AS component-toolchain
 RUN rustup target add --toolchain 1.99.0 wasm32-wasip2 \

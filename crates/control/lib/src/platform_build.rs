@@ -1,6 +1,6 @@
 //! The platform build step (docs/plan/platform-deploy.md §9.3, R15).
 //!
-//! It builds the host, runner, gates and identity images and the two role
+//! It builds the host, runner, gates, identity and edge images and the two role
 //! components from the root `Dockerfile`. Only when every build succeeded
 //! does it push them to one registry. It then stamps their digests into a
 //! copy of the release chart's defaults. That chart is the one source of an
@@ -221,7 +221,7 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
 
 /// Stamp the registry's images and role components of [`CHART_VERSION`] into
 /// a copy of the release chart at `request.out`. It builds and pushes
-/// nothing; when any of the six is missing, it refuses and names them.
+/// nothing; when any of the seven is missing, it refuses and names them.
 pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
     let receipt = ui_receipt(&request.repository)?;
     let insecure = loopback(&request.registry);
@@ -258,7 +258,7 @@ async fn stamp_from_registry(
     let registry = &request.registry;
     let mut pinned = Vec::new();
     let mut missing = Vec::new();
-    for target in ["host", "runner", "gates", "identity"] {
+    for target in ["host", "runner", "gates", "identity", "edge-web"] {
         let reference = format!("{registry}/wamn-{target}:{CHART_VERSION}");
         let digest = run(Command::new("docker").args([
             "buildx",
@@ -291,12 +291,12 @@ async fn stamp_from_registry(
         missing.len(),
         missing.join("; ")
     );
-    let [host, runner, gates, identity, http, materializer] =
-        <[String; 6]>::try_from(pinned).map_err(|_| anyhow::anyhow!("six images were resolved"))?;
+    let [host, runner, gates, identity, edge, http, materializer] = <[String; 7]>::try_from(pinned)
+        .map_err(|_| anyhow::anyhow!("seven images were resolved"))?;
     drop(stage);
     stamp_chart(
         request,
-        ([host, runner, gates, identity], (http, materializer)),
+        ([host, runner, gates, identity, edge], (http, materializer)),
         receipt,
     )
 }
@@ -312,11 +312,11 @@ fn manifest_digest(json: &str) -> anyhow::Result<String> {
         .context("the manifest descriptor has no sha256 digest")
 }
 
-/// Stamp the host, runner, gates and identity images and the http and
+/// Stamp the host, runner, gates, identity and edge images and the http and
 /// materializer components into a copy of the checkout's release chart.
 fn stamp_chart(
     request: &BuildPlatformRequest,
-    ([host, runner, gates, identity], (http, materializer)): ([String; 4], (String, String)),
+    ([host, runner, gates, identity, edge], (http, materializer)): ([String; 5], (String, String)),
     receipt: &PlatformBuildReceipt,
 ) -> anyhow::Result<PathBuf> {
     let _stage = start_stage("stamp");
@@ -334,6 +334,14 @@ fn stamp_chart(
         }),
         &request.out,
     )?;
+    let path = chart.join("values.yaml");
+    let mut defaults: serde_yaml::Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
+    ensure!(
+        edge.contains("@sha256:"),
+        "the edge image is not pinned by digest"
+    );
+    defaults["platform"]["edge"]["image"] = edge.into();
+    std::fs::write(path, serde_yaml::to_string(&defaults)?)?;
     std::fs::write(
         chart.join(RECEIPT_FILE),
         canonical_json_bytes(&serde_json::to_value(receipt)?),
@@ -347,14 +355,14 @@ fn loopback(registry: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1")
 }
 
-/// Build the host, runner, gates and identity images and export the role
+/// Build the host, runner, gates, identity and edge images and export the role
 /// components to `roles`, each through `run`; only when every build
 /// succeeded, push them and return them pinned by digest.
 async fn build_then_push(
     request: &BuildPlatformRequest,
     roles: &Path,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
-) -> anyhow::Result<([String; 4], (String, String))> {
+) -> anyhow::Result<([String; 5], (String, String))> {
     {
         let _stage = start_stage("ui-build");
         run(Command::new("pnpm").current_dir(&request.repository).args([
@@ -371,7 +379,7 @@ async fn build_then_push(
     ]))
     .await?;
     let mut references = Vec::new();
-    for target in ["host", "runner", "gates", "identity"] {
+    for target in ["host", "runner", "gates", "identity", "edge-web"] {
         let _stage = start_stage(format!("image-build-{target}"));
         let reference = format!("{}/wamn-{target}:{CHART_VERSION}", request.registry);
         run(docker(&request.repository)?
@@ -403,8 +411,8 @@ async fn build_then_push(
         let _stage = start_stage(format!("push-{target}"));
         pushed.push(push_image(&mut run, &request.registry, target, reference).await?);
     }
-    let images = <[String; 4]>::try_from(pushed)
-        .map_err(|_| anyhow::anyhow!("four platform images were pushed"))?;
+    let images = <[String; 5]>::try_from(pushed)
+        .map_err(|_| anyhow::anyhow!("five platform images were pushed"))?;
     Ok((images, push_roles(&request.registry, components).await?))
 }
 
@@ -886,7 +894,7 @@ with open('/cloud-auth/config.json', 'w') as output:
         "args": ["buildx", "create", "--name", "wamn", "--driver", "docker-container"],
         "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
     }));
-    for target in ["host", "runner", "gates", "identity", "roles"] {
+    for target in ["host", "runner", "gates", "identity", "edge-web", "roles"] {
         let mut args: Vec<String> = vec!["buildx".into(), "--builder".into(), "wamn".into()];
         args.extend(base.iter().cloned());
         args.extend(["--target".into(), target.into()]);
@@ -1068,7 +1076,7 @@ mod tests {
             .iter()
             .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
             .collect();
-        assert_eq!(builds.len(), 5);
+        assert_eq!(builds.len(), 6);
         let pushes = |step: &serde_json::Value| {
             step["args"]
                 .as_array()
@@ -1078,7 +1086,7 @@ mod tests {
         };
         assert_eq!(
             builds.iter().filter(|step| pushes(step)).count(),
-            4,
+            5,
             "every image target pushes, and roles exports locally"
         );
         // Each image build follows its own token step.
@@ -1346,7 +1354,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stamp_only_stamps_the_six_registry_digests_and_builds_nothing() {
+    async fn stamp_only_stamps_the_seven_registry_digests_and_builds_nothing() {
         let out = std::env::temp_dir().join(format!("wamn-stamp-only-{}", std::process::id()));
         let (stamped, calls) = stamp_recorded("\0", &out).await;
         let receipt: PlatformBuildReceipt =
@@ -1380,7 +1388,13 @@ mod tests {
                 "localhost:5000/wamn-gates:{CHART_VERSION}@{digest}"
             ))
         );
-        assert_eq!(calls.len(), 4, "{calls:?}");
+        assert_eq!(
+            platform["edge"]["image"].as_str(),
+            Some(&*format!(
+                "localhost:5000/wamn-edge-web:{CHART_VERSION}@{digest}"
+            ))
+        );
+        assert_eq!(calls.len(), 5, "{calls:?}");
         assert!(
             calls
                 .iter()
@@ -1446,7 +1460,7 @@ mod tests {
             .filter(|(_, call)| call.starts_with("docker build"))
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        assert_eq!(builds.len(), 5, "{calls:?}");
+        assert_eq!(builds.len(), 6, "{calls:?}");
         assert!(builds.iter().all(|index| *index < first_push), "{calls:?}");
         let key = checkout_key(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")).unwrap();
         assert!(
