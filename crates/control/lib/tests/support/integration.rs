@@ -159,15 +159,26 @@ pub async fn exercise(
     let issuer = super::session_issuer::deploy(run, repository, &platform).await?;
     platform.host_group =
         Some(event_host_group(run, &platform, &broker, &server, &issuer, &suffix).await?);
-    document.release = DeclaredRelease::Digest(digest.clone());
-    super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
     let mut project_url = url::Url::parse(admin_url)?;
     project_url.set_path(&format!(
         "/{}",
         wamn_control_provision::project_env_database_name(ORG, PROJECT, ENVIRONMENT, &suffix)
     ));
-    let (project, project_task) = connect(project_url.as_str()).await?;
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    let subject = wamn_platform_identity::application_subject(&tenant, CONNECTOR)?;
+    grant(
+        run,
+        repository,
+        &platform,
+        project_url.as_str(),
+        &tenant,
+        &format!("{subject}@{}", super::PLATFORM_DOMAIN),
+        &manifest,
+    )
+    .await?;
+    document.release = DeclaredRelease::Digest(digest.clone());
+    super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
+    let (project, project_task) = connect(project_url.as_str()).await?;
     let version = manifests
         .iter()
         .find(|m| m.package.id == CONNECTOR)
@@ -183,16 +194,6 @@ pub async fn exercise(
             &[&tenant, &wiring.package_id, &version, &graph.wiring_id, &i32::try_from(graph.version)?, &serde_json::to_string(graph)?, &graph.wiring_hash().as_str()],
         ).await?;
     }
-    let subject = wamn_platform_identity::application_subject(&tenant, CONNECTOR)?;
-    grant(
-        run,
-        repository,
-        &platform,
-        project_url.as_str(),
-        &tenant,
-        &format!("{subject}@{}", super::PLATFORM_DOMAIN),
-    )
-    .await?;
     let principal: String = system
         .query_one(
             "SELECT id::text FROM identity.principals WHERE type='service' AND subject=$1",
@@ -477,6 +478,9 @@ async fn secret_value(run: &Run, name: &str, key: &str) -> anyhow::Result<Vec<u8
     Ok(STANDARD.decode(value["data"][key].as_str().context("Secret key")?)?)
 }
 
+/// Write the connector's service row from the release manifest, then grant it
+/// the consumer permission. The caller runs this before the release apply, so
+/// no host has loaded the release and its schedule cannot tick before the grant.
 async fn grant(
     run: &Run,
     repository: &Path,
@@ -484,6 +488,7 @@ async fn grant(
     project_url: &str,
     tenant: &str,
     subject: &str,
+    manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     for key in ["ca.crt", "tls.crt", "tls.key"] {
@@ -515,15 +520,23 @@ async fn grant(
         nats_tls_server_name: Some(format!("nats.{NAMESPACE}.svc.cluster.local")),
     };
     let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    let changes = loop {
         match wamn_platform_identity::auth_changes::AuthChanges::connect(&auth).await {
-            Ok(_) => break,
+            Ok(changes) => break changes,
             Err(_) if Instant::now() < deadline => {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
             Err(error) => return Err(error),
         }
-    }
+    };
+    environment::stage::materialize_application_principals(
+        &platform.system_database_url,
+        project_url,
+        tenant,
+        manifest,
+        &changes,
+    )
+    .await?;
     for (verb, extra) in [
         ("create-role", vec![]),
         (

@@ -90,7 +90,8 @@
 //! Event NATS runs on the kind network with separate generated credentials.
 //! The integration applies one release containing `wamn_integration`,
 //! `rest_connector` and `rest_consumer_fixture`. The ctl role verbs grant the
-//! connector principal the consumer permission before the scheduled pull.
+//! connector principal the consumer permission before the release apply, so
+//! no host runs the schedule before the grant.
 //! Each schedule assertion has a 150-second bound.
 //!
 //! Before the epic closeout run, build the debug `wamn-ctl` and `wamn-cdc-reader`
