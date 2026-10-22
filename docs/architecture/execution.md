@@ -833,28 +833,71 @@ The generated TypeScript bindings continue to use the browser runtime.
 A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
 Descriptions state no route or navigation. The application decides what to open.
 
-The [platform UI](../../apps/platform_ui/README.md) owns the shared Solid 2 shell and uses wfe layout components.
+The [platform UI](../../apps/platform_ui/README.md) owns the shared Solid 2 shell.
+Its [package](../../apps/platform_ui/package.json) uses wfe components, forms, and generator descriptions.
 Receiving uses this shell with generated descriptions. The WMS backend remains, but its demo web application awaits a rebuild on wfe.
-The shell reuses `web/runtime` for the cookie session and transport.
-The generator emits no navigation list. Each application writes its route table.
-An application web page in `apps/<app>/web/` gives the shell a hand-written route table of screens, grouped by model.
-The navigation names a model with one screen by the model alone, and it lists the screen labels only below a model with more than one screen.
-A record page carries its key in the address, for example `packagings/<id>`, and a table row opens it through the row callback.
-The shell owns the router. A screen gets the address values, the query values, `open(path)` and `close()` as props, beside the transport.
-Each screen, route and action names its operation from the generated route constant. The shell reads `permission.mine` once after sign in and shows only what the caller holds, and everything to `admin`.
-An address of a screen that the caller does not hold shows the no page text. This is presentation only, because every route repeats its own check.
-Every application shell has an Administration section with the role grid and the user grid, and only `admin` sees it.
-An account that reaches no audience sees only "No access has been granted.", and the shell mints no session for it.
-The shell offers the [control session](#control-sessions) of its org as Control. Under it, the shell reads `control.mine` once and shows the org screen to `org-admin` and one project screen for each project that it names.
-The org screen grants and revokes `org-admin`, activates and deactivates a member, and invites a user. The project screen grants and revokes a membership of each environment and `project-admin`, and it adds a member of the org.
-A grant that a higher grant covers shows as hierarchy-controlled, with no toggle, because the route refuses its revoke.
-Each command form has its own route. A create or merge form opens from a button above its table, and an update form from a button above its record page.
-A row that fills a form opens it with the filled values in the query, so a reload keeps them. A completed submission returns to the page that opened the form, and a refusal stays on the form.
-The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
-A screen address with no session asks for the password on that address, and it shows the screen after sign in.
-The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.
+The [platform UI plan](../plan/platform-ui-app.md) records the replacement of the Solid 1 shell and the deleted `web/ui` and `web/components` packages.
+
+The [shell](../../apps/platform_ui/src/shell.tsx) reuses `web/runtime` for the cookie session and transport.
+Each application supplies its route table, grouped into sections. The generator emits no navigation list.
+Each screen, route, and action names its operation through a generated route constant.
+The shell reads `permission.mine` for an application session and `control.mine` for a control session.
+It filters screens and actions by those permissions. An application administrator sees every application operation.
+This filtering controls presentation. The server remains the authority for each request.
+
+The [address owner](../../apps/platform_ui/src/address.ts) keeps the audience in the first path segment and the record keys in later segments.
+A screen receives the transport, address parameters, query values, permitted actions, `open(path)`, and `close()`.
+The shell fills action paths from the address parameters.
+Reloading a screen renews its cookie session without browser storage. A screen without a session asks for the password at that address.
+The [identity pages](../../apps/platform_ui/src/identity.tsx) offer reachable audiences after sign-in and open a single audience automatically.
+An account with no audience sees "No access has been granted." and receives no session.
+
+The [page components](../../apps/platform_ui/src/page.tsx) wrap dashboards in wfe `Theme` and `DashboardShell` at viewport height.
+Sign-in, invitation, recovery, reset, and no-access pages use standalone `EntryPanel` pages.
+Unknown or forbidden addresses and missing records use the same standalone layout, with a heading, explanation, and return link.
+These pages have no sidebar or breadcrumbs.
+An audience with no available screens keeps its dashboard header and offers a link to audience selection, without a navigation pane.
+
+The [left pane](../../apps/platform_ui/src/control-navigation.tsx) follows the hierarchy organization > project > environment.
+Its context switcher searches sibling choices and returns to the parent. Expandable groups expose the projects and environments that the caller administers.
+The address controls the context across direct links, reloads, and browser history.
+The [application layout](../../apps/platform_ui/src/layout.tsx) adds role context with Permissions and Users links.
+The [administration routes](../../apps/platform_ui/src/administration.tsx) expose Roles, Users, and Permissions overview according to held operations.
+
+The dashboard header carries breadcrumbs, the links that show the current location, and the User menu with Sign out.
+[Layout](../../apps/platform_ui/src/layout.tsx) renders every breadcrumb as literal ALL CAPS text, including record names.
+Identity pages and audience selection omit breadcrumbs.
+Links navigate, and buttons act. [RecordLink and NavigationLink](../../apps/platform_ui/src/page.tsx) use native anchors with real addresses and preserve modified clicks.
+
+A table that can grow fills its panel, places its actions in `toolbarActions`, and pages its rows.
+The [table screen style](../../apps/platform_ui/src/page.css) fills the available space without outer padding.
+[Table routes](../../apps/platform_ui/src/projects.tsx) use `scroll="content"`.
+[Records](../../apps/platform_ui/src/records.tsx) supplies wfe `TableView` with toolbar actions and pagination, the controls that select a page of rows.
+It selects 25 rows per page from the returned array and reports the total row count.
+[TableView](../../web/wfe/packages/generator/src/TableView.tsx) passes these bindings to the wfe table.
+
+Each column shows one fact. Growing lists appear as counts in parent rows.
+[Environment tables](../../apps/platform_ui/src/environment.tsx) expand read-only reference tables through `rowDetails`, without new routes.
+Tables with actions retain their own screens.
+Data entry uses a separate form screen. [Create project](../../apps/platform_ui/src/projects.tsx) and [Grant membership](../../apps/platform_ui/src/membership.tsx) use `FormView`.
+Successful submission and Cancel return to the owning table. A refusal leaves the form open with its error.
+Modals serve confirmations only, as in [ConfirmAction](../../apps/platform_ui/src/confirm-action.tsx).
+
+Inline row actions use icon buttons. Delete and Revoke use the wfe `cross` icon.
+[ConfirmAction](../../apps/platform_ui/src/confirm-action.tsx) keeps the full action label in `aria-label` and `title`.
+The [wfe icon](../../web/wfe/packages/components/src/components/Icon.tsx) is decorative, so the button supplies its accessible name.
+State toggles keep text, including Activate and Grant org admin in [Users](../../apps/platform_ui/src/users.tsx).
+Toolbar actions and form buttons also keep text.
+
+The shell uses `@wfe/components/layout` at the pinned wfe v0.0.7 revision, `8e019cd271446f3f05452b11f226977622c798c4`.
+The move onto `@wfe/shell`, `wamn-n8q9m.5.4`, waits on wfe gap bead `wamn-n8q9m.5.5`.
+At this pin, [ShellView](../../web/wfe/packages/shell/src/ShellView.tsx) renders a flat menu and a fixed header.
+Its [public properties](../../web/wfe/packages/shell/src/types.ts) cannot replace that header or navigation with the current hierarchy and breadcrumbs.
+The [plan](../plan/platform-ui-app.md#6-wfe-dependency) owns the remaining migration.
+
+The shell calls the release under `/api` through its [transport](../../apps/platform_ui/src/shell.tsx).
 The platform UI calls the control host through `/api/wamn_control` at `control.wamn.dev`.
-Its [deployment](../operations/deployment.md#platform-ui-files) owns the control edge route and the org-only scope.
+Its [deployment](../operations/deployment.md#platform-ui-files) owns the edge routing and the org-only scope.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
