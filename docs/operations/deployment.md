@@ -257,7 +257,7 @@ Use [Web upload](web-upload.md#package-clients) to write the clients from the se
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
 The bucket must allow reads without credentials.
-The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, the URL `api` of the `http` Service of its environment's release, and its upload path `bucketPath`. `upgrade-environment` writes `api` from `release_chart::release_name`, and the chart only reads it. The edge passes the headers of each object on.
+Platform apply renders each application host and API Service in the edge chart. The Rust edge reads the live release and serves its bucket files.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
 ## Platform UI files
@@ -275,7 +275,7 @@ The HTTP transport workload selects that host group and supplies endpoints for t
 The edge values contain a separate `control` entry with `host`, `api` and `bucketPath`.
 The edge chart forwards `/api/` to the control Service and `/password/` to identity.
 With a bucket endpoint, it serves the control bundle directly.
-On Google Cloud, `deploy/gcp/url-map.yaml` serves `/assets/` and `/config.json` from the platform version prefix.
+On Google Cloud, the TCP proxy sends all traffic to nginx. The Rust edge serves the platform UI files behind nginx.
 Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
 
 ## Google Cloud edge

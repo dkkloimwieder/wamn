@@ -120,6 +120,40 @@ pub fn render_project_tofu(
         "resource": {
             "google_container_cluster": {"cluster": cluster},
             "google_container_node_pool": pools,
+            "google_compute_health_check": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+                "tcp_health_check": {"port_specification": "USE_SERVING_PORT"},
+            }},
+            "google_compute_backend_service": {"edge": {
+                "name": "wamn-edge-platform", "project": project.project_id,
+                "protocol": "TCP", "load_balancing_scheme": "EXTERNAL_MANAGED",
+                "health_checks": ["${google_compute_health_check.edge.id}"],
+                "backend": [{
+                    "group": "${data.google_compute_network_endpoint_group.edge.self_link}",
+                    "balancing_mode": "CONNECTION", "max_connections_per_endpoint": 1000,
+                }],
+            }},
+            "google_compute_target_tcp_proxy": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+                "backend_service": "${google_compute_backend_service.edge.id}",
+                "proxy_header": "NONE",
+            }},
+            "google_compute_global_address": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+            }},
+            "google_compute_global_forwarding_rule": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+                "ip_address": "${google_compute_global_address.edge.address}",
+                "target": "${google_compute_target_tcp_proxy.edge.id}",
+                "port_range": "443", "ip_protocol": "TCP",
+                "load_balancing_scheme": "EXTERNAL_MANAGED",
+            }},
+        },
+        "data": {
+            "google_compute_network_endpoint_group": {"edge": {
+                "name": project.edge.neg_name, "zone": project.edge.neg_zone,
+                "project": project.project_id,
+            }},
         },
         "import": imports,
     });
@@ -142,6 +176,13 @@ struct ProjectInput {
     service_secondary_range_name: String,
     node_service_account: String,
     node_pools: Vec<NodePool>,
+    edge: Edge,
+}
+
+#[derive(Deserialize)]
+struct Edge {
+    neg_name: String,
+    neg_zone: String,
 }
 
 #[derive(Deserialize)]
@@ -170,6 +211,64 @@ mod tests {
     }
 
     #[test]
+    fn edge_tcp_proxy_reads_the_service_neg_without_hosts_or_certificates() {
+        let mut source: Value = serde_json::from_slice(&project()).unwrap();
+        source["edge"]["neg_zone"] = json!("us-east1-b");
+        let rendered: Value = serde_json::from_slice(
+            &render_project_tofu(&serde_json::to_vec(&source).unwrap(), "state", "dev").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            rendered["data"]["google_compute_network_endpoint_group"]["edge"],
+            json!({
+                "name": "wamn-edge", "zone": "us-east1-b", "project": "wamn-dev"
+            })
+        );
+        let resources = &rendered["resource"];
+        assert_eq!(
+            resources["google_compute_health_check"]["edge"]["tcp_health_check"],
+            json!({"port_specification": "USE_SERVING_PORT"})
+        );
+        let backend = &resources["google_compute_backend_service"]["edge"];
+        assert_eq!(backend["protocol"], "TCP");
+        assert_eq!(
+            backend["health_checks"],
+            json!(["${google_compute_health_check.edge.id}"])
+        );
+        assert_eq!(
+            backend["backend"][0]["group"],
+            "${data.google_compute_network_endpoint_group.edge.self_link}"
+        );
+        assert_eq!(backend["backend"][0]["balancing_mode"], "CONNECTION");
+        assert_eq!(
+            resources["google_compute_target_tcp_proxy"]["edge"]["backend_service"],
+            "${google_compute_backend_service.edge.id}"
+        );
+        let forwarding = &resources["google_compute_global_forwarding_rule"]["edge"];
+        assert_eq!(
+            forwarding["target"],
+            "${google_compute_target_tcp_proxy.edge.id}"
+        );
+        assert_eq!(
+            forwarding["ip_address"],
+            "${google_compute_global_address.edge.address}"
+        );
+        assert_eq!(forwarding["port_range"], "443");
+        assert_eq!(
+            forwarding["load_balancing_scheme"],
+            backend["load_balancing_scheme"]
+        );
+        for absent in [
+            "google_compute_url_map",
+            "google_compute_ssl_certificate",
+            "google_compute_backend_bucket",
+            "google_compute_network_endpoint_group",
+        ] {
+            assert!(resources.get(absent).is_none());
+        }
+    }
+
+    #[test]
     fn committed_project_renders_cluster_pools_backend_and_imports() {
         let source = project();
         let declared: Value = serde_json::from_slice(&source).unwrap();
@@ -188,7 +287,7 @@ mod tests {
             })
         );
         let resources = &rendered["resource"];
-        assert_eq!(resources.as_object().unwrap().len(), 2);
+        assert_eq!(resources.as_object().unwrap().len(), 7);
         let clusters = resources["google_container_cluster"].as_object().unwrap();
         assert_eq!(clusters.len(), 1);
         let cluster = &clusters["cluster"];

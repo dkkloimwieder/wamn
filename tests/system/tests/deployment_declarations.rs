@@ -1019,8 +1019,8 @@ fn control_edge_serves_the_platform_ui_and_forwards_its_api() {
             "deploy/platform/edge",
             "--namespace",
             "edge",
-            "-f",
-            "deploy/gcp/values-edge.yaml",
+            "--set",
+            "tlsSecret=wamn-edge-tls,identity=https://identity.identity.svc.cluster.local,identityCaConfigMap=identity-ca,control.host=control.wamn.dev,control.api=http://c-dkk-http.hosts.svc.cluster.local",
             "--set",
             "issuer=test-issuer",
         ])
@@ -1065,64 +1065,4 @@ fn control_edge_serves_the_platform_ui_and_forwards_its_api() {
             .unwrap()
             .contains(&"control.wamn.dev".into())
     );
-
-    let map: serde_yaml::Value =
-        serde_yaml::from_str(&fs::read_to_string(root.join("deploy/gcp/url-map.yaml")).unwrap())
-            .unwrap();
-    let host = map["hostRules"]
-        .as_sequence()
-        .unwrap()
-        .iter()
-        .find(|rule| {
-            rule["hosts"]
-                .as_sequence()
-                .unwrap()
-                .contains(&"control.wamn.dev".into())
-        })
-        .unwrap();
-    let matcher = map["pathMatchers"]
-        .as_sequence()
-        .unwrap()
-        .iter()
-        .find(|matcher| matcher["name"] == host["pathMatcher"])
-        .unwrap();
-    for (path, expected) in [
-        ("/", "/platform-ui/0.1.31/index.html"),
-        ("/invite", "/platform-ui/0.1.31/index.html"),
-        ("/recover", "/platform-ui/0.1.31/index.html"),
-        ("/reset", "/platform-ui/0.1.31/index.html"),
-        (
-            "/urn:wamn:control:dkk/users",
-            "/platform-ui/0.1.31/index.html",
-        ),
-        (
-            "/urn:wamn:project-env:dkk:wms:dev:suffix/inventory",
-            "/platform-ui/0.1.31/index.html",
-        ),
-        ("/config.json", "/platform-ui/0.1.31/config.json"),
-        ("/assets/ui.js", "/platform-ui/0.1.31/assets/"),
-    ] {
-        let rule = matcher["routeRules"]
-            .as_sequence()
-            .unwrap()
-            .iter()
-            .find(|rule| {
-                rule["matchRules"].as_sequence().unwrap().iter().any(|m| {
-                    m["fullPathMatch"].as_str() == Some(path)
-                        || m["prefixMatch"]
-                            .as_str()
-                            .is_some_and(|prefix| path.starts_with(prefix))
-                        || m["pathTemplateMatch"].as_str() == Some("/{page=**}")
-                })
-            })
-            .unwrap();
-        let rewrite = &rule["routeAction"]["urlRewrite"];
-        assert_eq!(
-            rewrite["pathPrefixRewrite"]
-                .as_str()
-                .or(rewrite["pathTemplateRewrite"].as_str()),
-            Some(expected),
-            "{path}"
-        );
-    }
 }

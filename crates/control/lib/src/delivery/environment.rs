@@ -29,8 +29,6 @@ pub struct EnvironmentFile {
     pub packages: Vec<PathBuf>,
     pub web_client: WebClient,
     pub route_host: String,
-    pub edge: Edge,
-    pub url_map: UrlMap,
     /// The pinned gates image of `qualify-release`, with its digest.
     pub gates_image: String,
 }
@@ -52,23 +50,6 @@ pub struct SystemDatabase {
 pub struct WebClient {
     pub bucket: String,
     pub prefix: String,
-}
-
-/// The Helm release of the edge and its values file.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Edge {
-    pub release: String,
-    pub namespace: String,
-    pub values: PathBuf,
-}
-
-/// The load balancer URL map and the file that it is imported from.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct UrlMap {
-    pub name: String,
-    pub file: PathBuf,
 }
 
 impl EnvironmentFile {
@@ -105,14 +86,6 @@ impl EnvironmentFile {
             "the environment file {} names no package",
             path.display()
         );
-        for named in [&file.edge.values, &file.url_map.file] {
-            ensure!(
-                repository.join(named).is_file(),
-                "the environment file {} names the absent file {}",
-                path.display(),
-                named.display()
-            );
-        }
         for root in &file.packages {
             ensure!(
                 repository.join(root).is_dir(),

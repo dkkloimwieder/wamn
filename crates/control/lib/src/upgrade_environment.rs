@@ -988,26 +988,13 @@ impl Run {
         Ok(())
     }
 
-    fn rendered(&self) -> PathBuf {
-        self.release_files().join("rendered")
-    }
-
-    /// Stage 9: `env apply` of the environment's document with the published
-    /// release (docs/plan/platform-deploy.md §15.2), then the web client, the
-    /// edge and the URL map.
+    /// Stage 9: apply the published release, then upload its web clients.
     async fn deploy(&self, record: &RunRecord) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         self.broker(&kubectl).await?;
         let digest = Self::release_digest(record)?;
-        let hex = digest
-            .strip_prefix("sha256:")
-            .context("the published manifest digest has no sha256 prefix")?
-            .to_owned();
-        let rendered = self.rendered();
-        private_directory(&rendered)?;
         let mut outputs = BTreeMap::new();
-        let project = gcp_project(&environment.registry)?;
         let platform = platform(&environment)?;
         let triple = self.triple();
         let applied = crate::environment::apply_release(&platform, &triple, &digest).await?;
@@ -1015,7 +1002,6 @@ impl Run {
 
         // The web client of each package that has one, create-only, from its
         // package artifact.
-        let mut client_package = None;
         for client in crate::web_upload::upload_release(
             &platform,
             &triple,
@@ -1036,94 +1022,6 @@ impl Run {
                 format!("web client {}", client.package),
                 format!("{} {state}", client.location),
             );
-            client_package.get_or_insert(client.package);
-        }
-
-        // The edge and the URL map, from their live state, for this route
-        // host only, so another environment keeps what it serves.
-        if let Some(package) = &client_package {
-            let bucket_path = format!(
-                "{}/{}/{package}/{hex}",
-                environment.web_client.bucket, environment.web_client.prefix
-            );
-            let live = helm(
-                &environment.context,
-                &[
-                    "get",
-                    "values",
-                    &environment.edge.release,
-                    "-n",
-                    &environment.edge.namespace,
-                    "-o",
-                    "json",
-                ],
-            )
-            .await?;
-            let mut values: Value = serde_json::from_str(&live)?;
-            let api = format!(
-                "http://{}-http.{}.svc.cluster.local",
-                self.release_name()?,
-                platform.target.namespace
-            );
-            if set_edge_application(&mut values, &environment.route_host, &api, &bucket_path)? {
-                let file = rendered.join("values-edge.yaml");
-                fs::write(&file, serde_yaml::to_string(&values)?)?;
-                let chart = self.checkout.join("deploy/platform/edge");
-                helm(
-                    &environment.context,
-                    &[
-                        "upgrade",
-                        &environment.edge.release,
-                        &chart.display().to_string(),
-                        "-n",
-                        &environment.edge.namespace,
-                        "-f",
-                        &file.display().to_string(),
-                        "--wait",
-                        "--timeout",
-                        "3m",
-                    ],
-                )
-                .await?;
-                outputs.insert(
-                    "edge".to_owned(),
-                    format!("{} serves {bucket_path}", environment.route_host),
-                );
-            } else {
-                outputs.insert("edge".to_owned(), "already serves the release".to_owned());
-            }
-            let exported = rendered.join("url-map-live.yaml");
-            self.command(
-                "url-map-export",
-                Command::new("gcloud")
-                    .args(["compute", "url-maps", "export", &environment.url_map.name])
-                    .args(["--global", "--project", &project, "--destination"])
-                    .arg(&exported),
-            )
-            .await?;
-            let mut map: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(&exported)?)?;
-            let prefix = format!("/{}/{package}/", environment.web_client.prefix);
-            if rewrite_url_map(&mut map, &environment.route_host, &prefix, &hex)? {
-                let file = rendered.join("url-map.yaml");
-                fs::write(&file, serde_yaml::to_string(&map)?)?;
-                self.command(
-                    "url-map-import",
-                    Command::new("gcloud")
-                        .args(["compute", "url-maps", "import", &environment.url_map.name])
-                        .args(["--global", "--project", &project, "--quiet", "--source"])
-                        .arg(&file),
-                )
-                .await?;
-                outputs.insert(
-                    "url map".to_owned(),
-                    format!("{} rewrites to {hex}", environment.route_host),
-                );
-            } else {
-                outputs.insert(
-                    "url map".to_owned(),
-                    "already rewrites to the release".to_owned(),
-                );
-            }
         }
 
         Ok((StepResult::Done, outputs))
@@ -1923,118 +1821,6 @@ pub(crate) async fn apply_environment_package_qualification(
             crate::apply_package::apply_qualified_package(request, evidence_path).await?,
         ])
     }
-}
-
-async fn helm(context: &str, arguments: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("helm")
-        .args(["--kube-context", context])
-        .args(arguments)
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("start helm")?;
-    ensure!(
-        output.status.success(),
-        "helm {} exited {}: {}",
-        arguments.join(" "),
-        output.status,
-        redact(&String::from_utf8_lossy(&output.stderr))
-    );
-    Ok(String::from_utf8(output.stdout)?)
-}
-
-/// The Google Cloud project of an Artifact Registry path.
-fn gcp_project(registry: &str) -> anyhow::Result<String> {
-    registry
-        .split('/')
-        .nth(1)
-        .map(str::to_owned)
-        .with_context(|| format!("the registry {registry} names no project"))
-}
-
-/// Sets the api URL and the bucket path of the edge application of `host`.
-/// It reports whether the values changed.
-fn set_edge_application(
-    values: &mut Value,
-    host: &str,
-    api: &str,
-    bucket_path: &str,
-) -> anyhow::Result<bool> {
-    let application = values["applications"]
-        .as_array_mut()
-        .context("the edge values have no applications")?
-        .iter_mut()
-        .find(|application| application["host"] == host)
-        .with_context(|| format!("the edge serves no host {host}"))?;
-    if application["api"] == api && application["bucketPath"] == bucket_path {
-        return Ok(false);
-    }
-    application["api"] = Value::from(api);
-    application["bucketPath"] = Value::from(bucket_path);
-    Ok(true)
-}
-
-/// Points every rewrite of the path matcher of `host` that names a release
-/// under `prefix` at the release `hex`. It reports whether the map changed.
-fn rewrite_url_map(
-    map: &mut serde_yaml::Value,
-    host: &str,
-    prefix: &str,
-    hex: &str,
-) -> anyhow::Result<bool> {
-    let matcher = map["hostRules"]
-        .as_sequence()
-        .context("the URL map has no hostRules")?
-        .iter()
-        .find(|rule| {
-            rule["hosts"]
-                .as_sequence()
-                .is_some_and(|hosts| hosts.iter().any(|name| name.as_str() == Some(host)))
-        })
-        .and_then(|rule| rule["pathMatcher"].as_str())
-        .with_context(|| format!("the URL map has no host rule for {host}"))?
-        .to_owned();
-    let matcher = map["pathMatchers"]
-        .as_sequence_mut()
-        .context("the URL map has no pathMatchers")?
-        .iter_mut()
-        .find(|candidate| candidate["name"].as_str() == Some(matcher.as_str()))
-        .with_context(|| format!("the URL map has no path matcher {matcher}"))?;
-    let mut changed = false;
-    let mut found = 0;
-    for rule in matcher["routeRules"]
-        .as_sequence_mut()
-        .into_iter()
-        .flatten()
-    {
-        for key in ["pathPrefixRewrite", "pathTemplateRewrite"] {
-            let rewrite = &mut rule["routeAction"]["urlRewrite"][key];
-            let Some(path) = rewrite.as_str() else {
-                continue;
-            };
-            let Some(rest) = path.strip_prefix(prefix) else {
-                continue;
-            };
-            let (old, tail) = rest
-                .split_at_checked(64)
-                .context("a rewrite names a short release")?;
-            ensure!(
-                old.bytes().all(|byte| byte.is_ascii_hexdigit()),
-                "the rewrite {path} names no release digest"
-            );
-            found += 1;
-            if old != hex {
-                *rewrite = serde_yaml::Value::from(format!("{prefix}{hex}{tail}"));
-                changed = true;
-            }
-        }
-    }
-    ensure!(
-        found > 0,
-        "the path matcher of {host} rewrites to no release under {prefix}"
-    );
-    Ok(changed)
 }
 
 /// Each HTTP route of the release with its method and path.
@@ -3035,47 +2821,6 @@ mod tests {
         .unwrap();
         assert_eq!(secret_url(&encoded).unwrap(), "postgresql://u@h:5432/d");
         fs::remove_dir_all(&directory).unwrap();
-    }
-
-    fn repository() -> &'static Path {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(3)
-            .unwrap()
-    }
-
-    #[test]
-    fn the_edge_and_the_url_map_change_only_the_route_host_of_the_run() {
-        let edge: serde_yaml::Value = serde_yaml::from_str(
-            &fs::read_to_string(repository().join("deploy/gcp/values-edge.yaml")).unwrap(),
-        )
-        .unwrap();
-        let mut edge: Value = serde_json::to_value(edge).unwrap();
-        let before = edge.clone();
-        let path = format!("wamn-dev-web/clients/wamn_wms/{}", "c".repeat(64));
-        let api = "http://r-dev-2d9920a989cb26764e77-http.wamn-system.svc.cluster.local";
-        assert!(set_edge_application(&mut edge, "wms.wamn.dev", api, &path).unwrap());
-        assert!(!set_edge_application(&mut edge, "wms.wamn.dev", api, &path).unwrap());
-        assert_eq!(edge["applications"][0], before["applications"][0]);
-        assert_eq!(edge["applications"][1]["api"], api);
-        assert_eq!(edge["applications"][1]["bucketPath"], path.as_str());
-        assert!(set_edge_application(&mut edge, "absent.wamn.dev", api, &path).is_err());
-
-        let mut map: serde_yaml::Value = serde_yaml::from_str(
-            &fs::read_to_string(repository().join("deploy/gcp/url-map.yaml")).unwrap(),
-        )
-        .unwrap();
-        let receiving = serde_yaml::to_string(&map["pathMatchers"][0]).unwrap();
-        let hex = "c".repeat(64);
-        assert!(rewrite_url_map(&mut map, "wms.wamn.dev", "/clients/wamn_wms/", &hex).unwrap());
-        assert!(!rewrite_url_map(&mut map, "wms.wamn.dev", "/clients/wamn_wms/", &hex).unwrap());
-        assert_eq!(
-            serde_yaml::to_string(&map["pathMatchers"][0]).unwrap(),
-            receiving
-        );
-        let wms = serde_yaml::to_string(&map["pathMatchers"][1]).unwrap();
-        // /assets/, /config.json (wamn-l2fi), / and every other page.
-        assert_eq!(wms.matches(&hex).count(), 4, "{wms}");
     }
 
     #[test]

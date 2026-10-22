@@ -15,14 +15,5 @@
     "prefix": "clients"
   },
   "route_host": "wms.wamn.dev",
-  "edge": {
-    "release": "wamn-edge",
-    "namespace": "edge",
-    "values": "deploy/gcp/values-edge.yaml"
-  },
-  "url_map": {
-    "name": "wamn-edge",
-    "file": "deploy/gcp/url-map.yaml"
-  },
   "gates_image": "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4"
 }

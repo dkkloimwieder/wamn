@@ -25,6 +25,14 @@ schema NodePool:
         label == "" or regex.match(label, r"^[a-z0-9][a-z0-9_.-]*=[a-z0-9][a-z0-9_.-]*$"), "label is key=value or empty"
         taint == "" or regex.match(taint, r"^[a-z0-9][a-z0-9_.-]*=[a-z0-9][a-z0-9_.-]*:(NoSchedule|PreferNoSchedule|NoExecute)$"), "taint is key=value:effect or empty"
 
+schema Edge:
+    # The GKE Service owns this NEG. OpenTofu only reads it.
+    neg_name: "wamn-edge"
+    neg_zone: str
+
+    check:
+        regex.match(neg_zone, r"^[a-z]+-[a-z]+[0-9]+-[a-z]$"), "neg_zone is a GCP zone"
+
 schema Project:
     project_id: str
     zone: str
@@ -36,6 +44,7 @@ schema Project:
     service_secondary_range_name: str
     node_service_account: str
     node_pools: [NodePool]
+    edge: Edge
 
     check:
         len(cluster_name) <= 40 and regex.match(cluster_name, _name), "cluster_name is a lowercase name of at most 40 characters"
