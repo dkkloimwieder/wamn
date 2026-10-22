@@ -137,7 +137,7 @@ Owner rulings of 2026-10-21. Each ruling holds for every integration from Epic 4
 
 ## 4. Epic order
 
-Each epic names a goal and an exit condition. Only Epic 4 has issues. The order after Epic 4 is expected, not fixed; the owner re-orders at each review.
+Each epic names a goal and an exit condition. Only Epic 5 has issues. The order after Epic 5 is expected, not fixed. The owner re-orders at each review.
 
 ### Cloud
 
@@ -146,8 +146,8 @@ Each epic names a goal and an exit condition. Only Epic 4 has issues. The order 
 | 1 (done at `05f7659d`, `wamn-jstjf`) | C0. An HTTP connection is bound in a deployed environment and a guest sends through it. | Met. |
 | 2 (done at `030ce57c`, `wamn-5i3v9`) | C9, C4, C10. Webhook in, schedule, webhook out. | Met. |
 | 3 (done at `afba25a3f`, `wamn-7e39m`) | C2, C3, C20. OAuth credential types; the REST connector package. | Met. |
-| **4 (scoped)** | Org-scoped connection, C39, the integration principal, `wamn_integration`. The §3a shape without a vendor. | §5. |
-| 5 | C21, C22. NetSuite REST and RESTlet in the §3a shape. `http-page` gains `method` and `body-input-pointer`. SuiteQL pages in offset style, with an optional `has-more` pointer that stops the loop (owner ruling of 2026-10-21). | A record read and a SuiteQL query against the owner's account from a deployed package. |
+| 4 (done at `fde0b0cd5`, `wamn-lcaxg`) | Org-scoped connection, C39, the integration principal, `wamn_integration`. The §3a shape without a vendor. | Met. |
+| **5 (scoped)** | C21, C22. NetSuite REST and RESTlet in the §3a shape. | §5. |
 | 6 | C27, C29, C31, C37. Packages over C20. | Each sends once from a run. |
 | 7 | C1, C23. Sidecar and ODBC. | A sidecar opens the Oracle ODBC driver, streams one query to a guest, holds no credential. |
 | later | C24–C26, C17, C30, C7/C8, C11–C14, C16, C18, C28, C5, C6, C36 | Picked by need. |
@@ -168,43 +168,38 @@ Each epic names a goal and an exit condition. Only Epic 4 has issues. The order 
 
 Edge Epic A may run in parallel with cloud Epic 1: they share no files.
 
-## 5. Epic 4 (`wamn-lcaxg`) — org connection, `wamn_integration`, NetSuite (scoped)
+## 5. Epic 5 — NetSuite (C21, C22)
 
 ### Goal
 
-An org declares a connection once, and each environment that names it binds the same secret. An environment's release carries an integration application beside its consumer, and a scheduled integration run calls a consumer command under its own principal. Every integration application carries `wamn_integration` for its state. NetSuite (C21) moved to Epic 5 by owner ruling of 2026-10-21. Branch `work/integrations` from `695963e3b`.
+NetSuite is one integration application, `apps/netsuite`, composed with `wamn_integration` on an org-scoped `oauth1` connection. Its operations are wirings over `http-request` and `http-page`, with no vendor code. One scheduled pull brings SuiteQL rows into a consumer command, and one push turns a consumer event into a NetSuite record. Issue 1 first fixes the Epic 4 review findings on main. Branch `work/integrations` from `35130b0b9`.
 
-Out of this epic: no UI, no Secret Manager, no NetSuite (C21, C22, Epic 5), no ODBC (C23), no cross-package reads (C38), and no capture of several schemas (C40).
+Out of this epic: no UI, no Secret Manager, no ODBC (C23), no capture of several schemas (C40), no other vendors, no new WIT, and no OAuth2 JWT assertion. NetSuite machine-to-machine access uses `oauth1` only in this epic. C40 stays out, because NetSuite needs one registered schema. If the kind case proves otherwise, the work stops for the owner.
 
 ### Rulings
 
-Owner rulings of 2026-10-21 on the scoping forks. Each ruling is recorded verbatim on `wamn-lcaxg`.
+Owner rulings for Epic 5. Each ruling is recorded verbatim on the epic bead.
 
 | Ruling | Invariant to measure |
 | --- | --- |
-| The org record is `registry.org_connections (org, name, type, definition)` in the control database. Instances and generations stay in each project catalog. The credential handle is `org:<org>:<name>`. Only `http` connections can be org-scoped. s3 blobstore follows when a consumer needs it. | Two environments that name one org connection resolve one secret. |
-| The credentials file has version 2 with an `orgs` map. The host still reads the old file. | A host resolves an org handle only for its own org. |
-| `environment.k` changes in `Connection` only, which also accepts `{ org = "<name>" }`. | The platform-install lane hears of the change before the commit. |
-| `apps/platform/wamn_integration` is a base package. It owns `setting`, `log` and their SQL operations, and integrations compose it. "No new WIT" means no new platform capability. Generated operation WIT is allowed. | An integration keeps no state outside `setting`, `log` and the catalog. |
-| The integration application calls a named consumer command. The permission is authorized ahead of the call, never per call. A schedule run acts as its application. The HTTP-route alternative is rejected. | A consumer command runs from an integration workflow only when the integration principal holds its permission. |
-| The kind case gets event NATS and a CDC reader. | The kind case deploys `wamn_integration` and the consumer with CDC on. |
-| An environment stays one release, and a release is a set of applications. The integration packages sit in that release beside the consumer, pinned by version. `environment.k` gets no `integrations` field. | No KCL change beyond `Connection`. |
-| C39, bounded. CDC captures only the schemas that an event registration reads. C40 holds capture of several schemas. | `ensure_cdc` still refuses two registered schemas. A release with consumer models and `wamn_integration` deploys with CDC on the consumer schema only. |
-| Apply creates one service principal for each integration application in each environment, with a derived name. Its grants are not in `environment.k` (R18). An admin grants it a role with the consumer command permissions through the existing role administration. | A schedule run acts as that principal. The runs check admits the principal on a schedule run. A consumer command without the grant refuses the run. |
-| `http-page` gains an optional parameter `carry-input-pointer`. When it is set, the node emits `{"items":[…],"carry":<value>}`, where the value is the input at that pointer. Without it, the node emits the plain array. This deviates from the Epic 3 ruling that the node emits one array. The scheduled pull uses it to carry the schedule's `due` time to the final `setting.write`. | `last_synced_at` advances to the run's `due` time, and only after the consumer command succeeds. |
-| The release pins one runtime schema for each SQL-bearing application, derived from its models. The host binds it before it opens that application's transactions. The field is added with no contract version bump, and the per-process `WAMN_SCHEMA` stays the fallback for a release that carries none. The rule holds for any two applications in one release. | Two applications in one release each see only their own schema. `qualify_upgrade::runtime_schemas` reads the pinned value. |
+| Apply creates one service principal for each application that composes `wamn_integration`, not for each schedule. It grants that principal a role that holds the operations that the application's release declares as dependencies. Publish authorizes the role, apply materializes it with `ON CONFLICT`, and no admin grants it by hand. This replaces the Epic 4 ruling of a manual grant. | A schedule run right after apply reaches its consumer command. A second apply writes nothing. |
+| The runtime schema of a composed application derives from `base_dependencies`. No integration declares the models of its base again. This narrows the Epic 4 ruling that derived the schema from the application's own models. | `apps/rest_connector/wamn.k` carries no model of `wamn_integration`. |
+| `http-page` gains `method`, with GET as the default, and `body-input-pointer`: the input value at that pointer is the JSON body. Offset style gains an optional `has-more` pointer that ends the loop when its value is false. | A POST page carries the body plus `offset` and `limit`. The loop stops on `hasMore: false` without a request for an empty page. |
+| NetSuite is one application, `apps/netsuite`, composed with `wamn_integration` on an org-scoped `oauth1` connection. Its operations are `record.get`, `record.create` and `record.update` on `/services/rest/record/v1/<type>[/<id>]`, `suiteql.query` (POST `/services/rest/query/v1/suiteql`, offset paging, `hasMore`, `Prefer: transient`) and `restlet.call` (C22: `script`, `deploy`, body). Record type, script and deploy are node parameters. Account id and realm are `setting` rows. A SuiteQL query orders by a stable key. | Every request that the fixture sees carries a valid OAuth1 signature with the realm. No guest sees a key. |
+| One scheduled pull: `suiteql.query` windowed by `last_synced_at`, with `carry-input-pointer`, then `jsonata`, then the fixture consumer command, then `setting.write`. One push: a consumer event, then `jsonata`, then `record.create`. | `last_synced_at` advances only after the consumer command succeeds. A failing consumer leaves it unchanged. The push creates one record for each event, by delivery id. |
 
 ### Issues
 
-1. **Org-scoped connection** (`wamn-lcaxg.1`, done at `e3871563e`). A control-database record `(org, name, type, definition)` and a credential handle keyed by org. `wamn-ctl connection declare` writes the record. `environment.k` references it by name: `connections.<alias> = { org = "<name>" }`. `env apply` materializes the instance, generation and binding through the existing `bind`.
-2. **The integration application in a release** (`wamn-lcaxg.2`). The release names the integration packages beside the consumer. C39, bounded: CDC captures only the schemas that an event registration reads. Apply creates the integration principal, and the runs check admits it on a schedule run. A scheduled integration run calls a consumer command when an admin granted the principal a role with that permission.
-3. **`wamn_integration` and the kind case** (`wamn-lcaxg.3`). The base package `apps/platform/wamn_integration` holds the models `setting` and `log` and their SQL operations. `rest_connector` composes it, loses its `item` model, and ends in a fixture consumer command. It reads and writes `last_synced_at` through `setting`. The kind case gets event NATS and a CDC reader, deploys one release with the consumer and the integration, grants the principal with the ctl verb, and runs the scheduled pull.
+1. **Review fixes on main.** All findings of the Epic 4 review, with no new behavior: the org of a connection handle derives from the tenant, OAuth1 base strings percent-decode only and include a form body, a schedule with no next occurrence is skipped and refused at publish, the host schedule task reconnects and reports to the probe, application principals follow the ruling above, `cdc_in_place` compares the publication's schema, the serving manifest format returns to 9, the credentials file has one shape `{projects, orgs}`, the runtime schema derives from `base_dependencies`, `require_direct_transport` is deleted, one `wamn_catalog::parse_workflow_schedule` serves every reader, and the tests gain the restart, failing-consumer and `/recorded` cases.
+2. **`http-page` method, body and `has-more`.** Unit tests cover a POST with a body, the `hasMore` stop and unchanged GET paths.
+3. **`apps/netsuite`.** The manifest, five operations, two wirings and the settings. The publication test covers the error cases of `assemble_local_release` only. Unit tests cover the window query and the `jsonata` mappings.
+4. **Kind case.** A NetSuite-shaped fixture verifies OAuth1 with the realm, serves SuiteQL POST pages with `hasMore`, record get and create with 204 and `Location`, and a RESTlet echo. The pull and the push each run once, and the assertions read `/recorded`. `tools/netsuite/live.sh` is run by the owner against the real account, from a credentials file that the owner supplies. It calls `record.get` and `suiteql.query` once. It is documented and is never a test target.
 
-Per-issue budget: build, clippy, fmt check, unit tests, and the live Postgres test for issue 1. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
+Per-issue budget: build, clippy and unit tests. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class is fixed in place and recorded in the close reason.
 
 ### Closeout
 
-Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the test log path, delete the remote branch. Then stop. Epic 5 is scoped after the owner's review.
+Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the test log path, delete the remote branch. Then stop. Epic 6 follows the owner's review.
 
 ## 6. Sidecar shape (for Epic 6, not before)
 
