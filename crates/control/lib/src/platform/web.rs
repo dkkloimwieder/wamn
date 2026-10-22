@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use serde_json::json;
 use wamn_package_artifact::PackageRegistry;
 
@@ -125,6 +125,75 @@ fn request(
         }],
         ..JobRequest::default()
     })
+}
+
+pub(super) async fn platform_ui(
+    target: &Target,
+    document: &ClusterDocument,
+    repository: &Path,
+    directory: &Path,
+    mut progress: impl FnMut(&str) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if document.buckets.web.is_empty() {
+        for action in ["upload", "check"] {
+            progress(&format!("4.19.1 Platform UI {action}: skipped: no bucket"))?;
+        }
+        return Ok(());
+    }
+    let started = Instant::now();
+    progress("4.19.1 Platform UI upload: starting")?;
+    let mut request = JobRequest {
+        name: format!("platform-ui-{}", document.org),
+        image: super::install::runner_image(directory)?,
+        service_account: Some("wamn-host".into()),
+        command: vec!["/bin/sh".into(), "-ec".into()],
+        arguments: vec![
+            "cd /inputs; exec /usr/local/bin/wamn web upload --platform-ui --org \"$ORG\" --bucket \"$BUCKET\"".into(),
+        ],
+        environment: [
+            ("ORG".into(), document.org.clone()),
+            ("BUCKET".into(), format!("gs://{}", document.buckets.web)),
+            ("WAMN_RELEASE_CHART".into(), "/inputs/chart".into()),
+        ].into(),
+        ..JobRequest::default()
+    };
+    for name in ["Chart.yaml", crate::platform_build::RECEIPT_FILE] {
+        request.binary_files.insert(
+            format!("chart/{name}"),
+            std::fs::read(directory.join("release-chart").join(name))?,
+        );
+    }
+    let dist = crate::platform_build::platform_ui_dist(repository);
+    let mut files = Vec::new();
+    crate::web_upload::collect(&dist, &mut files)?;
+    for path in files {
+        let relative = path
+            .strip_prefix(&dist)?
+            .to_str()
+            .context("platform UI path is not UTF-8")?;
+        request.binary_files.insert(
+            format!("apps/platform_ui/dist/{relative}"),
+            std::fs::read(path)?,
+        );
+    }
+    let hosts = Target {
+        namespace: "hosts".into(),
+        ..target.clone()
+    };
+    let changed = job::run(
+        &hosts,
+        directory,
+        &request,
+        &json!({"org": document.org}),
+        &[],
+    )
+    .await?;
+    progress(&format!(
+        "4.19.1 Platform UI upload: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
+    Ok(())
 }
 
 #[cfg(test)]

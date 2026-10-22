@@ -167,6 +167,7 @@ pub async fn apply(
         if changed { "done" } else { "skipped" },
         started.elapsed().as_secs_f64()
     ))?;
+    super::web::platform_ui(&target, document, repository, work_directory, &mut progress).await?;
     progress("Steps after 4.19.1 come later.")?;
     Ok(())
 }

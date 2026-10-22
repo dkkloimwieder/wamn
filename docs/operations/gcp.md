@@ -940,13 +940,14 @@ It waits for `hosts/hostgroup-c-<org>` to roll out.
 Keep each environment's administration credential current through `provision-project-env --emit-control-administration-patch` before control writes.
 The runtime TLS Secrets and service account from section 4.9 must exist in `hosts`.
 
-Upload the local bundle whose digest the stamped chart records:
+The verb runs `wamn web upload --platform-ui --org <org> --bucket gs://<buckets.web>` in a Job.
+It mounts the local bundle and the stamped build record as Job-owned inputs.
+The upload refuses bytes that differ from the recorded digest.
+An unchanged input digest skips the Job.
+The destination is `gs://<buckets.web>/platform-ui/<platform version>/`, and `config.json` contains only the org.
+Without `--bucket`, the standalone command keeps `gs://wamn-dev-web` as its default.
+With an empty `buckets.web`, the upload and its check print `skipped: no bucket` and start no Job.
 
-```bash
-WAMN_RELEASE_CHART="$W/release-chart" target/debug/wamn web upload --platform-ui --org dkk
-```
-
-The destination is `gs://wamn-dev-web/platform-ui/<platform version>/` and `config.json` contains only the org.
 Set the control `bucketPath` in `values-edge.yaml` and the control matcher paths in `url-map.yaml` to that platform version.
 The `control.wamn.dev` DNS record must point to the same load balancer as the application hosts.
 The existing wildcard certificate covers this host.

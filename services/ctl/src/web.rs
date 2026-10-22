@@ -44,11 +44,7 @@ pub struct UploadArgs {
     /// `gs://<bucket>[/<prefix>]`. For `s3://` the `AWS_*` variables supply
     /// the endpoint and the credentials. For `gs://` the `GOOGLE_*` variables
     /// and Application Default Credentials do.
-    #[arg(
-        long,
-        required_unless_present = "platform_ui",
-        conflicts_with = "platform_ui"
-    )]
+    #[arg(long, required_unless_present = "platform_ui")]
     pub bucket: Option<String>,
     /// Upload apps/platform_ui/dist using WAMN_RELEASE_CHART's build receipt.
     #[arg(long, requires = "org")]
@@ -74,6 +70,9 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
             args.org
                 .as_deref()
                 .context("--platform-ui requires --org")?,
+            args.bucket
+                .as_deref()
+                .unwrap_or(wamn_control::web_upload::PLATFORM_UI_BUCKET),
         )
         .await?;
         println!("platform-ui {location} written");
@@ -141,7 +140,7 @@ mod tests {
                 "--bucket",
                 "gs://other"
             ])
-            .is_err()
+            .is_ok()
         );
     }
 }

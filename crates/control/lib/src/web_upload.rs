@@ -138,12 +138,18 @@ pub async fn upload_platform_ui(
     repository: &Path,
     chart: &Path,
     org: &str,
+    bucket: &str,
 ) -> anyhow::Result<String> {
     let (dist, root) = platform_ui_source(repository, chart)?;
-    let sink = Sink::parse(PLATFORM_UI_BUCKET)?;
+    let sink = Sink::parse(bucket)?;
+    let root = [sink.prefix.trim_matches('/'), root.as_str()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
     let store = sink.store()?;
     write_platform_ui(store.as_ref(), &root, &dist, org).await?;
-    Ok(format!("{PLATFORM_UI_BUCKET}/{root}/"))
+    Ok(format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket))
 }
 
 fn platform_ui_source(repository: &Path, chart: &Path) -> anyhow::Result<(PathBuf, String)> {
