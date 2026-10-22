@@ -300,7 +300,7 @@ The operator release runs in `platform`. [values-operator.yaml](../../deploy/gcp
 
 ```bash
 for n in platform identity hosts; do kubectl create namespace $n; done
-helm upgrade --install --namespace platform wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 \
+helm upgrade --install --namespace platform wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
   -f deploy/infra/values-wamn.yaml -f deploy/gcp/values-operator.yaml --wait --timeout 5m
 sed -e 's/__ENVIRONMENT_NAMESPACE__/hosts/' -e 's/namespace: wamn-system/namespace: platform/' \
   deploy/platform/runtime-operator-events-rbac.example.yaml | kubectl apply -f -

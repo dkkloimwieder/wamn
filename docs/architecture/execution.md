@@ -281,7 +281,14 @@ A replacement release or deployment trust configuration uses new pools.
 Credential checks retain the exact pinned generation rules above.
 
 Pool capacity does not limit request admission or total memory.
-Existing route and queue admission limits, native memory accounting, and deployment memory limits remain independent.
+A chart host derives its guest memory budget from its cgroup: three quarters of the 768Mi limit, which is 576 MiB.
+A process memory guard at 90 percent of the limit refuses guest growth and new workloads in every mode.
+The guard samples resident memory once per second, so it is not a hard allocation cap.
+The host runs guest memory and raw-socket egress in count mode ([native alignment](native-alignment.md#retained-wamn-implementations)).
+Count records growth past the budget and connections that the socket policy refuses, and allows them.
+The host flags `--guest-memory-mode` and `--socket-egress` select enforce.
+Each linear memory keeps its 256 MiB ceiling.
+Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.
 The release chart sets how many bytes each allocator slot keeps resident after use.
 Dev activation and the local benchmark read the same values ([host environment](../operations/development-loop.md)).

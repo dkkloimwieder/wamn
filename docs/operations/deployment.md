@@ -19,7 +19,7 @@ Apply repository-wide resource restrictions from [AGENTS.md](../../AGENTS.md).
 The [deploy tree](../../deploy/README.md) contains infrastructure, platform manifests, test Jobs, and SQL.
 Use the direct upstream revision pinned in `Cargo.toml`.
 Use the runtime-operator chart version in the install command in `deploy/infra/values-wamn.yaml`.
-The retained runtime-operator installation uses chart `2.10.3`.
+The retained runtime-operator installation uses chart `2.11.0`.
 Install its CRDs before the operator release.
 Helm does not update existing CRDs during a chart upgrade.
 

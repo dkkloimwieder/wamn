@@ -7,8 +7,8 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 
 ## Upstream ownership
 
-The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.10.3` source at `548bb21b65ac8cc03776f73656c4bf7be2f96992`.
-The resolved Wasmtime family is `48.0.5`.
+The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.11.0` source at `bc5acfb8e15f7d6d199ca940354d82e590c2d5ff`.
+The resolved Wasmtime family is `48.0.7`.
 There are no carried wasmCloud patches, and upstream default providers remain disabled.
 The existing owner rule forbids restoring the retired fork patches.
 
@@ -28,7 +28,8 @@ These choices make no general performance claim.
 | [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
 | [Guest normalization](components.md#guest-build-identity) | Standard-library imports must satisfy the closed tenant capability set. | A replacement build must preserve that actual import boundary. |
 | [`wamn build`](../operations/building.md#native-programs-and-app-components) | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
-| Operator Event permissions | Chart `2.10.3` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the scoped `create,patch` Role only when the pinned chart grants it. |
+| Operator Event permissions | Chart `2.11.0` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the scoped `create,patch` Role only when the pinned chart grants it. |
+| [Count mode](execution.md#native-dispatch) | Chart `2.11.0` defaults guest memory and raw-socket egress to enforce. The owner ruling of 2026-10-21 (`wamn-upgrade-2.11`) runs both in count. Count records what enforce would refuse and allows it. | Return to enforce when the owner rules on the measured `guest_memory.would_refuse` and `socket_policy.would_deny` counters. The host flags and chart values already accept enforce. |
 | [Object storage](capabilities.md#object-storage) | Binding ownership requires bucket and prefix confinement plus complete-body writes. | Adopt stable `wasi:blobstore` when upstream supplies the required binding behavior by default. |
 | Platform extensions | Extension installation changes the whole database and needs administrator authority. | A package-scoped mechanism must prevent effects on neighboring packages. |
 | [HTTP transport](capabilities.md#outbound-http) | Native connector access does not preserve pinned peers and the required client identity and limits. | Public native APIs must preserve peer pinning, credential generations, aggregate bounds, and exact outcomes. |
