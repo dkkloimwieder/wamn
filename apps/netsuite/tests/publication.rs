@@ -1,4 +1,11 @@
-//! Publication refusals for the NetSuite wiring package.
+//! Publication refusals and the checkpoint command through the native host.
+mod checkpoint_live;
+#[path = "../../rest_connector/tests/consumer_live.rs"]
+#[expect(
+    dead_code,
+    reason = "this target shares installation, not the REST consumer invocation"
+)]
+mod consumer_live;
 #[path = "../../rest_connector/tests/support.rs"]
 mod support;
 
@@ -9,8 +16,17 @@ use wamn_control::publish_release::{
 };
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
-#[test]
-fn invalid_ports_and_dependencies_refuse_publication() {
+struct Fixture {
+    args: PublishReleaseRequest,
+    roots: Vec<std::path::PathBuf>,
+    admissions: Vec<wamn_control::component_admission::ComponentAdmission>,
+    documents: Vec<(ComponentPackageScope, WiringDocument)>,
+}
+
+fn fixture() -> Fixture {
+    // support::admit writes one temporary declaration per process and component.
+    static ADMISSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _admission = ADMISSION.lock().unwrap();
     let repository = support::repository();
     let integration = repository.join("apps/platform/wamn_integration");
     let consumer = repository.join("apps/rest_consumer_fixture");
@@ -99,6 +115,34 @@ fn invalid_ports_and_dependencies_refuse_publication() {
             })
             .collect(),
     };
+    Fixture {
+        args,
+        roots,
+        admissions,
+        documents,
+    }
+}
+
+#[tokio::test]
+async fn pull_checkpoint_commits_through_the_application_role() -> anyhow::Result<()> {
+    let Fixture {
+        args,
+        roots,
+        admissions,
+        documents,
+    } = fixture();
+    let assembled = assemble_local_release(&args, &roots, &admissions, documents)?;
+    checkpoint_live::invoke(&roots, &assembled.published.manifest, &admissions).await
+}
+
+#[test]
+fn invalid_ports_and_dependencies_refuse_publication() {
+    let Fixture {
+        args,
+        roots,
+        admissions,
+        documents,
+    } = fixture();
     assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
     let mut wrong_port = documents.clone();
     wrong_port[0]

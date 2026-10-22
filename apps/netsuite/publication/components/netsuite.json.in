@@ -27,13 +27,31 @@
           "schema": {
             "type": "string",
             "enum": [
-              "setting.read",
-              "setting.write"
+              "setting.read"
             ]
           },
           "required": true
         }
       ]
+    },
+    "netsuite:sync/finish": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
     }
   },
   "connections": []

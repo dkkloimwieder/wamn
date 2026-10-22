@@ -18,7 +18,17 @@ manifest.Package {
         }
     }
     models = {}
-    custom_operations = {}
+    custom_operations = {
+        "sync.finish" = manifest.Command("sync.finish") {
+            permission = None
+            visibility = "private"
+            connection = None
+            idempotent_by = "stateless"
+            input.fields = [manifest.request_id, {path = "value.due", type = "timestamptz"}]
+            result = {class = "one", fields = [{path = "due", type = "timestamptz"}]}
+            errors = ["invalid_input", "retry", "timeout", "internal_error"]
+        }
+    }
     connections = ["postgres"]
     components = {netsuite = {connections = ["postgres"]}}
     workflows = {

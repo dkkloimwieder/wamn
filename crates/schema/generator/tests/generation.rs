@@ -153,7 +153,7 @@ fn a_custom_operation_refuses_the_page_result_class() {
 }
 
 #[test]
-fn a_single_base_adapter_needs_no_new_operation_interface() {
+fn a_component_with_no_operation_refuses_over_base_sql() {
     let mut adapter = manifest();
     adapter["models"] = json!({});
     adapter["base_dependencies"] = json!({"integration": {
@@ -161,7 +161,12 @@ fn a_single_base_adapter_needs_no_new_operation_interface() {
         "digest": format!("sha256:{}", "a".repeat(64)),
         "operations": ["setting.read", "setting.write"]
     }});
-    validate_operation_vocabulary(&parsed_manifest(&adapter)).unwrap();
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&adapter))
+            .unwrap_err()
+            .error_type(),
+        GenerateErrorType::InvalidComponent
+    );
     adapter["base_dependencies"] = json!({});
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&adapter))

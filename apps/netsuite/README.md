@@ -2,8 +2,9 @@
 
 This application composes `wamn_integration` and owns no domain tables.
 The wirings implement every NetSuite request with JSONata and the platform HTTP nodes.
-The Rust component only forwards `setting.read` and `setting.write` to the composed base.
-It imports existing interfaces and contains no NetSuite request logic.
+The Rust component forwards `setting.read` to the composed base.
+Its private `sync.finish` command writes `last_synced_at` through the base inside the transaction that the host opens.
+It contains no NetSuite request logic.
 The package pins both base components by version and digest.
 
 ## Operations
@@ -50,7 +51,8 @@ Use a NetSuite account time zone that matches these query bounds.
 The page node carries the due time through every page, including an empty result.
 The row mapping makes one `rest_consumer_fixture.item.record` command with each row's `id` as its key and `name` as its name.
 The command result retains the due time as `request_id`.
-The finish mapping refuses an error result before the `setting.write` node can run.
+The finish mapping refuses an error result before the `sync.finish` command can run.
+It passes the due time to that command.
 Only a successful batch advances `last_synced_at` to the due time.
 The fixture command inserts missing keys. It does not update existing fixture rows.
 
@@ -135,7 +137,7 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' CARGO_TARGET_DIR="$PWD/target" \
   -p netsuite --target x86_64-unknown-linux-gnu --lib
 ```
 
-Run publication refusal tests after the package build:
+Run the publication and live checkpoint tests after the package build:
 
 ```sh
 TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \

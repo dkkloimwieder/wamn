@@ -74,17 +74,14 @@
       "interface-version": "0.1.0",
       "operation": "wamn:node/handler@0.1.0",
       "params": {
-        "expression": "($assert($count($) = 1 and $type($lookup($[0].value, \"keys\")) = \"array\" and $not($exists($[0].error)), \"consumer command did not succeed\"); [{\"request_id\": $[0].request_id, \"value\": {\"idempotency_key\": $[0].request_id, \"key\": \"last_synced_at\", \"value\": $[0].request_id}}])",
+        "expression": "($assert($count($) = 1 and $type($lookup($[0].value, \"keys\")) = \"array\" and $not($exists($[0].error)), \"consumer command did not succeed\"); [{\"request_id\": $[0].request_id, \"value\": {\"due\": $[0].request_id}}])",
         "port": "items"
       }
     },
     "write": {
       "component": "netsuite",
       "interface-version": "0.1.0",
-      "operation": "wamn:node/async-handler@0.1.0",
-      "params": {
-        "operation": "setting.write"
-      }
+      "operation": "netsuite:sync/finish"
     }
   },
   "edges": [

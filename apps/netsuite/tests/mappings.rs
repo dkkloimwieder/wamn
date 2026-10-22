@@ -33,6 +33,16 @@ fn window_uses_the_checkpoint_and_due_with_stable_order() {
         result["body"]["q"],
         "SELECT id, entityid AS name FROM customer WHERE lastmodifieddate >= TO_DATE('2026-10-22 12:00:00', 'YYYY-MM-DD HH24:MI:SS') AND lastmodifieddate < TO_DATE('2026-10-22 12:01:00', 'YYYY-MM-DD HH24:MI:SS') ORDER BY id"
     );
+    // sync.finish stores the due time in its normalized timestamptz form.
+    let normalized = mapping(
+        "netsuite_pull",
+        "window",
+        &json!([{"value": {
+            "value": "2026-10-22T12:00:00.000000Z", "carry": due
+        }}]),
+        None,
+    );
+    assert_eq!(normalized["body"]["q"], result["body"]["q"]);
     let first = mapping(
         "netsuite_pull",
         "window",
@@ -73,7 +83,9 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
         &json!([{"request_id": due, "value": {"keys": []}}]),
         None,
     );
-    assert_eq!(finish[0]["value"]["value"], due);
+    assert_eq!(finish[0]["value"]["due"], due);
+    let command = super::finish_codec::decode(&finish.to_string()).unwrap();
+    assert_eq!(command[0].input.as_ref().unwrap().due, due);
 }
 
 #[test]

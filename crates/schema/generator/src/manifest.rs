@@ -1103,14 +1103,7 @@ fn validate_component_groups(
         };
         *count += 1;
     }
-    // A single composition adapter can expose only existing node interfaces.
-    // Its SQL operations still belong to the pinned base and pass admission there.
-    let composition_adapter = manifest.components.len() == 1
-        && component_by_operation.is_empty()
-        && manifest.uses_only_base_sql();
-    if let Some((component, _)) = grouped.iter().find(|(_, count)| **count == 0)
-        && !composition_adapter
-    {
+    if let Some((component, _)) = grouped.iter().find(|(_, count)| **count == 0) {
         return Err(GenerateError::new(
             GenerateErrorType::InvalidComponent,
             format!("component {component} groups no operations"),
