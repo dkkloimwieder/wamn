@@ -6,7 +6,7 @@ WMS owns package `wamn_wms`, its SQL, guest, generated client, and application t
 [Data access](data/): SQL-backed operation implementations.
 Generated output: Derived contracts, SQL, and client code. `wamn build` writes it to `apps/target/wamn/wamn_wms/`, outside Git.
 [Component](component/): Application guest.
-[Web application](web/README.md): The browser page, with its route table.
+The WMS demo web application is removed. A later rebuild will use wfe.
 [Tests](tests/): Application assertions.
 [Running tests](../../docs/operations/running-tests.md): Commands and required inputs.
 [Development loop](../../docs/operations/development-loop.md): Generation during a watch session.

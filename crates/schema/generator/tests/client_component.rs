@@ -66,7 +66,6 @@ fn every_served_role_emits_a_typed_description_without_components() {
         let source = std::str::from_utf8(file.bytes()).unwrap();
         for retired in [
             "solid-js",
-            "@wamn/ui",
             "export function",
             "createSignal",
             "<form",

@@ -497,8 +497,7 @@ fn a_package_manifest_carries_the_authored_name_and_the_release_version() {
             "    \".\": \"./index.ts\"\n",
             "  },\n",
             "  \"dependencies\": {\n",
-            "    \"@wamn/web-runtime\": \"^0.1.0\",\n",
-            "    \"@wamn/ui\": \"^0.1.0\"\n",
+            "    \"@wamn/web-runtime\": \"^0.1.0\"\n",
             "  }\n",
             "}\n",
         )
@@ -507,10 +506,6 @@ fn a_package_manifest_carries_the_authored_name_and_the_release_version() {
     assert_eq!(
         parsed["dependencies"]["@wamn/web-runtime"], "^0.1.0",
         "the bindings import the hand-written runtime"
-    );
-    assert_eq!(
-        parsed["dependencies"]["@wamn/ui"], "^0.1.0",
-        "the components render through the hand-written UI package"
     );
 }
 

@@ -124,42 +124,27 @@ function scopePlugin(dev: DevConfiguration): DevPlugin {
 export function applicationConfig(options: ApplicationOptions): ApplicationConfig {
   const at = (path: string) => fileURLToPath(new URL(path, options.root));
   const web = fileURLToPath(new URL("..", import.meta.url));
-  // The clients of the host-run routes: the shell reads `permission.mine`
-  // through the first and `control.mine` through the second.
+  // The clients of the host-run application and control routes.
   const control = fileURLToPath(new URL("../../apps/target/wamn/wamn_control/client-ts/", import.meta.url));
   const controlOrg = fileURLToPath(new URL("../../apps/target/wamn/wamn_control/control/client-ts/", import.meta.url));
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
-  const installed = (name: string) => at(`node_modules/${name}`);
   const dev = options.command === "serve" ? devConfiguration() : undefined;
   return {
     plugins: dev === undefined ? [] : [scopePlugin(dev)],
-    // The shell, the runtime, the UI and the generated clients live outside the
-    // application, so the names they import resolve here. A bare import from
-    // one of them would otherwise walk up a directory tree that installs nothing.
+    // The runtime and generated clients live outside the application.
     resolve: {
       alias: [
         { find: "@wamn/web-runtime", replacement: `${web}runtime/src/index.ts` },
-        { find: "@wamn/ui/styles.css", replacement: `${web}ui/src/styles.css` },
-        { find: /^@wamn\/ui$/, replacement: `${web}ui/src/index.ts` },
-        { find: /^@wamn\/ui\/admin$/, replacement: `${web}ui/src/admin/index.ts` },
-        { find: /^@wamn\/shell$/, replacement: `${web}shell/src/index.ts` },
         { find: options.client.name, replacement: at(options.client.path) },
         { find: /^@wamn\/control-client$/, replacement: `${control}index.ts` },
         { find: /^@wamn\/control-org-client$/, replacement: `${controlOrg}index.ts` },
-        { find: /^@solidjs\/router$/, replacement: installed("@solidjs/router") },
-        { find: /^@tanstack\/solid-table$/, replacement: installed("@tanstack/solid-table") },
-        { find: /^zod(\/.*)?$/, replacement: `${installed("zod")}$1` },
       ],
-      // web/ui installs its own libraries, and they import solid-js. Two
-      // copies of solid-js break context and reactivity.
-      dedupe: ["solid-js", "@solidjs/router", "@tanstack/solid-table"],
+      dedupe: [],
     },
     server: {
       port: options.port,
       ...(dev === undefined ? {} : { proxy: proxy(dev) }),
-      // The web/ui stylesheet names its font files by path, and a path outside
-      // the application is refused unless it is allowed here. pnpm keeps each
-      // installed package once, under the repository root's node_modules.
+      // Allow shared sources and pnpm packages outside the application.
       fs: { allow: [at("."), web, at(options.client.path), control, controlOrg, store] },
     },
     build: { outDir: at(options.outDir), emptyOutDir: true },

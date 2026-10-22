@@ -138,11 +138,11 @@ WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_route.wasm"
 ```
 
 The generated clients of the host routes run against the same HTTP shell.
-`control_client_live` serves each set and runs `web/components/test/control-client.live.test.ts` and `control-org-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
+`control_client_live` serves each set and runs `apps/platform_ui/test/control-client.live.test.ts` and `control-org-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
 
 ```bash
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
-  cargo test --locked --offline -p wamn-integration-tests --lib control_client_live -- --ignored --skip shell_browser_live
+  cargo test --locked --offline -p wamn-integration-tests --lib control_client_live -- --ignored
 ```
 
 The edge route, device and forward tests run in the workspace run.
@@ -677,7 +677,7 @@ One test composes Acme over Receiving into a copy of their build output and chec
 ### Generated TypeScript bindings
 
 The generated TypeScript is type-checked by hand, not by a test and not by a build.
-Nothing in `cargo build` needs Node, and only the ignored `control_client_live` and `shell_browser_live` tests run it.
+Nothing in `cargo build` needs Node, and the ignored `control_client_live` tests run it.
 To type-check the bindings for the platform fixture, run:
 
 ```bash
@@ -702,13 +702,13 @@ To write them without a web script, run:
 cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client
 ```
 
-`pnpm run check` in `web/components` type-checks them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
+`pnpm run check` in `apps/platform_ui` type-checks them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
 The repository policy lint refuses a tracked file in a `client-ts` directory outside `apps/`.
 
 ### Web packages
 
 The web packages form one pnpm workspace, which `pnpm-workspace.yaml` at the repository root lists.
-They are `web/runtime`, `web/components`, `web/ui`, `web/shell`, `apps/wamn_wms/web` and `apps/wamn_receiving/web`.
+It includes `web/runtime`, `web/shell`, the wfe packages, `apps/platform_ui`, and `apps/wamn_receiving/web`.
 Use pnpm for every command of these packages, not npm.
 Install all of them once, at the repository root:
 
@@ -717,7 +717,7 @@ pnpm install
 ```
 
 The workspace has one lock file, `pnpm-lock.yaml`, at the repository root.
-The scripts of `web/components`, `web/shell`, `web/ui` and the application web packages write the host route clients with Cargo before they run.
+The scripts of the application web packages write the host route clients with Cargo before they run.
 So these scripts need the Rust toolchain, and the first run compiles the generator.
 
 Prettier formats the hand-written web code, and ESLint lints it.
@@ -751,15 +751,14 @@ If you change the table, run these tests.
 
 ### Platform UI
 
-`web/ui` holds the copied Zaidan components and the one stylesheet that generated components render through.
-To type-check the package and build its stylesheet once, run:
+`apps/platform_ui` owns the shared Solid 2 shell and the platform screens.
+After the workspace install, run these commands from the repository root:
 
 ```bash
-cd web/ui && pnpm run check
+pnpm --filter @wamn/platform-ui check
+pnpm --filter @wamn/platform-ui test
+pnpm --filter @wamn/platform-ui build
 ```
-
-The stylesheet build writes into `node_modules/.cache/wamn-ui`, and nothing reads that file.
-It shows that the CSS entry compiles.
 
 ### Local platform sign-in
 
@@ -898,33 +897,15 @@ TMPDIR=/var/tmp cargo run --offline -p wamn-schema-generator --example check_cli
 The command writes temporary modules and removes them after the check.
 `check_client_ts` checks the unchanged TypeScript bindings separately.
 
-### App shell
+### Shared Vite tooling and Receiving
 
-`web/shell` resolves `@wamn/ui` from `web/ui` and the runtime from `web/runtime`.
-To type-check the shell and run its tests, run:
-
-```bash
-cd web/shell && pnpm run check && pnpm test
-```
-
-The tests render the shell with stub screens and a stub identity service, and read the document.
-
-The browser test serves an identity stand-in, an application host and a control host from local processes, and a Vite dev server for the page in `web/shell/test/browser`.
-It drives a headless Chrome through sign in for five accounts, so the machine needs Chrome.
-Build the flow HTTP component, and run `pnpm install` at the repository root. Then run:
+`web/shell` keeps the shared Vite helper and the Playwright dependency for browser tests.
+The platform UI owns the application shell and its tests.
+To type-check the helper and the Receiving web application, run:
 
 ```bash
-WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
-  cargo test --locked --offline -p wamn-integration-tests --lib shell_browser_live -- --ignored
-```
-They need no browser and no server.
-
-An application web page, such as `apps/wamn_wms/web` or `apps/wamn_receiving/web`, is a package of the same workspace.
-To type-check it, run:
-
-```bash
-cd apps/wamn_wms/web && pnpm run check
-cd apps/wamn_receiving/web && pnpm run check
+pnpm --dir web/shell check
+pnpm --dir apps/wamn_receiving/web check
 ```
 
 ## Cleanup

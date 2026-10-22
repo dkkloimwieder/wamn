@@ -1,6 +1,6 @@
 # Platform UI
 
-This application ports the [shell rules](../../web/shell/README.md) to Solid 2.
+This application owns the shared Solid 2 shell.
 [Execution](../../docs/architecture/execution.md) owns those rules.
 The application uses wfe components from the `web/wfe` submodule and the shared session and transport in `web/runtime`.
 Vite uses the `wfe-source` export condition, so it compiles the pinned source without a separate wfe build.
@@ -9,7 +9,7 @@ The build refuses Solid 1 modules and imports from the old UI packages.
 
 The shell core owns addresses, permission filtering, navigation, and query values.
 Its tests port the Solid 1 assertions and use stub screens for later Control and administration work.
-Receiving uses this shell with generated wfe descriptions. WMS retains the Solid 1 shell.
+Receiving uses this shell with generated wfe descriptions. The WMS demo awaits a rebuild on wfe.
 The shell passes permitted route actions through `ScreenProps.actions`, with route parameters filled.
 Receiving renders those actions through the table `toolbarActions` binding.
 
@@ -56,7 +56,6 @@ State cells contain only the value. Pods cells contain only the count.
 Sign-in, invitation, recovery, reset, and no-access pages use standalone wfe EntryPanel pages with distinct titles.
 Theme and a main landmark wrap each default viewport panel. These pages contain no dashboard Frame.
 Identity forms use `@wfe/form` and FormView. The no-access panel contains a return link.
-Their rules also exist in both shells until M3.
 
 After sign-in, an audience table replaces the form.
 Its columns show the org, project, and environment.

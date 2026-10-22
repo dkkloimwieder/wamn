@@ -2,7 +2,7 @@
 //! (docs/plan/platform-ui.md §4.4 to §4.6, wamn-a40n.7 and wamn-a40n.8).
 //!
 //! Each test serves one set through the shipped flow-http component, as a
-//! host does, and runs its test file in `web/components` against it with
+//! host does, and runs its test file in `apps/platform_ui` against it with
 //! session tokens. The application set answers an `admin` and a member, and
 //! the control set answers an `org-admin` and a `project-admin`.
 
@@ -38,11 +38,11 @@ mod application_fixture;
 use application_fixture::{ApplicationHost, MEMBER, PROJECT, application_host};
 
 #[path = "../../../crates/execution/host/tests/support/control_fixture.rs"]
+#[expect(
+    dead_code,
+    reason = "The shared fixture also provides project databases for host route tests."
+)]
 mod control_fixture;
-
-// The shell browser test uses the same fixtures, and a fixture file loads once.
-#[path = "shell_browser_live.rs"]
-mod shell_browser_live;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
@@ -98,10 +98,10 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
     Ok(())
 }
 
-/// Run one test file of `web/components` with `pnpm`, and require that both
+/// Run one test file of `apps/platform_ui` with `pnpm`, and require that both
 /// of its cases pass.
 async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
-    let components = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/components");
+    let platform_ui = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/platform_ui");
     // `pnpm exec` runs no package script, so the clients are written here.
     wamn_schema_generator::materialize_host_route_client(
         &wamn_schema_generator::host_route_client_output_root(
@@ -109,7 +109,7 @@ async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
         ),
     )?;
     let output = tokio::process::Command::new("pnpm")
-        .current_dir(&components)
+        .current_dir(&platform_ui)
         .args(["exec", "vitest", "run", file])
         .envs(env.iter().map(|(name, value)| (name, value)))
         .output()

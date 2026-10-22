@@ -4,8 +4,6 @@
     "lib": ["ES2022", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -14,16 +12,7 @@
     "noUnusedLocals": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"],
-    "paths": {
-      "@wamn/web-runtime": ["../runtime/src/index.ts"],
-      "@wamn/ui": ["../ui/src/index.ts"],
-      "@wamn/ui/admin": ["../ui/src/admin/index.ts"],
-      "@wamn/control-client": ["../../apps/target/wamn/wamn_control/client-ts/index.ts"],
-      "@wamn/control-org-client": ["../../apps/target/wamn/wamn_control/control/client-ts/index.ts"],
-      "solid-js": ["./node_modules/solid-js"],
-      "solid-js/*": ["./node_modules/solid-js/*"]
-    }
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.ts", "vitest.config.ts"]
+  "include": ["vite.ts"]
 }

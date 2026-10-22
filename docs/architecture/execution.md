@@ -132,8 +132,8 @@ The writes are the functions of [`wamn_platform_identity::application`](../../cr
 `permission.grant` writes one permission row; a row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
 The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
-The web screens `RoleGrid` and `UserGrid` of [`@wamn/ui/admin`](../../web/ui/README.md#the-platform-exports) call these routes through that client and write no database directly.
-`RoleGrid` shows one role's operations from `permission.list`, and `UserGrid` shows one user's roles from `user.list` and their permissions from `permission.list`.
+The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through that client and write no database directly.
+The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
 Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
@@ -749,71 +749,18 @@ A generated detail, a table, an edit cell, the record text in a table's referenc
 Each reads again only after a write that touches them, so an unchanged read costs one 304 and an untouched read costs nothing.
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
-A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
-Every table renders the platform `QueryTable` over a table definition that the generator derives from the read's contract.
-The emitter writes the definition as data, and each table component is one line: the [`QueryTable`](../../web/ui/src/table/query-table.tsx) of the UI package over that definition.
-When the last load read every row, the `QueryTable` places a [`SetTable`](../../web/ui/src/table/set-table.tsx) over the rows, which filters, searches, sorts, groups, totals and exports them in the browser.
-The definition names each operation the table calls as a binding, which is its route and its field maps, and the input path of the limit, the sort and each scope filter.
-Each filter states its match mode when it does not match exactly, a range states the type of its bounds, and a band states the days it reads by default.
-A read with a server search names the search input and the fields it reads.
-Its declared filters are the scope bar of the table, and the table owns the sort, the cap and the refresh.
-The scope bar shows one control for each filter mode. Exact, contains and prefix filters take value chips, a range takes two bounds, and an is-null filter takes any, empty or has a value.
-A band shows its default days until the operator sets its start, and its reset returns to the default. A load without the band leaves it out of the request.
-A read with a server search gets a search box in the scope bar, apart from the client search of a fully read set. Views and the URL keep each shape.
-It loads when it mounts. A load of a query streams its rows up to the cap, when the transport can stream.
-[`load.ts`](../../web/runtime/src/load.ts) reads the reply lines with a stream decoder and a line buffer, and hands the rows to the table in batches, once per animation frame, or every 50 ms where no frames run.
-A new load aborts the stream of the last one, and a batch of an older load is dropped. A malformed line, or a body without its outcome line, fails the load.
-The table holds the rows of its last load, so a load of the same request sends that load's ETag with `cache: "no-store"`, and a 304 keeps the rows. No browser cache keeps a second copy of a load.
-A transport that cannot stream reads one page, with a limit of the cap or the page maximum, whichever is lower, and follows no cursor.
-A load of a bounded list reads every row, so the table is always fully read.
-A header sort of rows that the load did not read in full starts a new load in that order.
-The row id of the table is the key that the read states in `lists`: one result field, or several whose values together name one row.
-Generation refuses a projection that answers a list of rows and states no `lists` key, because a row position names no row.
-A `lists` that names a model also lets a selector offer the rows as records of that model.
-Each row link and row form is a button in the column after the row selection and the expand of child tables, when the page passes a handler for its operation.
-That column is as wide as its buttons, and a page that passes no handler has no such column.
-A table that holds more than 100 rows renders only the rows in view of its box.
-The definition also names the served update of the table's relation, with the columns it writes that the plan does not supply.
-The update contract states the column that each writable input writes, so no name is compared.
-It names each operation that a row opens. An operation takes many rows when it accepts more than one outer input and runs each in its own transaction.
-An operation that takes many rows is a bulk action of the table. It opens its generated form in a sheet, and the form hides the inputs that the rows fill.
-One submission sends one input for each selected row in one call, and each row shows its own outcome. A row sends its own revision when the form's revision input names the input that the row fills.
-It names each child table: another table whose declared filter narrows a column that names a record of this table's model.
-A table with an update leads each row with an edit button, which opens every cell of a column that the update writes.
-A column whose update input names a record edits through a select over the list that the update form's selector reads.
-One save sends the changed columns in one update. The table puts the returned row in place, and loads again after any write it did not send.
-A row expands to its child tables. Each child is a table with its scope filter fixed to the row's key, which its scope bar does not offer.
-A detail reads one record and shows its fields.
-A form holds each input the operator fills in a Solid signal, and it checks that input with an emitted `zod` schema.
-It writes the reserved inputs from the runtime at submit time.
-A delete asks for a confirmation first.
-A form whose plan binds a revision reads the record when it opens and sends the revision of that read.
-It reads nothing at submit, so a change that another writer makes in between refuses as a conflict.
-A delete whose plan binds a revision takes the key and the revision of the record that the page displayed, and it reads nothing.
-A command revision input can name the input whose record it guards, as `"revision": "value.packaging_id"` in place of `"revision": true`. The form then sends the revision of the row that carries the held key in that selector: the row the operator chose, a listed row that carries a filled key, or the record read for a key off the list. If no row carries the key, the form refuses locally and marks that selector.
-No page supplies a revision. Generation refuses a form whose revision input has no bound read and names no input, with the code `unsupplied_revision`.
-A table row fills a form input only when that input is the one input of the form that names the row's model. If two inputs name it, the row fills neither.
-A table column that names a record shows the record's text, not its key.
-A generated result field states `references` from its column's foreign key, and an authored result field can declare it.
-The plan binds that column to the model's served list, which states the display field, and to the record read that the list's rows open.
-A list uses its explicit `display_field` as the record label. If that declaration is absent, the label uses the record ID from `key_field`. The plan never selects a label from the order or type of other fields. A generated model query declares `display_field` on the query. An authored list declares it in `lists`; both emit the same contract member.
-The table reads each key once, shows nothing while the read runs, and shows the key when no record comes back.
-A column whose model serves no such list and read shows the key, and the emitted index names it.
-A selector that holds a key its list did not return, such as one a row action filled from a later page, reads that record through the same read and shows its text.
-A screen shows a refusal as a sentence, never as its code. The runtime holds one sentence for each platform and ingress code. An application code shows the `text` that its `error_details` entry declares, and a code with no text reads as its words. The text travels like a field label: through the errors contract and the client IR into the generated contract, where the transport puts it on the refused outcome.
-A refusal that names a field marks that control. A unique or foreign key over one field that the operation writes names that field in the refusal detail, beside the constraint.
-A form shows a completed line beside its buttons after its command completes.
-An operation whose shape has no role gets no component, and the emitted index names it with the reason.
-A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
-Components state no route and no navigation: a row link is a callback, and the application decides what to open.
+A package that generates TypeScript also generates [wfe descriptions](../../crates/schema/generator/src/client_component.rs) for its supported screen roles.
+Descriptions contain presentation data for tables, details, forms, and deletes.
+The [Receiving web application](../../apps/wamn_receiving/web/README.md) binds those descriptions to requests, validation, reference selectors, and navigation.
+The generated TypeScript bindings continue to use the browser runtime.
 
-The [app shell](../../web/shell/README.md) places the components on routes, and the generator does not write it.
-Receiving and WMS share the Solid 1 shell in `web/shell`.
-The [platform UI](../../apps/platform_ui/README.md) ports the shell core to Solid 2 with wfe layout components.
-It reuses `web/runtime` for the cookie session and transport.
-Its route, scope, permission, query, and identity-page rules have separate implementations until M3 removes the Solid 1 shell.
-No bundle includes both Solid versions.
-The generator emits no navigation list: an application writes its route table by hand from the generated component index.
+A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
+Descriptions state no route or navigation. The application decides what to open.
+
+The [platform UI](../../apps/platform_ui/README.md) owns the shared Solid 2 shell and uses wfe layout components.
+Receiving uses this shell with generated descriptions. The WMS backend remains, but its demo web application awaits a rebuild on wfe.
+The shell reuses `web/runtime` for the cookie session and transport.
+The generator emits no navigation list. Each application writes its route table.
 An application web page in `apps/<app>/web/` gives the shell a hand-written route table of screens, grouped by model.
 The navigation names a model with one screen by the model alone, and it lists the screen labels only below a model with more than one screen.
 A record page carries its key in the address, for example `packagings/<id>`, and a table row opens it through the row callback.
@@ -827,13 +774,11 @@ The org screen grants and revokes `org-admin`, activates and deactivates a membe
 A grant that a higher grant covers shows as hierarchy-controlled, with no toggle, because the route refuses its revoke.
 Each command form has its own route. A create or merge form opens from a button above its table, and an update form from a button above its record page.
 A row that fills a form opens it with the filled values in the query, so a reload keeps them. A completed submission returns to the page that opened the form, and a refusal stays on the form.
-A packaging form, such as `inventory.move`, sends the revision of the packaging row that its packaging selector holds, so no route reads the packaging for it.
 The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
 A screen address with no session asks for the password on that address, and it shows the screen after sign in.
 The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.
 The platform UI calls the control host through `/api/wamn_control` at `control.wamn.dev`.
 Its [deployment](../operations/deployment.md#platform-ui-files) owns the control edge route and the org-only scope.
-The Solid 1 shell still calls Control at `/wamn_control` with no prefix. No application edge routes that path yet, and `wamn-oeki` holds that change.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.

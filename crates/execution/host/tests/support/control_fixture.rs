@@ -5,8 +5,7 @@
 //! It also builds the project databases of the two environments, with the
 //! administration logins that the control host reads from its mounted Secret.
 //!
-//! `control_route_live` and `tests/integration`'s `control_client_live` and
-//! `shell_browser_live` include it.
+//! `control_route_live` and `tests/integration`'s `control_client_live` include it.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{

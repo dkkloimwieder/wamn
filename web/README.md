@@ -6,9 +6,8 @@ The generator writes the bindings, and this directory holds what the bindings ca
 | Path | Owner |
 | --- | --- |
 | [runtime](runtime/) | `@wamn/web-runtime`: the wire contract, and the transport that classifies one response |
-| [ui](ui/README.md) | `@wamn/ui`: the copied Zaidan components, the theme, and the exports that generated components render through |
-| [components](components/README.md) | The harness that type checks and tests generated components |
-| [shell](shell/README.md) | `@wamn/shell`: sign in, the session, the layout and the routes that every application web page shares |
+| [wfe](wfe/README.md) | The UI library used by the platform and Receiving applications |
+| [shell](shell/README.md) | Shared Vite configuration and Playwright for browser tests |
 
 ## Runtime
 

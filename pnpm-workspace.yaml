@@ -1,12 +1,8 @@
 # The web packages. One `pnpm install` here installs all of them against one
 # lock file. The platform UI consumes wfe through workspace dependencies.
-# WMS still reaches the Solid 1 shell through path aliases.
 packages:
   - web/runtime
-  - web/components
-  - web/ui
   - web/shell
-  - apps/wamn_wms/web
   - apps/wamn_receiving/web
   - apps/platform_ui
   # wfe, the UI library, is the git submodule web/wfe pinned by commit (docs/plan/platform-ui-app.md D3).
@@ -21,7 +17,7 @@ allowBuilds:
   "@parcel/watcher": true
 
 minimumReleaseAgeExclude:
-  - solid-js@1.9.16 || 2.0.0-rc.16
+  - solid-js@2.0.0-rc.16
   - "@solidjs/babel-plugin@2.0.0-rc.16"
   - "@solidjs/compiler-darwin-arm64@2.0.0-rc.16"
   - "@solidjs/compiler-darwin-x64@2.0.0-rc.16"
