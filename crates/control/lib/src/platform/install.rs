@@ -151,7 +151,15 @@ pub async fn apply(
         &mut progress,
     )
     .await?;
-    progress("Steps after 4.19 come later.")?;
+    let started = Instant::now();
+    progress("4.19.1 Control credentials: starting")?;
+    let changed = super::control::credentials(&target, document, work_directory).await?;
+    progress(&format!(
+        "4.19.1 Control credentials: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
+    progress("Steps after 4.19.1 come later.")?;
     Ok(())
 }
 
