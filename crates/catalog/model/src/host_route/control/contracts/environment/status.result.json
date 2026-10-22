@@ -60,6 +60,24 @@
       "type": "int32",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "users_with_role",
+      "type": "int32",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "roles",
+      "type": "int32",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "memberships",
+      "type": "int32",
+      "nullable": true,
+      "values": []
     }
   ]
 }

@@ -32,7 +32,7 @@ Out of scope (own beads, after this plan):
 | D5 | Every screen reads and writes through the existing `wamn-control:*` routes at 0.9.0. No new route. | The routes exist. The gap is the client. |
 | D6 | `client_component.rs` emits wfe generator descriptions (`TableDescription`, `FormDescription`) instead of Solid 1 components. `client_ts.rs` bindings are unchanged. | The generator package renders descriptions. Emitting components again would be a second renderer. |
 | D7 | Labels come from a `label` member on operations and fields in `wamn.k`, optional, defaulting to the field path. | `web-operator-client.md` §8 "What hurts" item 3. `label` is an optional additive member of the manifest: the generator identity bumps, the manifest schema version does not. |
-| D8 | No new route. `wamn-control:environment/status@0.9.0` gains three additive answer members: `users_with_role`, `roles`, `memberships`. Additive members do not bump 0.9.0. | The splash tiles need one read per environment, not four. |
+| D8 | No new route. `wamn-control:environment/status@0.9.0` gains three additive answer members: `users_with_role`, `roles`, `memberships` (nullable `int32`). A failed count read returns null without failing status. Additive members do not bump 0.9.0. | The splash tiles need one read per environment, not four. |
 
 ## 3. Audiences and access
 

@@ -28,7 +28,9 @@
 //! `project-admin` in it for each `org-admin` of the org (§5.1).
 //!
 //! `environment.status` reads the runtime through the host-selected
-//! [`crate::environment_status::StatusSource`] and writes nothing.
+//! [`crate::environment_status::StatusSource`] and writes nothing. Optional
+//! counts read the environment through its administration login and the
+//! control store through its existing connection. Count failures answer null.
 //!
 //! `release.profile` reads one installed release of one environment of the
 //! project from its `catalog.releases`, and the columns of its application
@@ -39,6 +41,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use serde::Deserialize;
@@ -315,10 +318,37 @@ impl ControlRoutes<'_> {
                         detail: json!({ "field": "env" }),
                     });
                 }
-                Ok(self
+                let status = self
                     .status
                     .read(self.org, &request.project, &request.env)
-                    .await?)
+                    .await?;
+                let application = async {
+                    let logins = self
+                        .logins(&[(request.project.clone(), request.env.clone())])
+                        .map_err(|_| {
+                            anyhow::anyhow!("no administration login for status counts")
+                        })?;
+                    application_counts(&logins[0]).await
+                };
+                let memberships = async {
+                    let row = self
+                        .control
+                        .query_one(
+                            "SELECT count(*)::int4 FROM identity.project_env_memberships \
+                         WHERE org = $1 AND project = $2 AND env = $3",
+                            &[&self.org, &request.project, &request.env],
+                        )
+                        .await?;
+                    anyhow::Ok(row.get::<_, i32>(0))
+                };
+                Ok(status_with_counts(
+                    status,
+                    &request.project,
+                    &request.env,
+                    application,
+                    memberships,
+                )
+                .await)
             }
             HostHandler::ReleaseProfile => {
                 let request: ReleaseRequest = parse(payload)?;
@@ -811,6 +841,81 @@ impl ControlRoutes<'_> {
     }
 }
 
+/// Bound optional count reads to two seconds so unavailable databases do not
+/// prevent the runtime status from answering. Each read has its own deadline.
+const STATUS_COUNTS_TIMEOUT: Duration = Duration::from_secs(2);
+
+// The platform rows identify the sole tenant, as environment_tenant does.
+// query_one refuses missing or multiple tenants. EXISTS counts each human
+// user once even when that user holds several roles, and excludes services.
+const APPLICATION_COUNTS_SQL: &str = "SELECT \
+    (SELECT count(*)::int4 FROM app_system.users u \
+     WHERE u.tenant_id = t.tenant_id AND u.type = 'user' AND EXISTS \
+       (SELECT 1 FROM app_system.user_roles r \
+        WHERE r.tenant_id = u.tenant_id AND r.user_id = u.id)), \
+    (SELECT count(*)::int4 FROM app_system.roles r WHERE r.tenant_id = t.tenant_id) \
+    FROM (SELECT DISTINCT tenant_id FROM app_system.users WHERE type = 'platform') t";
+
+async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {
+    let (mut client, connection) = tokio_postgres::connect(url, NoTls).await?;
+    // Poll the connection here so cancellation drops its socket too. A spawned
+    // connection could retain a blocked query after the deadline.
+    tokio::select! {
+        result = async {
+            let transaction = client.build_transaction().read_only(true).start().await?;
+            let row = transaction.query_one(APPLICATION_COUNTS_SQL, &[]).await?;
+            let counts = (row.get(0), row.get(1));
+            transaction.commit().await?;
+            anyhow::Ok(counts)
+        } => result,
+        result = connection => {
+            result?;
+            anyhow::bail!("administration connection closed before status counts")
+        }
+    }
+}
+
+async fn optional_status_count<T>(
+    project: &str,
+    env: &str,
+    source: &str,
+    read: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> Option<T> {
+    match tokio::time::timeout(STATUS_COUNTS_TIMEOUT, read).await {
+        Ok(Ok(value)) => Some(value),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, project, env, source, "environment status count read failed");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                project,
+                env,
+                source,
+                "environment status count read timed out"
+            );
+            None
+        }
+    }
+}
+
+async fn status_with_counts(
+    mut status: Value,
+    project: &str,
+    env: &str,
+    application: impl std::future::Future<Output = anyhow::Result<(i32, i32)>>,
+    memberships: impl std::future::Future<Output = anyhow::Result<i32>>,
+) -> Value {
+    let (application, memberships) = tokio::join!(
+        optional_status_count(project, env, "application", application),
+        optional_status_count(project, env, "memberships", memberships),
+    );
+    status["users_with_role"] = json!(application.map(|counts| counts.0));
+    status["roles"] = json!(application.map(|counts| counts.1));
+    status["memberships"] = json!(memberships);
+    status
+}
+
 /// One environment's application write, in its own transaction on its
 /// administration login. It returns the drops of the write, none when the
 /// database holds no platform rows.
@@ -1001,4 +1106,68 @@ fn denied(attachment: &HostAttachment) -> Refusal {
     Refusal::Delivery(DeliveryError::PermissionDenied(PermissionDenial {
         operation: attachment.operation.clone(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn status_answers_when_count_reads_fail() {
+        let status = json!({"digest": "sha256:live", "workloads": [], "live": [], "rollout": {"replicas": 1}});
+        let answer = status_with_counts(
+            status.clone(),
+            "billing",
+            "dev",
+            async { anyhow::bail!("application unavailable") },
+            async { anyhow::bail!("control unavailable") },
+        )
+        .await;
+        for name in ["users_with_role", "roles", "memberships"] {
+            assert_eq!(answer[name], Value::Null);
+        }
+        for name in ["digest", "workloads", "live", "rollout"] {
+            assert_eq!(answer[name], status[name]);
+        }
+    }
+
+    #[tokio::test]
+    async fn status_keeps_independent_counts_and_zero() {
+        let answer = status_with_counts(json!({}), "billing", "dev", async { Ok((0, 2)) }, async {
+            anyhow::bail!("control unavailable")
+        })
+        .await;
+        assert_eq!(
+            answer,
+            json!({"users_with_role": 0, "roles": 2, "memberships": null})
+        );
+        let answer = status_with_counts(
+            json!({}),
+            "billing",
+            "dev",
+            async { anyhow::bail!("application unavailable") },
+            async { Ok(3) },
+        )
+        .await;
+        assert_eq!(
+            answer,
+            json!({"users_with_role": null, "roles": null, "memberships": 3})
+        );
+    }
+
+    #[tokio::test]
+    async fn status_answers_when_count_reads_time_out() {
+        let answer = status_with_counts(
+            json!({"digest": "sha256:live"}),
+            "billing",
+            "dev",
+            std::future::pending(),
+            std::future::pending(),
+        )
+        .await;
+        assert_eq!(
+            answer,
+            json!({"digest": "sha256:live", "users_with_role": null, "roles": null, "memberships": null})
+        );
+    }
 }

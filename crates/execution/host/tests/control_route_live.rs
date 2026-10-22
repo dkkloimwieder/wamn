@@ -1297,3 +1297,123 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
+
+#[derive(Debug)]
+struct FixedStatus;
+
+#[async_trait::async_trait]
+impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
+    async fn read(&self, _: &str, _: &str, _: &str) -> anyhow::Result<Value> {
+        Ok(
+            json!({"digest": "sha256:live", "rollout": {"replicas": 1}, "workloads": [], "live": []}),
+        )
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("control_status_counts")?;
+    let admin = connect(database.url()).await?;
+    let control_url = install(&admin, database.url()).await?;
+    let (logins, billing, _shop) = environments(&admin, database.url(), "counts").await?;
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&PlatformComponent::Provisioning.principal_id().to_string()],
+        )
+        .await?;
+    let principal = create_or_reuse_user(&admin, "counts@example.test", "Counts")
+        .await?
+        .principal_id;
+    invite_member(
+        &admin,
+        &principal,
+        ORG,
+        &MemberGrants {
+            org_admin: true,
+            ..MemberGrants::default()
+        },
+    )
+    .await?;
+    billing.batch_execute(
+        "INSERT INTO app_system.roles (tenant_id, name) VALUES ('t-billing', 'first'), ('t-billing', 'second'), ('other', 'ignored');
+         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES
+           ('t-billing', '00000000-0000-0000-0000-000000000001', 'user', 'one@example.test'),
+           ('t-billing', '00000000-0000-0000-0000-000000000002', 'user', 'two@example.test'),
+           ('t-billing', '00000000-0000-0000-0000-000000000003', 'service', 'service@example.test'),
+           ('other', '00000000-0000-0000-0000-000000000004', 'user', 'other@example.test');
+         INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES
+           ('t-billing', '00000000-0000-0000-0000-000000000001', 'first'),
+           ('t-billing', '00000000-0000-0000-0000-000000000001', 'second'),
+           ('t-billing', '00000000-0000-0000-0000-000000000003', 'first'),
+           ('other', '00000000-0000-0000-0000-000000000004', 'ignored');"
+    ).await?;
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            status: Arc::new(FixedStatus),
+            administration: Some(logins.clone()),
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            org: ORG.to_owned(),
+            changes: AuthChanges::default(),
+        },
+        None,
+    );
+    let payload = json!({"project": "billing", "env": "dev"});
+    let expected = json!({"digest": "sha256:live", "rollout": {"replicas": 1}, "workloads": [], "live": [],
+        "users_with_role": 1, "roles": 2, "memberships": 1});
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/status",
+            principal.as_str(),
+            payload.clone()
+        )
+        .await,
+        Ok(expected.clone())
+    );
+    let mut empty = expected.clone();
+    empty["users_with_role"] = json!(0);
+    empty["roles"] = json!(0);
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/status",
+            principal.as_str(),
+            json!({"project": "shop", "env": "dev"})
+        )
+        .await,
+        Ok(empty)
+    );
+    // A failed application query cannot turn runtime status into a refusal.
+    billing
+        .batch_execute("ALTER TABLE app_system.roles RENAME TO unavailable_roles")
+        .await?;
+    let mut unavailable = expected;
+    unavailable["users_with_role"] = Value::Null;
+    unavailable["roles"] = Value::Null;
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/status",
+            principal.as_str(),
+            payload.clone()
+        )
+        .await,
+        Ok(unavailable.clone())
+    );
+    // A missing mounted credential has the same optional-count behavior.
+    let login = logins.join(wamn_control_provision::control_administration_key(
+        "billing", "dev",
+    ));
+    std::fs::remove_file(login)?;
+    assert_eq!(
+        call(&delivery, "environment/status", principal.as_str(), payload).await,
+        Ok(unavailable)
+    );
+    std::fs::remove_dir_all(logins)?;
+    Ok(())
+}

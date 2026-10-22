@@ -107,7 +107,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: every environment of the project as `{name, state}`. |
-| `wamn-control:environment/status@0.9.0` | The current state of one environment in its release namespace: the digest, the rollout, the workload conditions and the live set. |
+| `wamn-control:environment/status@0.9.0` | Answers the digest, rollout, workload conditions, and live set of one environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the tables it reads, writes, deletes and locks, derived from the release's SQL over the environment's table columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
@@ -119,6 +119,15 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:environment/inactivate@0.9.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
 | `wamn-control:project/activate@0.9.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
 | `wamn-control:project/inactivate@0.9.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
+
+`environment.status` retains version 0.9.0 and adds three nullable `int32` members.
+`users_with_role` counts human users with at least one role, once per user.
+`roles` counts all roles in the environment.
+`memberships` counts its rows in `identity.project_env_memberships` on the control connection.
+
+The first two counts share one query through the existing environment administration login, within a read-only transaction.
+Each count read has a two-second timeout, and both reads run concurrently.
+A failed or timed-out read logs a warning and returns null for its counts, without failing the runtime status answer.
 
 The control host selects one status source. Kubernetes reads the release namespace.
 With `--local-control`, the local source reads the development loop's endpoint record and queries its selected host through NATS.
