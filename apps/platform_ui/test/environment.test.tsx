@@ -29,6 +29,9 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
         : path.includes("/environment/status")
           ? {
               digest,
+              users_with_role: 3,
+              roles: 4,
+              memberships: 5,
               rollout: { replicas: 2, updated_replicas: 1, ready_replicas: 1, available_replicas: 1 },
               workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
               live: [{ digest: "sha256:release", pods: 1 }],
@@ -103,10 +106,12 @@ describe("Environment", () => {
     const data = fixture();
     mount(data);
     await screen.findByRole("region", { name: "Release profile" });
-    expect(screen.getByRole("region", { name: "Environment status" }).textContent).toContain("sha256:release");
+    expect(screen.getByRole("region", { name: "Environment status" }).textContent).toContain("release");
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Environment tables" })).toBeNull();
     expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(1);
+    expect(data.calls.filter((path) => path.includes("/environment/status"))).toHaveLength(1);
+    expect(screen.getByRole("group", { name: "Roles" }).textContent).toContain("4");
   });
 
   it("expands read-only tables under workloads, roles and operations without changing the address", async () => {
@@ -293,7 +298,8 @@ describe("Environment", () => {
   it("does not request a profile when no release is installed", async () => {
     const data = fixture("inactive", null);
     mount(data);
-    await screen.findByText("Release: No release");
+    await screen.findByRole("button", { name: "Activate environment" });
+    expect(screen.getByRole("group", { name: "Release" }).getAttribute("data-state")).toBe("unknown");
     expect(screen.queryByRole("region", { name: "Release profile" })).toBeNull();
     expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
   });

@@ -98,7 +98,7 @@ describe("Projects and Project", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
     await waitFor(() => expect(session.state.calls.filter((call) => call.endsWith("/control/mine"))).toHaveLength(2));
   });
-  it("lands Control on Projects and reads control.mine once", async () => {
+  it("lands Control on its splash and reads control.mine once", async () => {
     const session = identity(true);
     const fetch: typeof globalThis.fetch = async (url, init) =>
       String(url).startsWith("/api/wamn_control/project/list")
@@ -106,6 +106,9 @@ describe("Projects and Project", () => {
         : session.fetch(url, init);
     window.history.pushState({}, "", `/${CONTROL}`);
     render(() => <Shell title="WAMN" org="acme" sections={[]} controlSections={controlSections} fetch={fetch} />);
+    await screen.findByRole("heading", { name: "Control" });
+    expect(window.location.pathname).toBe(`/${CONTROL}`);
+    fireEvent.click(screen.getByRole("link", { name: "All projects" }));
     await screen.findByRole("table", { name: "Projects" });
     await within(screen.getByRole("table", { name: "Projects" })).findByRole("link", { name: "widgets" });
     expect(

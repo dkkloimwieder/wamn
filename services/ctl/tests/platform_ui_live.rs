@@ -231,6 +231,12 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             ),
             "browser did not complete application administration"
         );
+        ensure!(
+            String::from_utf8_lossy(&output.stdout).contains(
+                "PASS: environment and Control splash tiles match status values, grouped by project, with one read per environment"
+            ),
+            "browser did not complete the splash tile assertions"
+        );
         drop(admin);
         driver.await??;
         Ok::<_, anyhow::Error>(())

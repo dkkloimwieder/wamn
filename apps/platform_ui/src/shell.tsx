@@ -219,8 +219,13 @@ function Session(
               const projects = shown.controlMine?.projects.filter((entry) =>
                 shown.holds(member.MEMBER_LIST_ROUTE.operation, entry.project),
               );
-              const home = projects?.length === 1 ? `projects/${encodeURIComponent(projects[0]!.project)}` : first.path;
-              props.address.navigate(`/${props.aud}/${home}`, true);
+              const home =
+                projects?.length === 1
+                  ? `projects/${encodeURIComponent(projects[0]!.project)}`
+                  : shown.sections.some((section) => section.routes?.some((route) => route.path === ""))
+                    ? undefined
+                    : first.path;
+              if (home !== undefined) props.address.navigate(`/${props.aud}/${home}`, true);
             }
           },
           (error: unknown) => {

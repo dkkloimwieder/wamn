@@ -811,6 +811,8 @@ The browser uses a 1400 by 900 viewport and saves one PNG for each screen in `<r
 The Rust test and browser print that directory.
 Identity files are `sign-in.png`, `invite.png`, `recover.png`, `reset.png`, `no-access.png`, and `audience-choice.png`.
 Administration files are `control-layout.png`, `projects.png`, `project.png`, `environment.png`, `users.png`, and `user.png`.
+Splash files are `environment-splash.png` and `control-splash.png`.
+The browser compares their tile values with fixture status responses and requires one status read per environment.
 Form files are `create-project.png`, `invite-user.png`, `project-grant-membership.png`, `member-grant-membership.png`, and `user-grant-membership.png`.
 Access table files are `project-environments.png`, `project-members.png`, `member-memberships.png`, `user-projects.png`, and `user-memberships.png`.
 Environment table files are `environment-workloads.png`, `environment-live-releases.png`, `environment-operations.png`, and `environment-roles.png`.

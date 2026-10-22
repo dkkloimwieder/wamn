@@ -33,6 +33,13 @@ Operations, roles, reaches, statements, and relations come from `release.profile
 Membership and audience tables use the same pagination.
 Refresh requests fresh data from each table’s owning API, including `control.mine` for project administrators.
 
+The environment home uses one `environment.status` read for Release, Users with a role, Roles, Memberships, and Workloads tiles.
+Release shows a short digest and warns until updated, ready, and available replica counts match the total.
+Workloads shows ready and not-ready counts. A workload is ready when its `Ready` condition is `True`.
+Missing counts show Unknown. Tiles remain read-only, and the left pane supplies navigation.
+The Control home groups these tiles by project, with an environment link above each row.
+Each environment uses one status read. A failed read shows Unknown tiles with the error text for that environment.
+
 The left pane follows the address through organization, project, and environment contexts, including direct links, history navigation, and reloads.
 SidebarContextSwitcher shows the current context, searches sibling choices, and returns to the parent.
 At the organization level, Projects expands to held projects from `control.mine`. Only org admins see Users.

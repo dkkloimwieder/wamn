@@ -4,7 +4,7 @@ import { Button, FieldError } from "@wfe/components/fields";
 import { environment, release } from "@wamn/control-org-client";
 import { MissingPage, Page } from "./page";
 import { DashboardPanel } from "@wfe/components/layout";
-import { Field, FieldValue, FormGrid, Label } from "@wfe/components";
+import { EnvironmentTiles } from "./status-tiles";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
@@ -94,32 +94,7 @@ export function Environment(
           <Show when={state()}>
             <p>State: {state()}</p>
           </Show>
-          <Show when={status()}>
-            {(current) => (
-              <DashboardPanel role="region" aria-label="Environment status">
-                <h2>Status</h2>
-                <p>Release: {current().digest ?? "No release"}</p>
-                <FormGrid columns={2}>
-                  <Field>
-                    <Label>Replicas</Label>
-                    <FieldValue value={current().rollout.replicas} />
-                  </Field>
-                  <Field>
-                    <Label>Updated replicas</Label>
-                    <FieldValue value={current().rollout.updatedReplicas} />
-                  </Field>
-                  <Field>
-                    <Label>Ready replicas</Label>
-                    <FieldValue value={current().rollout.readyReplicas} />
-                  </Field>
-                  <Field>
-                    <Label>Available replicas</Label>
-                    <FieldValue value={current().rollout.availableReplicas} />
-                  </Field>
-                </FormGrid>
-              </DashboardPanel>
-            )}
-          </Show>
+          <EnvironmentTiles status={status()} />
           <Show when={profile()}>
             {(current) => (
               <DashboardPanel role="region" aria-label="Release profile">

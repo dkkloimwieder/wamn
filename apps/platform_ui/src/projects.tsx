@@ -10,6 +10,7 @@ import type { Outcome } from "@wamn/web-runtime";
 import { MissingPage, Page, RecordLink } from "./page";
 import { GrantMembership } from "./membership";
 import { value } from "./outcome";
+import { ControlHome } from "./control-home";
 import { Environment } from "./environment";
 import type { ScreenProps, ShellSection } from "./shell";
 
@@ -385,6 +386,7 @@ export const controlSections: readonly ShellSection[] = [
       },
     ],
     routes: [
+      { path: "", operation: control.CONTROL_MINE_ROUTE.operation, component: ControlHome },
       {
         path: "projects/:project/environments",
         label: "Environments",

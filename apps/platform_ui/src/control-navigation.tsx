@@ -69,7 +69,7 @@ export function ControlNavigation(props: {
       active = false;
     };
   });
-  const organization = (): SidebarContext => ({ id: `${root()}/projects`, kind: "Organization", name: props.org });
+  const organization = (): SidebarContext => ({ id: root(), kind: "Organization", name: props.org });
   const currentProject = (): SidebarContext => ({ id: projectPath(), kind: "Project", name: project()! });
   const current = (): SidebarContext =>
     env()
@@ -125,6 +125,9 @@ export function ControlNavigation(props: {
         onValueChange={(context) => navigate(context.id)}
       />
       <Show when={trouble()}>{(message) => <FieldError role="alert">{message()}</FieldError>}</Show>
+      <Show when={!project()}>
+        <Link href={root()} label="Control home" />
+      </Show>
       <Show when={!env()}>
         <SidebarGroup
           label="Projects"

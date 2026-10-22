@@ -228,8 +228,8 @@ describe("control hierarchy navigation", () => {
     await switcher("Project gadgets");
     fireEvent.click(await switcher("Project gadgets"));
     fireEvent.click(await screen.findByRole("button", { name: "Up one level: Organization acme" }));
-    await screen.findByRole("table", { name: "Projects" });
-    expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
+    await screen.findByRole("heading", { name: "Control" });
+    expect(window.location.pathname).toBe(`/${CONTROL}`);
   });
 
   it.each([
@@ -251,6 +251,15 @@ describe("control hierarchy navigation", () => {
       expect(item.textContent).toBe(item.textContent?.toUpperCase());
   });
 
+  it("opens the Control splash for multiple held projects", async () => {
+    mount("");
+    await screen.findByRole("heading", { name: "Control" });
+    expect(window.location.pathname).toBe(`/${CONTROL}`);
+    await screen.findByRole("region", { name: "widgets" });
+    await screen.findByRole("region", { name: "gadgets" });
+    expect(selectedItem()).toBe("Control home");
+  });
+
   it.each([true, false])("opens one held project directly (org admin: %s), and allows return to org", async (admin) => {
     const { calls } = mount("", admin, ["widgets"]);
     await screen.findByRole("heading", { name: "widgets" });
@@ -258,11 +267,11 @@ describe("control hierarchy navigation", () => {
     expect(selectedItem()).toBe("widgets");
     fireEvent.click(await switcher("Project widgets"));
     fireEvent.click(await screen.findByRole("button", { name: "Up one level: Organization acme" }));
-    await screen.findByRole("table", { name: "Projects" });
-    expect(window.location.pathname).toBe(`/${CONTROL}/projects`);
+    await screen.findByRole("heading", { name: "Control" });
+    expect(window.location.pathname).toBe(`/${CONTROL}`);
     const pane = within(screen.getByRole("navigation", { name: "Primary navigation" }));
     expect(!!pane.queryByRole("link", { name: "Users" })).toBe(admin);
-    expect(selectedItem()).toBe("Projects");
+    expect(selectedItem()).toBe("Control home");
     if (!admin) expect(calls.some((path) => path.endsWith("/project/list"))).toBe(false);
   });
 
