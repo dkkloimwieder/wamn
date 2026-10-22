@@ -6,9 +6,14 @@ interface dispatch {
 
   /// The composition derives this from the operation export signature.
   is-query: func(operation: string) -> bool;
+  is-projection: func(operation: string) -> bool;
+
+  read: async func(operation: string, ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;
 
   run: async func(operation: string, ctx: node-context, input: string) -> result<emission, node-error>;
-  query: async func(operation: string, ctx: node-context, input: string) -> result<tuple<stream<string>, future<string>>, node-error>;
+  record query-metadata { wal-position: option<string>, }
+
+  query: async func(operation: string, ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<string>, future<string>>, node-error>;
 }
 
 world adapter {

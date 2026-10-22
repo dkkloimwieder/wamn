@@ -532,3 +532,19 @@ Update is unchanged, and it makes one statement fewer per request.
 Get and query now open an operation for each read, so the session settings statement runs once per request.
 That statement is `set_config('statement_timeout', ...)` with `search_path`, at 0.015 ms mean execution time.
 The read cost is the extra round-trip and the guest work, and `wamn-cg5e4` holds the large stream case.
+
+The `wamn-5x0tt` live test on 2026-10-22 measured the revised composed read path against PostgreSQL 18.
+It warmed all three routes, reset `pg_stat_statements`, and sent ten requests per route.
+Get used ten SQL calls, or 1 call per request.
+Query used twenty SQL calls, or 2 calls per request: one application read and one `pg_current_wal_lsn()` read.
+The `/widget_maker/list` projection also used twenty SQL calls: ten application reads and ten WAL reads.
+The test counted every statement from the guest database roles, including transaction and configuration statements.
+The test is `route_interface_live::composed_reads_use_one_statement_plus_optional_wal` in `tests/integration`.
+
+Trips per request remain unmeasured for all three routes.
+The host queues the optional WAL read before the application read in one pipeline on the same connection.
+The sampler in `tools/bench/db-profile.sh` samples `pg_stat_activity` every 100 ms and cannot count individual trips.
+Use protocol tracing of isolated, warmed requests to count client waits between requests and server responses.
+For the next throughput comparison, run `tools/bench/local.sh --no-edge --call get --call query`.
+Retain its wait-event logs and statement CSV files.
+No new throughput benchmark ran for this change.

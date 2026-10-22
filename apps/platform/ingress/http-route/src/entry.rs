@@ -71,12 +71,12 @@ pub(super) async fn deliver(
     }
 }
 
-async fn list_etag(route: &RouteDefinition) -> Option<String> {
+fn list_etag(route: &RouteDefinition, position: Option<String>) -> Option<String> {
     let inputs = route.etag_inputs.as_ref()?;
     let EtagKind::List(relations) = &inputs.kind else {
         return None;
     };
-    let position = operation::wal_position().await.ok()?;
+    let position = position?;
     let relations = relations
         .iter()
         .map(|relation| json!([relation.schema, relation.name]))
@@ -105,39 +105,32 @@ pub(super) async fn deliver_stream(
         .sealed_operation_id
         .as_ref()
         .expect("base route has an operation");
-    let begun = operation::begin_operation(
-        request.caller.as_ref(),
+    operation::authorize(request.caller.as_ref(), id.clone())
+        .await
+        .map_err(|error| report(Err(boundary(error, id)), None))?;
+    let query = dispatch::query(
         id.clone(),
-        String::new(),
-        Vec::new(),
+        context(&request, String::new(), route.operation_deadline_ms),
+        request.payload.clone(),
+        wants_list_etag(route),
     )
-    .await
-    .map_err(|error| report(Err(boundary(error, id)), None))?;
-    let operation::Begun::New(delivery_id) = begun else {
-        return Err(report(Err(DeliveryError::ExecutionFailed), None));
+    .await;
+    let (metadata, mut rows, end) = match query {
+        Ok(query) => query,
+        Err(error) => {
+            let _ = operation::finish_read().await;
+            return Err(report(Ok(node_failure(error)), None));
+        }
     };
-    let etag = list_etag(route).await;
+    let etag = list_etag(route, metadata.await.wal_position);
     if matches_tag(&request, &etag) {
-        operation::rollback()
+        drop(rows);
+        drop(end);
+        operation::finish_read()
             .await
             .map_err(|error| report(Err(boundary(error, id)), None))?;
         return Err(report(Ok(DeliveryOutcome::NotModified), etag));
     }
-    let query = dispatch::query(
-        id.clone(),
-        context(&request, delivery_id, route.operation_deadline_ms),
-        request.payload.clone(),
-    )
-    .await;
-    let (mut rows, end) = match query {
-        Ok(query) => query,
-        Err(error) => {
-            operation::rollback()
-                .await
-                .map_err(|error| report(Err(boundary(error, id)), None))?;
-            return Err(report(Ok(node_failure(error)), None));
-        }
-    };
     // Wait for the first batch so an empty refused read keeps its HTTP refusal.
     let (mut status, mut batch) = rows.read(Vec::with_capacity(super::LINES_PER_READ)).await;
     let mut end = Some(end);
@@ -165,7 +158,7 @@ pub(super) async fn deliver_stream(
             if !writer.write_all(bytes).await.is_empty() {
                 drop(rows);
                 drop(end);
-                let _ = operation::rollback().await;
+                let _ = operation::finish_read().await;
                 return;
             }
             if !matches!(status, StreamResult::Complete(_)) {
@@ -188,12 +181,12 @@ pub(super) async fn deliver_stream(
 async fn finish_read(text: &str) -> Value {
     let outcome = serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
     if let Some(value) = outcome.get("value") {
-        if operation::commit(text.to_owned()).await.is_err() {
+        if operation::finish_read().await.is_err() {
             return json!({"uncertain": {}});
         }
         json!({"value": {"more": value.get("next_cursor").is_some_and(|cursor| !cursor.is_null())}})
     } else {
-        let _ = operation::rollback().await;
+        let _ = operation::finish_read().await;
         outcome
             .get("error")
             .map_or_else(|| json!({"uncertain": {}}), |error| json!({"error": error}))
@@ -215,31 +208,20 @@ async fn execute(
     let mut input: Value =
         serde_json::from_str(&request.payload).map_err(|_| DeliveryError::InvalidPayload)?;
     let Some(key_field) = route.idempotency_rule.as_deref() else {
-        let begun =
-            operation::begin_operation(caller, operation_id.clone(), String::new(), Vec::new())
-                .await
-                .map_err(|error| boundary(error, operation_id))?;
-        let operation::Begun::New(delivery_id) = begun else {
-            return Err(DeliveryError::ExecutionFailed);
-        };
-        *etag = list_etag(route).await;
-        if etag.is_some() {
-            if matches_tag(request, etag) {
-                operation::rollback()
-                    .await
-                    .map_err(|error| boundary(error, operation_id))?;
-                return Ok(DeliveryOutcome::NotModified);
-            }
-        }
-        let result = call(
+        operation::authorize(caller, operation_id.clone())
+            .await
+            .map_err(|error| boundary(error, operation_id))?;
+        let result = read_call(
             operation_id,
-            context(request, delivery_id, remaining_ms(deadline)),
+            context(request, String::new(), remaining_ms(deadline)),
             input.to_string(),
+            wants_list_etag(route),
         )
         .await;
         match result {
-            Ok(result) => {
-                operation::commit(result.to_string())
+            Ok((result, wal_position)) => {
+                *etag = list_etag(route, wal_position);
+                operation::finish_read()
                     .await
                     .map_err(|error| boundary(error, operation_id))?;
                 if let Some(inputs) = &route.etag_inputs
@@ -260,7 +242,7 @@ async fn execute(
                 return Ok(DeliveryOutcome::Respond(result.to_string()));
             }
             Err(error) => {
-                operation::rollback()
+                operation::finish_read()
                     .await
                     .map_err(|error| boundary(error, operation_id))?;
                 return Ok(node_failure(error));
@@ -440,6 +422,24 @@ fn context(
 }
 
 async fn call(id: &str, context: NodeContext, input: String) -> Result<Value, NodeError> {
+    read_call(id, context, input, false)
+        .await
+        .map(|(value, _)| value)
+}
+
+fn wants_list_etag(route: &RouteDefinition) -> bool {
+    route
+        .etag_inputs
+        .as_ref()
+        .is_some_and(|inputs| matches!(inputs.kind, EtagKind::List(_)))
+}
+
+async fn read_call(
+    id: &str,
+    context: NodeContext,
+    input: String,
+    want_wal: bool,
+) -> Result<(Value, Option<String>), NodeError> {
     let decode = |text: &str| {
         serde_json::from_str(text).map_err(|_| {
             NodeError::Terminal(super::bindings::wamn::node::types::ErrorDetail {
@@ -448,10 +448,17 @@ async fn call(id: &str, context: NodeContext, input: String) -> Result<Value, No
             })
         })
     };
-    if !dispatch::is_query(id) {
-        return decode(&dispatch::run(id.to_owned(), context, input).await?.payload);
+    if dispatch::is_projection(id) {
+        let (emission, position) = dispatch::read(id.to_owned(), context, input, want_wal).await?;
+        return decode(&emission.payload).map(|value| (value, position));
     }
-    let (mut rows, end) = dispatch::query(id.to_owned(), context, input).await?;
+    if !dispatch::is_query(id) {
+        return decode(&dispatch::run(id.to_owned(), context, input).await?.payload)
+            .map(|value| (value, None));
+    }
+    let (metadata, mut rows, end) =
+        dispatch::query(id.to_owned(), context, input, want_wal).await?;
+    let wal_position = metadata.await.wal_position;
     let mut values = Vec::<Value>::new();
     loop {
         let (status, batch) = rows.read(Vec::with_capacity(256)).await;
@@ -466,7 +473,7 @@ async fn call(id: &str, context: NodeContext, input: String) -> Result<Value, No
     if let Some(value) = outcome.get_mut("value").and_then(Value::as_object_mut) {
         value.insert("item".into(), Value::Array(values));
     }
-    Ok(json!([outcome]))
+    Ok((json!([outcome]), wal_position))
 }
 
 fn boundary(error: operation::Refusal, id: &str) -> DeliveryError {

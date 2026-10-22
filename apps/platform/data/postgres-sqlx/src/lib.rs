@@ -1432,6 +1432,7 @@ mod tests {
 
     fn rows(columns: &[(&str, &str)], rows: Vec<Vec<wire::SqlValue>>) -> wire::RowSet {
         wire::RowSet {
+            wal_position: None,
             columns: columns
                 .iter()
                 .map(|(name, type_name)| wire::Column {

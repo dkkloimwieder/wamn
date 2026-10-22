@@ -51,7 +51,7 @@ fn statement_error(error: wamn_postgres_statements::StatementError) -> NodeError
 // Keep codec validation and typed outcomes, but return SQL failures through
 // the existing NodeError boundary, whose message can carry the cause.
 macro_rules! export_operation {
-    ($contract:ident, $codec:ident, $item:ident, $outcome:ident, $error:ident, $state:expr, $handler:path) => {
+    ($contract:ident, $codec:ident, $item:ident, $outcome:ident, $error:ident, $state:expr, $handler:path $(, $read:item)?) => {
         impl $contract::Guest for super::Component {
             async fn run(
                 _context: super::wamn::node::types::NodeContext,
@@ -87,6 +87,8 @@ macro_rules! export_operation {
                     port: None,
                 })
             }
+
+            $($read)?
         }
     };
 }

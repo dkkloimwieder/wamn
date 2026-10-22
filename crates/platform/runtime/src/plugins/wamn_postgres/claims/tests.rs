@@ -2194,7 +2194,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
 
     let statement = cold_parse_statement();
     let rows = pg
-        .one_shot_statement(scope, "sha256:cold-parse", &statement, &[])
+        .one_shot_statement(scope, "sha256:cold-parse", &statement, &[], false)
         .await
         .expect(
             "a COLD connection must parse the statement inside the claim transaction: a \
@@ -2210,7 +2210,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
     // And the same connection, now WARM, still runs it: the flight that
     // saves the round trip is the one this second call takes.
     let again = pg
-        .one_shot_statement(scope, "sha256:cold-parse", &statement, &[])
+        .one_shot_statement(scope, "sha256:cold-parse", &statement, &[], false)
         .await
         .expect("the warm connection runs the pipelined flight");
     assert_eq!(again.rows.len(), 2);
@@ -2256,7 +2256,13 @@ async fn a_transactional_statement_without_an_executing_principal_is_refused() {
     .await
     .expect("the scope binds");
     let refused = pg
-        .one_shot_statement(scope, "sha256:principal", &principal_statement(true), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:principal",
+            &principal_statement(true),
+            &[],
+            false,
+        )
         .await
         .expect_err("no executing principal");
     let StatementError::Postgres(PgError::QueryError((code, message))) = refused else {
@@ -2351,7 +2357,13 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     .expect("the principal scope binds");
 
     let bound = pg
-        .one_shot_statement(scope, "sha256:principal", &principal_statement(true), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:principal",
+            &principal_statement(true),
+            &[],
+            false,
+        )
         .await
         .expect("the transactional statement runs");
     assert!(
@@ -2362,7 +2374,13 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     // The pool holds one connection, so the read reuses the connection whose
     // transaction-local claim ended at COMMIT.
     let read = pg
-        .one_shot_statement(scope, "sha256:principal", &principal_statement(false), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:principal",
+            &principal_statement(false),
+            &[],
+            false,
+        )
         .await
         .expect("the read runs");
     assert!(
@@ -2385,12 +2403,24 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     .await
     .unwrap();
     let bound = pg
-        .one_shot_statement(scope, "sha256:principal", &principal_statement(true), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:principal",
+            &principal_statement(true),
+            &[],
+            false,
+        )
         .await
         .unwrap();
     assert!(matches!(&bound.rows[0][0], SqlValue::Text(value) if value == PRINCIPAL_B));
     let read = pg
-        .one_shot_statement(scope, "sha256:principal", &principal_statement(false), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:principal",
+            &principal_statement(false),
+            &[],
+            false,
+        )
         .await
         .unwrap();
     assert!(matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()));
@@ -2652,7 +2682,13 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         .expect("the operation scope binds");
 
     let bound = pg
-        .one_shot_statement(scope, "sha256:operation", &operation_statement(true), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:operation",
+            &operation_statement(true),
+            &[],
+            false,
+        )
         .await
         .expect("the transactional statement runs");
     assert!(
@@ -2661,7 +2697,13 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         bound.rows
     );
     let read = pg
-        .one_shot_statement(scope, "sha256:operation", &operation_statement(false), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:operation",
+            &operation_statement(false),
+            &[],
+            false,
+        )
         .await
         .expect("the read runs");
     assert!(
@@ -2691,7 +2733,13 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     .await
     .expect("the next acquisition binds");
     let next = pg
-        .one_shot_statement(scope, "sha256:operation", &operation_statement(true), &[])
+        .one_shot_statement(
+            scope,
+            "sha256:operation",
+            &operation_statement(true),
+            &[],
+            false,
+        )
         .await
         .expect("the next transactional statement runs");
     assert!(
@@ -2909,7 +2957,7 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         .await
         .unwrap();
         let first = pg
-            .one_shot_statement("settings", "sha256:settings", &statement, &[])
+            .one_shot_statement("settings", "sha256:settings", &statement, &[], false)
             .await
             .unwrap();
         assert!(
@@ -2929,13 +2977,32 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
             .batch_execute("SELECT pg_stat_statements_reset()")
             .await
             .unwrap();
-        pg.one_shot_statement("settings", "sha256:settings", &statement, &[])
+        pg.one_shot_statement("settings", "sha256:settings", &statement, &[], false)
             .await
             .unwrap();
         let calls: i64 = admin.query_one(
             "SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_statements WHERE userid = (SELECT oid FROM pg_roles WHERE rolname LIKE 'wamn_app_%' AND rolcanlogin)", &[],
         ).await.unwrap().get(0);
         assert_eq!(calls, 1, "a warm get runs only its application statement");
+        admin
+            .batch_execute("SELECT pg_stat_statements_reset()")
+            .await
+            .unwrap();
+        let with_wal = pg
+            .one_shot_statement("settings", "sha256:settings", &statement, &[], true)
+            .await
+            .unwrap();
+        assert!(
+            with_wal
+                .wal_position
+                .as_deref()
+                .is_some_and(|position| position.contains('/'))
+        );
+        assert!(matches!(with_wal.rows[0][2], SqlValue::Int32(observed) if observed == pid));
+        let calls: i64 = admin.query_one(
+            "SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_statements WHERE userid = (SELECT oid FROM pg_roles WHERE rolname LIKE 'wamn_app_%' AND rolcanlogin)", &[],
+        ).await.unwrap().get(0);
+        assert_eq!(calls, 2, "WAL metadata adds only its own statement");
     }
 }
 /// The server sees one prepared read, with claim statements only when the
@@ -3035,6 +3102,7 @@ async fn live_stream_reads_once_and_scopes_claims() {
                 "sql/query.sql".into(),
                 Arc::clone(&statement),
                 Vec::new(),
+                false,
             )
             .await
             .unwrap();
@@ -3116,6 +3184,7 @@ async fn live_stream_reads_once_and_scopes_claims() {
             "sql/large.sql".into(),
             statement,
             Vec::new(),
+            false,
         )
         .await
         .unwrap();

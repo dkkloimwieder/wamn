@@ -36,10 +36,12 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
         else {
             continue;
         };
+        let projection = interface.exports.contains_key("read-json");
         let function = &types[*function];
         let result = function.result.context("operation has no result")?;
-        let result = if is_query(&types, result) {
-            "tuple<stream<string>, future<string>>"
+        let query = is_query(&types, result);
+        let result = if query {
+            "tuple<future<query-metadata>, stream<string>, future<string>>"
         } else {
             "emission"
         };
@@ -51,13 +53,30 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
         let asynchronous = if function.is_async { "async " } else { "" };
         let parameters = function.params.keys().collect::<Vec<_>>();
         ensure!(
-            parameters.len() == 2,
+            parameters.len() == if query { 3 } else { 2 },
             "operation {name} does not use the node JSON call ABI"
         );
+        let metadata = if query {
+            "record query-metadata { wal-position: option<string>, }"
+        } else {
+            ""
+        };
+        let wal = if query {
+            ", want-wal-position: bool"
+        } else {
+            ""
+        };
+        let read_json = if projection {
+            "read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;"
+        } else {
+            ""
+        };
         writeln!(source,
             "interface %{interface} {{
                 use wamn:node/types@0.1.0.{{node-context, emission, node-error}};
-                {function_name}: {asynchronous}func(%{}: node-context, %{}: string) -> result<{result}, node-error>;
+                {metadata}
+                {function_name}: {asynchronous}func(%{}: node-context, %{}: string{wal}) -> result<{result}, node-error>;
+                {read_json}
             }}", parameters[0], parameters[1])?;
         names.push(name.clone());
     }
@@ -94,44 +113,56 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut sizes = SizeAlign::default();
     sizes.fill(&resolve);
     let mut module = String::from("(module\n");
-    let mut calls = [String::new(), String::new()];
+    let mut calls = [String::new(), String::new(), String::new()];
     let mut data = String::new();
     let mut queries = String::new();
+    let mut projections = String::new();
     let mut offset = 16_usize;
     for (index, (name, id)) in operations.iter().enumerate() {
-        let function = resolve.interfaces[*id].functions.values().next().unwrap();
-        let signature = resolve.wasm_signature(wit_parser::abi::AbiVariant::GuestImport, function);
-        ensure!(
-            signature.indirect_params && signature.retptr && signature.params.len() == 2,
-            "operation {name} does not use the node JSON call ABI"
-        );
-        let key = WorldKey::Interface(*id);
-        let (namespace, import) = resolve.wasm_import_name(
-            sync,
-            WasmImport::Func {
-                interface: Some(&key),
-                func: function,
-            },
-        );
-        writeln!(
-            module,
-            "(import {namespace:?} {import:?} (func $op{index} (param i32 i32)))"
-        )?;
-        let result = function.result.context("operation has no result")?;
-        let query = is_wit_query(&resolve, result);
-        writeln!(data, "(data (i32.const {offset}) {name:?})")?;
-        writeln!(calls[usize::from(query)],
-            "local.get $args i32.load local.get $args i32.load offset=4 i32.const {offset} i32.const {} call $equal
-             if local.get $args i32.const 8 i32.add local.get $result call $op{index}
-                call $finish{} i32.const 0 return end",
-            name.len(), usize::from(query))?;
-        if query {
+        for (function_index, function) in resolve.interfaces[*id].functions.values().enumerate() {
+            let projection = function.name == "read-json";
+            let signature =
+                resolve.wasm_signature(wit_parser::abi::AbiVariant::GuestImport, function);
+            ensure!(
+                signature.indirect_params && signature.retptr && signature.params.len() == 2,
+                "operation {name} does not use the node JSON call ABI"
+            );
+            let key = WorldKey::Interface(*id);
+            let (namespace, import) = resolve.wasm_import_name(
+                sync,
+                WasmImport::Func {
+                    interface: Some(&key),
+                    func: function,
+                },
+            );
             writeln!(
-                queries,
-                "local.get 0 local.get 1 i32.const {offset} i32.const {} call $equal if i32.const 1 return end",
-                name.len()
+                module,
+                "(import {namespace:?} {import:?} (func $op{index}_{function_index} (param i32 i32)))"
             )?;
+            let result = function.result.context("operation has no result")?;
+            let query = is_wit_query(&resolve, result);
+            let call_index = if projection { 2 } else { usize::from(query) };
+            writeln!(calls[call_index],
+            "local.get $args i32.load local.get $args i32.load offset=4 i32.const {offset} i32.const {} call $equal
+             if local.get $args i32.const 8 i32.add local.get $result call $op{index}_{function_index}
+                call $finish{} i32.const 0 return end",
+            name.len(), call_index)?;
+            if query {
+                writeln!(
+                    queries,
+                    "local.get 0 local.get 1 i32.const {offset} i32.const {} call $equal if i32.const 1 return end",
+                    name.len()
+                )?;
+            }
+            if projection {
+                writeln!(
+                    projections,
+                    "local.get 0 local.get 1 i32.const {offset} i32.const {} call $equal if i32.const 1 return end",
+                    name.len()
+                )?;
+            }
         }
+        writeln!(data, "(data (i32.const {offset}) {name:?})")?;
         offset += name.len();
     }
     let (key, id) = resolve.worlds[world]
@@ -142,19 +173,23 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
             _ => None,
         })
         .context("dispatch interface missing")?;
-    let function = &resolve.interfaces[id].functions["is-query"];
-    let query_export = resolve.wasm_export_name(
-        sync,
-        WasmExport::Func {
-            interface: Some(key),
-            func: function,
-            kind: WasmExportKind::Normal,
-        },
-    );
-    let mut exports = format!(
-        "(func (export {query_export:?}) (param i32 i32) (result i32) {queries} i32.const 0)\n"
-    );
-    for (index, name) in ["run", "query"].iter().enumerate() {
+    let mut exports = String::new();
+    for (name, selectors) in [("is-query", queries), ("is-projection", projections)] {
+        let function = &resolve.interfaces[id].functions[name];
+        let export = resolve.wasm_export_name(
+            sync,
+            WasmExport::Func {
+                interface: Some(key),
+                func: function,
+                kind: WasmExportKind::Normal,
+            },
+        );
+        writeln!(
+            exports,
+            "(func (export {export:?}) (param i32 i32) (result i32) {selectors} i32.const 0)"
+        )?;
+    }
+    for (index, name) in ["run", "query", "read"].iter().enumerate() {
         let function = &resolve.interfaces[id].functions[*name];
         let (namespace, import, signature) =
             function.task_return_import(&resolve, Some(key), callback_abi.mangling());
@@ -245,7 +280,7 @@ fn core_type(ty: wit_parser::abi::WasmType) -> &'static str {
     }
 }
 
-/// Flatten the two dispatch result types using their canonical memory layout.
+/// Flatten the dispatch result types using their canonical memory layout.
 fn lift(
     resolve: &Resolve,
     sizes: &SizeAlign,
@@ -342,10 +377,7 @@ fn is_wit_query(resolve: &Resolve, result: wit_parser::Type) -> bool {
     };
     match &resolve.types[id].kind {
         TypeDefKind::Result(result) => result.ok.is_some_and(|ty| is_wit_query(resolve, ty)),
-        TypeDefKind::Tuple(tuple) => tuple
-            .types
-            .first()
-            .is_some_and(|ty| is_wit_query(resolve, *ty)),
+        TypeDefKind::Tuple(tuple) => tuple.types.iter().any(|ty| is_wit_query(resolve, *ty)),
         TypeDefKind::Stream(_) => true,
         TypeDefKind::Type(ty) => is_wit_query(resolve, *ty),
         _ => false,
@@ -358,7 +390,7 @@ fn is_query(types: &Types, result: ValueType) -> bool {
     };
     match &types[id] {
         DefinedType::Result { ok, .. } => ok.is_some_and(|ty| is_query(types, ty)),
-        DefinedType::Tuple(tuple) => tuple.first().is_some_and(|ty| is_query(types, *ty)),
+        DefinedType::Tuple(tuple) => tuple.iter().any(|ty| is_query(types, *ty)),
         DefinedType::Stream(_) => true,
         DefinedType::Alias(ty) => is_query(types, *ty),
         _ => false,
@@ -400,9 +432,15 @@ mod tests {
             }
             interface query {
                 use wamn:node/types@0.1.0.{node-context, node-error};
-                run-json: async func(ctx: node-context, input: string) -> result<tuple<stream<string>, future<string>>, node-error>;
+                record query-metadata { wal-position: option<string>, }
+                run-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<string>, future<string>>, node-error>;
             }
-            world app { export get; export query; }
+            interface projection {
+                use wamn:node/types@0.1.0.{node-context, emission, node-error};
+                run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+                read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;
+            }
+            world app { export get; export query; export projection; }
         ").unwrap();
         let world = resolve.select_world(&[package], None).unwrap();
         let mut module =

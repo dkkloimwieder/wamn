@@ -19,6 +19,7 @@ interface operation {
     not-begun,
     already-begun,
     postgres(pg-error),
+    reads-claim-nothing,
   }
 
   variant begun {
@@ -28,9 +29,15 @@ interface operation {
     finished(string),
   }
 
+  /// Authorize a read and bind its statement authority without a connection.
+  authorize: async func(caller: option<borrow<authenticated-caller>>, operation: sealed-operation-id) -> result<_, refusal>;
+
+  /// End an authorized read and record its delivery outcome without SQL.
+  finish-read: async func() -> result<_, refusal>;
+
   /// Check the host-issued caller and its grant, mint the delivery id, and
   /// claim the key inside a new transaction. The host stores the request
-  /// hash unchanged. Reads claim no key and store no result.
+  /// hash unchanged. Reads refuse with reads-claim-nothing.
   /// Only one operation can be open per Store.
   /// A begin while one is open returns already-begun and leaves it open.
   /// Commit or rollback (ok or refusal) clears the open operation.

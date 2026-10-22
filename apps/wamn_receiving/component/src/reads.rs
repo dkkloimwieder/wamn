@@ -1,6 +1,6 @@
 //! Typed read handlers over the existing application operations.
 
-use wamn_postgres_statements::{Transaction, Uuid};
+use wamn_postgres_statements::{Connection, Uuid};
 use wamn_receiving_data_access::{AccessError, AccessErrorType, read};
 
 pub(super) fn error_detail(
@@ -28,12 +28,12 @@ pub(super) fn error_detail(
 }
 
 pub(super) mod location_list {
-    use super::{Transaction, error_detail, read};
+    use super::{Connection, error_detail, read};
     use crate::exports::wamn_receiving::location::list as contract;
     include!("../../../target/wamn/wamn_receiving/wit/location_list_codec.rs");
 
     pub(super) async fn execute(
-        connection: &mut Transaction,
+        connection: &mut Connection,
         _request: contract::ListRequest,
     ) -> Result<contract::ListResult, contract::ListError> {
         read::location_list(connection)
@@ -53,12 +53,12 @@ pub(super) mod location_list {
 }
 
 pub(super) mod receiving_load_receipt_screen {
-    use super::{Transaction, Uuid, error_detail, read};
+    use super::{Connection, Uuid, error_detail, read};
     use crate::exports::wamn_receiving::receiving::load_receipt_screen as contract;
     include!("../../../target/wamn/wamn_receiving/wit/receiving_load_receipt_screen_codec.rs");
 
     pub(super) async fn execute(
-        connection: &mut Transaction,
+        connection: &mut Connection,
         request: contract::LoadReceiptScreenRequest,
     ) -> Result<contract::LoadReceiptScreenResult, contract::LoadReceiptScreenError> {
         read::receipt_screen(connection, Uuid(request.purchase_order_id.clone()))
@@ -84,14 +84,14 @@ pub(super) mod receiving_load_receipt_screen {
 }
 
 pub(super) mod receiving_load_purchase_order_history {
-    use super::{Transaction, Uuid, error_detail, read};
+    use super::{Connection, Uuid, error_detail, read};
     use crate::exports::wamn_receiving::receiving::load_purchase_order_history as contract;
     include!(
         "../../../target/wamn/wamn_receiving/wit/receiving_load_purchase_order_history_codec.rs"
     );
 
     pub(super) async fn execute(
-        connection: &mut Transaction,
+        connection: &mut Connection,
         request: contract::LoadPurchaseOrderHistoryRequest,
     ) -> Result<contract::LoadPurchaseOrderHistoryResult, contract::LoadPurchaseOrderHistoryError>
     {
@@ -126,6 +126,7 @@ location_list::export_operation!(
     crate::Component,
     crate::exports::wamn_receiving::location::list,
     crate::wamn::node::types,
+    Connection::new(),
     location_list::execute,
     location_list
 );
@@ -134,6 +135,7 @@ receiving_load_receipt_screen::export_operation!(
     crate::Component,
     crate::exports::wamn_receiving::receiving::load_receipt_screen,
     crate::wamn::node::types,
+    Connection::new(),
     receiving_load_receipt_screen::execute,
     receiving_load_receipt_screen
 );
@@ -142,6 +144,7 @@ receiving_load_purchase_order_history::export_operation!(
     crate::Component,
     crate::exports::wamn_receiving::receiving::load_purchase_order_history,
     crate::wamn::node::types,
+    Connection::new(),
     receiving_load_purchase_order_history::execute,
     receiving_load_purchase_order_history
 );

@@ -16,7 +16,9 @@ use wash_runtime::wasmtime::component::{
 };
 
 use super::claims::reject_claim_mutation;
-use super::claims::transactions::{bind_session_settings, prepare_session_settings};
+use super::claims::transactions::{
+    bind_session_settings, prepare_session_settings, read_wal_position,
+};
 use super::resources::{
     PgStatementTransaction, SharedTxnState, StatementConnectionGuard, admit_transaction_statement,
     db_span_for_project, plugin_of, record_query_ms, take_conn,
@@ -34,6 +36,7 @@ const STREAM_BATCH_ROWS: usize = 500;
 
 pub(super) struct OpenedStream {
     pub(super) columns: Vec<Column>,
+    pub(super) wal_position: Option<String>,
     pub(super) batches: mpsc::Receiver<Vec<Vec<SqlValue>>>,
     pub(super) finished: oneshot::Receiver<Result<(), StatementError>>,
 }
@@ -44,10 +47,12 @@ pub(super) async fn run_stream<T: 'static + Send>(
     instance: Option<&str>,
     statement_path: String,
     binds: Vec<SqlValue>,
+    wal: Option<super::bindings::wamn::postgres::statements::WantWalPosition>,
 ) -> WasmResult<
     Result<
         (
             Vec<Column>,
+            Option<String>,
             StreamReader<Vec<SqlValue>>,
             FutureReader<Result<(), StatementError>>,
         ),
@@ -84,6 +89,7 @@ pub(super) async fn run_stream<T: 'static + Send>(
                 statement_path,
                 statement,
                 binds,
+                wal.is_some(),
             )
             .instrument(span)
             .await;
@@ -105,12 +111,25 @@ pub(super) type StreamCallResult = WasmResult<
     >,
 >;
 
+pub(super) type ConnectionStreamCallResult = WasmResult<
+    Result<
+        (
+            Vec<Column>,
+            Option<String>,
+            StreamReader<Vec<SqlValue>>,
+            FutureReader<Result<(), StatementError>>,
+        ),
+        StatementError,
+    >,
+>;
+
 fn into_guest_stream<T: 'static + Send>(
     accessor: &Accessor<T, SharedCtx>,
     opened: Result<OpenedStream, StatementError>,
-) -> StreamCallResult {
+) -> ConnectionStreamCallResult {
     let OpenedStream {
         columns,
+        wal_position,
         batches,
         finished,
     } = match opened {
@@ -124,7 +143,7 @@ fn into_guest_stream<T: 'static + Send>(
                 StatementError::Postgres(PgError::ConnectionUnavailable),
             )))
         })?;
-        Ok(Ok((columns, stream, finished)))
+        Ok(Ok((columns, wal_position, stream, finished)))
     })
 }
 
@@ -179,7 +198,7 @@ pub(super) async fn transaction_run_stream<T: 'static + Send>(
             result
         })
         .await;
-    into_guest_stream(accessor, opened)
+    Ok(into_guest_stream(accessor, opened)?.map(|(columns, _, rows, end)| (columns, rows, end)))
 }
 
 pub(super) async fn open_transaction_stream(
@@ -241,6 +260,7 @@ pub(super) async fn open_transaction_stream(
         .await
         .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))??;
     Ok(OpenedStream {
+        wal_position: None,
         columns,
         batches,
         finished,
@@ -255,6 +275,7 @@ pub(super) async fn open_stream(
     statement_path: String,
     statement: Arc<VerifiedStatement>,
     binds: Vec<SqlValue>,
+    want_wal: bool,
 ) -> Result<OpenedStream, StatementError> {
     reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
     let tenant = plugin
@@ -308,6 +329,17 @@ pub(super) async fn open_stream(
         .map_err(StatementError::Postgres)?;
         None
     };
+    let wal_statement = if want_wal {
+        Some(
+            connection
+                .connection()
+                .prepare_cached("SELECT pg_current_wal_lsn()::text")
+                .await
+                .map_err(postgres)?,
+        )
+    } else {
+        None
+    };
     // A cold Parse follows claims. COMMIT must wait until Execute was queued,
     // rather than overtaking a Parse that is still waiting for its description.
     let (mut queued, completion) = match completion {
@@ -344,9 +376,9 @@ pub(super) async fn open_stream(
                         let stream = conn.query_raw(&prepared, binds.iter().map(PgParam)).await.map_err(postgres)?;
                         Ok::<_, StatementError>((prepared, stream))
                     };
-                    let ((), (prepared, stream)) = tokio::try_join!(biased; bind, execute)?;
+                    let ((), wal_position, (prepared, stream)) = tokio::try_join!(biased; bind, read_wal_position(conn, wal_statement.as_ref()), execute)?;
                     let columns = columns_of(&prepared);
-                    opened.take().expect("a stream opens once").send(Ok(columns.clone()))
+                    opened.take().expect("a stream opens once").send(Ok((columns.clone(), wal_position)))
                         .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
                     pump(stream, &statement_path, &statement, columns, &rows).await?;
                     // A writing statement commits only after every row passed its contract.
@@ -388,11 +420,12 @@ pub(super) async fn open_stream(
             }
         }
     }.instrument(tracing::Span::current()));
-    let columns = started
+    let (columns, wal_position) = started
         .await
         .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))??;
     Ok(OpenedStream {
         columns,
+        wal_position,
         batches,
         finished,
     })

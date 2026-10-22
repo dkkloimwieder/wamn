@@ -23,6 +23,20 @@ mod node_contract {
 
 use node_contract::wamn::node::types as node_types;
 
+/// Metadata that a query resolves before writing its first row.
+#[derive(
+    Debug,
+    wash_runtime::wasmtime::component::ComponentType,
+    wash_runtime::wasmtime::component::Lift,
+    wash_runtime::wasmtime::component::Lower,
+)]
+#[component(record)]
+#[component(wasmtime_crate = wash_runtime::wasmtime)]
+pub(crate) struct QueryMetadata {
+    #[component(name = "wal-position")]
+    pub wal_position: Option<String>,
+}
+
 /// The async contract for generic nodes. Application operations also support async.
 pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.1.0";
 const HANDLER_SIGNATURE: &str =
@@ -127,15 +141,21 @@ pub fn validate_component_admission(
         };
         let adapter = instance.get_export(raw, "run-json");
         if let Some(ComponentItem::ComponentFunc(adapter)) = adapter.as_ref().map(|item| &item.ty)
-                && adapter
-                    .typecheck::<
-                        (&node_types::NodeContext, &str),
-                        (Result<(StreamReader<String>, FutureReader<String>), node_types::NodeError>,),
-                    >(&component_type.instance_type())
-                    .is_ok()
-            {
-                return validate_streamed_query(adapter, &run);
-            }
+            && adapter
+                .typecheck::<(&node_types::NodeContext, &str, bool), (
+                    Result<
+                        (
+                            FutureReader<QueryMetadata>,
+                            StreamReader<String>,
+                            FutureReader<String>,
+                        ),
+                        node_types::NodeError,
+                    >,
+                )>(&component_type.instance_type())
+                .is_ok()
+        {
+            return validate_streamed_query(adapter, &run);
+        }
         if let Some(adapter) = adapter {
             let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
                 anyhow::bail!("run-json is not a component function");
@@ -347,11 +367,12 @@ fn validate_streamed_query(
     let params: Vec<_> = run.params().collect();
     let adapter_params: Vec<_> = adapter.params().collect();
     anyhow::ensure!(
-        params.len() == 2
+        params.len() == 3
             && params[0].1 == adapter_params[0].1
+            && matches!(params[2].1, Type::Bool)
             && matches!(params[1].1, Type::Record(_))
             && owned_operation_value(&params[1].1),
-        "a streamed query must accept node-context and one owned request record"
+        "a streamed query must accept node-context, one owned request record, and a WAL request"
     );
     let results: Vec<_> = run.results().collect();
     let adapter_results: Vec<_> = adapter.results().collect();
@@ -369,8 +390,11 @@ fn validate_streamed_query(
     };
     let returned: Vec<_> = returned.types().collect();
     anyhow::ensure!(
-        matches!(returned.as_slice(), [Type::Stream(_), Type::Future(_)]),
-        "a streamed query must return a stream of rows and a future of its final record"
+        matches!(
+            returned.as_slice(),
+            [Type::Future(_), Type::Stream(_), Type::Future(_)]
+        ),
+        "a streamed query must return early metadata, rows, and its final outcome"
     );
     Ok(())
 }

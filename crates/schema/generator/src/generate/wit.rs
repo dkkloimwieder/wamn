@@ -12,9 +12,7 @@ use super::{
 };
 use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
-use crate::manifest::{
-    CustomOperationType, FilterMatch, OperationErrorDetailKey, authored_name, serde_field,
-};
+use crate::manifest::{FilterMatch, OperationErrorDetailKey, authored_name, serde_field};
 
 /// How many items one generated CRUD call carries. The codec refuses any
 /// other count, and the route input schema states the same bounds.
@@ -217,7 +215,9 @@ fn emit_crud_interface(
 /// that continues the read, or the error that ended it (`wamn-utci`). The host
 /// shapes the rows into a page or a streamed load.
 fn emit_query_stream(source: &mut String, fields: &[ContractFieldDeclaration]) {
-    source.push_str("  record query-row {\n");
+    source.push_str(
+        "  record query-metadata { wal-position: option<string>, }\n\n  record query-row {\n",
+    );
     for column in fields {
         let mut ty = wit_type(column.ty);
         if column.nullable {
@@ -228,8 +228,8 @@ fn emit_query_stream(source: &mut String, fields: &[ContractFieldDeclaration]) {
     }
     source.push_str("  }\n\n");
     source.push_str("  /// The record after the last row. A cursor means more rows follow.\n  record query-end {\n    next-cursor: option<string>,\n  }\n\n");
-    source.push_str("  run: async func(ctx: node-context, input: query-request) -> result<tuple<stream<query-row>, future<result<query-end, query-error>>>, node-error>;\n");
-    source.push_str("  /// Each row as one JSON object, then the outcome as one JSON value.\n  run-json: async func(ctx: node-context, input: string) -> result<tuple<stream<string>, future<string>>, node-error>;\n}\n\n");
+    source.push_str("  run: async func(ctx: node-context, input: query-request, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<query-row>, future<result<query-end, query-error>>>, node-error>;\n");
+    source.push_str("  /// Each row as one JSON object, then the outcome as one JSON value.\n  run-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<string>, future<string>>, node-error>;\n}\n\n");
 }
 
 fn emit_writable_fields(source: &mut String, table: &Table, operation: &OperationDeclaration) {
@@ -490,7 +490,7 @@ fn emit_update_codec(
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
         revision_width(table, operation),
     ));
-    source.push_str(&emit_export_adapter("Update", false, true));
+    source.push_str(&emit_export_adapter("Update", false, true, false));
     source
 }
 
@@ -538,7 +538,12 @@ fn emit_crud_codec(
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
         revision_width(table, operation),
     ));
-    source.push_str(&emit_export_adapter(&type_name, false, true));
+    source.push_str(&emit_export_adapter(
+        &type_name,
+        false,
+        action.changes_records(),
+        false,
+    ));
     source
 }
 
@@ -651,16 +656,23 @@ enum Writer {
 pub(crate) struct Rows {
     writer: Writer,
     batch: Vec<contract::QueryRow>,
+    metadata: Option<wit_bindgen::rt::async_support::FutureWriter<contract::QueryMetadata>>,
 }
 
 #[allow(dead_code)]
 impl Rows {
-    pub(crate) fn typed(writer: wit_bindgen::rt::async_support::StreamWriter<contract::QueryRow>) -> Self {
-        Self { writer: Writer::Typed(writer), batch: Vec::with_capacity(BATCH) }
+    pub(crate) fn typed(writer: wit_bindgen::rt::async_support::StreamWriter<contract::QueryRow>, metadata: wit_bindgen::rt::async_support::FutureWriter<contract::QueryMetadata>) -> Self {
+        Self { writer: Writer::Typed(writer), batch: Vec::with_capacity(BATCH), metadata: Some(metadata) }
     }
 
-    pub(crate) fn json(writer: wit_bindgen::rt::async_support::StreamWriter<String>) -> Self {
-        Self { writer: Writer::Json(writer), batch: Vec::with_capacity(BATCH) }
+    pub(crate) fn json(writer: wit_bindgen::rt::async_support::StreamWriter<String>, metadata: wit_bindgen::rt::async_support::FutureWriter<contract::QueryMetadata>) -> Self {
+        Self { writer: Writer::Json(writer), batch: Vec::with_capacity(BATCH), metadata: Some(metadata) }
+    }
+
+    pub(crate) async fn metadata(&mut self, wal_position: Option<String>) {
+        if let Some(writer) = self.metadata.take() {
+            let _ = writer.write(contract::QueryMetadata { wal_position }).await;
+        }
     }
 
     /// Hand one row to the reader. An error means the reader left, so the
@@ -716,7 +728,7 @@ where
 const QUERY_EXPORT: &str = r#"
 #[allow(unused_macros)]
 macro_rules! export_operation {
-    ($component:ty, $contract:path, $node:path, $handler:path, $codec:ident) => {
+    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {
         const _: () = {
             use $contract as __contract;
             use $node as __node;
@@ -731,53 +743,56 @@ macro_rules! export_operation {
             }
 
             impl __contract::Guest for $component {
+                #[allow(clippy::unused_async_trait_impl)]
                 async fn run(
                     _context: __node::NodeContext,
                     input: __contract::QueryRequest,
+                    want_wal_position: bool,
                 ) -> Result<
                     (
+                        FutureReader<__contract::QueryMetadata>,
                         StreamReader<__contract::QueryRow>,
                         FutureReader<Result<__contract::QueryEnd, __contract::QueryError>>,
                     ),
                     __node::NodeError,
                 > {
-                    let mut state = wamn_postgres_statements::operation_transaction().await
-                        .map_err(|error| __node::NodeError::Terminal(__node::ErrorDetail {
-                            message: error.to_string(), code: Some("internal_error".to_owned()),
-                        }))?;
                     let (writer, rows) = crate::wit_stream::new::<__contract::QueryRow>();
                     let (end, ended) = crate::wit_future::new::<
                         Result<__contract::QueryEnd, __contract::QueryError>,
                     >(|| Err(__contract::QueryError::InternalError));
+                    let (metadata, header) = crate::wit_future::new::<__contract::QueryMetadata>(|| __contract::QueryMetadata { wal_position: None });
                     spawn_local(async move {
-                        let mut sink = __codec::Rows::typed(writer);
+                        let mut state = $state;
+                        state.want_wal_position(want_wal_position);
+                        let mut sink = __codec::Rows::typed(writer, metadata);
                         let outcome = __codec::run(Ok(input), &mut state, &mut sink, $handler).await;
                         drop(sink);
                         let _ = end.write(outcome).await;
                     });
-                    Ok((rows, ended))
+                    Ok((header, rows, ended))
                 }
 
+                #[allow(clippy::unused_async_trait_impl)]
                 async fn run_json(
                     _context: __node::NodeContext,
                     input: String,
-                ) -> Result<(StreamReader<String>, FutureReader<String>), __node::NodeError> {
+                    want_wal_position: bool,
+                ) -> Result<(FutureReader<__contract::QueryMetadata>, StreamReader<String>, FutureReader<String>), __node::NodeError> {
                     let request = __codec::decode(&input).map_err(invalid)?;
-                    let mut state = wamn_postgres_statements::operation_transaction().await
-                        .map_err(|error| __node::NodeError::Terminal(__node::ErrorDetail {
-                            message: error.to_string(), code: Some("internal_error".to_owned()),
-                        }))?;
                     let (writer, rows) = crate::wit_stream::new::<String>();
                     let (end, ended) = crate::wit_future::new::<String>(|| {
                         __codec::encode_end(&Err(__contract::QueryError::InternalError))
                     });
+                    let (metadata, header) = crate::wit_future::new::<__contract::QueryMetadata>(|| __contract::QueryMetadata { wal_position: None });
                     spawn_local(async move {
-                        let mut sink = __codec::Rows::json(writer);
+                        let mut state = $state;
+                        state.want_wal_position(want_wal_position);
+                        let mut sink = __codec::Rows::json(writer, metadata);
                         let outcome = __codec::run(request, &mut state, &mut sink, $handler).await;
                         drop(sink);
                         let _ = end.write(__codec::encode_end(&outcome)).await;
                     });
-                    Ok((rows, ended))
+                    Ok((header, rows, ended))
                 }
             }
         };
@@ -1642,7 +1657,7 @@ fn emit_custom_group(
                     .iter()
                     .any(|candidate| candidate == operation_name)
             }) {
-            emit_forwarding_interface(package, version, group, local_name, dependency)
+            emit_forwarding_interface(package, version, group, local_name, dependency, operation)
         } else {
             emit_owned_interface(package, version, group, local_name, manifest, operation)
         };
@@ -1663,11 +1678,13 @@ fn emit_forwarding_interface(
     group: &str,
     local_name: &str,
     dependency: &crate::manifest::BaseDependencyRequirement,
+    operation: &CustomOperationDeclaration,
 ) -> String {
     let dependency_package = dependency.package.replace('_', "-");
     let interface = wit_name(local_name);
+    let read_json = projection_read_export(operation);
     format!(
-        "package {package}:{}@{version};\n\ninterface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n  use {dependency_package}:{}/{interface}@{}.{{{interface}-item, {interface}-outcome}};\n\n  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n",
+        "package {package}:{}@{version};\n\ninterface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n  use {dependency_package}:{}/{interface}@{}.{{{interface}-item, {interface}-outcome}};\n\n  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n{read_json}}}\n",
         wit_name(group),
         wit_name(group),
         dependency.version
@@ -1813,8 +1830,17 @@ fn emit_owned_interface(
         }
     }
     writeln!(source, "  }}\n\n  record {interface}-outcome {{\n{key}    outcome: result<{interface}-result, {interface}-error>,\n  }}\n").expect("writing to a String cannot fail");
-    writeln!(source, "  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n").expect("writing to a String cannot fail");
+    let read_json = projection_read_export(operation);
+    writeln!(source, "  run: async func(ctx: node-context, input: list<{interface}-item>) -> result<list<{interface}-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n{read_json}}}\n").expect("writing to a String cannot fail");
     source
+}
+
+fn projection_read_export(operation: &CustomOperationDeclaration) -> &'static str {
+    if custom_is_keyed(operation) {
+        ""
+    } else {
+        "  read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;\n"
+    }
 }
 
 fn emit_record_fields(
@@ -2043,7 +2069,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     let Some(result) = operation.result.as_ref() else {
         let type_name = rust_type_identifier(local_name);
         let mut source = emit_direct_custom_codec(&type_name, operation);
-        source.push_str(&emit_export_adapter(&type_name, true, false));
+        source.push_str(&emit_export_adapter(&type_name, true, false, false));
         return source;
     };
     let (minimum, maximum) = operation
@@ -2156,9 +2182,8 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     source.push_str(&emit_export_adapter(
         &type_name,
         false,
-        operation.has_host_transaction()
-            || (operation.type_ == CustomOperationType::Projection
-                && !operation.statements.is_empty()),
+        operation.has_host_transaction(),
+        !custom_is_keyed(operation),
     ));
     source
 }

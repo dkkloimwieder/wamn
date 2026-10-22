@@ -69,7 +69,7 @@ mod aggregate {
     }
 
     async fn handle(
-        connection: &mut wamn_postgres_statements::Transaction,
+        connection: &mut wamn_postgres_statements::Connection,
         _: contract::AggregateRequest,
     ) -> Result<contract::AggregateResult, contract::AggregateError> {
         let rows = inventory_aggregate::execute(connection)
@@ -100,6 +100,7 @@ mod aggregate {
         crate::Component,
         contract,
         crate::wamn::node::types,
+        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );

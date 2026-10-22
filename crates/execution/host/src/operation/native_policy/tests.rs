@@ -198,7 +198,7 @@ const MEMBER_POSTGRES: &str = r#"
         (export "sql-value" (type $sql-value (eq $sql-value')))
         (type $column' (record (field "name" string) (field "type-name" string)))
         (export "column" (type $column (eq $column')))
-        (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
+        (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value))) (field "wal-position" (option string))))
         (export "row-set" (type $row-set (eq $row-set')))
         (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
           (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
@@ -213,6 +213,8 @@ const MEMBER_POSTGRES: &str = r#"
         (export "sql-value" (type $used-sql-value (eq $sql-value)))
         (export "row-set" (type $used-row-set (eq $row-set)))
         (export "pg-error" (type $used-pg-error (eq $pg-error)))
+        (type $want-wal' (enum "current"))
+        (export "want-wal-position" (type $want-wal (eq $want-wal')))
         (type $contract-part' (enum "binds" "columns"))
         (export "contract-part" (type $contract-part (eq $contract-part')))
         (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -231,7 +233,7 @@ const MEMBER_POSTGRES: &str = r#"
           (result (result $used-row-set (error $statement-error)))))
         (export "begin" (func async
           (result (result (own $transaction) (error $statement-error)))))
-        (export "run" (func async (param "statement" string) (param "binds" (list $used-sql-value))
+        (export "run" (func async (param "statement" string) (param "binds" (list $used-sql-value)) (param "wal" (option $want-wal))
           (result (result $used-row-set (error $statement-error)))))))
 "#;
 
@@ -293,7 +295,7 @@ fn member_child_component() -> Vec<u8> {
         (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32)))
         (import "host" "code" (func $code (param i32) (result i32)))
         (import "host" "begin" (func $begin (param i32)))
-        (import "host" "plain-run" (func $plain-run (param i32 i32 i32 i32 i32)))
+        (import "host" "plain-run" (func $plain-run (param i32 i32 i32 i32 i32 i32 i32)))
         (import "host" "refused" (func $refused (param i32) (result i32)))
         (import "memory" "memory" (memory 16))
         (func (export "run") (result i32) (local $transaction i32) (local $foreign i32)
@@ -308,7 +310,7 @@ fn member_child_component() -> Vec<u8> {
           local.get $foreign i32.const 8 i32.shl i32.const 256 call $code i32.or
           i32.const 384 call $begin
           i32.const 384 call $refused i32.const 16 i32.shl i32.or
-          i32.const 48 i32.const {child_len} i32.const 0 i32.const 0 i32.const 448 call $plain-run
+          i32.const 48 i32.const {child_len} i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 448 call $plain-run
           i32.const 448 call $refused i32.const 24 i32.shl i32.or))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "transaction" (func $transaction))

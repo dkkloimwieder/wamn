@@ -6,7 +6,7 @@
     (export "sql-value" (type $sql-value (eq $sql-value')))
     (type $column' (record (field "name" string) (field "type-name" string)))
     (export "column" (type $column (eq $column')))
-    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
+    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value))) (field "wal-position" (option string))))
     (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
       (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
@@ -19,6 +19,8 @@
   (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/statements@0.4.0" (instance $statements
+    (type $want-wal' (enum "current"))
+    (export "want-wal-position" (type $want-wal (eq $want-wal')))
     (type $contract-part' (enum "binds" "columns"))
     (export "contract-part" (type $contract-part (eq $contract-part')))
     (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -34,10 +36,10 @@
       (result (result (own $transaction) (error $statement-error)))))
     (export "begin" (func async
       (result (result (own $transaction) (error $statement-error)))))
-    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value))
+    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value)) (param "wal" (option $want-wal))
       (result (result $row-set (error $statement-error)))))
-    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value))
-      (result (result (tuple (list $column) (stream (list $sql-value))
+    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value)) (param "wal" (option $want-wal))
+      (result (result (tuple (list $column) (option string) (stream (list $sql-value))
         (future (result (error $statement-error)))) (error $statement-error)))))
     (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
       (param "statement" string) (param "binds" (list $sql-value))
@@ -53,13 +55,16 @@
     (export "sealed-operation-id" (type $id (eq $id')))
     (type $refusal' (variant (case "uncertain") (case "resolved" string) (case "conflict")
       (case "unknown-operation") (case "grant-denied") (case "invalid-caller")
-      (case "not-begun") (case "already-begun") (case "postgres" $pg-error)))
+      (case "not-begun") (case "already-begun") (case "postgres" $pg-error) (case "reads-claim-nothing")))
     (export "refusal" (type $refusal (eq $refusal')))
     (type $begun' (variant (case "new" string) (case "finished" string)))
     (export "begun" (type $begun (eq $begun')))
     (export "begin-operation" (func async (param "caller" (option (borrow $caller)))
       (param "operation" $id) (param "idempotency-key" string) (param "request-hash" (list u8))
       (result (result $begun (error $refusal)))))
+    (export "authorize" (func async (param "caller" (option (borrow $caller)))
+      (param "operation" $id) (result (result (error $refusal)))))
+    (export "finish-read" (func async (result (result (error $refusal)))))
     (export "commit" (func async (param "result" string) (result (result (error $refusal)))))
     (export "rollback" (func async (result (result (error $refusal)))))
     (export "wal-position" (func async (result (result string (error $refusal)))))))
@@ -83,6 +88,12 @@
   (core instance $memory (instantiate $memory))
   (core func $begin (canon lower (func $operation "begin-operation")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $authorize (canon lower (func $operation "authorize")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $finish-read (canon lower (func $operation "finish-read")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $read (canon lower (func $statements "run")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $commit (canon lower (func $operation "commit")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $rollback (canon lower (func $operation "rollback")
@@ -97,6 +108,9 @@
   (core module $main
     (import "memory" "memory" (memory 1))
     (import "host" "begin" (func $begin (param i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+    (import "host" "authorize" (func $authorize (param i32 i32 i32 i32 i32)))
+    (import "host" "finish-read" (func $finish-read (param i32)))
+    (import "host" "read" (func $read (param i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "commit" (func $commit (param i32 i32 i32)))
     (import "host" "rollback" (func $rollback (param i32)))
     (import "host" "wal" (func $wal (param i32)))
@@ -167,10 +181,10 @@
         if (result i32) i32.const 640 else i32.const 512 end
         local.get $mode i32.const 19 i32.eq
         if (result i32) i32.const 21 else i32.const 24 end
-        i32.const 544 i32.const 3 i32.const 560 i32.const 3 i32.const 64 call $begin
+        i32.const 64 call $authorize
         local.get $mode i32.const 19 i32.eq if
           i32.const 64 i32.load8_u if unreachable end
-          i32.const 64 call $rollback
+          i32.const 64 call $finish-read
           i32.const 64 i32.load8_u if unreachable end
         else
           i32.const 4 call $refused
@@ -178,19 +192,21 @@
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 18 i32.eq if
+        ;; Reads cannot begin, even with a key and hash.
         i32.const 1 local.get $caller i32.const 640 i32.const 21 i32.const 544 i32.const 3
         i32.const 560 i32.const 3 i32.const 64 call $begin
+        i32.const 9 call $refused
+        i32.const 1 local.get $caller i32.const 640 i32.const 21 i32.const 64 call $authorize
         i32.const 64 i32.load8_u if unreachable end
-        i32.const 72 i32.load8_u if unreachable end
-        call $wal-call
-        i32.const 128 call $transaction
-        i32.const 128 i32.load8_u if unreachable end
-        i32.const 136 i32.load i32.const 672 i32.const 8
-        i32.const 0 i32.const 0 i32.const 192 call $run
-        i32.const 192 i32.load8_u if unreachable end
-        call $commit-call
-        i32.const 64 i32.load8_u if unreachable end
+        call $commit-call i32.const 6 call $refused
         i32.const 64 call $wal i32.const 6 call $refused
+        i32.const 128 call $transaction
+        i32.const 128 i32.load8_u i32.eqz if unreachable end
+        i32.const 672 i32.const 8 i32.const 0 i32.const 0
+        i32.const 0 i32.const 0 i32.const 192 call $read
+        i32.const 192 i32.load8_u if unreachable end
+        i32.const 64 call $finish-read
+        i32.const 64 i32.load8_u if unreachable end
         i32.const 1 call $return i32.const 0 return
       end
       local.get $mode i32.const 16 i32.eq if
@@ -318,6 +334,8 @@
     (with "host" (instance (export "begin" (func $begin)) (export "commit" (func $commit))
       (export "rollback" (func $rollback))
       (export "wal" (func $wal))
+      (export "authorize" (func $authorize)) (export "finish-read" (func $finish-read))
+      (export "read" (func $read))
       (export "transaction" (func $transaction)) (export "run" (func $run))
       (export "return" (func $return))))))
   (func (export "delivery-id") (result string)

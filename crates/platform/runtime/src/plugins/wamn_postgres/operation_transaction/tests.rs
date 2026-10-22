@@ -126,7 +126,7 @@ fn operation_owner_component(statement: &str) -> String {
     (export "sql-value" (type $sql-value (eq $sql-value')))
     (type $column' (record (field "name" string) (field "type-name" string)))
     (export "column" (type $column (eq $column')))
-    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value)))))
+    (type $row-set' (record (field "columns" (list $column)) (field "rows" (list (list $sql-value))) (field "wal-position" (option string))))
     (export "row-set" (type $row-set (eq $row-set')))
     (type $pg-error' (variant (case "serialization-failure") (case "connection-unavailable")
       (case "statement-timeout") (case "row-limit-exceeded" u64) (case "unique-violation" string)
@@ -139,6 +139,8 @@ fn operation_owner_component(statement: &str) -> String {
   (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/statements@0.4.0" (instance $statements
+    (type $want-wal' (enum "current"))
+    (export "want-wal-position" (type $want-wal (eq $want-wal')))
     (type $contract-part' (enum "binds" "columns"))
     (export "contract-part" (type $contract-part (eq $contract-part')))
     (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -154,10 +156,10 @@ fn operation_owner_component(statement: &str) -> String {
       (result (result (own $transaction) (error $statement-error)))))
     (export "begin" (func async
       (result (result (own $transaction) (error $statement-error)))))
-    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value))
+    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value)) (param "wal" (option $want-wal))
       (result (result $row-set (error $statement-error)))))
-    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value))
-      (result (result (tuple (list $column) (stream (list $sql-value))
+    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value)) (param "wal" (option $want-wal))
+      (result (result (tuple (list $column) (option string) (stream (list $sql-value))
         (future (result (error $statement-error)))) (error $statement-error)))))
     (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
       (param "statement" string) (param "binds" (list $sql-value))
@@ -195,8 +197,8 @@ fn operation_owner_component(statement: &str) -> String {
     (import "memory" "memory" (memory 1))
     (import "host" "operation-transaction" (func $operation-transaction (param i32)))
     (import "host" "begin" (func $begin (param i32)))
-    (import "host" "run" (func $run (param i32 i32 i32 i32 i32)))
-    (import "host" "run-stream" (func $run-stream (param i32 i32 i32 i32 i32)))
+    (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32 i32)))
+    (import "host" "run-stream" (func $run-stream (param i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "transaction-run" (func $transaction-run (param i32 i32 i32 i32 i32 i32)))
     (import "host" "commit" (func $commit (param i32 i32)))
     (import "host" "drop" (func $drop (param i32)))
@@ -214,7 +216,7 @@ fn operation_owner_component(statement: &str) -> String {
       i32.const 64 call $operation-transaction
       i32.const 64 i32.load8_u if
         ;; Outside a host transaction, run and begin work as before.
-        i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 320 call $run
+        i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 320 call $run
         i32.const 320 i32.load8_u if unreachable end
         i32.const 448 call $begin
         i32.const 448 i32.load8_u if unreachable end
@@ -226,10 +228,10 @@ fn operation_owner_component(statement: &str) -> String {
       i32.const 256 i32.const 0x30303532 call $refused
       i32.eqz if i32.const 0 call $return i32.const 0 return end
       ;; run and run-stream would each commit on a connection of their own.
-      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 320 call $run
+      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 320 call $run
       i32.const 320 i32.const 0x30303532 call $refused
       i32.eqz if i32.const 0 call $return i32.const 0 return end
-      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 384 call $run-stream
+      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 384 call $run-stream
       i32.const 384 i32.const 0x30303532 call $refused
       i32.eqz if i32.const 0 call $return i32.const 0 return end
       ;; The same statement runs in the host transaction.

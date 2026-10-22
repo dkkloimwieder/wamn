@@ -102,9 +102,7 @@ pub async fn invoke_operation<H: ApplicationHost>(
     match intent.filter(|intent| logs_intent(intent.kind)) {
         // The per-item loop holds a large future, so it lives on the heap.
         Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await,
-        None => call_unlogged(host, call, NativeInput::Json)
-            .await?
-            .into_json(),
+        None => run_export(host, call).await,
     }
 }
 
@@ -116,33 +114,10 @@ pub async fn invoke_operation_stream<H: ApplicationHost>(
     call: OperationCall<'_, H::Policy>,
     rows: RowBatches,
 ) -> anyhow::Result<Result<String, node_types::NodeError>> {
-    match call_unlogged(host, call, |input| NativeInput::Stream { input, rows }).await? {
+    match call_export(host, call, |input| NativeInput::Stream { input, rows }).await? {
         NativeOutcome::Stream(outcome) => Ok(outcome),
         _ => anyhow::bail!("a streamed call returned a whole outcome"),
     }
-}
-
-/// An unlogged read can still own SQL in the host transaction.
-async fn call_unlogged<H: ApplicationHost>(
-    host: &H,
-    mut call: OperationCall<'_, H::Policy>,
-    input: impl FnOnce(String) -> NativeInput,
-) -> anyhow::Result<NativeOutcome> {
-    let application = application_of(host, call.closure).await?;
-    let id = component_id_of(&application, call.component)?;
-    let transaction = application
-        .policy
-        .begin_item(id, call.operation, &call.facts)
-        .await?;
-    if let Some(transaction) = &transaction {
-        call.facts = application.policy.item_facts(&call.facts, transaction);
-    }
-    let result = call_export(host, call, input).await;
-    if let Some(transaction) = transaction {
-        // Reads write no result or causation message.
-        transaction.rollback().await?;
-    }
-    result
 }
 
 /// Run one export under the call's deadline.

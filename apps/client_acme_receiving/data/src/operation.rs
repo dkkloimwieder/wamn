@@ -109,11 +109,11 @@ fn approve_inspection_value(
 
 /// Execute `quality.load_purchase_order_detail` against its verified projection.
 pub async fn quality_load_purchase_order_detail(
-    transaction: &mut Transaction,
+    connection: &mut Connection,
     purchase_order_id: &str,
 ) -> Result<PurchaseOrderDetailValue, AccessError> {
     let id = parse_uuid(purchase_order_id, "purchase_order_id")?;
-    let row = detail_sql::load_purchase_order_detail(transaction, id)
+    let row = detail_sql::load_purchase_order_detail(connection, id)
         .await
         .map_err(|source| AccessError::from_statement("load purchase_order detail", &source))?;
     row.map(Into::into)

@@ -392,7 +392,43 @@ async fn resolved_refusal_carries_its_basis_across_wit() {
 }
 
 #[tokio::test]
-async fn read_operations_commit_without_a_write_log_claim_or_replay() {
+async fn anonymous_read_authorization_needs_no_database_credentials() {
+    let release = release();
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1000,
+            statement_timeout_ms: 1000,
+            row_limit: 10,
+        })
+        .unwrap(),
+    );
+    postgres
+        .bind_operation_workload(
+            WORKLOAD,
+            Arc::clone(&release),
+            &release
+                .manifest()
+                .composed_entry
+                .as_ref()
+                .unwrap()
+                .reference,
+            "entry",
+            SessionClaims {
+                tenant: TENANT.into(),
+                release: Some(ReleaseIdentity::from_loaded(&release)),
+                ..SessionClaims::default()
+            },
+        )
+        .unwrap();
+    run_guest(Arc::clone(&postgres), release, 19).await;
+    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn reads_authorize_without_a_transaction_and_refuse_begin() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres, release) = fixture().await;
     for _ in 0..2 {

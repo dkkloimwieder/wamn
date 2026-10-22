@@ -59,6 +59,8 @@ interface types {
   record row-set {
     columns: list<column>,
     rows: list<list<sql-value>>,
+    /// The position read before this statement, when the connection call requests it.
+    wal-position: option<string>,
   }
 
   /// Error taxonomy mirrors the runner retry semantics so SDKs can
@@ -131,6 +133,9 @@ interface client {
 interface statements {
   use types.{sql-value, column, row-set, pg-error};
 
+  /// Request the current WAL position in the same pipeline as the read.
+  enum want-wal-position { current }
+
   enum contract-part {
     binds,
     columns,
@@ -164,22 +169,22 @@ interface statements {
     rollback: async func() -> result<_, statement-error>;
   }
 
-  run: async func(statement: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+  /// Optional WAL metadata travels before the statement on the same connection.
+  run: async func(statement: string, binds: list<sql-value>, wal: option<want-wal-position>) -> result<row-set, statement-error>;
 
   /// Run one admitted statement and return its rows as the server sends them.
   ///
   /// The host executes the exact prepared statement once, with the same claims
   /// as `run`. Caller claims keep their transaction. Every row reads the
   /// snapshot the statement took when it started. The result names the columns,
-  /// then carries each row
-  /// on the stream. The future resolves after the last row: ok when the
+  /// then the optional WAL position, then carries each row on the stream. The future resolves after the last row: ok when the
   /// statement read to its end, the error otherwise.
   ///
   /// Dropping the stream before its end closes its session, which ends the
   /// query on the server. The project row limit does not apply, because
   /// the statement's declared limit bounds the rows; the connection buffers
   /// the result.
-  run-stream: async func(statement: string, binds: list<sql-value>) -> result<tuple<list<column>, stream<list<sql-value>>, future<result<_, statement-error>>>, statement-error>;
+  run-stream: async func(statement: string, binds: list<sql-value>, wal: option<want-wal-position>) -> result<tuple<list<column>, option<string>, stream<list<sql-value>>, future<result<_, statement-error>>>, statement-error>;
 
   /// Begin a transaction that the guest commits or rolls back.
   ///

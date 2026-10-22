@@ -1,5 +1,5 @@
 use wamn_platform_fixture_data_access::widget;
-use wamn_postgres_statements::Transaction;
+use wamn_postgres_statements::{Connection, Transaction};
 
 use crate::detail;
 
@@ -37,7 +37,7 @@ mod archive {
 }
 
 mod list {
-    use super::{Transaction, detail, widget};
+    use super::{Connection, detail, widget};
     use crate::exports::platform_fixture::widget::list as contract;
     mod codec {
         use super::contract;
@@ -50,7 +50,7 @@ mod list {
     /// The list statement takes no parameter, so the request's `selector`
     /// and `maker_id` narrow nothing.
     async fn handle(
-        connection: &mut Transaction,
+        connection: &mut Connection,
         _: contract::ListRequest,
     ) -> Result<contract::ListResult, contract::ListError> {
         widget::list(connection)
@@ -71,6 +71,7 @@ mod list {
         crate::Component,
         contract,
         crate::wamn::node::types,
+        Connection::new(),
         handle,
         codec
     );

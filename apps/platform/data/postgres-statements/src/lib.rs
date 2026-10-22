@@ -238,23 +238,45 @@ impl Error for StatementError {}
 
 /// Ambient connection to host-admitted statements.
 #[derive(Debug, Default)]
-pub struct Connection;
+pub struct Connection {
+    want_wal: bool,
+    wal_position: Option<String>,
+}
 
 impl Connection {
     /// Open the ambient capability; no socket or credential is accepted.
     pub const fn new() -> Self {
-        Self
+        Self {
+            want_wal: false,
+            wal_position: None,
+        }
     }
 
-    /// Run one admitted statement in an implicit transaction.
+    /// Request WAL metadata with this connection's reads.
+    pub fn want_wal_position(&mut self, want: bool) {
+        self.want_wal = want;
+    }
+
+    /// The WAL position read before the latest statement.
+    pub fn wal_position(&self) -> Option<&str> {
+        self.wal_position.as_deref()
+    }
+
+    /// Run one admitted statement through the connection.
     pub async fn run(
         &mut self,
         statement: &str,
         params: Vec<SqlValue>,
     ) -> Result<RowSet, StatementError> {
-        host::run(statement.to_string(), params)
-            .await
-            .map_err(StatementError::from_wire)
+        let rows = host::run(
+            statement.to_string(),
+            params,
+            self.want_wal.then_some(host::WantWalPosition::Current),
+        )
+        .await
+        .map_err(StatementError::from_wire)?;
+        self.wal_position.clone_from(&rows.wal_position);
+        Ok(rows)
     }
 
     /// Run one admitted statement and read its rows as the server sends them.
@@ -268,9 +290,14 @@ impl Connection {
         params: Vec<SqlValue>,
         decode: fn(&mut RowDecoder<'_>) -> Result<T, StatementError>,
     ) -> Result<RowStream<T>, StatementError> {
-        let (columns, rows, end) = host::run_stream(statement.to_string(), params)
-            .await
-            .map_err(StatementError::from_wire)?;
+        let (columns, wal_position, rows, end) = host::run_stream(
+            statement.to_string(),
+            params,
+            self.want_wal.then_some(host::WantWalPosition::Current),
+        )
+        .await
+        .map_err(StatementError::from_wire)?;
+        self.wal_position = wal_position;
         Ok(RowStream {
             statement: statement.into(),
             columns,

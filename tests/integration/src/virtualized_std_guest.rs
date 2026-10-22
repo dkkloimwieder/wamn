@@ -218,18 +218,44 @@ mod tests {
             })
             .collect::<Vec<_>>();
         functions.sort_by(|left, right| left.0.cmp(&right.0));
+        let projection = !operation.contains("/get@")
+            && functions.iter().any(|(name, _, shape)| {
+                name == "run" && shape.contains(",input:list<record{input:result<")
+            });
+        let expected = if projection {
+            BTreeSet::from(["run", "run-json", "read-json"])
+        } else {
+            BTreeSet::from(["run", "run-json"])
+        };
         ensure!(
             functions
                 .iter()
                 .map(|entry| entry.0.as_str())
                 .collect::<BTreeSet<_>>()
-                == BTreeSet::from(["run", "run-json"]),
-            "Receiving operation {operation:?} function exports are not exactly run and run-json: {functions:?}"
+                == expected,
+            "Receiving operation {operation:?} function exports differ from {expected:?}: {functions:?}"
         );
         ensure!(
             functions.iter().all(|entry| entry.1),
             "Receiving operation {operation:?} has a synchronous generated entry point: {functions:?}"
         );
+        if projection {
+            let read_json = functions
+                .iter()
+                .find(|entry| entry.0 == "read-json")
+                .unwrap();
+            let expected = HANDLER_PARAMETERS_AND_RESULTS
+                .replace("input:string)", "input:string,want-wal-position:bool)")
+                .replace(
+                    "result<record{payload:string,port:option<string>},",
+                    "result<tuple<record{payload:string,port:option<string>},option<string>>,",
+                );
+            ensure!(
+                read_json.2 == expected,
+                "Receiving projection {operation:?} read-json shape is {:?}, not {expected:?}",
+                read_json.2
+            );
+        }
         let run_json = functions
             .iter()
             .find(|entry| entry.0 == "run-json")
@@ -238,8 +264,8 @@ mod tests {
         if operation.contains("/query@") {
             let streamed = HANDLER_PARAMETERS_AND_RESULTS.replace(
                 "result<record{payload:string,port:option<string>},",
-                "result<tuple<stream<string>,future<string>>,",
-            );
+                "result<tuple<future<record{wal-position:option<string>}>,stream<string>,future<string>>,",
+            ).replace("input:string)", "input:string,want-wal-position:bool)");
             ensure!(
                 run_json.2 == streamed,
                 "Receiving query {operation:?} run-json shape is {:?}, not {streamed:?}",
@@ -251,7 +277,7 @@ mod tests {
                 .expect("the exact function-name check found run");
             ensure!(
                 run.2.contains(",input:record{")
-                    && run.2.contains(")->(result<tuple<stream<record{")
+                    && run.2.contains(")->(result<tuple<future<record{wal-position:option<string>}>,stream<record{")
                     && run
                         .2
                         .contains(",future<result<record{next-cursor:option<string>},"),

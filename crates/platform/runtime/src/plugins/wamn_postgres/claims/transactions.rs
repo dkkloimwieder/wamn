@@ -474,6 +474,7 @@ impl WamnPostgres {
         digest: &str,
         statement: &VerifiedStatement,
         binds: &[SqlValue],
+        want_wal: bool,
     ) -> Result<RowSet, StatementError> {
         let project = self.project_for(component_id);
         let tenant = self
@@ -492,6 +493,17 @@ impl WamnPostgres {
             .await
             .map_err(StatementError::Postgres)?;
         let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
+        let wal_statement = if want_wal {
+            Some(
+                connection
+                    .connection()
+                    .prepare_cached("SELECT pg_current_wal_lsn()::text")
+                    .await
+                    .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?,
+            )
+        } else {
+            None
+        };
         // AUTOCOMMIT WHEN THE SERVER SAYS NO TRANSACTION IS NEEDED. PostgreSQL
         // classified this statement at generation time: it neither writes nor
         // takes a row lock, so BEGIN and COMMIT are ceremony around a read.
@@ -513,17 +525,19 @@ impl WamnPostgres {
             )
             .await
             .map_err(StatementError::Postgres)?;
-            let (settings, rows) = tokio::join!(
+            let (settings, wal, rows) = tokio::join!(
                 biased;
                 bind_session_settings(
                     connection.connection(), &policy, prepared.as_ref(), schema, runner,
                 ),
+                read_wal_position(connection.connection(), wal_statement.as_ref()),
                 run_verified_query(
                     connection.connection(), digest, statement, binds, policy.row_limit,
                 ),
             );
             settings.map_err(StatementError::Postgres)?;
-            let rows = rows?;
+            let mut rows = rows?;
+            rows.wal_position = wal?;
             connection.repool();
             return Ok(rows);
         }
@@ -546,9 +560,10 @@ impl WamnPostgres {
             )
             .await
             .map_err(StatementError::Postgres)?;
-        let (claims, result) = tokio::join!(
+        let (claims, wal, result) = tokio::join!(
             biased;
             claims.bind(connection.connection()),
+            read_wal_position(connection.connection(), wal_statement.as_ref()),
             run_verified_query(
                 connection.connection(),
                 digest,
@@ -570,6 +585,10 @@ impl WamnPostgres {
             }
             return Err(StatementError::Postgres(error));
         }
+        let result = result.and_then(|mut rows| {
+            rows.wal_position = wal?;
+            Ok(rows)
+        });
         match result {
             // COMMIT is a SECOND full server round trip on every request, and it
             // sat inside wamn.postgres with no span: statement ended at 13.7 ms
@@ -600,4 +619,19 @@ impl WamnPostgres {
             }
         }
     }
+}
+
+/// Read WAL metadata before the application statement in the same pipeline.
+pub(in super::super) async fn read_wal_position(
+    conn: &Object,
+    statement: Option<&tokio_postgres::Statement>,
+) -> Result<Option<String>, StatementError> {
+    let Some(statement) = statement else {
+        return Ok(None);
+    };
+    conn.query_one(statement, &[])
+        .await
+        .and_then(|row| row.try_get(0))
+        .map(Some)
+        .map_err(|error| StatementError::Postgres(map_pg_error(&error)))
 }

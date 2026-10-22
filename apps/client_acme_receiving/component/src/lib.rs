@@ -52,6 +52,7 @@ quality::detail_codec::export_operation!(
     Component,
     exports::client_acme_receiving::quality::load_purchase_order_detail,
     wamn::node::types,
+    wamn_postgres_statements::Connection::new(),
     quality::handle_detail,
     detail_codec
 );

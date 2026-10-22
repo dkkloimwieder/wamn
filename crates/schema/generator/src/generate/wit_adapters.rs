@@ -151,7 +151,12 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
 /// A `transacted` operation works in the transaction that the host began for
 /// it (`docs/history/host-transaction.md` 4.1), so its export takes no state: its
 /// handler gets the operation transaction.
-pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: bool) -> String {
+pub(super) fn emit_export_adapter(
+    type_name: &str,
+    direct: bool,
+    transacted: bool,
+    projection: bool,
+) -> String {
     let input_type = if direct {
         format!("__contract::{type_name}Request")
     } else {
@@ -194,6 +199,27 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: boo
     } else {
         (" $state:expr,", "$state")
     };
+    let read_json = if projection {
+        r"
+                async fn read_json(
+                    _context: __node::NodeContext,
+                    input: String,
+                    want_wal_position: bool,
+                ) -> Result<(__node::Emission, Option<String>), __node::NodeError> {
+                    let input = __codec::decode(&input).map_err(invalid)?;
+                    __codec::validate(&input).map_err(invalid)?;
+                    let mut state = $state;
+                    state.want_wal_position(want_wal_position);
+                    let output = __codec::run(input, &mut state, $handler).await;
+                    Ok((__node::Emission {
+                        payload: __codec::encode(&output),
+                        port: None,
+                    }, state.wal_position().map(str::to_owned)))
+                }
+"
+    } else {
+        ""
+    };
     format!(
         r#"
 #[allow(unused_macros)]
@@ -226,6 +252,7 @@ macro_rules! export_operation {{
                 ) -> Result<__node::Emission, __node::NodeError> {{
                     {run_json}
                 }}
+                {read_json}
             }}
         }};
     }};

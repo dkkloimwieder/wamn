@@ -336,8 +336,17 @@ type WholeEntry = TypedFunc<
 
 /// The JSON adapter of a query: its row stream and its outcome future.
 type StreamedEntry = TypedFunc<
-    (node_types::NodeContext, String),
-    (Result<(StreamReader<String>, FutureReader<String>), node_types::NodeError>,),
+    (node_types::NodeContext, String, bool),
+    (
+        Result<
+            (
+                FutureReader<crate::component_admission::QueryMetadata>,
+                StreamReader<String>,
+                FutureReader<String>,
+            ),
+            node_types::NodeError,
+        >,
+    ),
 >;
 
 /// Batches a gathered page holds between the component and its outcome.
@@ -362,16 +371,17 @@ async fn run_streamed<P: InvocationPolicy>(
     let (returned,) = tokio::select! {
         biased;
         () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
-        result = run.call_concurrent(accessor, (context, input)) => result,
+        result = run.call_concurrent(accessor, (context, input, false)) => result,
     }
     .map_err(anyhow::Error::from)
     .context("streamed operation trapped")?;
-    let (stream, end) = match returned {
+    let (mut metadata, stream, end) = match returned {
         Ok(returned) => returned,
         Err(error) => return Ok(Err(error)),
     };
     let (ended, outcome) = oneshot::channel();
     accessor.with(|mut access| {
+        metadata.close(&mut access)?;
         stream.pipe(&mut access, RowForwarder::new(rows))?;
         end.pipe(&mut access, OutcomeForwarder(Some(ended)))
     })?;

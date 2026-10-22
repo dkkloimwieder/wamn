@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use crate::manifest::authored_name;
+use crate::manifest::{CustomOperationType, authored_name};
 
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CREATE_STATEMENT, CatalogIr, Column, ColumnType,
@@ -103,7 +103,11 @@ pub(super) fn emit_static_sql_projection(
 ) -> Result<(), GenerateError> {
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
     if matches!(projection, Projection::Wamn) {
-        source.push_str("use wamn_postgres_statements::Transaction;\n\n");
+        source.push_str(if operation.type_ == CustomOperationType::Projection {
+            "use wamn_postgres_statements::Connection;\n\n"
+        } else {
+            "use wamn_postgres_statements::Transaction;\n\n"
+        });
     }
     for row in rows {
         emit_rust_row(&mut source, row, projection);
@@ -143,7 +147,12 @@ pub(super) fn emit_static_sql_projection(
                 .iter()
                 .find(|row| row.name == accessor.row)
                 .expect("static accessor row was generated from the same statement");
-            emit_static_sql_wamn_accessor(&mut source, &accessor, row);
+            emit_static_sql_wamn_accessor(
+                &mut source,
+                &accessor,
+                row,
+                operation.type_ != CustomOperationType::Projection,
+            );
         }
     }
     while source.ends_with("\n\n") {
@@ -160,12 +169,21 @@ pub(super) fn emit_static_sql_projection(
     )
 }
 
-fn emit_static_sql_wamn_accessor(source: &mut String, accessor: &StaticSqlAccessor, row: &RustRow) {
+fn emit_static_sql_wamn_accessor(
+    source: &mut String,
+    accessor: &StaticSqlAccessor,
+    row: &RustRow,
+    transactional: bool,
+) {
     let function = rust_identifier(&accessor.name)
         .expect("static SQL statement names were validated for Rust");
     emit_argument_count_expectation(source, accessor.binds.len());
     writeln!(source, "pub(crate) async fn {function}(").expect("writing to a String cannot fail");
-    source.push_str("    transaction: &mut Transaction,\n");
+    source.push_str(if transactional {
+        "    transaction: &mut Transaction,\n"
+    } else {
+        "    connection: &mut Connection,\n"
+    });
     for bind in &accessor.binds {
         let parameter = rust_identifier(&bind.parameter)
             .expect("static SQL parameter names were validated for Rust");
@@ -180,7 +198,12 @@ fn emit_static_sql_wamn_accessor(source: &mut String, accessor: &StaticSqlAccess
     .expect("writing to a String cannot fail");
     writeln!(
         source,
-        "    let rows = transaction.run({}, vec![",
+        "    let rows = {}.run({}, vec![",
+        if transactional {
+            "transaction"
+        } else {
+            "connection"
+        },
         accessor.statement_constant,
     )
     .expect("writing to a String cannot fail");
@@ -592,6 +615,14 @@ pub(super) fn emit_projection(
         ),
     };
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
+    // A read runs on the connection; a change runs in the host's transaction.
+    if wamn_api.is_some_and(|api| {
+        api.accessors
+            .iter()
+            .any(|accessor| !accessor.operation.changes_records())
+    }) {
+        source.push_str("use wamn_postgres_statements::Connection;\n\n");
+    }
     let model_row = RustRow {
         name: format!("{}Row", rust_type_identifier(model_name)),
         visibility: RustVisibility::Public,
@@ -757,6 +788,8 @@ fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
 }
 
 fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
+    // A change runs in the transaction the host began for its operation.
+    let transactional = accessor.operation.changes_records();
     emit_argument_count_expectation(source, accessor.binds.len());
     writeln!(
         source,
@@ -765,7 +798,11 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
         accessor.name
     )
     .expect("writing to a String cannot fail");
-    source.push_str("    transaction: &mut wamn_postgres_statements::Transaction,\n");
+    if transactional {
+        source.push_str("    transaction: &mut wamn_postgres_statements::Transaction,\n");
+    } else {
+        source.push_str("    connection: &mut Connection,\n");
+    }
     for bind in &accessor.binds {
         writeln!(source, "    {}: {},", bind.parameter, bind.wamn_rust)
             .expect("writing to a String cannot fail");
@@ -782,7 +819,12 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     }
     writeln!(
         source,
-        "    let rows = transaction.run({}, vec![",
+        "    let rows = {}.run({}, vec![",
+        if transactional {
+            "transaction"
+        } else {
+            "connection"
+        },
         accessor.statement_constant
     )
     .expect("writing to a String cannot fail");
@@ -815,7 +857,7 @@ fn accessor_result_type(accessor: &WamnAccessor) -> String {
 fn emit_stream_accessor_body(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
     writeln!(
         source,
-        "    transaction.run_stream({}, vec![",
+        "    connection.run_stream({}, vec![",
         accessor.statement_constant
     )
     .expect("writing to a String cannot fail");

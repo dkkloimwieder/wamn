@@ -244,7 +244,7 @@ fn lower_statements(
         .collect()
 }
 
-/// Store-local lifecycle state. Only `open` marks an operation as begun.
+/// Store-local authority for a begun write or an authorized read.
 #[derive(Debug, Clone)]
 struct StoreOperation {
     workload: Arc<str>,
@@ -325,6 +325,29 @@ fn binding_error(kind: OperationErrorKind, scope: &str, source: anyhow::Error) -
 impl wit::Host for ActiveCtx<'_> {}
 
 impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
+    async fn finish_read(
+        accessor: &Accessor<T, Self>,
+    ) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
+        let Some(store) = accessor.with(|mut access| state(access.get().table).cloned()) else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        let mut current = store.open.lock().await;
+        if current
+            .as_ref()
+            .is_none_or(|open| open.transaction.is_some())
+        {
+            return Ok(Err(Refusal::NotBegun));
+        }
+        let mut open = current.take().expect("authorized read exists");
+        open.postgres
+            .operation_metrics
+            .record(&open.source, DeliveryClass::Delivered);
+        open.settled = true;
+        drop(open);
+        accessor.with(|mut access| access.get().component_id = Arc::clone(&store.workload));
+        Ok(Ok(()))
+    }
+
     async fn wal_position(
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<String, Refusal>> {
@@ -335,13 +358,10 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         let Some(open) = current.as_ref() else {
             return Ok(Err(Refusal::NotBegun));
         };
-        Ok(open
-            .transaction
-            .as_ref()
-            .expect("new begin owns a transaction")
-            .wal_position()
-            .await
-            .map_err(Refusal::Postgres))
+        let Some(transaction) = open.transaction.as_ref() else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        Ok(transaction.wal_position().await.map_err(Refusal::Postgres))
     }
 
     async fn rollback(
@@ -351,6 +371,12 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
             return Ok(Err(Refusal::NotBegun));
         };
         let mut current = store.open.lock().await;
+        if current
+            .as_ref()
+            .is_some_and(|open| open.transaction.is_none())
+        {
+            return Ok(Err(Refusal::NotBegun));
+        }
         let Some(mut open) = current.take() else {
             return Ok(Err(Refusal::NotBegun));
         };
@@ -376,6 +402,18 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         });
         Ok(rolled_back)
     }
+    async fn authorize(
+        accessor: &Accessor<T, Self>,
+        caller: Option<Resource<AuthenticatedCaller>>,
+        operation: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
+        Ok(
+            enter(accessor, caller, operation, String::new(), Vec::new(), true)
+                .await?
+                .map(drop),
+        )
+    }
+
     async fn begin_operation(
         accessor: &Accessor<T, Self>,
         caller: Option<Resource<AuthenticatedCaller>>,
@@ -383,82 +421,15 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         idempotency_key: String,
         request_hash: Vec<u8>,
     ) -> wash_runtime::wasmtime::Result<Result<Begun, Refusal>> {
-        let store = accessor.with(|mut access| {
-            let ctx = access.get();
-            if state(ctx.table).is_none() {
-                ctx.table.push(StoreOperation {
-                    workload: Arc::clone(&ctx.component_id),
-                    open: Arc::default(),
-                })?;
-            }
-            Ok::<_, wash_runtime::wasmtime::Error>(
-                state(ctx.table).expect("Store state exists").clone(),
-            )
-        })?;
-        // Serialize lifecycle calls without marking an unfinished begin as open.
-        let mut current = store.open.lock().await;
-        // The open operation and its scope stay as they are.
-        if current.is_some() {
-            return Ok(Err(Refusal::AlreadyBegun));
-        }
-        accessor.with(|mut access| {
-            access.get().component_id = Arc::clone(&store.workload);
-        });
-        let input = accessor.with(|mut access| {
-            let ctx = access.get();
-            let Ok(caller) = caller
-                .map(|caller| ctx.table.get(&caller).cloned())
-                .transpose()
-            else {
-                return Ok(Err(Refusal::InvalidCaller));
-            };
-            let postgres = ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?;
-            Ok::<_, wash_runtime::wasmtime::Error>(Ok((postgres, caller)))
-        })?;
-        let (postgres, caller) = match input {
-            Ok(input) => input,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        let source = caller.as_ref().map_or_else(
-            || operation.clone(),
-            |caller| caller.attachment_id().to_owned(),
-        );
-        let trace = accessor
-            .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
-        let result = trace
-            .run(begin(
-                Arc::clone(&postgres),
-                &store.workload,
-                caller.as_ref(),
-                operation,
-                idempotency_key,
-                request_hash,
-            ))
-            .await;
-        if !matches!(&result, Ok((Some(_), _))) {
-            let class = match &result {
-                Ok(_) | Err(Refusal::Conflict | Refusal::Uncertain | Refusal::Resolved(_)) => {
-                    DeliveryClass::Delivered
-                }
-                Err(Refusal::GrantDenied | Refusal::InvalidCaller) => {
-                    DeliveryClass::PermissionDenied
-                }
-                Err(_) => DeliveryClass::ExecutionFailed,
-            };
-            postgres.operation_metrics.record(&source, class);
-        }
-        match result {
-            Ok((open, begun)) => {
-                if let Some(open) = &open {
-                    accessor.with(|mut access| {
-                        access.get().component_id = Arc::from(open.scope.as_str());
-                    });
-                }
-                *current = open;
-                Ok(Ok(begun))
-            }
-            Err(refusal) => Ok(Err(refusal)),
-        }
+        enter(
+            accessor,
+            caller,
+            operation,
+            idempotency_key,
+            request_hash,
+            false,
+        )
+        .await
     }
 
     async fn commit(
@@ -470,6 +441,12 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
             return Ok(Err(Refusal::NotBegun));
         };
         let mut current = store.open.lock().await;
+        if current
+            .as_ref()
+            .is_some_and(|open| open.transaction.is_none())
+        {
+            return Ok(Err(Refusal::NotBegun));
+        }
         let Some(mut open) = current.take() else {
             return Ok(Err(Refusal::NotBegun));
         };
@@ -502,6 +479,91 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
     }
 }
 
+async fn enter<T: 'static + Send>(
+    accessor: &Accessor<T, SharedCtx>,
+    caller: Option<Resource<AuthenticatedCaller>>,
+    operation: String,
+    idempotency_key: String,
+    request_hash: Vec<u8>,
+    authorize_only: bool,
+) -> wash_runtime::wasmtime::Result<Result<Begun, Refusal>> {
+    let store = accessor.with(|mut access| {
+        let ctx = access.get();
+        if state(ctx.table).is_none() {
+            ctx.table.push(StoreOperation {
+                workload: Arc::clone(&ctx.component_id),
+                open: Arc::default(),
+            })?;
+        }
+        Ok::<_, wash_runtime::wasmtime::Error>(
+            state(ctx.table).expect("Store state exists").clone(),
+        )
+    })?;
+    // Serialize lifecycle calls without marking an unfinished begin as open.
+    let mut current = store.open.lock().await;
+    // The open operation and its scope stay as they are.
+    if current.is_some() {
+        return Ok(Err(Refusal::AlreadyBegun));
+    }
+    accessor.with(|mut access| {
+        access.get().component_id = Arc::clone(&store.workload);
+    });
+    let input = accessor.with(|mut access| {
+        let ctx = access.get();
+        let Ok(caller) = caller
+            .map(|caller| ctx.table.get(&caller).cloned())
+            .transpose()
+        else {
+            return Ok(Err(Refusal::InvalidCaller));
+        };
+        let postgres = ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?;
+        Ok::<_, wash_runtime::wasmtime::Error>(Ok((postgres, caller)))
+    })?;
+    let (postgres, caller) = match input {
+        Ok(input) => input,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
+    let source = caller.as_ref().map_or_else(
+        || operation.clone(),
+        |caller| caller.attachment_id().to_owned(),
+    );
+    let trace = accessor
+        .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
+    let result = trace
+        .run(begin(
+            Arc::clone(&postgres),
+            &store.workload,
+            caller.as_ref(),
+            operation,
+            idempotency_key,
+            request_hash,
+            authorize_only,
+        ))
+        .await;
+    if !matches!(&result, Ok((Some(_), _))) {
+        let class = match &result {
+            Ok(_) | Err(Refusal::Conflict | Refusal::Uncertain | Refusal::Resolved(_)) => {
+                DeliveryClass::Delivered
+            }
+            Err(Refusal::GrantDenied | Refusal::InvalidCaller) => DeliveryClass::PermissionDenied,
+            Err(_) => DeliveryClass::ExecutionFailed,
+        };
+        postgres.operation_metrics.record(&source, class);
+    }
+    match result {
+        Ok((open, begun)) => {
+            if let Some(open) = &open {
+                accessor.with(|mut access| {
+                    access.get().component_id = Arc::from(open.scope.as_str());
+                });
+            }
+            *current = open;
+            Ok(Ok(begun))
+        }
+        Err(refusal) => Ok(Err(refusal)),
+    }
+}
+
 async fn begin(
     postgres: Arc<WamnPostgres>,
     workload: &str,
@@ -509,6 +571,7 @@ async fn begin(
     operation: String,
     key: String,
     request: Vec<u8>,
+    authorize_only: bool,
 ) -> Result<(Option<OpenOperation>, Begun), Refusal> {
     let facts = postgres
         .operation_workloads
@@ -521,6 +584,9 @@ async fn begin(
         .operations
         .get(&operation)
         .ok_or(Refusal::UnknownOperation)?;
+    if statements.is_read() && !authorize_only {
+        return Err(Refusal::ReadsClaimNothing);
+    }
     wamn_engine::router_delivery::authorize_registered_operation(
         caller,
         facts.grants[&operation].as_deref(),
@@ -560,10 +626,17 @@ async fn begin(
         operation: Some(open.operation.clone()),
         ..facts.claims.clone()
     };
-    postgres
-        .bind_session_claims(&open.scope, &claims)
-        .await
-        .map_err(|error| binding_error(OperationErrorKind::Claims, &open.scope, error))?;
+    if authorize_only {
+        // The host-issued caller already passed authentication and grant checks.
+        postgres
+            .bind_item_session_claims(&open.scope, &claims)
+            .map_err(|error| binding_error(OperationErrorKind::Claims, &open.scope, error))?;
+    } else {
+        postgres
+            .bind_session_claims(&open.scope, &claims)
+            .await
+            .map_err(|error| binding_error(OperationErrorKind::Claims, &open.scope, error))?;
+    }
     postgres.set_current_run(
         &open.scope,
         Some(wamn_event_wire::Causation {
@@ -579,6 +652,10 @@ async fn begin(
         })
         .and_then(|()| postgres.activate_statement_operation(&open.scope, &open.operation))
         .map_err(|error| binding_error(OperationErrorKind::Statements, &open.scope, error))?;
+    if authorize_only {
+        open.settled = false;
+        return Ok((Some(open), Begun::New(delivery)));
+    }
     let transaction = postgres
         .begin_operation_transaction(&open.scope)
         .await

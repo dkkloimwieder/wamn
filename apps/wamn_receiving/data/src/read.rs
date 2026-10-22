@@ -1,4 +1,4 @@
-//! Application-owned read transactions and history image projection.
+//! Application-owned read connections and history image projection.
 
 use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
@@ -6,7 +6,7 @@ use crate::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
     receiving_load_receipt_screen as screen_sql,
 };
-use wamn_postgres_statements::{Transaction, Uuid};
+use wamn_postgres_statements::{Connection, Uuid};
 
 pub use location_sql::ListLocationsRow;
 pub use screen_sql::LoadReceiptScreenRow;
@@ -81,11 +81,11 @@ fn history_value(
     })
 }
 
-/// Read the declared locations in one transaction.
+/// Read the declared locations through the connection.
 pub async fn location_list(
-    transaction: &mut Transaction,
+    connection: &mut Connection,
 ) -> Result<Vec<ListLocationsRow>, AccessError> {
-    let rows = location_sql::list_locations(transaction)
+    let rows = location_sql::list_locations(connection)
         .await
         .map_err(|source| {
             AccessError::from_statement("list locations", &source, AllowedConstraints::NONE)
@@ -93,12 +93,12 @@ pub async fn location_list(
     Ok(rows)
 }
 
-/// Read the purchase order and its lines in one transaction.
+/// Read the purchase order and its lines in one statement.
 pub async fn receipt_screen(
-    transaction: &mut Transaction,
+    connection: &mut Connection,
     id: Uuid,
 ) -> Result<Vec<LoadReceiptScreenRow>, AccessError> {
-    let rows = screen_sql::load_receipt_screen(transaction, id)
+    let rows = screen_sql::load_receipt_screen(connection, id)
         .await
         .map_err(|source| {
             AccessError::from_statement("load receipt screen", &source, AllowedConstraints::NONE)
@@ -111,7 +111,7 @@ pub async fn receipt_screen(
 
 /// Read retained history and project the declared purchase-order image.
 pub async fn purchase_order_history(
-    transaction: &mut Transaction,
+    connection: &mut Connection,
     id: Uuid,
     after_cursor: Option<&str>,
     limit: i32,
@@ -124,7 +124,7 @@ pub async fn purchase_order_history(
     }
     let after_position = history_position(after_cursor, &id)?;
     let rows =
-        history_sql::load_purchase_order_history(transaction, id.clone(), after_position, limit)
+        history_sql::load_purchase_order_history(connection, id.clone(), after_position, limit)
             .await
             .map_err(|source| {
                 AccessError::from_statement(

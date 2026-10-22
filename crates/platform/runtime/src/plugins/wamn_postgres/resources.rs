@@ -267,7 +267,11 @@ pub(super) async fn run_query(
             tracing::info_span!("wamn.postgres.decode_rows")
         }))
         .await?;
-        Ok(RowSet { columns, rows })
+        Ok(RowSet {
+            columns,
+            rows,
+            wal_position: None,
+        })
     }
     .instrument(wamn_engine::invocation_trace::sampled_span(|| {
         tracing::info_span!(
@@ -347,7 +351,11 @@ pub(super) async fn run_verified_query(
         }))
         .await?;
         validate_statement_result(statement_path, statement, &columns, &rows)?;
-        Ok(RowSet { columns, rows })
+        Ok(RowSet {
+            columns,
+            rows,
+            wal_position: None,
+        })
     }
     .instrument(wamn_engine::invocation_trace::sampled_span(|| {
         tracing::info_span!(
@@ -1001,7 +1009,11 @@ async fn cursor_fetch<T: 'static>(
             record_query_ms("cursor.fetch", project, t0.elapsed());
             Ok(fetched.and_then(|(columns, rows)| {
                 let rows = rows.iter().map(decode_row).collect::<Result<Vec<_>, _>>()?;
-                Ok(RowSet { columns, rows })
+                Ok(RowSet {
+                    columns,
+                    rows,
+                    wal_position: None,
+                })
             }))
         })
         .await
@@ -1253,8 +1265,9 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
         statement_path: String,
         binds: Vec<SqlValue>,
+        wal: Option<statement_wit::WantWalPosition>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        statement_run(accessor, None, statement_path, binds).await
+        statement_run(accessor, None, statement_path, binds, wal).await
     }
 
     async fn begin(
@@ -1268,17 +1281,19 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
         statement_path: String,
         binds: Vec<SqlValue>,
+        wal: Option<statement_wit::WantWalPosition>,
     ) -> wash_runtime::wasmtime::Result<
         Result<
             (
                 Vec<super::Column>,
+                Option<String>,
                 wash_runtime::wasmtime::component::StreamReader<Vec<SqlValue>>,
                 wash_runtime::wasmtime::component::FutureReader<Result<(), StatementError>>,
             ),
             StatementError,
         >,
     > {
-        super::run_stream::run_stream(accessor, None, statement_path, binds).await
+        super::run_stream::run_stream(accessor, None, statement_path, binds, wal).await
     }
 
     async fn operation_transaction(
@@ -1345,6 +1360,7 @@ async fn statement_run<T: 'static>(
     instance: Option<&str>,
     statement_path: String,
     binds: Vec<SqlValue>,
+    wal: Option<statement_wit::WantWalPosition>,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
     let (plugin, component_id, trace) = accessor.with(|mut access| {
         let mut ctx = access.get();
@@ -1371,7 +1387,13 @@ async fn statement_run<T: 'static>(
             let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
             let started = std::time::Instant::now();
             let result = plugin
-                .one_shot_statement(&component_id, &statement_path, &statement, &binds)
+                .one_shot_statement(
+                    &component_id,
+                    &statement_path,
+                    &statement,
+                    &binds,
+                    wal.is_some(),
+                )
                 .instrument(span)
                 .await;
             record_query_ms("statement.run", &project, started.elapsed());
@@ -1684,8 +1706,9 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
         id: super::NamedStatements,
         statement_path: String,
         binds: Vec<SqlValue>,
+        wal: Option<statement_wit::WantWalPosition>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        statement_run(accessor, Some(id.instance()), statement_path, binds).await
+        statement_run(accessor, Some(id.instance()), statement_path, binds, wal).await
     }
 
     async fn run_stream(
@@ -1693,17 +1716,20 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
         id: super::NamedStatements,
         statement_path: String,
         binds: Vec<SqlValue>,
+        wal: Option<statement_wit::WantWalPosition>,
     ) -> wash_runtime::wasmtime::Result<
         Result<
             (
                 Vec<super::Column>,
+                Option<String>,
                 wash_runtime::wasmtime::component::StreamReader<Vec<SqlValue>>,
                 wash_runtime::wasmtime::component::FutureReader<Result<(), StatementError>>,
             ),
             StatementError,
         >,
     > {
-        super::run_stream::run_stream(accessor, Some(id.instance()), statement_path, binds).await
+        super::run_stream::run_stream(accessor, Some(id.instance()), statement_path, binds, wal)
+            .await
     }
 
     async fn begin(

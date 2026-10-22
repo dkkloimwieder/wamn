@@ -506,17 +506,21 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
 
     // CONDITIONAL READS. A list answers with a weak ETag from the versions of
     // the relations it reads. The same GET with that tag answers 304 with no
-    // body and runs no read, and a write changes the tag.
-    let (status, etag, _) = paths.conditional("/widget/query", None).await?;
-    let etag = etag
-        .filter(|_| status == 200)
-        .with_context(|| format!("the list answers 200 with an ETag, not {status}"))?;
-    anyhow::ensure!(etag.starts_with("W/\""), "a list tag is weak: {etag}");
-    let (status, again, body) = paths.conditional("/widget/query", Some(&etag)).await?;
-    anyhow::ensure!(
-        status == 304 && again.as_deref() == Some(etag.as_str()) && body.is_empty(),
-        "an unchanged list answers 304 with its tag and no body: {status} {again:?} {body}"
-    );
+    // body, and a write changes the tag.
+    let mut tags = Vec::new();
+    for path in ["/widget/query", "/widget_maker/list"] {
+        let (status, etag, _) = paths.conditional(path, None).await?;
+        let etag = etag
+            .filter(|_| status == 200)
+            .with_context(|| format!("the list answers 200 with an ETag, not {status}"))?;
+        anyhow::ensure!(etag.starts_with("W/\""), "a list tag is weak: {etag}");
+        let (status, again, body) = paths.conditional(path, Some(&etag)).await?;
+        anyhow::ensure!(
+            status == 304 && again.as_deref() == Some(etag.as_str()) && body.is_empty(),
+            "an unchanged list answers 304 with its tag and no body: {status} {again:?} {body}"
+        );
+        tags.push((path, etag));
+    }
     value(
         &paths
             .route(
@@ -525,11 +529,13 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
             )
             .await?,
     )?;
-    let (status, changed, _) = paths.conditional("/widget/query", Some(&etag)).await?;
-    anyhow::ensure!(
-        status == 200 && changed.is_some() && changed.as_deref() != Some(etag.as_str()),
-        "a write changes the list tag: {status} {changed:?} {etag}"
-    );
+    for (path, etag) in tags {
+        let (status, changed, _) = paths.conditional(path, Some(&etag)).await?;
+        anyhow::ensure!(
+            status == 200 && changed.is_some() && changed.as_deref() != Some(etag.as_str()),
+            "a write changes the list tag: {status} {changed:?} {etag}"
+        );
+    }
     // STREAMED READS (wamn-utci.2). The same query in the stream shape answers
     // one line for each row and one outcome line last, with the list's weak
     // ETag, and an unchanged load answers 304. A cap above the ceiling refuses
@@ -1035,4 +1041,103 @@ async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::R
     connection.await??;
     application.shutdown().await?;
     Ok(())
+}
+
+/// A composed read adds no transaction statements (wamn-5x0tt).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<()> {
+    const REQUESTS: i64 = 10;
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let mut server = wamn_test_postgres::start(&[
+        ("shared_preload_libraries", "pg_stat_statements"),
+        ("pg_stat_statements.track", "all"),
+    ])?;
+    let system = server.create_database("statement_system")?;
+    let project = server.create_database("statement_project")?;
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let result = async {
+        let (database, connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        database
+            .batch_execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
+            .await?;
+        let created = paths
+            .route(
+                "/widget/create",
+                &json!([{
+                    "request_id": "count", "idempotency_key": "count", "code": "standard",
+                }]),
+            )
+            .await?;
+        let id = value(&created)?["id"].clone();
+        let get = json!([{"id": id}]);
+        let query = json!([{"limit": 10}]);
+        let projection = json!([{}]);
+        // Warm the prepared statements and authentication caches before counting.
+        for _ in 0..3 {
+            paths.route("/widget/get", &get).await?;
+            paths.route("/widget/query", &query).await?;
+            paths.route("/widget_maker/list", &projection).await?;
+        }
+        for (path, body, expected_wal) in [
+            ("/widget/get", &get, 0),
+            ("/widget/query", &query, REQUESTS),
+            ("/widget_maker/list", &projection, REQUESTS),
+        ] {
+            database
+                .query_one("SELECT pg_stat_statements_reset()", &[])
+                .await?;
+            for _ in 0..REQUESTS {
+                value(&paths.route(path, body).await?)?;
+            }
+            // Exclude this observer's superuser session, but count every guest SQL call.
+            let statements = database
+                .query(
+                    "SELECT query, calls FROM pg_stat_statements \
+                 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+                 AND userid <> (SELECT oid FROM pg_roles WHERE rolname = current_user) \
+                 ORDER BY query",
+                    &[],
+                )
+                .await?;
+            let mut calls = 0;
+            let mut wal = 0;
+            for row in statements {
+                let sql: String = row.get(0);
+                let count: i64 = row.get(1);
+                eprintln!("wamn-5x0tt {path}: calls={count} sql={sql}");
+                calls += count;
+                if sql.contains("pg_current_wal_lsn") {
+                    wal += count;
+                }
+            }
+            anyhow::ensure!(
+                wal == expected_wal,
+                "{path}: WAL calls {wal}, expected {expected_wal}"
+            );
+            anyhow::ensure!(
+                calls == REQUESTS + expected_wal,
+                "{path}: {calls} SQL calls for {REQUESTS} requests, expected {}",
+                REQUESTS + expected_wal
+            );
+            eprintln!(
+                "wamn-5x0tt {path}: {} calls/request, {} WAL calls/request",
+                calls / REQUESTS,
+                wal / REQUESTS
+            );
+        }
+        drop(database);
+        connection.await??;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
 }

@@ -103,6 +103,12 @@ pub(super) struct StatementScopes {
     active: HashMap<String, ActiveStatements>,
 }
 
+impl PreparedStatementSet {
+    pub(super) fn is_read(&self) -> bool {
+        self.0.read
+    }
+}
+
 impl WamnPostgres {
     /// Seal one admitted operation's immutable statement set, once per
     /// component, so a scope can bind it. `read` is true for a get, query or
@@ -833,6 +839,7 @@ mod tests {
         let statement = verified("SELECT $1::uuid");
         let path = "sql/statement.sql".to_owned();
         let result = super::super::RowSet {
+            wal_position: None,
             columns: vec![super::super::Column {
                 name: "value".into(),
                 type_name: "int8".into(),

@@ -43,11 +43,9 @@ async fn read(
     connection: &mut Connection,
     request: read_contract::ReadRequest,
 ) -> Result<read_contract::ReadResult, super::NodeError> {
-    let mut transaction = connection.begin().await.map_err(super::statement_error)?;
-    let row = read_sql::read_setting(&mut transaction, request.key)
+    let row = read_sql::read_setting(connection, request.key)
         .await
         .map_err(super::statement_error)?;
-    transaction.commit().await.map_err(super::statement_error)?;
     Ok(read_value(row, request.carry))
 }
 
@@ -68,7 +66,35 @@ export_operation!(
     ReadOutcome,
     ReadError,
     Connection::new(),
-    read
+    read,
+    async fn read_json(
+        _context: super::wamn::node::types::NodeContext,
+        input: String,
+        want_wal_position: bool,
+    ) -> Result<(super::wamn::node::types::Emission, Option<String>), super::NodeError> {
+        let input = read_codec::decode(&input).map_err(|error| super::invalid(error.context()))?;
+        read_codec::validate(&input).map_err(|error| super::invalid(error.context()))?;
+        let mut connection = Connection::new();
+        connection.want_wal_position(want_wal_position);
+        let mut failure = None;
+        let rows = read_codec::run(input, &mut connection, async |connection, request| {
+            read(connection, request).await.map_err(|error| {
+                failure = Some(error);
+                read_contract::ReadError::InternalError
+            })
+        })
+        .await;
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok((
+            super::wamn::node::types::Emission {
+                payload: read_codec::encode(&rows),
+                port: None,
+            },
+            connection.wal_position().map(str::to_owned),
+        ))
+    }
 );
 export_operation!(
     write_contract,
