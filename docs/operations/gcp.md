@@ -101,6 +101,23 @@ The owner supplies these inputs. The install stops at the first step that reads 
     gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/logging.viewer
     ```
 
+13. Read access to `buckets.web` for the Rust edge. The Google service account is `wamn-edge@wamn-dev.iam.gserviceaccount.com`.
+    The Kubernetes service account `edge/wamn-edge-web` uses this identity.
+    The bucket grants `roles/storage.objectViewer` to the Google account.
+    The Google account grants `roles/iam.workloadIdentityUser` to `serviceAccount:wamn-dev.svc.id.goog[edge/wamn-edge-web]`.
+    If these inputs are absent, the owner creates them:
+
+    ```bash
+    gcloud iam service-accounts create wamn-edge --project wamn-dev
+    gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web \
+      --member serviceAccount:wamn-edge@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectViewer
+    gcloud iam service-accounts add-iam-policy-binding wamn-edge@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+      --role roles/iam.workloadIdentityUser --member 'serviceAccount:wamn-dev.svc.id.goog[edge/wamn-edge-web]'
+    ```
+
+    For another project, replace `wamn-dev` with `project_id` and the bucket with `buckets.web`.
+    The installer creates the Kubernetes account and its annotation, but the owner supplies these IAM grants.
+
 `build-platform` uses these owner inputs and never creates their grants or budget. Missing access causes the cloud operation to fail.
 
 ## 2. Project resources
@@ -948,13 +965,43 @@ The destination is `gs://<buckets.web>/platform-ui/<platform version>/`, and `co
 Without `--bucket`, the standalone command keeps `gs://wamn-dev-web` as its default.
 With an empty `buckets.web`, the upload and its check print `skipped: no bucket` and start no Job.
 
-Set the control `bucketPath` in `values-edge.yaml` and the control matcher paths in `url-map.yaml` to that platform version.
+The control release chart writes its route host and platform version into the `hosts/c-<org>` ConfigMap.
+Helm upgrade and rollback update that ConfigMap with the release.
+The Rust edge reads it for each request.
 The `control.wamn.dev` DNS record must point to the same load balancer as the application hosts.
 The existing wildcard certificate covers this host.
 Section 4.20 installs both routing owners.
 They send `/api/` to `c-dkk-http`, `/password/` to identity, and every shell page to the platform UI index.
 
 ### 4.20 Edge and load balancer
+
+`platform apply` installs the Rust edge Deployment and Service as `edge/wamn-edge-web` and waits for rollout.
+It reads the image digest from `platform.edge.image` in the stamped release chart.
+`build-platform` builds the `edge-web` Docker target for `linux/amd64` and stamps that image.
+The `edge` target still exports the aarch64 edge-box binary.
+The installer compares rendered objects with live objects and skips an unchanged installation.
+It grants the edge only `get` on the named release ConfigMaps in `hosts`, without Secret access.
+
+Each environment can set `client_package` to the package id whose web client its `route_host` serves.
+A release with one client needs no name.
+With multiple clients and no name, `env apply` refuses and names the host.
+The release chart owns the host-to-package map and the release digest in its ConfigMap.
+The edge reads that row and fetches files under `clients/<package>/<release digest hex>/` with `object_store`.
+For the control host, it reads files under `platform-ui/<platform version>/`.
+It caches files in memory by their full versioned object path.
+Digest paths carry `Cache-Control: public, max-age=31536000, immutable`.
+The edge fetches `config.json` again for every request and returns `Cache-Control: no-cache`.
+Unversioned page paths also return `no-cache`.
+
+The nginx chart proxies web paths to `http://wamn-edge-web.edge.svc.cluster.local` with the original Host header.
+It proxies `/api/` and `/password/` to their existing services.
+It reads no bucket and needs no static digest or `bucketPath`.
+The load balancer procedure below still installs the nginx chart.
+
+The verb runs a Job that requires HTTP 200 for `/` and `/config.json` on every declared host through the Rust Service.
+With an empty `buckets.web`, this step prints `4.20 Edge bucket check: skipped: no bucket` and starts no Job.
+The Rust edge still installs and rolls out.
+
 
 The edge chart annotates its Service with `neg: true`, so GKE makes the network endpoint group `wamn-edge`. The group of the deleted cluster carries the old cluster UID, and the new cluster's controller refuses it (`found conflicting description in neg wamn-edge`). Install the edge, take the old group off the backend service, delete it, wait for the new group, and add it back. The new group exists some seconds before it is ready, and `add-backend` refuses it until then (`is not ready`), so the add repeats:
 

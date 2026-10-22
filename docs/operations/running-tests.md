@@ -557,7 +557,11 @@ The owner invite Job must run once with `--org-admin`.
 The test requires one invitation and no invitation link or secret in the logs.
 The rerun must skip the invite and leave its saved Job log and mail file unchanged.
 It must preserve the control Secrets and remove the temporary Job-owned Secrets.
-The final rerun must skip every implemented step through 4.19.1 and report 4.15 and 4.16 as owner steps.
+The final rerun must skip every implemented step through the Rust edge in 4.20 and report 4.15 and 4.16 as owner steps.
+Step 4.20 must install `edge/wamn-edge-web` with the stamped image and wait for its Deployment to become available.
+Its service account can get only the named release ConfigMaps in `hosts`.
+The empty bucket must print `4.20 Edge bucket check: skipped: no bucket` without a bucket Job.
+The unchanged rerun must skip the Rust edge and preserve the Deployment resource version.
 Both phases retain the PAT, database credential, and unchanged Secret assertions.
 The GCP greenfield covers uploads to a real bucket.
 
@@ -572,7 +576,7 @@ pnpm --filter @wamn/platform-ui build
 cargo test -p wamn-control --test platform_apply_kind -- --ignored --nocapture
 ```
 
-The version in `deploy/platform/release/Chart.yaml` must have all six images in the registry from `deploy/gcp/cluster.k`.
+The version in `deploy/platform/release/Chart.yaml` must have all seven images in the registry from `deploy/gcp/cluster.k`.
 For each new platform version, a lane runs this explicit build once before the test, with the agent identity and Docker configuration above.
 The package outputs required by [building](building.md) must exist first.
 Use the `registry` value from `deploy/gcp/cluster.k` for `<registry>` and a new directory for `<dir>`:
