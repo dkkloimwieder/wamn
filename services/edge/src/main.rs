@@ -39,6 +39,10 @@ async fn main() -> anyhow::Result<()> {
     if args.as_slice() == ["web"] {
         return wamn_edge::web::serve(path.as_deref().context("web requires --config")?).await;
     }
+    if args.as_slice() == ["web-check"] {
+        return wamn_edge::web::check(path.as_deref().context("web-check requires --config")?)
+            .await;
+    }
     let config = EdgeConfig::load(path.as_deref())?;
     match args.split_first() {
         None => {

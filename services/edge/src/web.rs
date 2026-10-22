@@ -333,6 +333,37 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Require the live index and configuration of every declared host through the Service.
+///
+/// # Errors
+/// Returns an error naming the host and path if a response is not successful.
+pub async fn check(path: &Path) -> anyhow::Result<()> {
+    let config: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+    let client: Client<HttpConnector, Empty<Bytes>> =
+        Client::builder(TokioExecutor::new()).build_http();
+    for host in config.releases.keys() {
+        for path in ["/", "/config.json"] {
+            let request = hyper::Request::builder()
+                .uri(format!("http://wamn-edge-web.edge.svc.cluster.local{path}"))
+                .header(HOST, host)
+                .body(Empty::new())?;
+            tokio::time::timeout(Duration::from_secs(30), async {
+                let response = client.request(request).await?;
+                ensure!(
+                    response.status() == StatusCode::OK,
+                    "web check {host}{path}: {}",
+                    response.status()
+                );
+                response.into_body().collect().await?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            .with_context(|| format!("web check {host}{path} timed out"))??;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -177,7 +177,23 @@ pub async fn apply(
         if changed { "done" } else { "skipped" },
         started.elapsed().as_secs_f64()
     ))?;
-    progress("Steps after 4.19.1 come later.")?;
+    let started = Instant::now();
+    progress("4.20 Rust edge: starting")?;
+    let changed = super::edge::apply(&target, document, environments, work_directory).await?;
+    progress(&format!(
+        "4.20 Rust edge: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
+    super::edge::check(
+        &target,
+        document,
+        environments,
+        work_directory,
+        &mut progress,
+    )
+    .await?;
+    progress("The load balancer and step 4.21 come later.")?;
     Ok(())
 }
 

@@ -1,13 +1,16 @@
 //! Install the Rust web edge with access to the chart-owned release rows.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::document::{ClusterDocument, Provider};
+use super::job::{self, JobRequest};
 use crate::environment::document::EnvironmentDocument;
+use crate::{kubectl, release_chart::Target};
 
 const NAME: &str = "wamn-edge-web";
 
@@ -94,6 +97,87 @@ fn objects(
     ])
 }
 
+/// Reconcile the rendered objects, then wait even when they were unchanged.
+pub(super) async fn apply(
+    target: &Target,
+    document: &ClusterDocument,
+    environments: &Path,
+    directory: &Path,
+) -> anyhow::Result<bool> {
+    let environments = super::broker::documents(environments)?
+        .into_iter()
+        .map(|(_, document)| document)
+        .collect::<Vec<_>>();
+    let routes = routes(document, &environments)?;
+    let chart: Value =
+        serde_yaml::from_slice(&std::fs::read(directory.join("release-chart/values.yaml"))?)?;
+    let mut changed = false;
+    for object in objects(document, &routes, &chart)? {
+        changed |= super::install::apply_object(target, &object).await?;
+    }
+    kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        "edge",
+        &[
+            "rollout",
+            "status",
+            "deployment/wamn-edge-web",
+            "--timeout=600s",
+        ],
+        None,
+    )
+    .await?;
+    Ok(changed)
+}
+
+pub(super) async fn check(
+    target: &Target,
+    document: &ClusterDocument,
+    environments: &Path,
+    directory: &Path,
+    mut progress: impl FnMut(&str) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if document.buckets.web.is_empty() {
+        return progress("4.20 Edge bucket check: skipped: no bucket");
+    }
+    let environments = super::broker::documents(environments)?
+        .into_iter()
+        .map(|(_, document)| document)
+        .collect::<Vec<_>>();
+    let routes = routes(document, &environments)?;
+    let chart: Value =
+        serde_yaml::from_slice(&std::fs::read(directory.join("release-chart/values.yaml"))?)?;
+    let rendered = objects(document, &routes, &chart)?;
+    let configuration = rendered[3]["data"]["web.json"]
+        .as_str()
+        .context("edge configuration")?;
+    let image = chart["platform"]["edge"]["image"]
+        .as_str()
+        .context("edge image")?;
+    let request = JobRequest {
+        name: "platform-edge-check".into(),
+        image: image.into(),
+        refresh: true,
+        command: vec!["/usr/local/bin/wamn-edge".into()],
+        arguments: ["--config", "/inputs/web.json", "web-check"]
+            .map(str::to_owned)
+            .into(),
+        files: [("web.json".into(), configuration.into())].into(),
+        ..JobRequest::default()
+    };
+    let edge = Target {
+        namespace: "edge".into(),
+        ..target.clone()
+    };
+    let started = std::time::Instant::now();
+    job::run(&edge, directory, &request, &json!({"routes": routes}), &[]).await?;
+    progress(&format!(
+        "4.20 Edge bucket check: done {:.1}s",
+        started.elapsed().as_secs_f64()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +223,48 @@ mod tests {
             objects[5]["spec"]["selector"],
             objects[4]["spec"]["template"]["metadata"]["labels"]
         );
+    }
+    #[tokio::test]
+    async fn empty_bucket_reports_the_skip_without_reading_inputs() {
+        let mut document = document();
+        document.provider = Provider::Kind;
+        document.buckets.web.clear();
+        let target = Target {
+            kubeconfig: "/absent".into(),
+            context: "absent".into(),
+            namespace: "platform".into(),
+        };
+        let mut lines = Vec::new();
+        check(
+            &target,
+            &document,
+            Path::new("/absent"),
+            Path::new("/absent"),
+            |line| {
+                lines.push(line.to_owned());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(lines, ["4.20 Edge bucket check: skipped: no bucket"]);
+        let objects = objects(
+            &document,
+            &routes(&document, &[]).unwrap(),
+            &json!({"platform": {"edge": {"image": "registry/edge@sha256:abc"}}}),
+        )
+        .unwrap();
+        assert!(objects[0]["metadata"]["annotations"].is_null());
+        let configuration: Value =
+            serde_json::from_str(objects[3]["data"]["web.json"].as_str().unwrap()).unwrap();
+        assert_eq!(configuration["bucket"], "");
+        let mut live = objects[4].clone();
+        live["metadata"]["resourceVersion"] = "123".into();
+        assert!(super::super::manifests::already_applied(&objects[4], &live));
+        live["spec"]["template"]["spec"]["containers"][0]["image"] = "old".into();
+        assert!(!super::super::manifests::already_applied(
+            &objects[4],
+            &live
+        ));
     }
 }

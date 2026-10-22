@@ -175,7 +175,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.6", title: "Packages and platform build",
             runs: Runner::Verb("local build"),
-            inputs: vec![("platform_version", platform_version.into()), ("registry", registry.clone()), ("platform images", format!("{registry}/{{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn/http,wamn/materializer}}:{platform_version}")), ("release chart", "$HOME/.cache/wamn-install/release-chart".into())],
+            inputs: vec![("platform_version", platform_version.into()), ("registry", registry.clone()), ("platform images", format!("{registry}/{{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn-edge-web,wamn/http,wamn/materializer}}:{platform_version}")), ("release chart", "$HOME/.cache/wamn-install/release-chart".into())],
             owner_inputs: vec![registry_owner.clone()],
         },
         InstallStep {
@@ -271,8 +271,11 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.20", title: "Edge and load balancer",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("project_id", project.clone()), ("zone", document.zone.clone()), ("route hosts", routes.clone()), ("buckets.web", document.buckets.web.clone()), ("platform_version", platform_version.into()), ("control Service", format!("hosts/c-{org}-http")), ("edge release and endpoint group", "edge/wamn-edge, wamn-edge".into()), ("backend service and URL map", "wamn-edge-platform, wamn-edge".into()), ("certificate Secret and CronJob", "edge/wamn-edge-tls, edge/edge-cert".into())],
-            owner_inputs: vec![dns.clone(), history(format!("load balancer wamn-edge in {project}: address, health check, firewall rule, backend bucket, backend service, URL map, proxy, forwarding rule, certificate entry"), "4.3"), history(format!("IAM projects/{project}/roles/wamnEdgeCert and binding for edge/edge-cert"), "4.3.1")],
+            inputs: vec![("project_id", project.clone()), ("zone", document.zone.clone()), ("route hosts", routes.clone()), ("buckets.web", document.buckets.web.clone()), ("platform_version", platform_version.into()), ("control Service", format!("hosts/c-{org}-http")), ("Rust edge Deployment and Service", "edge/wamn-edge-web".into()), ("edge release and endpoint group", "edge/wamn-edge, wamn-edge".into()), ("backend service and URL map", "wamn-edge-platform, wamn-edge".into()), ("certificate Secret and CronJob", "edge/wamn-edge-tls, edge/edge-cert".into())],
+            owner_inputs: vec![OwnerInput {
+                name: format!("edge/wamn-edge-web Workload Identity read on {}", document.buckets.web),
+                instructions: format!("gcloud iam service-accounts create wamn-edge --project {project}\ngcloud storage buckets add-iam-policy-binding gs://{} --member serviceAccount:wamn-edge@{project}.iam.gserviceaccount.com --role roles/storage.objectViewer\ngcloud iam service-accounts add-iam-policy-binding wamn-edge@{project}.iam.gserviceaccount.com --project {project} --role roles/iam.workloadIdentityUser --member 'serviceAccount:{project}.svc.id.goog[edge/wamn-edge-web]'", document.buckets.web),
+            }, dns.clone(), history(format!("load balancer wamn-edge in {project}: address, health check, firewall rule, backend bucket, backend service, URL map, proxy, forwarding rule, certificate entry"), "4.3"), history(format!("IAM projects/{project}/roles/wamnEdgeCert and binding for edge/edge-cert"), "4.3.1")],
         },
         InstallStep {
             number: "4.21", title: "Check",
