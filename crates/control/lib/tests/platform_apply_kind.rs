@@ -551,25 +551,21 @@ cluster.Cluster {{
         release.as_deref() == Some(digest.as_str()),
         "Receiving serves another release"
     );
-    let deadline = Instant::now() + std::time::Duration::from_secs(180);
-    let reader_log = loop {
-        let log = kubectl::kubectl(
-            &kubeconfig,
-            &context,
-            "hosts",
-            &["logs", "deployment/cdc-reader-test--receiving--dev"],
-            None,
-        )
-        .await?;
-        if log.contains("registration loaded") && log.contains("walsender session open") {
-            break log;
-        }
+    // Receiving registers no event, so env apply enables no CDC and 4.18
+    // deploys no reader (owner ruling 2026-10-22). environment_apply_kind
+    // runs the CDC reader.
+    require_cdc_reader_skip(&applied)?;
+    for (kind, name) in [
+        ("deployment", "cdc-reader-test--receiving--dev"),
+        ("secret", "wamn-cdc-test--receiving--dev"),
+    ] {
         ensure!(
-            Instant::now() < deadline,
-            "CDC reader did not open its walsender session: {log}"
+            kubectl::get::<Value>(&kubeconfig, &context, "hosts", kind, name)
+                .await?
+                .is_none(),
+            "Receiving has a {kind} {name} without an event registration"
         );
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    };
+    }
     require_web_skip(&applied)?;
     require_platform_ui_skip(&applied)?;
     let control: Value = kubectl::get(
@@ -684,6 +680,7 @@ cluster.Cluster {{
             "{title} did not skip"
         );
     }
+    require_cdc_reader_skip(&repeated)?;
     require_web_skip(&repeated)?;
     require_platform_ui_skip(&repeated)?;
     require_edge_skip(&repeated)?;
@@ -817,10 +814,7 @@ cluster.Cluster {{
     )
     .await?;
     ensure!(completion.is_none(), "kind completed a web upload Job");
-    let logs = format!(
-        "{}\n{reader_log}",
-        std::fs::read_to_string(directory.join("progress.log"))?
-    );
+    let logs = std::fs::read_to_string(directory.join("progress.log"))?;
     let registry_secret = kubectl::get(
         &kubeconfig,
         &context,
@@ -1183,6 +1177,16 @@ fn require_edge_skip(lines: &[String]) -> anyhow::Result<()> {
             .iter()
             .any(|line| line == "4.20 Edge bucket check: skipped: no bucket"),
         "missing edge no-bucket skip"
+    );
+    Ok(())
+}
+
+fn require_cdc_reader_skip(lines: &[String]) -> anyhow::Result<()> {
+    ensure!(
+        lines
+            .iter()
+            .any(|line| line == "4.18 CDC reader test/receiving/dev: skipped: no registration"),
+        "missing Receiving CDC reader skip"
     );
     Ok(())
 }

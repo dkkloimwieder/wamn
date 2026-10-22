@@ -912,14 +912,16 @@ target/debug/wamn-ctl env show dkk/wms/dev
 
 ### 4.18 CDC readers
 
-`platform apply` renders one CDC reader Deployment per environment in `hosts` and waits for its rollout.
+`platform apply` renders one CDC reader Deployment in `hosts` for each environment that has a `wamn-cdc-<org>--<project>--<env>` Secret, and waits for its rollout.
+`env apply` writes that Secret only for a release with an event registration.
+For an environment without the Secret, the step prints `4.18 CDC reader <org>/<project>/<env>: skipped: no registration`.
 The reader uses the stamped gates image, which contains `/usr/local/bin/wamn-cdc-reader`.
 The Deployment mounts the replication, registry-reader, and event publisher Secrets by name.
 The verb does not read their values.
 The reader loads its registration from the environment row with its registry-reader login.
 An unchanged apply skips the write when the rendered fields match the live objects.
 
-For each environment, read its logs:
+For each environment with a reader, read its logs:
 
 ```bash
 kubectl -n hosts logs deploy/cdc-reader-dkk--receiving--dev --tail=20

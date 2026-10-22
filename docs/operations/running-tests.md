@@ -549,7 +549,9 @@ The Receiving host group mounts the fixture registry credential and CA Secret.
 These changes affect only temporary fixture files.
 
 A separate environment directory selects qualified Receiving for the remaining install and its unchanged rerun.
-Step 4.17 must serve that release, and step 4.18 must log `registration loaded` and `walsender session open`.
+Step 4.17 must serve that release.
+Receiving registers no event, so step 4.18 must report `skipped: no registration`, with no reader Deployment and no CDC Secret.
+`environment_apply_kind` runs the native CDC reader against a release with an event registration.
 Step 4.19 must report `skipped: no bucket` for the upload and its check, with no web Job or completion record.
 Step 4.19.1 must roll out the control host and report `skipped: no bucket` for the platform UI upload and its check.
 The fixture selects identity's private local mail file in a memory volume, so the invite sends no external email.

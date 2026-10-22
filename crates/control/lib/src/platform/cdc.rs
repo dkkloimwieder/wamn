@@ -1,4 +1,6 @@
-//! CDC readers use the environment's registered credentials in hosts.
+//! CDC readers use the environment's registered credentials in hosts. env
+//! apply writes the CDC Secret only for a release with an event registration
+//! (b1cfa6349), so an environment without that Secret gets no reader.
 
 use std::path::Path;
 
@@ -14,6 +16,7 @@ pub(super) async fn apply(
     target: &release_chart::Target,
     environments: &Path,
     directory: &Path,
+    mut progress: impl FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
     // The stamped gates image already carries the native reader executable.
     let image = release_chart::qualification_images(&directory.join("release-chart"))
@@ -21,6 +24,23 @@ pub(super) async fn apply(
         .gates;
     let mut changed = apply_object(target, &account()).await?;
     for (_, environment) in super::broker::documents(environments)? {
+        let tenant = tenant(&environment);
+        if kubectl::get::<Value>(
+            &target.kubeconfig,
+            &target.context,
+            "hosts",
+            "secret",
+            &format!("wamn-cdc-{tenant}"),
+        )
+        .await?
+        .is_none()
+        {
+            progress(&format!(
+                "4.18 CDC reader {}/{}/{}: skipped: no registration",
+                environment.org, environment.project, environment.env
+            ))?;
+            continue;
+        }
         let object = deployment(&environment, &image);
         changed |= apply_object(target, &object).await?;
         let name = object["metadata"]["name"]
@@ -51,11 +71,15 @@ fn account() -> Value {
     })
 }
 
-fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
-    let tenant = format!(
+fn tenant(environment: &EnvironmentDocument) -> String {
+    format!(
         "{}--{}--{}",
         environment.org, environment.project, environment.env
-    );
+    )
+}
+
+fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
+    let tenant = tenant(environment);
     let name = format!("cdc-reader-{tenant}");
     let publisher = format!("evt-nats-{tenant}-publisher");
     json!({

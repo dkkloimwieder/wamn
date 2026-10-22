@@ -136,7 +136,7 @@ pub async fn apply(
     ))?;
     let started = Instant::now();
     progress("4.18 CDC readers: starting")?;
-    let changed = super::cdc::apply(&target, environments, work_directory).await?;
+    let changed = super::cdc::apply(&target, environments, work_directory, &mut progress).await?;
     progress(&format!(
         "4.18 CDC readers: {} {:.1}s",
         if changed { "done" } else { "skipped" },
