@@ -229,7 +229,8 @@ pub async fn ensure(
 /// Secret, judged by the publication probe of [`cdc_in_place`]; then the CDC
 /// reader registration, recorded on every apply as an idempotent upsert, so a
 /// crash before the record is finished by the next apply. A package set with
-/// no event registration captures nothing.
+/// no event registration captures nothing, but still gets the source and
+/// advisory streams, which every host activates at start (wamn-7r3dt).
 ///
 /// # Errors
 ///
@@ -241,7 +242,7 @@ pub(super) async fn ensure_cdc(
     manifests: &[wamn_schema_generator::PackageManifest],
 ) -> anyhow::Result<()> {
     let Some(schema) = registered_schema(manifests)? else {
-        return Ok(());
+        return ensure_streams(platform, document, manifests).await;
     };
     let triple = document.triple();
     let instance = read_project_env_instance(&platform.system_database_url, &triple).await?;
@@ -265,6 +266,41 @@ pub(super) async fn ensure_cdc(
     )
     .await
     .context("record the CDC reader")
+}
+
+/// Provision the environment's source and advisory streams, with the same
+/// scope, consumers and duplicate window as [`enable_cdc`], and no slot,
+/// publication or reader. Without an event broker there is nothing to provision.
+async fn ensure_streams(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    manifests: &[wamn_schema_generator::PackageManifest],
+) -> anyhow::Result<()> {
+    let Some(events) = &platform.events else {
+        return Ok(());
+    };
+    let triple = document.triple();
+    let tenant =
+        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
+    let consumers =
+        wamn_control_provision::events::registration_consumers(&triple, &tenant, manifests);
+    let broker = async_nats::jetstream::new(
+        crate::event_streams::connection_options(
+            &events.nats_username,
+            &events.nats_password_file,
+        )?
+        .connect(&events.nats_url)
+        .await
+        .context("connect the event provisioning credential")?,
+    );
+    crate::event_streams::provision(
+        &broker,
+        &triple,
+        events.stream_replicas,
+        std::time::Duration::from_secs(events.dup_window_secs),
+        &consumers,
+    )
+    .await
 }
 
 /// Resolve registration entities against their source packages, as publish does.
