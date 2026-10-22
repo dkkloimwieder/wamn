@@ -209,6 +209,22 @@ pub async fn apply(
         if changed { "done" } else { "skipped" },
         started.elapsed().as_secs_f64()
     ))?;
+    let started = Instant::now();
+    progress("4.21 Check: starting")?;
+    let changed = super::check::apply(
+        &target,
+        document,
+        environments,
+        work_directory,
+        registry,
+        &mut progress,
+    )
+    .await?;
+    progress(&format!(
+        "4.21 Check: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
     Ok(())
 }
 

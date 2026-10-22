@@ -3,6 +3,7 @@
 mod broker;
 pub mod build;
 mod cdc;
+mod check;
 pub(crate) mod control;
 pub mod document;
 mod edge;
