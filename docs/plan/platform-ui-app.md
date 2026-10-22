@@ -1,7 +1,7 @@
 # Platform UI application — spec
 
-Status: live, `wamn-n8q9m`. M1 through M5 merged except `wamn-n8q9m.5.4`, the move onto `@wfe/shell`.
-That issue waits on wfe gap `wamn-n8q9m.5.5` for header and navigation overrides. M6 owns documentation.
+Status: live, `wamn-n8q9m`. M1 through M6 merged, and the shell runs on `@wfe/shell` at wfe v0.0.8.
+Server paging, `wamn-n8q9m.20`, remains open.
 [Execution](../architecture/execution.md#operator-clients) records current client and shell behavior.
 Owner rulings of 2026-10-19 are applied.
 **Baseline:** wamn `main` at `02e87bb4f`; wfe `main` at `45faa4aed7de92a7cd3e0a0b772bbd845e52ba63`.

@@ -17,7 +17,7 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Platform deploy](platform-deploy.md): done, `wamn-jqdja`.
 - [Platform install](platform-install.md): live, `wamn-whdih` (E1).
 - [Platform UI](platform-ui.md): done, `wamn-a40n`.
-- [Platform UI application](platform-ui-app.md): live, `wamn-n8q9m`. M1 through M5 merged except `wamn-n8q9m.5.4`, blocked on wfe gap `wamn-n8q9m.5.5`. M6 owns documentation.
+- [Platform UI application](platform-ui-app.md): live, `wamn-n8q9m`. M1 through M6 merged. Server paging `wamn-n8q9m.20` remains open.
 - [Request round-trips](request-round-trips.md): live, `wamn-stxy9`.
 - [Routes, workflows, and the router](routes-router.md): done, `wamn-upl3`.
 - [Table data loading](table-adv-data.md): done, `wamn-3nsf`.
