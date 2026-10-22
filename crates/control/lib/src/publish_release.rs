@@ -1776,7 +1776,7 @@ fn project_wiring_document(
     Ok(entry_operation)
 }
 
-/// Project the route of every route attachment, with its component closure.
+/// Project operation contracts for released components and route attachments.
 ///
 /// The kind comes from the generated contract of the operation, or from the
 /// published manifest a promotion copies.
@@ -1852,6 +1852,33 @@ fn project_routes(
             idempotency: contract.idempotency.clone(),
             canonicalization: contract.canonicalization.clone(),
         });
+    }
+    // Workflow nodes also use these contracts to begin item transactions and
+    // claim their keys. An HTTP attachment is not required to call an operation.
+    for component in components.iter() {
+        for (operation, fact) in &component.operations {
+            if fact.registered_operation.is_none() {
+                continue;
+            }
+            let Some(contract) =
+                route_contracts.get(&(component.package_id.clone(), operation.clone()))
+            else {
+                continue;
+            };
+            if contract.kind == wamn_catalog::OperationType::EventHandler {
+                continue;
+            }
+            routes.insert(ServingRoute {
+                package_id: component.package_id.clone(),
+                component: component.descriptor.component.clone(),
+                operation: operation.clone(),
+                type_: contract.kind,
+                reads: contract.reads.clone(),
+                revision: contract.revision.clone(),
+                idempotency: contract.idempotency.clone(),
+                canonicalization: contract.canonicalization.clone(),
+            });
+        }
     }
     Ok(routes)
 }

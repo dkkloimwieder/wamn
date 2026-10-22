@@ -5535,6 +5535,7 @@ dependencies = [
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-execution-host",
  "wamn-fixture-package",
  "wamn-identity-client",
  "wamn-package-artifact",

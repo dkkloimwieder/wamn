@@ -1,4 +1,5 @@
 //! Admit both applications and resolve their pull and push workflows in one release.
+mod consumer_live;
 mod support;
 
 use serde_json::json;
@@ -122,7 +123,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
     };
     let assembled = assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
     let release = &assembled.published.manifest;
-    composed_sql_uses_released_schemas(&roots, release).await?;
+    composed_sql_uses_released_schemas(&roots, release, &admissions).await?;
     assert_eq!(release.release.packages.len(), 3);
     assert_eq!(release.workflow.schedules.len(), 1);
     assert_eq!(release.workflow.registrations.len(), 1);
@@ -188,46 +189,17 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
 async fn composed_sql_uses_released_schemas(
     roots: &[std::path::PathBuf],
     release: &wamn_catalog::ServingManifest,
+    admissions: &[wamn_control::component_admission::ComponentAdmission],
 ) -> anyhow::Result<()> {
-    use wamn_schema_generator::{
-        DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
-        render_effective_data_access_sql,
-    };
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let (mut client, connection) =
+    let (client, connection) =
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     let driver = tokio::spawn(connection);
-    client.batch_execute("DO $$ BEGIN CREATE ROLE wamn_app NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$; CREATE SCHEMA wamn_integration; CREATE SCHEMA rest_consumer_fixture;").await?;
-    let mut overlays = Vec::new();
-    let mut relations = std::collections::BTreeMap::new();
-    for root in roots {
-        let migration = root.join("migrations/0001_initial.sql");
-        if migration.exists() {
-            client
-                .batch_execute(&std::fs::read_to_string(migration)?)
-                .await?;
-        }
-        let overlay = DataAccessOverlay::from_slice(&std::fs::read(
-            wamn_schema_generator::output_root(root).join("platform-policy/data-access.json"),
-        )?)?;
-        for relation in overlay.relations() {
-            relations.insert(
-                (relation.schema().to_owned(), relation.table().to_owned()),
-                DataAccessRelationFields::new(
-                    relation.schema(),
-                    relation.table(),
-                    relation.all_fields().to_vec(),
-                ),
-            );
-        }
-        overlays.push(overlay);
-    }
-    client
-        .batch_execute(&render_effective_data_access_sql(
-            &derive_effective_data_access(&relations.into_values().collect::<Vec<_>>(), &overlays)?,
-        )?)
-        .await?;
+    let guest_url = consumer_live::install(&client, &database, roots).await?;
+    let (mut guest, guest_connection) =
+        tokio_postgres::connect(&guest_url, tokio_postgres::NoTls).await?;
+    let guest_driver = tokio::spawn(guest_connection);
     for (package, expected_schema) in [
         ("rest_connector", "wamn_integration"),
         ("rest_consumer_fixture", "rest_consumer_fixture"),
@@ -240,8 +212,7 @@ async fn composed_sql_uses_released_schemas(
             })
             .unwrap();
         assert_eq!(component.runtime_schema.as_deref(), Some(expected_schema));
-        let transaction = client.transaction().await?;
-        transaction.batch_execute("SET LOCAL ROLE wamn_app").await?;
+        let transaction = guest.transaction().await?;
         transaction
             .query_one(
                 "SELECT set_config('search_path', $1, true)",
@@ -297,6 +268,16 @@ async fn composed_sql_uses_released_schemas(
                     .get::<_, bool>(0)
             );
         } else {
+            transaction
+                .query_one(
+                    wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL,
+                    &[
+                        &"rest-consumer-fixture:item/record",
+                        &"sql-proof",
+                        &vec![1_u8],
+                    ],
+                )
+                .await?;
             let statement = component
                 .operations
                 .values()
@@ -308,6 +289,12 @@ async fn composed_sql_uses_released_schemas(
                 .await?
                 .get(0);
             assert_eq!(key, "item");
+            transaction
+                .query_one(
+                    wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL,
+                    &[&"rest-consumer-fixture:item/record", &"sql-proof", &"{}"],
+                )
+                .await?;
             assert!(
                 transaction
                     .query_one("SELECT to_regclass('setting') IS NULL", &[])
@@ -317,6 +304,26 @@ async fn composed_sql_uses_released_schemas(
         }
         transaction.commit().await?;
     }
+    eprintln!(
+        "released connector SQL, consumer item insert, write-log claim and finish all passed under the App login"
+    );
+    consumer_live::invoke(&database, &guest_url, release, admissions).await?;
+    let stored = client
+        .query_one(
+            "SELECT item.name, log.result::jsonb FROM rest_consumer_fixture.item AS item \
+             CROSS JOIN app_system.write_log AS log \
+             WHERE item.key = 'native-item' AND log.operation = 'rest-consumer-fixture:item/record' \
+             AND log.idempotency_key = 'live-key'",
+            &[],
+        )
+        .await?;
+    assert_eq!(stored.get::<_, String>(0), "native name");
+    assert_eq!(
+        stored.get::<_, serde_json::Value>(1),
+        json!({"value":{"keys":["native-item"]}})
+    );
+    drop(guest);
+    guest_driver.await??;
     drop(client);
     driver.await??;
     Ok(())

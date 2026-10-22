@@ -83,6 +83,7 @@ wamn-schema-introspection = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [dev-dependencies]
+wamn-execution-host = { workspace = true }
 wamn-workflow = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
