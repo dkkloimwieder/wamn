@@ -95,6 +95,19 @@ The guest does not supply an endpoint or credential.
 The host resolves the admitted requirement and confines the request to that connection.
 
 The `http-request` palette node sends one request through this contract.
+Its `method` stays a fixed parameter.
+
+The optional `path-input-pointer` selects the request path from the input through a JSON pointer, a path into a JSON value.
+The required `path-and-query` parameter stays declared. The pointer overrides its value for that request.
+Without the pointer, `path-and-query` supplies the path.
+Both forms require a relative absolute-path that starts with `/`, but not `//`.
+A missing target or a target that is not a string returns a terminal error.
+
+The optional `body-input-pointer` selects the JSON body from the input.
+A missing body target returns a terminal error. JSON null is a valid body.
+Without that parameter, the node sends the original input bytes as its body.
+Headers retain their configured values in both forms.
+
 The `http-page` node emits one array on `main` after it collects all pages.
 Its parameters are `requirement`, `path-and-query`, optional `headers`, `page`, `items`, and optional `carry-input-pointer`.
 The optional `method` defaults to GET and accepts GET, HEAD, POST, PUT, DELETE, OPTIONS, and PATCH, as `http-request` does.

@@ -4,11 +4,15 @@
 
 extern crate alloc;
 
+#[cfg(any(test, feature = "std"))]
+extern crate std;
+
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString as _};
 use alloc::vec::Vec;
 
+#[cfg(not(any(test, feature = "std")))]
 #[path = "../../guest_runtime.rs"]
 mod guest_runtime;
 
@@ -41,19 +45,14 @@ struct Component;
 
 impl Guest for Component {
     async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        serde_json::from_str::<serde_json::Value>(&input)
+        let value = serde_json::from_str::<serde_json::Value>(&input)
             .map_err(|error| invalid_input(format!("input is not JSON: {error}")))?;
         let config = serde_json::from_str::<serde_json::Value>(&context.config)
             .map_err(|error| terminal("invalid-config", format!("config is not JSON: {error}")))?;
         let requirement = required_string(&config, "requirement")?;
         let method = required_string(&config, "method")?.to_ascii_uppercase();
-        let path_and_query = required_string(&config, "path-and-query")?;
-        if !path_and_query.starts_with('/') || path_and_query.starts_with("//") {
-            return Err(terminal(
-                "invalid-config",
-                "path-and-query must be a relative absolute-path",
-            ));
-        }
+        let path_and_query = request_path(&config, &value)?;
+        let body = request_body(&config, &value, &input)?;
 
         let mut headers = configured_headers(&config)?;
         if let Some(traceparent) = context.traceparent {
@@ -68,7 +67,7 @@ impl Guest for Component {
             method,
             path_and_query,
             headers,
-            body: Some(input.into_bytes()),
+            body: Some(body),
             idempotency_key: Some(format!(
                 "{}:{}:{}",
                 context.delivery_id, context.node_id, context.occurrence
@@ -79,6 +78,56 @@ impl Guest for Component {
             Err(error) => Err(classify_connection_error(error)),
         }
     }
+}
+
+fn selected_input<'a>(
+    config: &serde_json::Value,
+    input: &'a serde_json::Value,
+    field: &str,
+) -> Result<Option<&'a serde_json::Value>, NodeError> {
+    if config.get(field).is_none() {
+        return Ok(None);
+    }
+    let pointer = required_string(config, field)?;
+    input.pointer(&pointer).map(Some).ok_or_else(|| {
+        terminal(
+            "invalid-input-pointer",
+            format!("{field} has no target in the input"),
+        )
+    })
+}
+
+fn request_path(
+    config: &serde_json::Value,
+    input: &serde_json::Value,
+) -> Result<String, NodeError> {
+    let path = match selected_input(config, input, "path-input-pointer")? {
+        Some(value) => value.as_str().map(String::from).ok_or_else(|| {
+            terminal(
+                "invalid-input-pointer",
+                "path-input-pointer must select a string",
+            )
+        })?,
+        None => required_string(config, "path-and-query")?,
+    };
+    if !path.starts_with('/') || path.starts_with("//") {
+        return Err(terminal(
+            "invalid-config",
+            "path-and-query must be a relative absolute-path",
+        ));
+    }
+    Ok(path)
+}
+
+fn request_body(
+    config: &serde_json::Value,
+    input: &serde_json::Value,
+    original: &str,
+) -> Result<Vec<u8>, NodeError> {
+    Ok(match selected_input(config, input, "body-input-pointer")? {
+        Some(value) => value.to_string().into_bytes(),
+        None => original.as_bytes().to_vec(),
+    })
 }
 
 fn required_string(config: &serde_json::Value, field: &str) -> Result<String, NodeError> {
@@ -218,3 +267,6 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests;

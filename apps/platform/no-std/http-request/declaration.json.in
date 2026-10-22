@@ -34,6 +34,16 @@
           "required": true
         },
         {
+          "name": "path-input-pointer",
+          "schema": { "type": "string" },
+          "required": false
+        },
+        {
+          "name": "body-input-pointer",
+          "schema": { "type": "string" },
+          "required": false
+        },
+        {
           "name": "headers",
           "schema": {
             "type": "object",
