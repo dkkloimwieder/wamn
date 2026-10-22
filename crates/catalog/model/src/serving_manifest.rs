@@ -1050,6 +1050,24 @@ pub struct ServingRegistration {
     pub delivery: RegistrationDelivery,
 }
 
+/// Parse a workflow's five-field UTC cron expression.
+///
+/// # Errors
+/// Returns an invalid-definition error for any other schedule syntax.
+pub fn parse_workflow_schedule(text: &str) -> Result<croner::Cron, CatalogIdentityError> {
+    if text.split_whitespace().count() != 5 {
+        return invalid("workflow-schedule-invalid: requires five-field cron in UTC");
+    }
+    croner::parser::CronParser::builder()
+        .seconds(croner::parser::Seconds::Disallowed)
+        .year(croner::parser::Year::Disallowed)
+        .build()
+        .parse(text)
+        .map_err(|error| CatalogIdentityError::InvalidDefinition {
+            message: format!("workflow-schedule-invalid: {error}"),
+        })
+}
+
 /// One declared schedule targeting an exact released wiring.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -1495,18 +1513,7 @@ impl ServingManifest {
                 &schedule.wiring_id,
                 schedule.wiring_version,
             )?;
-            if schedule.schedule.split_whitespace().count() != 5
-                || croner::parser::CronParser::builder()
-                    .seconds(croner::parser::Seconds::Disallowed)
-                    .year(croner::parser::Year::Disallowed)
-                    .build()
-                    .parse(&schedule.schedule)
-                    .is_err()
-            {
-                return invalid(format!(
-                    "workflow-schedule-invalid: {key:?} requires five-field cron in UTC"
-                ));
-            }
+            parse_workflow_schedule(&schedule.schedule)?;
         }
         for (registration_id, registration) in &self.workflow.registrations {
             validate_package_member(&package_versions, &registration.package_id)?;
@@ -2590,11 +2597,11 @@ mod tests {
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).unwrap();
         assert_eq!(decoded, manifest);
         let mut old = manifest;
-        old.format_version = 9;
+        old.format_version = 10;
         assert_eq!(
             ServingManifest::from_canonical_bytes(&old.canonical_bytes()).unwrap_err(),
             CatalogIdentityError::UnsupportedServingManifestVersion {
-                requested: "9".into()
+                requested: "10".into()
             }
         );
     }

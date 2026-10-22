@@ -86,7 +86,7 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
 
     let triple = Triple::new(ORG, PROJECT, ENV);
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let in_place = || cdc_in_place(&db, &cdc_name);
+    let in_place = || cdc_in_place(&db, &cdc_name, "app");
     let record = || record_event_reader(database.url(), &triple, "app", &cdc_name, None);
     let readers = || async {
         db.query_one(
@@ -115,6 +115,20 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     .await
     .expect("the publication");
     assert!(in_place().await.expect("probe"), "CDC is in place");
+
+    assert!(!cdc_in_place(&db, &cdc_name, "another").await.unwrap());
+    db.batch_execute(&format!(
+        "CREATE SCHEMA another; ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA another"
+    ))
+    .await
+    .unwrap();
+    assert!(!in_place().await.unwrap());
+    db.batch_execute(&format!(
+        "ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA app"
+    ))
+    .await
+    .unwrap();
+    assert!(in_place().await.unwrap());
 
     // Every apply records the reader; recording it again leaves one row.
     record().await.expect("record the reader again");

@@ -415,7 +415,7 @@ async fn main() -> anyhow::Result<()> {
         ]))
         .await
         .context("create the labels bucket")?;
-        // The host reads `{project: {handle: secret}}`, as the cluster host
+        // The host reads `{projects, orgs}`, as the cluster host
         // reads its mounted Secret. `wamn dev up` copies it into its root.
         let credentials = directory.join("credentials.json");
         let secret = json!({
@@ -426,7 +426,7 @@ async fn main() -> anyhow::Result<()> {
         private(
             &credentials,
             &serde_json::to_vec(&json!({
-                wamn_control::dev::environment::PROJECT: {LABELS_CREDENTIAL: secret}
+                "projects": {wamn_control::dev::environment::PROJECT: {LABELS_CREDENTIAL: secret}}, "orgs": {}
             }))?,
         )?;
         variables.insert(

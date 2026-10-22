@@ -1530,23 +1530,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         && !release.manifest().workflow.schedules.is_empty()
     {
         let url = executor_platform_url
-            .as_deref()
+            .clone()
             .context("scheduled workflows require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
-        let (client, connection) = tokio_postgres::connect(url, NoTls)
-            .await
-            .context("connect workflow schedule admission")?;
-        schedule_tasks.spawn(async move {
-            if let Err(error) = connection.await {
-                tracing::error!(%error, "workflow schedule database connection stopped");
-            }
-        });
         let scope = release_scope(&args)?;
-        let workflows = wamn_workflow::PostgresWorkflows::new(
-            client,
-            "wamn_run",
-            &scope.tenant_id,
-            &scope.environment,
-        );
         let schedules = release
             .manifest()
             .workflow
@@ -1555,15 +1541,39 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .cloned()
             .collect::<Vec<_>>();
         let digest = release.release().manifest_digest.as_str().to_owned();
-        let stopped = stopping.clone();
-        schedule_tasks.spawn(async move {
-            if let Err(error) =
-                wamn_workflow::schedule::serve(&workflows, &digest, &schedules, stopped).await
-            {
-                tracing::error!(%error, "workflow schedule task stopped");
+        let mut stopped = stopping.clone();
+        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_connected = Arc::clone(&connected);
+        let task = schedule_tasks.spawn(async move {
+            loop {
+                if *stopped.borrow() { return; }
+                let connection = tokio::select! {
+                    _ = stopped.changed() => return,
+                    connection = tokio_postgres::connect(&url, NoTls) => connection,
+                };
+                match connection {
+                    Ok((client, connection)) => {
+                        let workflows = wamn_workflow::PostgresWorkflows::new(client, "wamn_run", &scope.tenant_id, &scope.environment);
+                        task_connected.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let schedule_stopping = stopped.clone();
+                        tokio::select! {
+                            _ = stopped.changed() => return,
+                            result = connection => tracing::warn!(?result, "workflow schedule database connection stopped"),
+                            result = wamn_workflow::schedule::serve(&workflows, &digest, &schedules, schedule_stopping) => tracing::warn!(?result, "workflow schedule task stopped"),
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "connect workflow schedule admission"),
+                }
+                task_connected.store(false, std::sync::atomic::Ordering::Relaxed);
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {},
+                }
             }
         });
+        probe_state.register(Arc::new(ScheduleProbe { connected, task }));
     }
+
     let mut ingress_connections = None;
     let mut ingress_handler = None;
     if let Some(addr) = args.http_addr {
@@ -2046,6 +2056,24 @@ fn shutdown_budget(drain_bound_seconds: u64) -> Duration {
     Duration::from_secs(drain_bound_seconds).saturating_sub(EXIT_RESERVE)
 }
 
+#[derive(Debug)]
+struct ScheduleProbe {
+    connected: Arc<std::sync::atomic::AtomicBool>,
+    task: tokio::task::AbortHandle,
+}
+
+impl probes::ReadinessCheck for ScheduleProbe {
+    fn name(&self) -> &'static str {
+        "workflow_schedule"
+    }
+    fn ready(&self) -> bool {
+        self.connected.load(std::sync::atomic::Ordering::Relaxed) && !self.task.is_finished()
+    }
+    fn unrecoverable(&self) -> bool {
+        self.task.is_finished()
+    }
+}
+
 fn probe_listener_failure(task: Option<&Result<(), tokio::task::JoinError>>) -> anyhow::Error {
     anyhow::anyhow!("native probe listener stopped unexpectedly: {task:?}")
 }
@@ -2344,6 +2372,25 @@ mod tests {
             Duration::from_secs(226)
         );
         assert!(cleanup_budget_for_plugins(7, Duration::MAX).is_err());
+    }
+
+    #[tokio::test]
+    async fn schedule_probe_distinguishes_reconnect_from_task_exit() {
+        use probes::ReadinessCheck as _;
+        let task = tokio::spawn(std::future::pending::<()>());
+        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let probe = ScheduleProbe {
+            connected: Arc::clone(&connected),
+            task: task.abort_handle(),
+        };
+        assert!(!probe.ready());
+        assert!(!probe.unrecoverable());
+        connected.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(probe.ready());
+        task.abort();
+        let _ = task.await;
+        assert!(!probe.ready());
+        assert!(probe.unrecoverable());
     }
 
     #[tokio::test]

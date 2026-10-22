@@ -276,7 +276,7 @@ async fn org_connection_materializes_once_per_environment() {
         std::env::temp_dir().join(format!("wamn-org-connections-{}.json", std::process::id()));
     std::fs::write(
         &path,
-        json!({"version": 2, "projects": {}, "orgs": {"acme": {"shared_erp": SECRET}}}).to_string(),
+        json!({"projects": {}, "orgs": {"acme": {"shared_erp": SECRET}}}).to_string(),
     )
     .unwrap();
     let vault = WamnCredentials::from_file(&path).unwrap().with_org("acme");
@@ -387,4 +387,35 @@ async fn org_connection_materializes_once_per_environment() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn binding_refuses_a_handle_from_another_org_before_connecting() {
+    let mut instance = wamn_control::bind_connection::ConnectionInstance {
+        database_url: "invalid database URL".into(),
+        tenant: "acme--erp--dev".into(),
+        environment: "dev".into(),
+        instance_id: "erp".into(),
+        requirement_type: RequirementType::Http,
+        definition: definition("erp.example"),
+        credential_handle: Some("org:other:shared_erp".into()),
+        org_connection_name: Some("shared_erp".into()),
+    };
+    let error = wamn_control::bind_connection::ensure_instance(&instance)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("org connection source and credential handle differ")
+    );
+    instance.credential_handle = Some("org:acme:shared_erp".into());
+    let error = wamn_control::bind_connection::ensure_instance(&instance)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("connect to the project-environment database")
+    );
 }

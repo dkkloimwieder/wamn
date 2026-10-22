@@ -299,6 +299,15 @@ fn a_package_with_no_sql_generates_without_a_model() {
             .contains("manifest must declare at least one model"),
         "{error}"
     );
+    manifest["base_dependencies"] = json!({"state": {
+        "package": "fixture_base", "version": "1.0.0",
+        "digest": format!("sha256:{}", "a".repeat(64)), "operations": ["setting.read"]
+    }});
+    let package = fixture::try_generate_with_sql(&empty, &manifest, &[])
+        .expect("a composition with stateless wrappers owns no schema");
+    let access = artifact(&package, "generated/platform-policy/data-access.json");
+    assert_eq!(access["schemas"], json!([]));
+    assert_eq!(access["relations"], json!([]));
 }
 
 /// The fixture manifest with [`fixture::UNREAD_TABLE`] as an internal relation.

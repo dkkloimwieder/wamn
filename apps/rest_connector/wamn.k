@@ -7,7 +7,7 @@ manifest.Package {
         integration = {
             package = "wamn_integration"
             version = "0.1.0"
-            digest = "sha256:2fb87a687a5fd90f25be2fd7771326351f19d423df7e0de0194a70879303e775"
+            digest = "sha256:2d66025ff2f7d7842fe115ed6babb7716300fdb340b1006f9662c5655568d65f"
             operations = ["setting.read", "setting.write", "log.append"]
         }
         consumer = {
@@ -17,18 +17,7 @@ manifest.Package {
             operations = ["item.record"]
         }
     }
-    models = {
-        setting = manifest.Model("setting", "wamn_integration") {
-            table = "setting"
-            owner = "wamn_integration"
-            operations = {}
-        }
-        log = manifest.Model("log", "wamn_integration") {
-            table = "log"
-            owner = "wamn_integration"
-            operations = {}
-        }
-    }
+    models = {}
     custom_operations = {
         "sync.finish" = manifest.Command("sync.finish") {
             permission = None

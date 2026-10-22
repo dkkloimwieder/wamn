@@ -1370,23 +1370,49 @@ async fn validate_release_package_manifests(
 /// Derive the one schema that an application's SQL resolves against.
 pub(crate) fn application_runtime_schema(
     manifest: &wamn_schema_generator::PackageManifest,
+    manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    components: &BTreeSet<ServingComponent>,
 ) -> anyhow::Result<Option<String>> {
-    let schemas = manifest
-        .models
-        .values()
-        .map(|model| model.schema.as_str())
-        .chain(
+    let member_digests = components
+        .iter()
+        .filter(|component| component.package_id == manifest.package.id)
+        .flat_map(|component| component.descriptor.statement_instances.values())
+        .collect::<BTreeSet<_>>();
+    let mut members = vec![manifest];
+    for dependency in manifest.base_dependencies.values() {
+        let composed = member_digests.contains(&dependency.digest)
+            || components.iter().any(|component| {
+                component.package_id == dependency.package
+                    && member_digests.contains(&component.descriptor.component_digest)
+            });
+        if composed {
+            members.push(
+                manifests
+                    .get(&dependency.package)
+                    .with_context(|| format!("missing base manifest {}", dependency.package))?,
+            );
+        }
+    }
+    let schemas = members
+        .into_iter()
+        .flat_map(|manifest| {
             manifest
-                .internal_relations
+                .models
                 .values()
-                .map(|relation| relation.schema.as_str()),
-        )
-        .chain(manifest.custom_operations.values().flat_map(|operation| {
-            operation
-                .relations
-                .iter()
-                .map(|relation| relation.schema.as_str())
-        }))
+                .map(|model| model.schema.as_str())
+                .chain(
+                    manifest
+                        .internal_relations
+                        .values()
+                        .map(|relation| relation.schema.as_str()),
+                )
+                .chain(manifest.custom_operations.values().flat_map(|operation| {
+                    operation
+                        .relations
+                        .iter()
+                        .map(|relation| relation.schema.as_str())
+                }))
+        })
         .collect::<BTreeSet<_>>();
     match schemas.into_iter().collect::<Vec<_>>().as_slice() {
         [] if manifest.declares_no_sql() => Ok(None),
@@ -1398,31 +1424,113 @@ pub(crate) fn application_runtime_schema(
     }
 }
 
+/// Select applications whose admitted component includes the integration base.
+pub(crate) fn composes_integration(
+    manifest: &wamn_schema_generator::PackageManifest,
+    components: &BTreeSet<ServingComponent>,
+) -> bool {
+    manifest.base_dependencies.values().any(|dependency| {
+        dependency.package == "wamn_integration"
+            && components.iter().any(|application| {
+                application.package_id == manifest.package.id
+                    && application
+                        .descriptor
+                        .statement_instances
+                        .values()
+                        .any(|digest| {
+                            digest == &dependency.digest
+                                || components.iter().any(|base| {
+                                    base.package_id == dependency.package
+                                        && &base.descriptor.component_digest == digest
+                                })
+                        })
+            })
+    })
+}
+
+/// Resolve the declared dependency permissions of an integration application.
+/// Publication resolves them against the released package manifests.
+pub(crate) fn application_dependency_permissions(
+    manifest: &wamn_schema_generator::PackageManifest,
+    manifests: &BTreeMap<&str, &wamn_schema_generator::PackageManifest>,
+) -> anyhow::Result<BTreeSet<String>> {
+    let mut permissions = BTreeSet::new();
+    for dependency in manifest.base_dependencies.values() {
+        for operation in &dependency.operations {
+            let base = manifests
+                .get(dependency.package.as_str())
+                .with_context(|| format!("missing dependency manifest {}", dependency.package))?;
+            ensure!(
+                base.package.version == dependency.version,
+                "dependency {} version differs from the release",
+                dependency.package
+            );
+            let registered = base
+                .custom_operations
+                .get(operation)
+                .map(|operation| operation.permission().is_some())
+                .or_else(|| {
+                    base.models
+                        .values()
+                        .flat_map(|model| model.operations.values())
+                        .find(|declared| declared.permission == *operation)
+                        .map(|_| true)
+                })
+                .with_context(|| {
+                    format!(
+                        "declared dependency {}:{operation} is absent from the release",
+                        dependency.package
+                    )
+                })?;
+            if registered {
+                let canonical =
+                    wamn_schema_generator::canonical_operation_identity(&base.package, operation)?;
+                permissions.insert(
+                    canonical
+                        .split_once('@')
+                        .expect("canonical operation has a version")
+                        .0
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    Ok(permissions)
+}
+
 fn pin_runtime_schemas(
     components: BTreeSet<ServingComponent>,
     manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
-    components
+    let dependency_manifests = manifests
+        .iter()
+        .map(|(id, manifest)| (id.as_str(), manifest))
+        .collect();
+    let schemas = manifests
+        .iter()
+        .map(|(id, manifest)| {
+            if composes_integration(manifest, &components)
+                || manifest
+                    .workflows
+                    .values()
+                    .any(|workflow| workflow.schedule.is_some())
+            {
+                application_dependency_permissions(manifest, &dependency_manifests)?;
+            }
+            application_runtime_schema(manifest, manifests, &components)
+                .map(|schema| (id.clone(), schema))
+        })
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()
+        .map_err(|error| {
+            PublishManifestError::new(PublishManifestErrorType::PackageManifest, error.to_string())
+        })?;
+    Ok(components
         .into_iter()
         .map(|mut component| {
-            let schema = manifests
-                .get(&component.package_id)
-                .map(application_runtime_schema)
-                .transpose()
-                .map_err(|error| {
-                    PublishManifestError::new(
-                        PublishManifestErrorType::PackageManifest,
-                        format!(
-                            "derive runtime schema for {}: {error:#}",
-                            component.package_id
-                        ),
-                    )
-                })?
-                .flatten();
-            component.runtime_schema = schema;
-            Ok(component)
+            component.runtime_schema = schemas.get(&component.package_id).cloned().flatten();
+            component
         })
-        .collect()
+        .collect())
 }
 
 /// The admitted components of the release packages: the facts of each package
@@ -1622,6 +1730,13 @@ fn derive_serving_schedules(
             let Some(schedule) = &workflow.schedule else {
                 continue;
             };
+            let cron = wamn_catalog::parse_workflow_schedule(schedule).map_err(|error| {
+                PublishManifestError::new(PublishManifestErrorType::Registration, error.to_string())
+            })?;
+            cron.find_next_occurrence(&chrono::Utc::now(), false).map_err(|error| {
+                PublishManifestError::new(PublishManifestErrorType::Registration,
+                    format!("workflow-schedule-invalid: {workflow_id:?} has no next occurrence: {error}"))
+            })?;
             let targets = entry_targets
                 .values()
                 .flatten()
@@ -2802,7 +2917,9 @@ mod tests {
             model.schema = "own_schema".into();
         }
         assert_eq!(
-            application_runtime_schema(&manifest).unwrap().as_deref(),
+            application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new())
+                .unwrap()
+                .as_deref(),
             Some("own_schema")
         );
         for model in manifest.models.values_mut() {
@@ -2810,13 +2927,65 @@ mod tests {
             model.owner = "base_package".into();
         }
         assert_eq!(
-            application_runtime_schema(&manifest).unwrap().as_deref(),
+            application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new())
+                .unwrap()
+                .as_deref(),
             Some("base_schema")
         );
         let mut extra = manifest.models.values().next().unwrap().clone();
         extra.schema = "other_schema".into();
         manifest.models.insert("other".into(), extra);
-        assert!(application_runtime_schema(&manifest).is_err());
+        assert!(application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).is_err());
+    }
+
+    #[test]
+    fn composed_schema_uses_base_dependencies_without_copied_models() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let mut overlay = dependency_manifest(&digest);
+        overlay.models.clear();
+        overlay.custom_operations.clear();
+        overlay.internal_relations.clear();
+        let mut base = source_manifest();
+        base.package.id = "base".into();
+        base.custom_operations.clear();
+        base.internal_relations.clear();
+        for model in base.models.values_mut() {
+            model.schema = "base_schema".into();
+        }
+        let mut consumer = base.clone();
+        consumer.package.id = "consumer".into();
+        for model in consumer.models.values_mut() {
+            model.schema = "consumer_schema".into();
+        }
+        let mut dependency = overlay.base_dependencies["base"].clone();
+        dependency.package = "consumer".into();
+        dependency.digest = format!("sha256:{}", "b".repeat(64));
+        overlay
+            .base_dependencies
+            .insert("consumer".into(), dependency);
+        let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+            "overlay",
+            "1.0.0",
+            format!("sha256:{}", "c".repeat(64)),
+        );
+        descriptor
+            .statement_instances
+            .insert("sql-0".into(), digest);
+        let components = BTreeSet::from([ServingComponent {
+            package_id: overlay.package.id.clone(),
+            runtime_schema: None,
+            descriptor,
+            operations: BTreeMap::new(),
+            statement_instances: BTreeMap::new(),
+        }]);
+        let manifests = BTreeMap::from([("base".into(), base), ("consumer".into(), consumer)]);
+        assert_eq!(
+            application_runtime_schema(&overlay, &manifests, &components)
+                .unwrap()
+                .as_deref(),
+            Some("base_schema")
+        );
+        assert!(application_runtime_schema(&overlay, &BTreeMap::new(), &components).is_err());
     }
 
     fn handler_manifest_with_entity(entity: &str) -> wamn_schema_generator::PackageManifest {
@@ -2973,6 +3142,15 @@ mod tests {
         assert_eq!(schedules["observer_fixture::hourly"].schedule, "0 * * * *");
         refuse_unregistered_one_node_wirings(&[target], &BTreeMap::new(), &schedules).unwrap();
         assert!(derive_serving_schedules(&manifests, &BTreeMap::new()).is_err());
+        let mut impossible = manifests.clone();
+        impossible
+            .get_mut("observer_fixture")
+            .unwrap()
+            .workflows
+            .get_mut("hourly")
+            .unwrap()
+            .schedule = Some("0 0 31 2 *".into());
+        assert!(derive_serving_schedules(&impossible, &targets).is_err());
     }
 
     #[test]

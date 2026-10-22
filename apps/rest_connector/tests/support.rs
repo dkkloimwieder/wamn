@@ -29,7 +29,7 @@ pub fn admit(
     bases: BTreeSet<String>,
 ) -> ComponentAdmission {
     let scope = ComponentPackageScope {
-        tenant_id: "rest-publication".into(),
+        tenant_id: "rest--publication--test".into(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
         package_version: "0.1.0".into(),
     };

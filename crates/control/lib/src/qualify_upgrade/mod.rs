@@ -771,14 +771,24 @@ pub(crate) fn runtime_schemas<'a>(
     directories: impl IntoIterator<Item = &'a PackageDirectory>,
     release: &ServingManifest,
 ) -> anyhow::Result<BTreeMap<String, String>> {
+    let manifests = directories
+        .into_iter()
+        .map(|directory| {
+            let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
+            Ok((manifest.package.id.clone(), manifest))
+        })
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
     let mut runtime = BTreeMap::new();
-    for directory in directories {
-        let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
+    for manifest in manifests.values() {
         if manifest.declares_no_sql() {
             continue;
         }
-        let schema = crate::publish_release::application_runtime_schema(&manifest)?
-            .context("SQL-bearing package has no runtime schema")?;
+        let schema = crate::publish_release::application_runtime_schema(
+            manifest,
+            &manifests,
+            &release.components,
+        )?
+        .context("SQL-bearing package has no runtime schema")?;
         let pinned = release
             .components
             .iter()
@@ -791,7 +801,10 @@ pub(crate) fn runtime_schemas<'a>(
                 manifest.package.id
             );
         }
-        runtime.insert(manifest.package.id, pinned.cloned().unwrap_or(schema));
+        runtime.insert(
+            manifest.package.id.clone(),
+            pinned.cloned().unwrap_or(schema),
+        );
     }
     Ok(runtime)
 }

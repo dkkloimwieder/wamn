@@ -410,10 +410,45 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     assert_eq!(first.manifest, second.manifest);
     assert_eq!(first.manifest.release.packages, packages);
     assert_eq!(first.manifest.components.len(), 2);
-    // Every attachment is a route: the release has routes and no wiring, and
-    // each route carries the kind its generated contract names.
+    // Every attachment names a route. Released operation contracts can also
+    // have route records without attachments, which open no HTTP endpoint.
     assert!(first.manifest.workflow.wirings.is_empty());
-    assert_eq!(first.manifest.routes.len(), attachments.len());
+    let attached_routes = first
+        .manifest
+        .attachments
+        .values()
+        .map(|attachment| {
+            (
+                &attachment.package_id,
+                &attachment.component,
+                &attachment.operation,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let routes = &first.manifest.routes;
+    for (package, component, operation) in &attached_routes {
+        assert!(routes.iter().any(|route| {
+            (&route.package_id, &route.component, &route.operation)
+                == (*package, *component, *operation)
+        }));
+    }
+    for route in routes {
+        if attached_routes.contains(&(&route.package_id, &route.component, &route.operation)) {
+            continue;
+        }
+        assert!(first.manifest.components.iter().any(|component| {
+            component.package_id == route.package_id
+                && component.descriptor.component == route.component
+                && component.operations.contains_key(&route.operation)
+        }));
+        let contract = &kinds[&(route.package_id.clone(), route.operation.clone())];
+        assert_ne!(contract.kind, OperationType::EventHandler);
+        assert_eq!(route.type_, contract.kind);
+        assert_eq!(route.reads, contract.reads);
+        assert_eq!(route.revision, contract.revision);
+        assert_eq!(route.idempotency, contract.idempotency);
+        assert_eq!(route.canonicalization, contract.canonicalization);
+    }
     let kind_of = |operation: &str| {
         first
             .manifest

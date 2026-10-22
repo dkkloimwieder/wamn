@@ -446,16 +446,16 @@ A schedule must name a workflow wiring in that release.
 One host task serves all schedules of its environment's loaded release.
 Its first due moment is strictly after startup.
 At each due moment, it calls `Workflows::start` with input `{"due":"<due RFC 3339>"}`.
-The key is `<package id>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
+The key is `schedule:<package id>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
 Replicas use the same key, so concurrent starts return one run.
 
-Apply creates one service principal per application that declares a schedule, in each environment.
+Apply creates one service principal per application that declares a schedule or composes `wamn_integration`, in each environment.
 Its subject is `wamn-app-<org>--<project>--<env>--<package id>`.
 The tenant service row uses `<subject>@<platform-domain>` as its email.
 Repeated applies retain its identity and grants.
 
-Apply assigns no roles or permissions.
-An administrator grants a role through the existing [role administration](../operations/deployment.md).
+Publish authorizes the operations that the application declares as dependencies.
+Apply assigns a role with those permissions. Repeated applies write no principal or role rows.
 The executor resolves the application principal when it admits the schedule run.
 Its database role reads only `tenant_id`, `id`, `type`, `status`, and `email` from `app_system.users`.
 It can insert the principal into a run but cannot change that identity afterward.

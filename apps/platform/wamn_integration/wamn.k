@@ -41,11 +41,6 @@ manifest.Package {
             result = {class = "one", fields = [{path = "key", type = "text"}]}
             errors = ["invalid_input", "idempotency_conflict", "retry", "timeout", "internal_error"]
             statements = {
-                insert_setting = manifest.Statement("command/setting", "insert") {
-                    fetch = "optional_one"
-                    parameters = [manifest.text("key"), manifest.json("value")]
-                    row = [manifest.text("key")]
-                }
                 write_setting = manifest.Statement("command/setting", "write") {
                     fetch = "one"
                     parameters = [manifest.text("key"), manifest.json("value")]

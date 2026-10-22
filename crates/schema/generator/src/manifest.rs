@@ -679,6 +679,18 @@ impl PackageManifest {
                 .all(|operation| operation.idempotent_by == Some(CommandIdempotence::Stateless))
     }
 
+    /// Whether every SQL operation belongs to a base, with only stateless
+    /// wrappers declared here. Such a composition owns no application schema.
+    pub(crate) fn uses_only_base_sql(&self) -> bool {
+        !self.base_dependencies.is_empty()
+            && self.models.is_empty()
+            && self.internal_relations.is_empty()
+            && self.custom_operations.values().all(|operation| {
+                operation.statements.is_empty()
+                    && operation.idempotent_by == Some(CommandIdempotence::Stateless)
+            })
+    }
+
     /// Whether the package owns no table: it declares no SQL, or every model
     /// it declares belongs to another package and it has no internal
     /// relation. Such a package has no migration.
@@ -1443,12 +1455,7 @@ fn validate_workflows(manifest: &PackageManifest) -> Result<(), GenerateError> {
                 validate_registration(manifest, &format!("workflow {workflow_id}"), registration)?;
             }
             (None, Some(schedule)) => {
-                let parsed = croner::parser::CronParser::builder()
-                    .seconds(croner::parser::Seconds::Disallowed)
-                    .year(croner::parser::Year::Disallowed)
-                    .build()
-                    .parse(schedule);
-                if schedule.split_whitespace().count() != 5 || parsed.is_err() {
+                if wamn_catalog::parse_workflow_schedule(schedule).is_err() {
                     return Err(GenerateError::new(
                         GenerateErrorType::InvalidOperation,
                         format!(

@@ -47,7 +47,6 @@ async fn settings_and_delivery_outcomes_use_only_application_grants() -> anyhow:
             &derive_effective_data_access(&relations, &[overlay])?,
         )?)
         .await?;
-    let insert = std::fs::read_to_string(package.join("command/setting/insert.sql"))?;
     let write = std::fs::read_to_string(package.join("command/setting/write.sql"))?;
     let read = std::fs::read_to_string(package.join("command/setting/read.sql"))?;
     let append = std::fs::read_to_string(package.join("command/log/append.sql"))?;
@@ -69,9 +68,6 @@ async fn settings_and_delivery_outcomes_use_only_application_grants() -> anyhow:
             .is_none()
     );
     for due in ["2026-10-21T12:00:00Z", "2026-10-21T12:01:00Z"] {
-        transaction
-            .query(&insert, &[&"last_synced_at", &json!(due)])
-            .await?;
         transaction
             .query_one(&write, &[&"last_synced_at", &json!(due)])
             .await?;

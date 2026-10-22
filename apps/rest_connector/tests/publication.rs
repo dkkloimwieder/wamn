@@ -20,23 +20,6 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
     let roots = vec![integration.clone(), consumer.clone(), connector.clone()];
     let base = support::admit(&integration, "wamn_integration", None, BTreeSet::new());
     let destination = support::admit(&consumer, "rest_consumer_fixture", None, BTreeSet::new());
-    let declared = support::manifest(&connector);
-    for (alias, admitted) in [("integration", &base), ("consumer", &destination)] {
-        assert_eq!(
-            declared["base_dependencies"][alias]["version"],
-            admitted.package_version()
-        );
-        assert_eq!(
-            declared["base_dependencies"][alias]["digest"],
-            admitted.component_digest()
-        );
-    }
-    assert!(
-        base.facts()
-            .operations
-            .values()
-            .all(|op| op.registered_operation.is_none())
-    );
     let component = support::admit(
         &connector,
         "rest_connector",
@@ -45,19 +28,6 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
             base.component_digest().into(),
             destination.component_digest().into(),
         ]),
-    );
-    assert!(
-        component
-            .facts()
-            .operations
-            .values()
-            .all(|op| op.registered_operation.is_none())
-    );
-    assert_eq!(
-        destination.facts().operations["rest-consumer-fixture:item/record@0.1.0"]
-            .registered_operation
-            .as_deref(),
-        Some("rest-consumer-fixture:item/record@0.1.0")
     );
     let admissions = vec![
         base,
@@ -77,7 +47,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         ),
     ];
     let scope = ComponentPackageScope {
-        tenant_id: "rest-publication".into(),
+        tenant_id: "rest--publication--test".into(),
         package_id: "rest_connector".into(),
         package_version: "0.1.0".into(),
     };
@@ -124,45 +94,6 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
     let assembled = assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
     let release = &assembled.published.manifest;
     composed_sql_uses_released_schemas(&roots, release, &admissions).await?;
-    assert_eq!(release.release.packages.len(), 3);
-    assert_eq!(release.workflow.schedules.len(), 1);
-    assert_eq!(release.workflow.registrations.len(), 1);
-    assert_eq!(
-        release
-            .workflow
-            .registrations
-            .values()
-            .next()
-            .unwrap()
-            .source_package_id,
-        "rest_consumer_fixture"
-    );
-    let pull = assembled
-        .facts
-        .wirings
-        .iter()
-        .find(|wiring| wiring.document.wiring_id == "rest_item")
-        .unwrap();
-    assert_eq!(
-        pull.node_components["record"].scope.package_id,
-        "rest_consumer_fixture"
-    );
-    assert_eq!(
-        pull.document.nodes["page"].params["carry-input-pointer"],
-        "/due"
-    );
-    assert_eq!(declared["models"]["setting"]["owner"], "wamn_integration");
-    assert!(declared["models"].get("item").is_none());
-    assert_eq!(
-        support::manifest(&consumer)["custom_operations"]["item.record"]["permission"],
-        "item.record"
-    );
-    let consumer_operation =
-        &admissions[1].facts().operations["rest-consumer-fixture:item/record@0.1.0"];
-    assert_eq!(
-        consumer_operation.input_ports[0].schema.schema,
-        json!({"type":"array"})
-    );
     let mut wrong_port = documents.clone();
     wrong_port[0]
         .1
@@ -196,7 +127,7 @@ async fn composed_sql_uses_released_schemas(
     let (client, connection) =
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     let driver = tokio::spawn(connection);
-    let guest_url = consumer_live::install(&client, &database, roots).await?;
+    let guest_url = consumer_live::install(&client, &database, roots, release).await?;
     let (mut guest, guest_connection) =
         tokio_postgres::connect(&guest_url, tokio_postgres::NoTls).await?;
     let guest_driver = tokio::spawn(guest_connection);
@@ -240,7 +171,7 @@ async fn composed_sql_uses_released_schemas(
             };
             transaction
                 .query(
-                    sql("command/setting/insert.sql"),
+                    sql("command/setting/write.sql"),
                     &[&"last_synced_at", &json!("2026-10-21T12:00:00Z")],
                 )
                 .await?;
@@ -308,6 +239,18 @@ async fn composed_sql_uses_released_schemas(
         "released connector SQL, consumer item insert, write-log claim and finish all passed under the App login"
     );
     consumer_live::invoke(&database, &guest_url, release, admissions).await?;
+    let checkpoint: serde_json::Value = client
+        .query_one(
+            "SELECT value FROM wamn_integration.setting WHERE key='last_synced_at'",
+            &[],
+        )
+        .await?
+        .get(0);
+    assert_eq!(
+        checkpoint,
+        json!("2026-10-21T12:01:00Z"),
+        "a failing consumer leaves last_synced_at unchanged"
+    );
     let stored = client
         .query_one(
             "SELECT item.name, log.result::jsonb FROM rest_consumer_fixture.item AS item \

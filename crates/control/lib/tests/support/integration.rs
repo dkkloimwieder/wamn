@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
@@ -167,16 +166,6 @@ pub async fn exercise(
     ));
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     let subject = wamn_platform_identity::application_subject(&tenant, CONNECTOR)?;
-    grant(
-        run,
-        repository,
-        &platform,
-        project_url.as_str(),
-        &tenant,
-        &format!("{subject}@{}", super::PLATFORM_DOMAIN),
-        &manifest,
-    )
-    .await?;
     document.release = DeclaredRelease::Digest(digest.clone());
     super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
     let (project, project_task) = connect(project_url.as_str()).await?;
@@ -225,9 +214,12 @@ pub async fn exercise(
             std::fs::read_to_string(run.work.join("cdc-reader.log")).unwrap_or_default()
         )
     })?;
-    run.pass("integration schedule pushes five records and CDC logs each once under its principal",
-        "wamn-ctl create-role; grant-permission; grant-role; scheduled rest_item; SELECT runs, item, setting, log; kubectl logs http-fixture",
-        observed, true);
+    run.pass(
+        "integration schedule pushes five records and CDC logs each once under its principal",
+        "scheduled rest_item after apply; SELECT runs, item, setting, log; GET /recorded",
+        observed,
+        true,
+    );
     environment::delete::delete(&platform, &scope, true).await?;
     Ok(())
 }
@@ -479,110 +471,6 @@ async fn secret_value(run: &Run, name: &str, key: &str) -> anyhow::Result<Vec<u8
     Ok(STANDARD.decode(value["data"][key].as_str().context("Secret key")?)?)
 }
 
-/// Write the connector's service row from the release manifest, then grant it
-/// the consumer permission. The caller runs this before the release apply, so
-/// no host has loaded the release and its schedule cannot tick before the grant.
-async fn grant(
-    run: &Run,
-    repository: &Path,
-    platform: &Platform,
-    project_url: &str,
-    tenant: &str,
-    subject: &str,
-    manifest: &wamn_catalog::ServingManifest,
-) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-    for key in ["ca.crt", "tls.crt", "tls.key"] {
-        let bytes = secret_value(run, "wasmcloud-runtime-tls", key).await?;
-        let path = run.work.join(format!("auth-{key}"));
-        std::fs::write(&path, bytes)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    let port = std::net::TcpListener::bind("127.0.0.1:0")?
-        .local_addr()?
-        .port();
-    let _forward = Command::new("kubectl")
-        .env("KUBECONFIG", run.work.join("kubeconfig"))
-        .args([
-            "-n",
-            NAMESPACE,
-            "port-forward",
-            "svc/nats",
-            &format!("{port}:4222"),
-        ])
-        .stdout(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()?;
-    let auth = wamn_platform_identity::auth_changes::AuthNats {
-        nats_url: format!("nats://127.0.0.1:{port}"),
-        nats_tls_ca: run.work.join("auth-ca.crt"),
-        nats_tls_cert: run.work.join("auth-tls.crt"),
-        nats_tls_key: run.work.join("auth-tls.key"),
-        nats_tls_server_name: Some(format!("nats.{NAMESPACE}.svc.cluster.local")),
-    };
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let changes = loop {
-        match wamn_platform_identity::auth_changes::AuthChanges::connect(&auth).await {
-            Ok(changes) => break changes,
-            Err(_) if Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-            Err(error) => return Err(error),
-        }
-    };
-    environment::stage::materialize_application_principals(
-        &platform.system_database_url,
-        project_url,
-        tenant,
-        manifest,
-        &changes,
-    )
-    .await?;
-    for (verb, extra) in [
-        ("create-role", vec![]),
-        (
-            "grant-permission",
-            vec!["--operation", "rest-consumer-fixture:item/record"],
-        ),
-        ("grant-role", vec!["--user", subject]),
-    ] {
-        let output = Command::new(binary(repository, "wamn-ctl"))
-            .env("WAMN_SYSTEM_ADMIN_URL", &platform.system_database_url)
-            .env("WAMN_PG_ADMIN_URL", project_url)
-            .env("WAMN_AUTH_NATS_URL", &auth.nats_url)
-            .env("WAMN_AUTH_NATS_TLS_CA", &auth.nats_tls_ca)
-            .env("WAMN_AUTH_NATS_TLS_CERT", &auth.nats_tls_cert)
-            .env("WAMN_AUTH_NATS_TLS_KEY", &auth.nats_tls_key)
-            .env(
-                "WAMN_AUTH_NATS_TLS_SERVER_NAME",
-                auth.nats_tls_server_name.as_ref().unwrap(),
-            )
-            .args([
-                verb,
-                "--org",
-                ORG,
-                "--project",
-                PROJECT,
-                "--env",
-                ENVIRONMENT,
-                "--tenant",
-                tenant,
-                "--role",
-                "integration-writer",
-            ])
-            .args(extra)
-            .kill_on_drop(true)
-            .output()
-            .await?;
-        ensure!(
-            output.status.success(),
-            "{verb} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
 async fn start_reader(
     run: &Run,
     repository: &Path,
@@ -704,13 +592,8 @@ async fn assertions(
                     ),
                 "logs must contain one pushed row per key: {rows}"
             );
-            let requests = http_connection::request_records(
-                &run.run(
-                    "kubectl",
-                    &["-n", NAMESPACE, "logs", "deployment/http-fixture"],
-                )
-                .await?,
-            )?;
+            let requests =
+                http_connection::request_records(&http_connection::request_log(run).await?)?;
             let pages: Vec<_> = requests.iter().filter(|r| !r["page"].is_null()).collect();
             ensure!(
                 pages.iter().map(|r| r["page"].clone()).collect::<Vec<_>>()

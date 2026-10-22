@@ -136,6 +136,10 @@ pub async fn stage(
         project_url,
         &tenant,
         manifest,
+        &packages
+            .iter()
+            .map(|(_, _, _, manifest)| manifest.clone())
+            .collect::<Vec<_>>(),
         &platform.auth_changes().await?,
     )
     .await?;
@@ -169,8 +173,8 @@ pub async fn stage(
         .collect())
 }
 
-/// Create the service rows of scheduled applications without assigning roles.
-/// Repeated application retains the identity and any administrator-authored grants.
+/// Create each scheduled or integration application principal and its declared dependency role.
+/// An identical apply writes no rows.
 ///
 /// # Errors
 ///
@@ -180,21 +184,30 @@ pub async fn materialize_application_principals(
     project_url: &str,
     tenant: &str,
     manifest: &wamn_catalog::ServingManifest,
+    packages: &[PackageManifest],
     changes: &wamn_platform_identity::auth_changes::AuthChanges,
 ) -> anyhow::Result<()> {
-    use wamn_platform_identity::application::{ApplicationUser, write_service};
     use wamn_platform_identity::auth_changes::AuthDrops;
     use wamn_project_state::PlatformComponent;
 
-    let applications: std::collections::BTreeSet<_> = manifest
-        .workflow
-        .schedules
-        .values()
-        .map(|schedule| schedule.package_id.as_str())
-        .collect();
+    let applications = packages
+        .iter()
+        .filter(|package| {
+            manifest
+                .workflow
+                .schedules
+                .values()
+                .any(|schedule| schedule.package_id == package.package.id)
+                || crate::publish_release::composes_integration(package, &manifest.components)
+        })
+        .collect::<Vec<_>>();
     if applications.is_empty() {
         return Ok(());
     }
+    let dependency_manifests = packages
+        .iter()
+        .map(|package| (package.package.id.as_str(), package))
+        .collect();
     let mut system = connect(system_url).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
     let domain: Option<String> = system
@@ -212,7 +225,7 @@ pub async fn materialize_application_principals(
         .await?;
     let mut drops = AuthDrops::default();
     for package in applications {
-        let subject = wamn_platform_identity::application_subject(tenant, package)?;
+        let subject = wamn_platform_identity::application_subject(tenant, &package.package.id)?;
         let principal = crate::provision_project_env::resolve_or_create_service(
             &mut system,
             &subject,
@@ -223,26 +236,44 @@ pub async fn materialize_application_principals(
             principal.status() == wamn_platform_identity::PrincipalStatus::Active,
             "application service principal {subject:?} is disabled"
         );
-        let exists = transaction
-            .query_opt(
-                "SELECT id FROM app_system.users WHERE tenant_id = $1 AND id = $2::text::uuid",
-                &[&tenant, &principal.id().as_str()],
+        let written = transaction
+            .execute(
+                "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+             VALUES ($1, $2::text::uuid, 'service', $3, $4) ON CONFLICT (tenant_id, id) DO NOTHING",
+                &[
+                    &tenant,
+                    &principal.id().as_str(),
+                    &format!("{subject}@{domain}"),
+                    &subject,
+                ],
             )
-            .await?
-            .is_some();
-        if !exists {
-            write_service(
+            .await?;
+        if written != 0 {
+            drops.principal(tenant, principal.id().as_str());
+        }
+        let role = format!("application-{}", package.package.id.replace('_', "-"));
+        crate::role_permissions::create_role(&transaction, tenant, &role, &mut drops).await?;
+        for permission in crate::publish_release::application_dependency_permissions(
+            package,
+            &dependency_manifests,
+        )? {
+            crate::role_permissions::grant_permission(
                 &transaction,
                 tenant,
-                ApplicationUser {
-                    principal_id: principal.id(),
-                    email: &format!("{subject}@{domain}"),
-                    display_name: &subject,
-                },
+                &role,
+                &permission,
                 &mut drops,
             )
             .await?;
         }
+        wamn_platform_identity::application::grant_user_role(
+            &transaction,
+            tenant,
+            principal.id().as_str(),
+            &role,
+            &mut drops,
+        )
+        .await?;
     }
     transaction.commit().await?;
     changes.publish(drops).await;

@@ -382,21 +382,15 @@ fn next_link(headers: &[Header]) -> Result<Option<String>, NodeError> {
                     )
                 })?;
             if target.contains("://") || target.starts_with("//") {
-                return absolute_next(target).map(Some);
+                return Err(terminal(
+                    "invalid-page",
+                    "absolute next URLs are not followed",
+                ));
             }
             return Ok(Some(target.to_string()));
         }
     }
     Ok(None)
-}
-
-// The guest cannot see the binding's origin or base path, so it cannot prove an
-// absolute next URL stays inside the binding (follow-up wamn-62h0t).
-fn absolute_next(_url: &str) -> Result<String, NodeError> {
-    Err(terminal(
-        "invalid-page",
-        "absolute next URLs are not followed",
-    ))
 }
 
 #[cfg(test)]

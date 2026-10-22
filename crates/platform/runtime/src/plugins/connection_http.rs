@@ -446,7 +446,6 @@ impl ConnectionHttp {
             Some("verify-authority") => TlsPolicy::VerifyAuthority,
             _ => return Err(ConnectionError::Incompatible),
         };
-        require_direct_transport(object)?;
         let proxy = None;
         let authority = parse_http_connection_authority(primary, tls, proxy)
             .map_err(|error| authority_denied("definition", &error))?;
@@ -511,6 +510,11 @@ impl ConnectionHttp {
         let object = credential_object(&secret)?;
         let Some(oauth2) = object.get("oauth2") else {
             let headers = credential_headers(
+                request
+                    .headers
+                    .iter()
+                    .find(|header| header.name.eq_ignore_ascii_case("content-type"))
+                    .map(|header| header.value.as_slice()),
                 &secret,
                 &request.method,
                 &decision.logical_url,
@@ -705,22 +709,6 @@ fn log_effect_authority_denied(phase: &'static str, error: ConnectionError) -> C
         tracing::warn!(phase, "trusted HTTP connection authority denied");
     }
     error
-}
-
-fn require_direct_transport(
-    definition: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(), ConnectionError> {
-    if matches!(
-        definition.get("proxy-transport"),
-        None | Some(serde_json::Value::Null)
-    ) && matches!(
-        definition.get("proxy-authority"),
-        None | Some(serde_json::Value::Null)
-    ) {
-        Ok(())
-    } else {
-        Err(ConnectionError::Incompatible)
-    }
 }
 
 /// Require the executing operation to be reachable from the attested wiring root.
@@ -943,15 +931,24 @@ struct HmacCredential {
 }
 
 fn credential_headers(
+    content_type: Option<&[u8]>,
     secret: &str,
     method: &str,
     url: &str,
     body: &[u8],
 ) -> Result<HashMap<String, String>, ConnectionError> {
-    credential_headers_with(secret, method, url, body, oauth1_request_values)
+    credential_headers_with(
+        content_type,
+        secret,
+        method,
+        url,
+        body,
+        oauth1_request_values,
+    )
 }
 
 fn credential_headers_with(
+    content_type: Option<&[u8]>,
     secret: &str,
     method: &str,
     url: &str,
@@ -974,7 +971,26 @@ fn credential_headers_with(
             return Err(ConnectionError::CredentialUnavailable);
         }
         let (nonce, timestamp) = request_values()?;
-        let header = oauth1_header(&credential, method, url, &nonce, timestamp)?;
+        let form = content_type
+            .and_then(|value| std::str::from_utf8(value).ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+            });
+        let body_params = if form {
+            url::form_urlencoded::parse(body).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let body_params = body_params
+            .iter()
+            .map(|(name, value)| (name.as_ref(), value.as_ref()))
+            .collect::<Vec<_>>();
+        let header = oauth1_header(&credential, method, url, &body_params, &nonce, timestamp)?;
         return Ok([("authorization".to_string(), header)].into());
     }
     if let Some(hmac) = object.get("hmac") {
@@ -1070,7 +1086,17 @@ fn oauth1_encode(value: &str) -> String {
 
 fn oauth1_base_string(method: &str, url: &url::Url, params: &[(&str, &str)]) -> String {
     let mut params: Vec<_> = url
-        .query_pairs()
+        .query()
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (
+                percent_encoding::percent_decode_str(name).decode_utf8_lossy(),
+                percent_encoding::percent_decode_str(value).decode_utf8_lossy(),
+            )
+        })
         .map(|(name, value)| (oauth1_encode(&name), oauth1_encode(&value)))
         .chain(
             params
@@ -1111,6 +1137,7 @@ fn oauth1_header(
     credential: &Oauth1Credential,
     method: &str,
     url: &str,
+    body_params: &[(&str, &str)],
     nonce: &str,
     timestamp: u64,
 ) -> Result<String, ConnectionError> {
@@ -1124,7 +1151,12 @@ fn oauth1_header(
         ("oauth_nonce", nonce),
         ("oauth_version", "1.0"),
     ];
-    let base = oauth1_base_string(method, &url, &params);
+    let signature_params = params
+        .iter()
+        .copied()
+        .chain(body_params.iter().copied())
+        .collect::<Vec<_>>();
+    let base = oauth1_base_string(method, &url, &signature_params);
     let signature = oauth1_signature(credential, &base);
     params.push(("oauth_signature", &signature));
     let mut fields = Vec::new();
@@ -1495,69 +1527,6 @@ mod tests {
         format!("sha256:{}", byte.to_string().repeat(64))
     }
 
-    #[test]
-    fn direct_transport_accepts_the_catalog_definition_and_explicit_null() {
-        let mut definition = serde_json::json!({
-            "primary-authority": "http://http-fixture:8080/",
-            "tls-verification": "disabled"
-        });
-        wamn_catalog::RequirementType::Http
-            .check_definition(&definition)
-            .expect("the catalog accepts the two-key definition");
-        require_direct_transport(definition.as_object().unwrap())
-            .expect("an omitted proxy transport is direct");
-
-        definition["proxy-transport"] = serde_json::Value::Null;
-        require_direct_transport(definition.as_object().unwrap())
-            .expect("an explicit null proxy transport is direct");
-        definition["proxy-authority"] = serde_json::Value::Null;
-        require_direct_transport(definition.as_object().unwrap())
-            .expect("an explicit null proxy authority is direct");
-        definition
-            .as_object_mut()
-            .unwrap()
-            .remove("proxy-transport");
-        require_direct_transport(definition.as_object().unwrap())
-            .expect("a null proxy authority needs no proxy transport");
-    }
-
-    #[test]
-    fn direct_transport_refuses_non_null_proxy_fields() {
-        for value in [
-            serde_json::json!("connect"),
-            serde_json::json!(""),
-            serde_json::json!(false),
-            serde_json::json!(0),
-            serde_json::json!([]),
-            serde_json::json!({}),
-        ] {
-            let definition = serde_json::json!({"proxy-transport": value});
-            assert!(matches!(
-                require_direct_transport(definition.as_object().unwrap()),
-                Err(ConnectionError::Incompatible)
-            ));
-        }
-        for value in [
-            serde_json::json!("http://proxy.internal:8080/"),
-            serde_json::json!(""),
-            serde_json::json!(false),
-            serde_json::json!(0),
-            serde_json::json!([]),
-            serde_json::json!({}),
-        ] {
-            let mut definition = serde_json::json!({"proxy-authority": value});
-            assert!(matches!(
-                require_direct_transport(definition.as_object().unwrap()),
-                Err(ConnectionError::Incompatible)
-            ));
-            definition["proxy-transport"] = serde_json::Value::Null;
-            assert!(matches!(
-                require_direct_transport(definition.as_object().unwrap()),
-                Err(ConnectionError::Incompatible)
-            ));
-        }
-    }
-
     fn invocation() -> ConnectionInvocation {
         ConnectionInvocation {
             origin: ConnectionOrigin {
@@ -1918,8 +1887,9 @@ mod tests {
         // RFC 4231 test case 2: the expected value is independent of this signer.
         let secret = r#"{"hmac":{"algorithm":"sha256","secret":"Jefe","header":"x-signature"}}"#;
         let body = b"what do ya want for nothing?";
-        let credentials = credential_headers(secret, "POST", "https://example.com/notify", body)
-            .expect("HMAC credential");
+        let credentials =
+            credential_headers(None, secret, "POST", "https://example.com/notify", body)
+                .expect("HMAC credential");
         assert_eq!(
             credentials["x-signature"],
             "sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
@@ -1927,6 +1897,7 @@ mod tests {
         assert_ne!(
             credentials,
             credential_headers(
+                None,
                 secret,
                 "POST",
                 "https://example.com/notify",
@@ -1935,7 +1906,7 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            credential_headers(secret, "POST", "https://example.com/notify", b"").unwrap()["x-signature"],
+            credential_headers(None, secret, "POST", "https://example.com/notify", b"").unwrap()["x-signature"],
             "sha256=923598ca6d64af2a5dba79dcd021a8a0fe5c5f557519adaaf0ad532d4506dd30"
         );
         let request = Request {
@@ -1987,7 +1958,7 @@ mod tests {
             .unwrap();
         // RFC 5849 section 3.4.1.1 includes these decoded form fields and
         // omits oauth_version. Exercise its exact normalization vector here;
-        // the production signer excludes the body and includes oauth_version.
+        // the production signer includes oauth_version.
         let params = [
             ("c2", ""),
             ("a3", "2 q"),
@@ -2022,7 +1993,7 @@ mod tests {
     #[test]
     fn oauth1_netsuite_header_signs_query_and_excludes_body() {
         let sign = |body: &[u8]| {
-            credential_headers_with(OAUTH1_SECRET, "GET", OAUTH1_URL, body, || {
+            credential_headers_with(None, OAUTH1_SECRET, "GET", OAUTH1_URL, body, || {
                 Ok(("fixed-nonce".into(), 1_700_000_000))
             })
             .unwrap()
@@ -2046,9 +2017,54 @@ mod tests {
     }
 
     #[test]
+    fn oauth1_preserves_query_plus_and_signs_form_body() {
+        let url = url::Url::parse("https://example.com/?x=a+b").unwrap();
+        assert_eq!(
+            oauth1_base_string("GET", &url, &[]),
+            "GET&https%3A%2F%2Fexample.com%2F&x%3Da%252Bb"
+        );
+        let sign = |body: &[u8], content_type| {
+            credential_headers_with(
+                content_type,
+                OAUTH1_SECRET,
+                "POST",
+                "https://example.com/?x=a+b",
+                body,
+                || Ok(("nonce".into(), 1)),
+            )
+            .unwrap()
+        };
+        let headers = sign(
+            b"a=one+two&a=%2B",
+            Some(b"application/x-www-form-urlencoded".as_slice()),
+        );
+        let expected = concat!(
+            "POST&https%3A%2F%2Fexample.com%2F&",
+            "a%3D%252B%26a%3Done%2520two%26oauth_consumer_key%3Dconsumer%26oauth_nonce%3Dnonce",
+            "%26oauth_signature_method%3DHMAC-SHA256%26oauth_timestamp%3D1%26oauth_token%3Dtoken",
+            "%26oauth_version%3D1.0%26x%3Da%252Bb"
+        );
+        assert_eq!(
+            oauth1_header_param(&headers["authorization"], "oauth_signature"),
+            independent_oauth1_signature("consumer%2Fsecret%26&token%20secret%2B", expected)
+        );
+        assert_ne!(
+            headers,
+            sign(
+                b"a=changed",
+                Some(b"application/x-www-form-urlencoded".as_slice())
+            )
+        );
+        assert_eq!(
+            sign(b"a=one", Some(b"application/json".as_slice())),
+            sign(b"a=two", None)
+        );
+    }
+
+    #[test]
     fn oauth1_repeated_requests_get_fresh_nonces() {
-        let first = credential_headers(OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
-        let second = credential_headers(OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
+        let first = credential_headers(None, OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
+        let second = credential_headers(None, OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
         assert_ne!(
             oauth1_header_param(&first["authorization"], "oauth_nonce"),
             oauth1_header_param(&second["authorization"], "oauth_nonce")
@@ -2067,7 +2083,7 @@ mod tests {
                 value: b"second-guest-token".to_vec(),
             },
         ]);
-        let credentials = credential_headers(OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
+        let credentials = credential_headers(None, OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
         let signed = credentials["authorization"].clone();
         let headers = outbound_headers(&request, credentials).unwrap();
         assert_eq!(headers["authorization"], signed);
@@ -2082,16 +2098,18 @@ mod tests {
     fn oauth1_realm_is_optional_and_quoted_without_percent_encoding() {
         let mut secret: serde_json::Value = serde_json::from_str(OAUTH1_SECRET).unwrap();
         secret["oauth1"].as_object_mut().unwrap().remove("realm");
-        let without = credential_headers_with(&secret.to_string(), "GET", OAUTH1_URL, b"", || {
-            Ok(("fixed-nonce".into(), 1_700_000_000))
-        })
-        .unwrap();
+        let without =
+            credential_headers_with(None, &secret.to_string(), "GET", OAUTH1_URL, b"", || {
+                Ok(("fixed-nonce".into(), 1_700_000_000))
+            })
+            .unwrap();
         assert!(without["authorization"].starts_with("OAuth oauth_consumer_key="));
         secret["oauth1"]["realm"] = serde_json::json!("account /\"\\");
-        let with = credential_headers_with(&secret.to_string(), "GET", OAUTH1_URL, b"", || {
-            Ok(("fixed-nonce".into(), 1_700_000_000))
-        })
-        .unwrap();
+        let with =
+            credential_headers_with(None, &secret.to_string(), "GET", OAUTH1_URL, b"", || {
+                Ok(("fixed-nonce".into(), 1_700_000_000))
+            })
+            .unwrap();
         assert!(with["authorization"].starts_with("OAuth realm=\"account /\\\"\\\\\", "));
         assert_eq!(
             oauth1_header_param(&with["authorization"], "oauth_signature"),
@@ -2104,7 +2122,7 @@ mod tests {
         let valid: serde_json::Value = serde_json::from_str(OAUTH1_SECRET).unwrap();
         let refuses = |secret: serde_json::Value| {
             assert!(matches!(
-                credential_headers(&secret.to_string(), "GET", OAUTH1_URL, b""),
+                credential_headers(None, &secret.to_string(), "GET", OAUTH1_URL, b""),
                 Err(ConnectionError::CredentialUnavailable)
             ));
         };
@@ -2166,7 +2184,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    credential_headers(secret, "POST", "https://example.com/notify", b"body"),
+                    credential_headers(None, secret, "POST", "https://example.com/notify", b"body"),
                     Err(ConnectionError::CredentialUnavailable)
                 ),
                 "accepted malformed credential: {secret}"
@@ -2183,13 +2201,15 @@ mod tests {
         }]);
         let headers = outbound_headers(
             &request,
-            credential_headers(secret, "POST", "https://example.com/notify", b"body").unwrap(),
+            credential_headers(None, secret, "POST", "https://example.com/notify", b"body")
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(headers["authorization"], "Bearer host-token");
         assert_eq!(headers.get_all("authorization").iter().count(), 1);
         assert!(
             credential_headers(
+                None,
                 r#"{"headers":{}}"#,
                 "POST",
                 "https://example.com/notify",

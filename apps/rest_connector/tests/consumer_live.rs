@@ -1,6 +1,6 @@
 //! Apply the release's data access and call its consumer through the native host.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -20,8 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
-const TENANT: &str = "rest-publication";
-const PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
+const TENANT: &str = "rest--publication--test";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.0";
 const PASSWORD: &str = "rest-consumer-live-test";
 
@@ -29,6 +28,7 @@ pub async fn install(
     admin: &Client,
     database: &wamn_test_postgres::Database,
     roots: &[PathBuf],
+    manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<String> {
     admin
         .batch_execute("CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN;")
@@ -83,16 +83,31 @@ pub async fn install(
             "2099-01-01T00:00:00Z",
         ))
         .await?;
-    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:consumer-live-fixture', false)", &[&PRINCIPAL]).await?;
-    admin.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'service','connector@example.test')", &[&TENANT, &PRINCIPAL]).await?;
     admin
-        .execute(
-            "INSERT INTO app_system.roles (tenant_id,name) VALUES ($1,'consumer-writer')",
-            &[&TENANT],
-        )
+        .batch_execute(&wamn_control_provision::platform_principals_sql(
+            TENANT,
+            "example.test",
+        )?)
         .await?;
-    admin.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ($1,'consumer-writer','rest-consumer-fixture:item/record')", &[&TENANT]).await?;
-    admin.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'consumer-writer')", &[&TENANT,&PRINCIPAL]).await?;
+    let system = wamn_control_provision::test_database::system();
+    system.execute(&["UPDATE registry.meta SET platform_domain = 'example.test'"])?;
+    let manifests = roots
+        .iter()
+        .map(|root| {
+            Ok(wamn_schema_generator::PackageManifest::from_slice(
+                &std::fs::read(wamn_schema_generator::package_manifest_path(root))?,
+            )?)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    wamn_control::environment::stage::materialize_application_principals(
+        system.url(),
+        database.url(),
+        TENANT,
+        manifest,
+        &manifests,
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await?;
     let privileges = admin
         .query_one(
             "SELECT has_column_privilege($1, 'rest_consumer_fixture.item', 'key', 'SELECT'), \
@@ -128,7 +143,6 @@ pub async fn invoke(
     admissions: &[ComponentAdmission],
 ) -> anyhow::Result<()> {
     use wamn_engine::artifact_source::LocalComponentSource;
-    use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
     use wamn_engine::operation::native_workload::NativeComponent;
     use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
     use wamn_runtime::plugins::connection_http::transport::HttpTransport;
@@ -137,6 +151,7 @@ pub async fn invoke(
     };
     use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
+    use wamn_workflow::Workflows as _;
 
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
@@ -200,24 +215,124 @@ pub async fn invoke(
         "consumer host transaction declared=true, intent context present={}",
         intents.is_some()
     );
-    let caller = AuthenticatedCaller::new(
-        "",
-        PRINCIPAL,
-        CredentialType::QueuedService,
-        false,
-        HashSet::from(["rest-consumer-fixture:item/record".into()]),
-    );
-    for request in ["live-request", "retry-request"] {
-        let input = json!([{"request_id":request, "value":{"idempotency_key":"live-key", "items":[{"key":"native-item", "name":"native name"}]}}]);
+    let (admin, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    tokio::spawn(connection);
+    wamn_control::reconcile_run_plane::reconcile(
+        &admin,
+        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
+        true,
+    )
+    .await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&TENANT]).await?;
+    let (_, digest) =
+        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
+    wamn_control::environment::stage::write_release(
+        database.url(),
+        TENANT,
+        digest.as_str(),
+        manifest,
+    )
+    .await?;
+    let schedule = manifest
+        .workflow
+        .schedules
+        .values()
+        .find(|schedule| schedule.package_id == "rest_connector")
+        .unwrap();
+    let due =
+        chrono::DateTime::parse_from_rfc3339("2026-10-21T12:02:00Z")?.with_timezone(&chrono::Utc);
+    let (client, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    tokio::spawn(connection);
+    let workflows = wamn_workflow::PostgresWorkflows::new(client, "wamn_run", TENANT, "test");
+    let run = workflows
+        .start(&wamn_workflow::StartRequest {
+            manifest_digest: digest.to_string(),
+            package_id: "rest_connector".into(),
+            wiring_id: schedule.wiring_id.clone(),
+            wiring_version: schedule.wiring_version,
+            idempotency_key: wamn_workflow::schedule::idempotency_key(
+                "rest_connector",
+                &schedule.workflow_id,
+                due,
+            ),
+            input: json!({"due": wamn_workflow::schedule::due_text(due)}),
+            trigger: wamn_workflow::Trigger::Schedule {
+                workflow_id: schedule.workflow_id.clone(),
+                due,
+            },
+        })
+        .await?;
+    let principal: String = admin
+        .query_one(
+            "SELECT service_principal_id::text FROM wamn_run.runs WHERE run_id=$1",
+            &[&run],
+        )
+        .await?
+        .get(0);
+    let caller = wamn_runtime::plugins::route_authentication::queued_service_caller(
+        &admin, TENANT, &principal,
+    )
+    .await?;
+    wamn_engine::router_delivery::authorize_registered_operation(Some(&caller), Some(OPERATION))?;
+    let finish_operation = "rest-connector:sync/finish@0.1.0";
+    let connector = admissions
+        .iter()
+        .find(|admission| admission.component() == "rest_connector")
+        .unwrap()
+        .facts();
+    let connector_bytes = std::fs::read(
+        wamn_schema_generator::output_root(
+            &super::support::repository().join("apps/rest_connector"),
+        )
+        .join("components/rest_connector.wasm"),
+    )?;
+    let connector_application = host
+        .load_application(vec![NativeComponent {
+            fact: connector.clone(),
+            bytes: connector_bytes,
+        }])
+        .await?;
+    let mut failed_payload = serde_json::Value::Null;
+    for request in [
+        "live-request",
+        "retry-request",
+        "2026-10-21T12:02:00Z",
+        "failed-finish",
+    ] {
+        let finishing = request == "failed-finish";
+        let component = if finishing { connector } else { component };
+        let operation = if finishing {
+            finish_operation
+        } else {
+            OPERATION
+        };
+        let application = if finishing {
+            &connector_application
+        } else {
+            &application
+        };
+        let input = if finishing {
+            failed_payload.clone()
+        } else {
+            let (key, name) = if request == "2026-10-21T12:02:00Z" {
+                ("failed-key", "")
+            } else {
+                ("live-key", "native name")
+            };
+            json!([{"request_id":request, "value":{"idempotency_key":key, "items":[{"key":"native-item", "name":name}]}}])
+        };
+        let intents = host.call_intents(component, operation)?;
         let call = OperationCall {
-            closure: OperationClosure::Candidate(&application),
+            closure: OperationClosure::Candidate(application),
             component,
-            operation: OPERATION,
+            operation,
             context: node_types::NodeContext {
                 wiring_id: "rest_item".into(),
                 wiring_version: 1,
-                node_id: "record".into(),
-                delivery_id: "consumer-live".into(),
+                node_id: if finishing { "finish" } else { "record" }.into(),
+                delivery_id: run.clone(),
                 input_port: None,
                 occurrence: 0,
                 traceparent: None,
@@ -232,12 +347,12 @@ pub async fn invoke(
                     claims: host.claims(TENANT, Some(host.release_identity())),
                     invocation: wamn_execution_host::component_invocation(
                         component,
-                        OPERATION,
+                        operation,
                         InvocationEntry::Wiring(WiringPosition {
                             package_id: "rest_connector".into(),
                             wiring_id: "rest_item".into(),
                             wiring_version: 1,
-                            node_id: "record".into(),
+                            node_id: if finishing { "finish" } else { "record" }.into(),
                             occurrence: 0,
                         }),
                         ConnectionExecutionClosure::Released,
@@ -257,13 +372,27 @@ pub async fn invoke(
                 .map(wamn_execution_host::CallIntents::context),
         )
         .await?;
-        let emission =
-            result.map_err(|error| anyhow::anyhow!("cross-package consumer failed: {error:?}"))?;
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&emission.payload)?[0]["value"]["keys"],
-            json!(["native-item"])
-        );
+        if finishing {
+            assert!(
+                result.is_err(),
+                "a failed consumer outcome must refuse checkpoint advancement"
+            );
+        } else {
+            let emission = result
+                .map_err(|error| anyhow::anyhow!("cross-package consumer failed: {error:?}"))?;
+            let payload: serde_json::Value = serde_json::from_str(&emission.payload)?;
+            if request == "2026-10-21T12:02:00Z" {
+                assert!(
+                    payload[0].get("error").is_some(),
+                    "consumer must fail: {payload}"
+                );
+                failed_payload = payload;
+            } else {
+                assert_eq!(payload[0]["value"]["keys"], json!(["native-item"]));
+            }
+        }
     }
+    connector_application.workload.unbind_all_plugins().await?;
     application.workload.unbind_all_plugins().await?;
     Ok(())
 }

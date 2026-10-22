@@ -389,16 +389,31 @@ fn parse_update(
     access: &mut BTreeMap<String, RelationAccess>,
     excluded: &mut BTreeSet<usize>,
 ) -> Result<(), &'static str> {
+    let depth = depths[update];
+    let conflict_update = update > 0 && identifier(&tokens[update - 1]) == Some("do");
+    let insert = if conflict_update {
+        Some(
+            (0..update)
+                .rev()
+                .take_while(|index| depths[*index] >= depth)
+                .find(|index| {
+                    depths[*index] == depth && identifier(&tokens[*index]) == Some("insert")
+                })
+                .ok_or("ON CONFLICT UPDATE has no INSERT target")?,
+        )
+    } else {
+        None
+    };
+    let relation_index = insert.map_or(update + 1, |insert| insert + 2);
     let relation = tokens
-        .get(update + 1)
+        .get(relation_index)
         .and_then(identifier)
         .ok_or("UPDATE target is missing")?;
     let Some(fields) = relations.get(relation) else {
         return Err("UPDATE references an undeclared relation");
     };
-    let depth = depths[update];
     let end = statement_end(depths, update, depth);
-    let set = (update + 2..end)
+    let set = (update + 1..end)
         .find(|index| depths[*index] == depth && identifier(&tokens[*index]) == Some("set"))
         .ok_or("UPDATE is missing SET")?;
     let set_end = (set + 1..end)
@@ -441,10 +456,26 @@ fn parse_update(
     if assignments == 0 {
         return Err("UPDATE must use simple column assignments");
     }
+    // PostgreSQL checks SELECT on columns read through the proposed row too.
+    if let Some(insert) = insert {
+        for index in insert..end.saturating_sub(2) {
+            if identifier(&tokens[index]) == Some("excluded")
+                && tokens[index + 1] == Token::Dot
+                && let Some(field) = identifier(&tokens[index + 2])
+                && fields.contains(field)
+            {
+                access
+                    .get_mut(relation)
+                    .expect("known relation has an access row")
+                    .select_fields
+                    .insert(field.to_owned());
+            }
+        }
+    }
     collect_unqualified_fields(
         tokens,
         depths,
-        update,
+        insert.unwrap_or(update),
         end,
         &[relation],
         relations,
@@ -1367,6 +1398,30 @@ mod tests {
         assert_eq!(
             parameter_count(b"SELECT $2::int8, $10 -- $11\n /* $12 */ , '$13', \"$14\", $$ $15 $$"),
             10
+        );
+    }
+
+    #[test]
+    fn upsert_derives_insert_update_and_proposed_row_reads() {
+        let access = relation_access(
+            b"INSERT INTO item (id, status) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status RETURNING id",
+            &relations(),
+        ).unwrap();
+        assert_eq!(
+            access["item"],
+            RelationAccess {
+                insert_fields: ["id".into(), "status".into()].into(),
+                update_fields: ["status".into()].into(),
+                select_fields: ["id".into(), "status".into()].into(),
+                ..RelationAccess::default()
+            }
+        );
+        assert!(
+            relation_access(
+                b"INSERT INTO item (id) VALUES ($1) ON CONFLICT (id) DO UPDATE SET missing = $2",
+                &relations(),
+            )
+            .is_err()
         );
     }
 

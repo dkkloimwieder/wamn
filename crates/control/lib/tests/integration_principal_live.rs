@@ -5,7 +5,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ServingManifest, ServingWiring};
 use wamn_control::environment::stage::{materialize_application_principals, write_release};
 use wamn_engine::router_delivery::authorize_registered_operation;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
+use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_runtime::plugins::route_authentication::queued_service_caller;
 use wamn_schema_control::BareSchemaName;
 use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
@@ -20,12 +20,13 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 }
 
 #[tokio::test]
-async fn apply_creates_one_principal_and_schedules_use_its_authored_grants() -> anyhow::Result<()> {
+async fn apply_creates_one_integration_principal_and_grants_declared_dependencies()
+-> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
     system.execute(&["UPDATE registry.meta SET platform_domain = 'example.invalid'"])?;
     let project = wamn_test_postgres::database();
-    let mut admin = connect(project.url()).await?;
+    let admin = connect(project.url()).await?;
     let schema = BareSchemaName::new("wamn_run")?;
     wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
     admin
@@ -59,7 +60,7 @@ async fn apply_creates_one_principal_and_schedules_use_its_authored_grants() -> 
     for package in ["consumer", "integration"] {
         admin.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ($1,$2,'1.0.0',$3)", &[&TENANT, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
     }
-    let manifest: ServingManifest = serde_json::from_value(json!({
+    let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [
             {"package-id": "consumer", "package-version": "1.0.0"},
@@ -72,6 +73,82 @@ async fn apply_creates_one_principal_and_schedules_use_its_authored_grants() -> 
                 "integration::daily": {"package-id":"integration", "workflow-id":"daily", "wiring-id":"pull", "wiring-version":1, "schedule":"0 0 * * *"}
             }}
     }))?;
+    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+        "consumer",
+        "1.0.0",
+        format!("sha256:{}", "a".repeat(64)),
+    );
+    descriptor.operations.insert(OPERATION.into(), serde_json::from_value(json!({
+        "registered-operation": OPERATION, "input-ports": [], "output-ports": [], "parameters": []
+    }))?);
+    manifest.components.insert(wamn_catalog::ServingComponent {
+        package_id: "consumer".into(),
+        runtime_schema: None,
+        descriptor,
+        operations: std::collections::BTreeMap::from([(
+            OPERATION.into(),
+            wamn_catalog::ServingComponentOperation {
+                registered_operation: Some(OPERATION.into()),
+                permissions: [OPERATION.into()].into(),
+                committed_result_schema: None,
+                statements: std::collections::BTreeMap::new(),
+            },
+        )]),
+        statement_instances: std::collections::BTreeMap::new(),
+    });
+    let mut package: wamn_schema_generator::PackageManifest =
+        serde_json::from_str(include_str!("fixtures/observer_package/wamn.json"))?;
+    package.package.id = "integration".into();
+    package.package.version = "1.0.0".into();
+    package.base_dependencies = serde_json::from_value(json!({
+        "state": {"package":"wamn_integration", "version":"1.0.0", "digest":format!("sha256:{}", "b".repeat(64)), "operations":[]},
+        "consumer": {"package":"consumer", "version":"1.0.0", "digest":format!("sha256:{}", "a".repeat(64)), "operations":["item.import"]}
+    }))?;
+    let mut application = manifest.components.iter().next().unwrap().clone();
+    application.package_id = "integration".into();
+    application.descriptor.component = "integration".into();
+    application.descriptor.operations.clear();
+    application.descriptor.operations.insert(
+        "integration:sync/finish@1.0.0".into(),
+        serde_json::from_value(json!({
+            "input-ports": [], "output-ports": [], "parameters": []
+        }))?,
+    );
+    application.operations.clear();
+    application.operations.insert(
+        "integration:sync/finish@1.0.0".into(),
+        serde_json::from_value(json!({}))?,
+    );
+    application
+        .descriptor
+        .statement_instances
+        .insert("state".into(), format!("sha256:{}", "b".repeat(64)));
+    manifest.components.insert(application);
+    let mut declaration_only = package.clone();
+    declaration_only.package.id = "declaration_only".into();
+    let mut consumer = package.clone();
+    consumer.package.id = "consumer".into();
+    consumer.base_dependencies.clear();
+    let mut operation = consumer.custom_operations.values().next().unwrap().clone();
+    operation.permission = Some("item.import".into());
+    operation.visibility = wamn_schema_generator::OperationVisibility::Public;
+    consumer.custom_operations.clear();
+    consumer
+        .custom_operations
+        .insert("item.import".into(), operation);
+    let packages = vec![package, declaration_only, consumer];
+    // Composition alone must materialize the principal, before schedules exist.
+    let mut unscheduled = manifest.clone();
+    unscheduled.workflow.schedules.clear();
+    materialize_application_principals(
+        system.url(),
+        project.url(),
+        TENANT,
+        &unscheduled,
+        &packages,
+        &AuthChanges::default(),
+    )
+    .await?;
     let (_, digest) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     for _ in 0..2 {
         write_release(project.url(), TENANT, digest.as_str(), &manifest).await?;
@@ -80,6 +157,7 @@ async fn apply_creates_one_principal_and_schedules_use_its_authored_grants() -> 
             project.url(),
             TENANT,
             &manifest,
+            &packages,
             &AuthChanges::default(),
         )
         .await?;
@@ -110,7 +188,7 @@ async fn apply_creates_one_principal_and_schedules_use_its_authored_grants() -> 
             .query_one("SELECT count(*) FROM app_system.user_roles", &[])
             .await?
             .get::<_, i64>(0),
-        0
+        1
     );
     let workflows =
         PostgresWorkflows::new(connect(project.url()).await?, "wamn_run", TENANT, "dev");
@@ -141,33 +219,27 @@ async fn apply_creates_one_principal_and_schedules_use_its_authored_grants() -> 
         principal
     );
     let caller = queued_service_caller(&admin, TENANT, &principal).await?;
-    assert!(authorize_registered_operation(Some(&caller), Some(OPERATION)).is_err());
-    let transaction = admin.transaction().await?;
-    let mut drops = AuthDrops::default();
-    wamn_control::role_permissions::create_role(&transaction, TENANT, "importer", &mut drops)
-        .await?;
-    wamn_control::role_permissions::grant_permission(
-        &transaction,
-        TENANT,
-        "importer",
-        "consumer:item/import",
-        &mut drops,
-    )
-    .await?;
-    wamn_platform_identity::application::grant_user_role(
-        &transaction,
-        TENANT,
-        &principal,
-        "importer",
-        &mut drops,
-    )
-    .await?;
-    transaction.commit().await?;
+    authorize_registered_operation(Some(&caller), Some(OPERATION))?;
+    let before: Vec<String> = admin.query("SELECT xmin::text FROM app_system.users UNION ALL SELECT xmin::text FROM app_system.roles UNION ALL SELECT xmin::text FROM app_system.permissions UNION ALL SELECT xmin::text FROM app_system.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
         system.url(),
         project.url(),
         TENANT,
         &manifest,
+        &packages,
+        &AuthChanges::default(),
+    )
+    .await?;
+    let after: Vec<String> = admin.query("SELECT xmin::text FROM app_system.users UNION ALL SELECT xmin::text FROM app_system.roles UNION ALL SELECT xmin::text FROM app_system.permissions UNION ALL SELECT xmin::text FROM app_system.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    assert_eq!(before, after, "reapplying must write no application rows");
+    let mut unscheduled = manifest.clone();
+    unscheduled.workflow.schedules.clear();
+    materialize_application_principals(
+        system.url(),
+        project.url(),
+        TENANT,
+        &unscheduled,
+        &packages,
         &AuthChanges::default(),
     )
     .await?;
@@ -176,5 +248,66 @@ async fn apply_creates_one_principal_and_schedules_use_its_authored_grants() -> 
     assert!(
         authorize_registered_operation(Some(&caller), Some("consumer:item/delete@1.0.0")).is_err()
     );
+    // A scheduled application needs no dependencies to retain its own private operations.
+    let mut scheduled = packages[0].clone();
+    scheduled.package.id = "scheduled".into();
+    scheduled.base_dependencies.clear();
+    let mut schedule_only = manifest.clone();
+    schedule_only
+        .release
+        .packages
+        .insert(wamn_catalog::PackageCoordinate::new("scheduled", "1.0.0")?);
+    schedule_only.workflow.wirings.insert(ServingWiring::new(
+        "scheduled",
+        wamn_catalog::fixture_graph("pull", 1),
+    ));
+    let mut schedule = schedule_only
+        .workflow
+        .schedules
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    schedule.package_id = "scheduled".into();
+    schedule.workflow_id = "hourly".into();
+    schedule_only
+        .workflow
+        .schedules
+        .insert("scheduled::hourly".into(), schedule);
+    admin.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ($1,'scheduled','1.0.0',$2)", &[&TENANT, &format!("sha256:{}", "a".repeat(64))]).await?;
+    let (_, scheduled_digest) =
+        ServingManifest::from_canonical_bytes(&schedule_only.canonical_bytes())?;
+    write_release(
+        project.url(),
+        TENANT,
+        scheduled_digest.as_str(),
+        &schedule_only,
+    )
+    .await?;
+    materialize_application_principals(
+        system.url(),
+        project.url(),
+        TENANT,
+        &schedule_only,
+        &[scheduled],
+        &AuthChanges::default(),
+    )
+    .await?;
+    let mut scheduled_request = request.clone();
+    scheduled_request.manifest_digest = scheduled_digest.to_string();
+    scheduled_request.package_id = "scheduled".into();
+    scheduled_request.idempotency_key =
+        wamn_workflow::schedule::idempotency_key("scheduled", "hourly", due);
+    let scheduled_run = workflows.start(&scheduled_request).await?;
+    let scheduled_principal: String = admin
+        .query_one(
+            "SELECT service_principal_id::text FROM wamn_run.runs WHERE run_id=$1",
+            &[&scheduled_run],
+        )
+        .await?
+        .get(0);
+    let own_caller = queued_service_caller(&admin, TENANT, &scheduled_principal).await?;
+    authorize_registered_operation(Some(&own_caller), None)?;
+    assert_eq!(admin.query_one("SELECT count(*) FROM app_system.permissions WHERE role_name='application-scheduled'", &[]).await?.get::<_, i64>(0), 0);
     Ok(())
 }

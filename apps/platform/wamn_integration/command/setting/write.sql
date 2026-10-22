@@ -1,1 +1,2 @@
-UPDATE setting SET value = $2 WHERE key = $1 RETURNING key;
+INSERT INTO setting (key, value) VALUES ($1, $2)
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value RETURNING key;

@@ -31,16 +31,17 @@ pub struct ResolvedConnection {
 fn validate(
     org: &str,
     name: &str,
-    kind: RequirementType,
+    requirement_type: RequirementType,
     definition: &Value,
 ) -> anyhow::Result<()> {
     wamn_control_registry::validate_org_id(org).map_err(|error| anyhow::anyhow!("{error:?}"))?;
     org_credential_handle(org, name).map_err(anyhow::Error::msg)?;
     ensure!(
-        kind == RequirementType::Http,
+        requirement_type == RequirementType::Http,
         "org connections support only http"
     );
-    kind.check_definition(definition)
+    requirement_type
+        .check_definition(definition)
         .map_err(anyhow::Error::msg)
 }
 
@@ -60,14 +61,14 @@ pub async fn declare(request: &DeclareConnectionRequest) -> anyhow::Result<bool>
     transaction
         .batch_execute("SET LOCAL ROLE wamn_system")
         .await?;
-    let kind = request.requirement_type.descriptor().requirement_type;
+    let requirement_type = request.requirement_type.descriptor().requirement_type;
     let changed = transaction
         .execute(
             upsert_org_connection_sql(),
             &[
                 &request.org,
                 &request.name,
-                &kind,
+                &requirement_type,
                 &request.definition.to_string(),
             ],
         )
@@ -81,7 +82,7 @@ pub async fn declare(request: &DeclareConnectionRequest) -> anyhow::Result<bool>
         .await?
         .get(0);
     ensure!(
-        stored == kind,
+        stored == requirement_type,
         "an existing org connection cannot change type"
     );
     transaction
@@ -103,10 +104,10 @@ pub async fn snapshot(
         .context("read org connections")?
     {
         let name: String = row.get(0);
-        let kind: String = row.get(1);
+        let requirement_type: String = row.get(1);
         ensure!(
-            kind == "http",
-            "org connection {name} has unsupported type {kind}"
+            requirement_type == "http",
+            "org connection {name} has unsupported type {requirement_type}"
         );
         let definition: Value = serde_json::from_str(row.get(2))?;
         validate(org, &name, RequirementType::Http, &definition)?;

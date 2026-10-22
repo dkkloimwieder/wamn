@@ -253,7 +253,7 @@ pub(super) async fn ensure_cdc(
         &instance,
     );
     let project = connect(&project_url(platform, &triple).await?).await?;
-    if !cdc_in_place(&project, &cdc_name).await? {
+    if !cdc_in_place(&project, &cdc_name, &schema).await? {
         enable_cdc(platform, document, manifests, &schema, &project, &instance).await?;
     }
     let namespace = platform.target.namespace.as_str();
@@ -447,7 +447,7 @@ async fn admin_sql(platform: &Platform, sql: &str) -> anyhow::Result<()> {
 }
 
 /// Whether the environment's CDC is in place, judged by what it observes: the
-/// publication `cdc_name` exists in the project database `project`, the
+/// publication `cdc_name` captures exactly `schema` in database `project`, the
 /// connection the probe runs on. [`ensure_cdc`] writes the publication last
 /// among the CDC writes and records the reader on every apply.
 ///
@@ -457,15 +457,20 @@ async fn admin_sql(platform: &Platform, sql: &str) -> anyhow::Result<()> {
 pub async fn cdc_in_place(
     project: &tokio_postgres::Client,
     cdc_name: &str,
+    schema: &str,
 ) -> anyhow::Result<bool> {
     Ok(project
-        .query_opt(
-            wamn_control_provision::sql::PUBLICATION_PROBE_SQL,
-            &[&cdc_name],
+        .query_one(
+            "SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
+         AND NOT p.puballtables \
+         AND (SELECT array_agg(n.nspname::text ORDER BY n.nspname) \
+              FROM pg_publication_namespace pn JOIN pg_namespace n ON n.oid = pn.pnnspid \
+              WHERE pn.pnpubid = p.oid) = ARRAY[$2::text])",
+            &[&cdc_name, &schema],
         )
         .await
-        .context("probe the CDC publication")?
-        .is_some())
+        .context("probe the CDC publication schema")?
+        .get(0))
 }
 
 /// The URL of the environment's project database: the system URL's login on

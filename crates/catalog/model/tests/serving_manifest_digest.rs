@@ -1,4 +1,4 @@
-//! Digest and closed-shape tests for serving-manifest format 10.
+//! Digest and closed-shape tests for serving-manifest format 9.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -198,7 +198,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
     });
     assert_eq!(format!("sha256:{hex}"), format_three_vector::DIGEST);
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
-        .expect_err("format 10 refuses the frozen format-3 bytes");
+        .expect_err("format 9 refuses the frozen format-3 bytes");
     assert!(
         matches!(
             &error,

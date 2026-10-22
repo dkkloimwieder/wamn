@@ -51,13 +51,6 @@ async fn write(
     transaction: &mut Transaction,
     request: write_contract::WriteRequest,
 ) -> Result<write_contract::WriteResult, super::NodeError> {
-    write_sql::insert_setting(
-        transaction,
-        request.key.clone(),
-        Json(request.value.clone()),
-    )
-    .await
-    .map_err(super::statement_error)?;
     write_sql::write_setting(transaction, request.key, Json(request.value))
         .await
         .map(|row| write_contract::WriteResult { key: row.key })

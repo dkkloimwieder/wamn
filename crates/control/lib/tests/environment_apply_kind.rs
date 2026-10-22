@@ -1329,21 +1329,11 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     );
     let service = format!("http://{http_name}-http.{NAMESPACE}.svc.cluster.local/http/send");
     let (status, body) = route_probe_post(run, &service, &http.route_host).await?;
-    let observed = run
-        .run(
-            "kubectl",
-            &[
-                "-n",
-                NAMESPACE,
-                "logs",
-                &format!("deployment/{}", http_connection::SERVICE),
-            ],
-        )
-        .await?;
+    let observed = http_connection::request_log(run).await?;
     let assertion = http_connection::assert_observed_request(status, &body, &observed);
     run.pass(
         "HTTP guest sends once with its host-held bearer credential and receives 200",
-        "POST /http/send; kubectl logs deployment/http-fixture",
+        "POST /http/send; GET /recorded",
         json!({"status": status, "body": body, "requests": observed,
             "error": assertion.as_ref().err().map(ToString::to_string)}),
         assertion.is_ok(),

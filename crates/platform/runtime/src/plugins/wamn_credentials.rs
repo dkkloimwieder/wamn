@@ -5,8 +5,8 @@
 //!
 //! - Ordinary handles use the host-owned project identity. Org handles use
 //!   the trusted host org and never fall back to project credentials.
-//! - `WAMN_CREDENTIALS_FILE` is a mounted static file. Version 2 carries
-//!   separate `projects` and `orgs` maps. Legacy project maps still parse.
+//! - `WAMN_CREDENTIALS_FILE` is a mounted static file. It carries
+//!   separate `projects` and `orgs` maps.
 //! - No configured source is `unavailable`; a configured source missing the
 //!   selected handle is `not-found`.
 
@@ -67,57 +67,15 @@ impl WamnCredentials {
         }
     }
 
-    /// Parse the mounted credentials file: a JSON object
-    /// `{ "<project>": { "<name>": "<secret>", ... }, ... }`, mounted from a
-    /// K8s Secret.
-    pub fn projects_from_json(
-        text: &str,
-    ) -> anyhow::Result<HashMap<String, HashMap<String, String>>> {
-        let root: serde_json::Value =
-            serde_json::from_str(text).context("credentials file is not valid JSON")?;
-        let obj = root
-            .as_object()
-            .context("credentials file must be a JSON object of projects")?;
-        let mut projects = HashMap::new();
-        for (project, creds) in obj {
-            let creds_obj = creds.as_object().with_context(|| {
-                format!("credentials for project {project:?} must be an object of name: secret")
-            })?;
-            let mut map = HashMap::new();
-            for (name, secret) in creds_obj {
-                let secret = secret.as_str().with_context(|| {
-                    format!("credential {project:?}/{name:?} must be a string secret")
-                })?;
-                map.insert(name.clone(), secret.to_string());
-            }
-            projects.insert(project.clone(), map);
-        }
-        Ok(projects)
-    }
-
-    /// Parse either the legacy project map or the version 2 credentials envelope.
+    /// Parse the mounted credentials file with separate project and org maps.
     pub fn from_json(text: &str) -> anyhow::Result<Self> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Envelope {
-            version: u32,
             projects: HashMap<String, HashMap<String, String>>,
             orgs: HashMap<String, HashMap<String, String>>,
         }
-        let root: serde_json::Value =
-            serde_json::from_str(text).context("credentials file is not valid JSON")?;
-        if !root
-            .get("version")
-            .is_some_and(serde_json::Value::is_number)
-        {
-            return Ok(Self::from_projects(Self::projects_from_json(text)?));
-        }
-        let envelope: Envelope =
-            serde_json::from_value(root).context("invalid version 2 credentials file")?;
-        anyhow::ensure!(
-            envelope.version == 2,
-            "unsupported credentials file version"
-        );
+        let envelope: Envelope = serde_json::from_str(text).context("invalid credentials file")?;
         Ok(Self {
             has_source: true,
             projects: envelope.projects,
@@ -160,7 +118,7 @@ impl WamnCredentials {
     /// nonetheless the correct posture, not an omission, because an attempt's
     /// durable facts pin the `credential_generation` that authorized it
     /// (`wamn_run.effect_attempts`), which recovery must reuse or explicitly
-    /// refuse. This file's `{project: {handle: secret}}` shape carries no
+    /// refuse. This file's `{projects, orgs}` shape carries no
     /// generation, so a watcher could not tell rotated material from the pinned
     /// material and would silently substitute credentials under a recovering
     /// attempt. A process-lifetime snapshot cannot.
@@ -252,21 +210,23 @@ mod tests {
         ));
     }
 
-    /// The mounted-file shape is a project-keyed JSON object:
-    /// `{project: {name: secret}}`, strings only, malformed = loud.
     #[test]
-    fn credentials_file_parses_the_nested_project_shape() {
-        let projects = WamnCredentials::projects_from_json(
-            r#"{"default": {"notify-token": "tok-1", "other": "tok-2"}, "p2": {}}"#,
-        )
-        .unwrap();
-        assert_eq!(projects["default"]["notify-token"], "tok-1");
-        assert_eq!(projects["default"]["other"], "tok-2");
-        assert!(projects["p2"].is_empty());
-
-        assert!(WamnCredentials::projects_from_json("[]").is_err());
-        assert!(WamnCredentials::projects_from_json(r#"{"p": "flat"}"#).is_err());
-        assert!(WamnCredentials::projects_from_json(r#"{"p": {"n": 7}}"#).is_err());
+    fn credentials_file_parses_project_and_org_maps() {
+        let vault = WamnCredentials::from_json(
+            r#"{"projects":{"default":{"notify-token":"tok-1","other":"tok-2"},"p2":{}},"orgs":{}}"#,
+        ).unwrap();
+        assert_eq!(
+            vault.lookup("default", "notify-token").as_deref(),
+            Some("tok-1")
+        );
+        assert_eq!(vault.lookup("default", "other").as_deref(), Some("tok-2"));
+        for text in [
+            "[]",
+            r#"{"p":"flat"}"#,
+            r#"{"projects":{"p":{"n":7}},"orgs":{}}"#,
+        ] {
+            assert!(WamnCredentials::from_json(text).is_err());
+        }
     }
 
     /// Material is a PROCESS-LIFETIME snapshot: rotating the mount under the
@@ -279,11 +239,17 @@ mod tests {
             "wamn-credentials-snapshot-{}.json",
             std::process::id()
         ));
-        std::fs::write(&path, r#"{"proj-a": {"token": "generation-1"}}"#)
-            .expect("write the mounted credentials file");
+        std::fs::write(
+            &path,
+            r#"{"projects":{"proj-a":{"token":"generation-1"}},"orgs":{}}"#,
+        )
+        .expect("write the mounted credentials file");
         let vault = WamnCredentials::from_file(&path).expect("snapshot the mount");
-        std::fs::write(&path, r#"{"proj-a": {"token": "generation-2"}}"#)
-            .expect("rotate the material under the same handle");
+        std::fs::write(
+            &path,
+            r#"{"projects":{"proj-a":{"token":"generation-2"}},"orgs":{}}"#,
+        )
+        .expect("rotate the material under the same handle");
         let resolved = vault.lookup("proj-a", "token");
         std::fs::remove_file(&path).expect("remove the test mount");
         assert_eq!(resolved.as_deref(), Some("generation-1"));
@@ -295,8 +261,8 @@ mod org_tests {
     use super::*;
 
     #[test]
-    fn version_two_scopes_connections_and_keeps_route_lookup_project_only() {
-        let text = r#"{"version":2,"projects":{"p":{"token":"project","org:other:erp":"fallback","org:acme:missing":"fallback"}},"orgs":{"acme":{"erp":"shared"},"other":{"erp":"other-secret"}}}"#;
+    fn org_map_scopes_connections_and_keeps_route_lookup_project_only() {
+        let text = r#"{"projects":{"p":{"token":"project","org:other:erp":"fallback","org:acme:missing":"fallback"}},"orgs":{"acme":{"erp":"shared"},"other":{"erp":"other-secret"}}}"#;
         let unscoped = WamnCredentials::from_json(text).unwrap();
         assert!(unscoped.lookup_connection("p", "org:acme:erp").is_none());
         let vault = unscoped.with_org("acme");
@@ -324,8 +290,8 @@ mod org_tests {
     fn invalid_envelopes_and_missing_files_have_distinct_results() {
         for text in [
             r#"{"version":3,"projects":{},"orgs":{}}"#,
-            r#"{"version":2,"projects":{},"orgs":{"acme":{"erp":7}}}"#,
-            r#"{"version":2,"projects":{},"orgs":{},"extra":true}"#,
+            r#"{"projects":{},"orgs":{"acme":{"erp":7}}}"#,
+            r#"{"projects":{},"orgs":{},"extra":true}"#,
         ] {
             assert!(WamnCredentials::from_json(text).is_err());
         }

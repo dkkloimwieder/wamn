@@ -823,8 +823,9 @@ pub(crate) fn application_schemas(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    // A package with no SQL owns no schema.
-    if schemas.is_empty() && manifest.declares_no_sql() {
+    // A composition with only stateless wrappers owns no SQL schema. Its bases
+    // own the SQL and contribute their grants when the release is applied.
+    if schemas.is_empty() && (manifest.declares_no_sql() || manifest.uses_only_base_sql()) {
         return Ok(schemas);
     }
     if schemas.is_empty() || !schemas.iter().all(|schema| valid_identifier(schema)) {

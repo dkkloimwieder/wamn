@@ -54,7 +54,7 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                 {
                     "apiVersion": "v1", "kind": "Secret",
                     "metadata": {"name": SECRET, "namespace": NAMESPACE},
-                    "stringData": {"credentials.json": json!({
+                    "stringData": {"credentials.json": json!({"orgs": {}, "projects": {
                         PROJECT: {
                             "upstream": json!({
                                 "headers": {"authorization": "Bearer fixture-token"}
@@ -75,7 +75,7 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                                 "header": "x-wamn-signature"
                             }}).to_string()
                         }
-                    }).to_string()}
+                    }}).to_string()}
                 },
                 {
                     "apiVersion": "apps/v1", "kind": "Deployment",
@@ -86,7 +86,15 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                                 "name": SERVICE, "image": image, "imagePullPolicy": "Never",
                                 "ports": [{"containerPort": 8080}],
                                 "env": [{"name": "WAMN_HTTP_FIXTURE_HMAC_SECRET",
-                                    "value": OUTBOUND_SECRET}],
+                                    "value": OUTBOUND_SECRET},
+                                    {"name":"WAMN_HTTP_FIXTURE_CLIENT_ID", "value":"fixture-client"},
+                                    {"name":"WAMN_HTTP_FIXTURE_CLIENT_SECRET", "value":"fixture-client-secret"},
+                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_KEY", "value":"fixture-consumer"},
+                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_SECRET", "value":"fixture-consumer-secret"},
+                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN", "value":"fixture-token"},
+                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN_SECRET", "value":"fixture-token-secret"},
+                                    {"name":"WAMN_HTTP_FIXTURE_ACCESS_TOKEN", "value":"fixture-issued-token"},
+                                    {"name":"WAMN_HTTP_FIXTURE_LIMIT", "value":"2"}],
                                 "readinessProbe": {"tcpSocket": {"port": 8080}}
                             }]}}}
                 },
@@ -545,12 +553,18 @@ pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, diges
         })
 }
 
-async fn request_log(run: &Run) -> anyhow::Result<String> {
-    run.run(
-        "kubectl",
-        &["-n", NAMESPACE, "logs", &format!("deployment/{SERVICE}")],
-    )
-    .await
+pub async fn request_log(run: &Run) -> anyhow::Result<String> {
+    let (status, body) = super::route_probe(run, &format!("{ORIGIN}/recorded"), SERVICE).await?;
+    ensure!(
+        status == 200,
+        "recorded requests endpoint returned {status}"
+    );
+    let requests: Vec<Value> = serde_json::from_str(&body)?;
+    Ok(requests
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 pub async fn assert_triggers(
@@ -589,7 +603,7 @@ pub async fn assert_triggers(
         let passed = status == 401 && body.is_empty() && after == before;
         run.pass(
             &format!("{label} inbound signature refuses without a fixture request"),
-            "POST /http/signed; kubectl logs deployment/http-fixture",
+            "POST /http/signed; GET /recorded",
             json!({"status": status, "body": body, "before": before, "after": after}),
             passed,
         );
@@ -618,7 +632,7 @@ pub async fn assert_triggers(
         && assertion.is_ok();
     run.pass(
         "right inbound signature delivers inline like none and sends once",
-        "POST /http/signed; kubectl logs deployment/http-fixture",
+        "POST /http/signed; GET /recorded",
         json!({"status": status, "body": body, "requests": after,
             "error": assertion.as_ref().err().map(ToString::to_string)}),
         passed,
@@ -647,7 +661,7 @@ pub async fn assert_triggers(
         && signed[0]["body"] == json!(br#"{"id":1}"#.as_slice());
     run.pass(
         "HTTP guest sends once with a verified host signature",
-        "POST /http/signed-send; kubectl logs deployment/http-fixture",
+        "POST /http/signed-send; GET /recorded",
         json!({"status": status, "body": body, "requests": signed}),
         passed,
     );
@@ -689,7 +703,7 @@ async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyh
         + chrono::Duration::minutes(1);
     let dues = [first_due, first_due + chrono::Duration::minutes(1)]
         .map(|due| due.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-    let keys = dues.map(|due| format!("{PACKAGE}/{SCHEDULE}:{due}"));
+    let keys = dues.map(|due| format!("schedule:{PACKAGE}/{SCHEDULE}:{due}"));
     loop {
         let rows: Value = database.query_one(
             "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
@@ -720,7 +734,7 @@ async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyh
                         && row["wiring_id"] == SCHEDULE
                         && row["wiring_version"] == 1
                         && row["input_json"]
-                            == json!({"due": key.strip_prefix(&format!("{PACKAGE}/{SCHEDULE}:")).unwrap()}),
+                            == json!({"due": key.strip_prefix(&format!("schedule:{PACKAGE}/{SCHEDULE}:")).unwrap()}),
                     "schedule run has wrong identity, input or principal: {row}"
                 );
                 ensure!(
@@ -778,7 +792,7 @@ async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Re
         && oauth1[0]["oauth_nonce"] != oauth1[1]["oauth_nonce"];
     run.pass(
         "OAuth2 reuses its issued bearer and OAuth1 signatures verify",
-        "POST /http/oauth2 twice; POST /http/oauth1 twice; kubectl logs deployment/http-fixture",
+        "POST /http/oauth2 twice; POST /http/oauth1 twice; GET /recorded",
         json!({"tokens":tokens,"bearer":bearer,"oauth1":oauth1}),
         passed,
     );
@@ -824,7 +838,7 @@ async fn assert_paged(run: &mut Run, base: &str, route_host: &str) -> anyhow::Re
             ]);
     run.pass(
         "HTTP paging retries once and emits every fixture item exactly once",
-        "POST /http/pages; kubectl logs deployment/http-fixture",
+        "POST /http/pages; GET /recorded",
         json!({"status": status, "items": items, "pages": pages}),
         passed,
     );

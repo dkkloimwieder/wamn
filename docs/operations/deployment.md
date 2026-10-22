@@ -39,7 +39,7 @@ Production deployment supplies its own credentials through the same Secret contr
 
 Before starting the host, create a connection Secret in its namespace.
 Store the credential map under `credentials.json`.
-The outer key names the project.
+The `projects` map uses the project as its key.
 The inner key names the connection instance, which `env apply` also uses as its credential handle.
 Each inner value is a JSON string with a `headers` object:
 
@@ -52,7 +52,7 @@ metadata:
 type: Opaque
 stringData:
   credentials.json: |
-    {"orders":{"upstream":"{\"headers\":{\"authorization\":\"Bearer <token>\"}}"}}
+    {"projects":{"orders":{"upstream":"{\"headers\":{\"authorization\":\"Bearer <token>\"}}"}},"orgs":{}}
 ```
 
 Replace `<token>` with the endpoint credential before creating the Secret.
@@ -86,11 +86,10 @@ The command accepts only HTTP connections and never accepts credential bytes.
 A repeated declaration updates only a changed definition.
 The connection type cannot change under an existing name.
 
-Use the version 2 credentials file to share one org secret:
+Use the `orgs` map to share one org secret:
 
 ```json
 {
-  "version": 2,
   "projects": {},
   "orgs": {
     "acme": {
@@ -102,7 +101,6 @@ Use the version 2 credentials file to share one org secret:
 
 Mount this file into each host that uses the connection.
 Keep project credentials under `projects` when both forms are needed.
-The old project-keyed file remains valid.
 Each host resolves `org:acme:erp` only when its startup org is `acme`.
 An absent org entry never uses a project entry as a fallback.
 Restart each host after changing secret bytes.

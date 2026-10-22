@@ -27,12 +27,7 @@ mod tests {
     fn definition() -> Value {
         json!({
             "primary-authority": "https://erp.example/api/",
-            "failover-authorities": ["https://erp-backup.example/api/"],
-            "tls-verification": "verify-authority",
-            "tls-names": ["erp.example", "erp-backup.example"],
-            "redirect-policy": "same-authority",
-            "proxy-transport": null,
-            "credential-set-handle": "erp-api"
+            "tls-verification": "verify-authority"
         })
     }
 
@@ -45,18 +40,11 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&definition).expect("JSON values always serialize"),
-            concat!(
-                r#"{"credential-set-handle":"erp-api","#,
-                r#""failover-authorities":["https://erp-backup.example/api/"],"#,
-                r#""primary-authority":"https://erp.example/api/","proxy-transport":null,"#,
-                r#""redirect-policy":"same-authority","#,
-                r#""tls-names":["erp.example","erp-backup.example"],"#,
-                r#""tls-verification":"verify-authority"}"#,
-            )
+            r#"{"primary-authority":"https://erp.example/api/","tls-verification":"verify-authority"}"#
         );
         assert_eq!(
             definition_hash(&definition),
-            "sha256:830ed16fe590d3f54b3e28cad656b5b39b6f7bad0ef6072005ed0e729c978237"
+            "sha256:8a2d5e57fd0a85fc2ef8136b6501b8466061654bcb541d052cc9b8f1b6bf3407"
         );
     }
 }

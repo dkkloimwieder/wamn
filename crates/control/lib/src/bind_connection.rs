@@ -382,10 +382,14 @@ fn validate_handle(instance: &ConnectionInstance) -> anyhow::Result<()> {
                 .credential_handle
                 .as_deref()
                 .context("org connection requires its derived credential handle")?;
-            let (_, parsed_name) =
+            let (org, parsed_name) =
                 wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
             ensure!(
-                parsed_name == name,
+                parsed_name == name
+                    && instance
+                        .tenant
+                        .split_once("--")
+                        .is_some_and(|(tenant_org, _)| tenant_org == org),
                 "org connection source and credential handle differ"
             );
             Ok(())
