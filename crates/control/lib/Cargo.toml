@@ -58,6 +58,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-composer = { workspace = true }
+wasmparser = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }

@@ -548,6 +548,7 @@ mod tests {
 
     fn manifest(tenant: &str, package: &str) -> (ServingManifest, ReleaseScope) {
         let manifest = ServingManifest {
+            composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 packages: BTreeSet::from([

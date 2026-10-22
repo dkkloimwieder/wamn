@@ -222,6 +222,7 @@ impl LoadedRelease {
     /// names no real tenant or environment, and a control host reads neither.
     pub fn control_root() -> Self {
         let manifest = ServingManifest {
+            composed_entry: None,
             format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
             release: wamn_catalog::ServingRelease {
                 packages: std::collections::BTreeSet::default(),

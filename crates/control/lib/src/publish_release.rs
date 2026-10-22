@@ -404,6 +404,9 @@ pub async fn publish_local(
 pub struct ComposedApplication {
     bytes: Box<[u8]>,
     digest: String,
+    route_digest: String,
+    application: wamn_catalog::ServingEntryMember,
+    application_digests: BTreeSet<String>,
 }
 
 impl ComposedApplication {
@@ -438,10 +441,72 @@ pub fn compose_application(
     wamn_engine::statement_instances::statement_instances(&bytes)
         .context("validate composed application statement ownership")?;
     let digest = wamn_engine::component_admission::component_digest(&bytes);
+    let mut application_digests = BTreeSet::from([application.component_digest().to_owned()]);
+    for payload in wasmparser::Parser::new(0).parse_all(application.bytes()) {
+        if let wasmparser::Payload::ComponentSection {
+            unchecked_range, ..
+        } = payload?
+        {
+            let member = &application.bytes()
+                [usize::try_from(unchecked_range.start)?..usize::try_from(unchecked_range.end)?];
+            application_digests.insert(wamn_engine::component_admission::component_digest(member));
+        }
+    }
     Ok(ComposedApplication {
         bytes: bytes.into_boxed_slice(),
         digest,
+        route_digest: route_digest.to_owned(),
+        application: wamn_catalog::ServingEntryMember {
+            package_id: application.package_id().to_owned(),
+            component: application.component().to_owned(),
+            digest: application.component_digest().to_owned(),
+        },
+        application_digests,
     })
+}
+
+/// Record the exact composed entry before publication hashes the release.
+///
+/// The record names the released application components embedded in `entry`.
+/// The manifest retains their original digests for SQL and dependency authority.
+pub fn record_composed_entry(
+    published: &mut PublishedRelease,
+    entry: &ComposedApplication,
+) -> anyhow::Result<()> {
+    let members: BTreeSet<_> = published
+        .manifest
+        .components
+        .iter()
+        .filter(|component| {
+            entry
+                .application_digests
+                .contains(&component.descriptor.component_digest)
+        })
+        .map(|component| wamn_catalog::ServingEntryMember {
+            package_id: component.package_id.clone(),
+            component: component.descriptor.component.clone(),
+            digest: component.descriptor.component_digest.clone(),
+        })
+    reference: &str,
+        .collect();
+    ensure!(
+        members.contains(&entry.application),
+        "composed application is outside the released members"
+    );
+    let mut manifest = published.manifest.clone();
+    manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+        reference: reference.to_owned(),
+        route_digest: entry.route_digest.clone(),
+        members,
+    });
+    let canonical_bytes = manifest.canonical_bytes();
+    let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
+    *published = PublishedRelease {
+        manifest,
+        digest,
+        canonical_bytes,
+    };
+    Ok(())
 }
 
 /// A local release assembled from its package files and admitted components.
@@ -567,6 +632,7 @@ pub fn assemble_local_release(
     refuse_unregistered_one_node_wirings(&one_node, &registrations, &schedules)?;
     let (route_attachments, wiring_attachments) = ServingAttachment::split(attachments.clone());
     let manifest = ServingManifest {
+        composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
             packages: packages.clone(),
@@ -1059,6 +1125,7 @@ async fn publish_release_from_sources(
         ServingAttachment::split(request.attachments.clone());
 
     let projected = ServingManifest {
+        composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
             packages: request.packages.clone(),
@@ -3859,7 +3926,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":10,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"orders"}]}}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"orders"}]}}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(
@@ -3892,7 +3959,7 @@ mod manifest_push {
         fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
             let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
                 .expect("fixture is UTF-8")
-                .replacen("\"format-version\":10", "\"format-version\":9", 1);
+                .replacen("\"format-version\":11", "\"format-version\":9", 1);
             let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
                 .expect_err("format nine refuses");
             assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));

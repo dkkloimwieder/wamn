@@ -710,6 +710,7 @@ mod tests {
             registered_operation: Some("platform_fixture@1.0.0::widget/get".to_owned()),
         };
         ServingManifest {
+            composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 packages: BTreeSet::from([package]),

@@ -1688,6 +1688,7 @@ mod tests {
         let position = position(&mut invocation).clone();
         let snapshot = snapshot();
         ServingManifest {
+            composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),

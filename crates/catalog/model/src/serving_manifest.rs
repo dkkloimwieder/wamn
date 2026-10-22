@@ -1,6 +1,6 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 9 closes over exact package membership, component digests, routes,
+//! Format 11 closes over exact package membership, component digests, routes,
 //! the permission and SQL statements of each export, and route attachments.
 //! Each component is its package, its admitted descriptor (the bytes of the
 //! descriptor layer of its package artifact, docs/plan/platform-deploy.md
@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 10;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 11;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -1062,6 +1062,24 @@ pub struct ServingSchedule {
     pub schedule: String,
 }
 
+/// An application member whose exact bytes participate in the HTTP entry.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ServingEntryMember {
+    pub package_id: String,
+    pub component: String,
+    pub digest: String,
+}
+
+/// The published HTTP component and the source identities that fix its bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ServingComposedEntry {
+    pub reference: String,
+    pub route_digest: String,
+    pub members: BTreeSet<ServingEntryMember>,
+}
+
 /// The complete release document a serving process mounts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -1069,6 +1087,9 @@ pub struct ServingManifest {
     pub format_version: u32,
     pub release: ServingRelease,
     pub components: BTreeSet<ServingComponent>,
+    /// Absent on roots that serve only host operations or have no HTTP entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composed_entry: Option<ServingComposedEntry>,
     pub routes: BTreeSet<ServingRoute>,
     /// The attachments that call a route.
     pub attachments: BTreeMap<String, RouteAttachment>,
@@ -1102,6 +1123,7 @@ impl ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release,
             components,
+            composed_entry: None,
             routes,
             attachments,
             workflow: WorkflowSection {
@@ -1193,9 +1215,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-10 bytes.
+    /// Parse, validate, and admit only canonical format-11 bytes.
     ///
-    /// The version is classified before the format-10 schema is decoded. This is
+    /// The version is classified before the format-11 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1245,6 +1267,41 @@ impl ServingManifest {
                     field: "release-packages",
                     id: package.package_id().to_owned(),
                 });
+            }
+        }
+
+        if let Some(entry) = &self.composed_entry {
+            if let Some(path) = entry.reference.strip_prefix("file:") {
+                if !std::path::Path::new(path).is_absolute() {
+                    return invalid("a local composed entry must name an absolute file");
+                }
+            } else if crate::validate_component_start_reference(&entry.reference).is_err() {
+                return invalid("a composed entry requires an OCI manifest digest reference");
+            }
+            ArtifactHash::parse(entry.route_digest.clone())?;
+            if entry.members.is_empty() {
+                return invalid("a composed entry must name its application members");
+            }
+            let mut identities = BTreeSet::new();
+            for member in &entry.members {
+                ArtifactHash::parse(member.digest.clone())?;
+                if !identities.insert((&member.package_id, &member.component)) {
+                    return invalid("a composed entry repeats a member identity");
+                }
+                if !self.components.iter().any(|component| {
+                    component.package_id == member.package_id
+                        && component.descriptor.component == member.component
+                        && component.descriptor.component_digest == member.digest
+                }) {
+                    return invalid("a composed entry member is outside the release");
+                }
+            }
+            if self
+                .routes
+                .iter()
+                .any(|route| !identities.contains(&(&route.package_id, &route.component)))
+            {
+                return invalid("a composed entry omits a routed application member");
             }
         }
 
@@ -1800,6 +1857,88 @@ mod tests {
         .expect("fixture manifest is valid")
     }
 
+    fn entry_for(manifest: &ServingManifest) -> ServingComposedEntry {
+        ServingComposedEntry {
+            reference: format!("registry.example/entry@sha256:{}", "e".repeat(64)),
+            route_digest: format!("sha256:{}", "f".repeat(64)),
+            members: manifest
+                .components
+                .iter()
+                .map(|component| ServingEntryMember {
+                    package_id: component.package_id.clone(),
+                    component: component.descriptor.component.clone(),
+                    digest: component.descriptor.component_digest.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn composed_entry_identity_is_canonical_and_changes_release_digest() {
+        let mut manifest = manifest();
+        let original = manifest.digest();
+        manifest.composed_entry = Some(entry_for(&manifest));
+        let bytes = manifest.canonical_bytes();
+        let (decoded, digest) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
+        assert_eq!(decoded, manifest);
+        assert_ne!(digest, original);
+        manifest.composed_entry.as_mut().unwrap().reference =
+            format!("registry.example/entry@sha256:{}", "b".repeat(64));
+        let reference_digest = manifest.digest();
+        assert_ne!(reference_digest, digest);
+        manifest.composed_entry.as_mut().unwrap().route_digest =
+            format!("sha256:{}", "a".repeat(64));
+        assert_ne!(manifest.digest(), reference_digest);
+    }
+
+    #[test]
+    fn local_composed_entry_requires_an_absolute_file_reference() {
+        let mut manifest = manifest();
+        let mut entry = entry_for(&manifest);
+        entry.reference = "file:/var/tmp/application/entry.wasm".into();
+        manifest.composed_entry = Some(entry);
+        assert!(ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).is_ok());
+        manifest.composed_entry.as_mut().unwrap().reference = "file:entry.wasm".into();
+        assert!(ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).is_err());
+    }
+
+    #[test]
+    fn composed_entry_refuses_invalid_or_unreleased_members() {
+        let manifest = manifest();
+        let entry = entry_for(&manifest);
+        for change in 0..5 {
+            let mut manifest = manifest.clone();
+            let mut entry = entry.clone();
+            match change {
+                0 => entry.reference = "registry.example/entry:latest".into(),
+                1 => entry.route_digest = "invalid".into(),
+                2 => entry.members.clear(),
+                3 => {
+                    let mut member = entry.members.pop_first().unwrap();
+                    member.digest = format!("sha256:{}", "0".repeat(64));
+                    entry.members.insert(member);
+                }
+                _ => {
+                    let mut member = entry.members.first().unwrap().clone();
+                    member.component = "outside-release".into();
+                    entry.members.insert(member);
+                }
+            }
+            manifest.composed_entry = Some(entry);
+            assert!(ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn format_ten_requires_republication() {
+        let mut manifest = manifest();
+        manifest.format_version = 10;
+        assert!(matches!(
+            ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()),
+            Err(CatalogIdentityError::UnsupportedServingManifestVersion { .. })
+        ));
+    }
+
     #[test]
     fn runtime_schema_is_pinned_and_consistent_within_an_application() {
         let original = manifest();
@@ -2310,14 +2449,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format ten may enter the decoder");
+                .expect_err("only format eleven enters the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {
@@ -2446,7 +2585,7 @@ mod tests {
         );
         signed.registered_operation = None;
         let manifest = build(signed).unwrap();
-        assert_eq!(manifest.format_version, 10);
+        assert_eq!(manifest.format_version, 11);
         let (decoded, _) =
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).unwrap();
         assert_eq!(decoded, manifest);

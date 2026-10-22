@@ -192,6 +192,25 @@ pub fn component_digest_tag(
         })
 }
 
+/// Require the exact OCI manifest reference selected for a workload start.
+///
+/// # Errors
+///
+/// Refuses a missing registry, a tagged repository, or an invalid SHA-256 digest.
+pub fn validate_component_start_reference(
+    reference: &str,
+) -> Result<(), ComponentArtifactReferenceError> {
+    let (base, digest) = reference.split_once('@').ok_or_else(|| {
+        ComponentArtifactReferenceError::new(
+            ComponentArtifactReferenceErrorType::InvalidBase,
+            "expected <registry>/<repository>@sha256:<manifest-digest>",
+        )
+    })?;
+    parse_component_artifact_base(base)?;
+    component_digest_tag(digest)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,5 +266,34 @@ mod tests {
         )
         .expect_err("credentials in a base refuse");
         assert!(!format!("{leaked:?} {leaked}").contains("super-secret"));
+    }
+}
+
+#[cfg(test)]
+mod start_reference_tests {
+    use super::validate_component_start_reference;
+
+    #[test]
+    fn start_requires_an_explicit_repository_and_manifest_digest() {
+        assert!(
+            validate_component_start_reference(&format!(
+                "registry.example:5000/application/entry@sha256:{}",
+                "a".repeat(64)
+            ))
+            .is_ok()
+        );
+        for reference in [
+            "registry.example/entry:latest",
+            "registry.example/entry:abc",
+            "file:/tmp/entry.wasm",
+            "sha256:abc",
+            "entry@sha256:abc",
+            "registry.example/entry@sha256:ABC",
+        ] {
+            assert!(
+                validate_component_start_reference(reference).is_err(),
+                "{reference}"
+            );
+        }
     }
 }

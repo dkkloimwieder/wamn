@@ -720,6 +720,7 @@ impl Fixture {
         }];
         let facts = [root.clone()];
         let manifest = ServingManifest {
+            composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 packages: facts
@@ -1530,6 +1531,7 @@ fn released_component_validation_reuses_only_the_immutable_list() {
     });
     let served = ServingComponent::project(&component, Vec::new()).unwrap();
     let manifest = ServingManifest {
+        composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new("root", "1.0.0").unwrap()]),

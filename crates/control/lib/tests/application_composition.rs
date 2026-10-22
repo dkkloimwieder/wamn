@@ -147,6 +147,49 @@ fn publication_builds_two_identical_http_applications_from_pinned_bytes() {
 }
 
 #[test]
+fn publication_records_the_exact_entry_and_members() {
+    use wamn_catalog::{PackageCoordinate, ServingComponent, ServingManifest, ServingRelease};
+    use wamn_control::publish_release::{PublishedRelease, record_composed_entry};
+
+    let application = admit(&application("")).unwrap();
+    let route = route();
+    let pin = component_digest(&route);
+    let entry = compose_application(&application, &route, &pin).unwrap();
+    let fact = application.facts();
+    let manifest = ServingManifest::new(
+        ServingRelease {
+            packages: BTreeSet::from([PackageCoordinate::new(
+                &fact.scope.package_id,
+                &fact.scope.package_version,
+            )
+            .unwrap()]),
+        },
+        BTreeSet::from([ServingComponent::project(fact, Vec::new()).unwrap()]),
+        BTreeSet::new(),
+        BTreeSet::new(),
+        BTreeMap::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let mut published = PublishedRelease {
+        digest: manifest.digest(),
+        canonical_bytes: manifest.canonical_bytes(),
+        manifest,
+    };
+    let before = published.digest.clone();
+    let reference = format!("registry.example/entry@sha256:{}", "a".repeat(64));
+    record_composed_entry(&mut published, &entry, &reference).unwrap();
+    let recorded = published.manifest.composed_entry.as_ref().unwrap();
+    assert_eq!(recorded.reference, reference);
+    assert_eq!(recorded.route_digest, pin);
+    assert_ne!(before, published.digest);
+    assert_eq!(
+        ServingManifest::from_canonical_bytes(&published.canonical_bytes).unwrap(),
+        (published.manifest, published.digest)
+    );
+}
+
+#[test]
 fn publication_refuses_a_member_with_operation_authority() {
     let bytes = application("import wamn:operation/operation@0.1.0;");
     let error = admit(&bytes).expect_err("entry-only authority refuses");

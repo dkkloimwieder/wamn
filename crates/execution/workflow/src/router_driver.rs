@@ -1484,6 +1484,7 @@ mod tests {
             ),
         ]));
         let manifest = ServingManifest {
+            composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),

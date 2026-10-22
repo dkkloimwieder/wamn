@@ -168,13 +168,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_ten_preimage_and_digest_are_pinned() {
+fn the_format_eleven_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
-        .expect("the format-ten vector is admitted by the reader");
+        .expect("the format-eleven vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), publish_vector::DIGEST);
 

@@ -28,7 +28,7 @@ pub mod test_database;
 pub use component_artifact_reference::{
     ComponentArtifactBase, ComponentArtifactReference, ComponentArtifactReferenceError,
     ComponentArtifactReferenceErrorType, component_artifact_reference, component_digest_tag,
-    parse_component_artifact_base,
+    parse_component_artifact_base, validate_component_start_reference,
 };
 pub use component_facts::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
@@ -60,10 +60,10 @@ pub use serving_manifest::{
     RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, RegistrationDelivery, RouteAttachment,
     RouteCanonicalization, RouteLineOrder, SERVING_MANIFEST_FORMAT_VERSION,
     SESSION_AUTHENTICATION_MODE, ServedAttachment, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRegistrationInput,
-    ServingRelation, ServingRelease, ServingRoute, ServingSchedule, ServingWiring,
-    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment, WorkflowSection,
-    parse_attachment_auth_policy, release_manifest_configmap_name,
+    ServingComponentOperation, ServingComposedEntry, ServingEntryMember, ServingManifest,
+    ServingRegistration, ServingRegistrationInput, ServingRelation, ServingRelease, ServingRoute,
+    ServingSchedule, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment,
+    WorkflowSection, parse_attachment_auth_policy, release_manifest_configmap_name,
 };
 #[cfg(any(test, feature = "test-util"))]
 pub use wiring::fixture_graph;

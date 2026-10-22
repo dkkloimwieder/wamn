@@ -615,3 +615,15 @@ Sources.
 - wamn `catalog-schema.sql catalog.connection_instances, catalog.connection_bindings` connection instances and bindings; `wamn_postgres/claims.rs::SESSION_OPERATION_PERMISSIONS_SQL` the claims path's permission read
 - wasmCloud/wasmCloud at `the rev wamn's Cargo.toml pins`: `runtime-operator workload_controller.go (MatchingLabels(HostSelector))` (Hosts listed by `MatchingLabels(workload.Spec.HostSelector)`), `runtime-operator host_controller.go` (`Host` labels from the heartbeat), `wash-runtime washlet/mod.rs::ClusterHostBuilder::build` (`hostgroup` label), `wash-runtime host/mod.rs::HostBuilder::with_label` (`HostBuilder::with_label`), `charts/runtime-operator/templates/runtime/deployment.yaml` and `values.yaml` (host-group Deployment, `runtime.podLabels`, `--drain-delay`, `terminationGracePeriodSeconds`, `nats/operator/gateway.enabled`)
 - Kubernetes, container lifecycle hooks (`preStop` runs before TERM within the same grace period; fires on eviction and probe failure too) and pods-and-endpoint termination flow
+
+### Serving manifest format 11
+
+Owner ruling, 2026-10-21: publication records the composed HTTP entry in format 11.
+The `composed-entry` record names the entry reference, the pinned route digest, and the application member identities.
+A deployed entry uses `repository@sha256:<manifest-digest>`. The record carries no entry byte digest.
+Each member retains its package, component name, and original digest for SQL authority and dependency pins.
+Publication admits and composes the bytes. The host records each start reference before the runtime pulls, verifies, and compiles the component.
+The binding callback compares that reference with the release. It does not hash the entry.
+Local publication names an absolute `file:` reference to its existing digest-named artifact file.
+Local loading retains the file loader's byte verification. Entry binding uses the same reference comparison as deployed binding.
+Every release must be published again. Format 10 releases cannot load on the format 11 host.

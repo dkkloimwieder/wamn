@@ -5614,6 +5614,7 @@ dependencies = [
  "wamn-test-postgres",
  "wamn-workflow",
  "wash-runtime",
+ "wasmparser 0.261.0",
  "wat",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
