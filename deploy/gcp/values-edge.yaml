@@ -1,7 +1,7 @@
 # The edge of docs/history/gcp-deployment.md steps 4 and 5, release wamn-edge in namespace
 # edge. The wildcard certificate *.wamn.dev of step 2 is already in
 # wamn-edge-tls, so no issuer is set. The load balancer of
-# docs/history/gcp-install-history.md section 4 serves the bucket path.
+# Rust edge reads the bucket for every web path.
 tlsSecret: wamn-edge-tls
 identity: https://identity.identity.svc.cluster.local
 identityCaConfigMap: identity-ca
@@ -9,17 +9,12 @@ identityCaConfigMap: identity-ca
 # chart, named by release_chart::release_name of the coordinate, so it does not
 # change with the release. `env apply` writes no edge values, so this file
 # names it (wamn-rk9l2).
-# bucketPath is <bucket>/<prefix>/<package>/<release digest hex>, as wamn web
-# upload writes it.
 control:
   host: control.wamn.dev
   api: http://c-dkk-http.hosts.svc.cluster.local
-  bucketPath: wamn-dev-web/platform-ui/0.1.36
 applications:
   - host: receiving.wamn.dev
     api: http://r-dev-ee95c37ee965257ff856-http.hosts.svc.cluster.local
-    bucketPath: wamn-dev-web/clients/wamn_receiving/e2cb18182ed0ddac311718ce0f587be1c296ae535d1822b057b01fde8bd1bc48
   - host: wms.wamn.dev
     api: http://r-dev-8f6b3ee8ac75e40affb1-http.hosts.svc.cluster.local
-    bucketPath: wamn-dev-web/clients/wamn_wms/d31830b104ace4a09180b63e7dcfe5152a3a59db093553e5bbf67cda65adeec9
 neg: true

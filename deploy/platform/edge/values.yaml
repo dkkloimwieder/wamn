@@ -1,6 +1,4 @@
-# The edge of docs/plan/web-deployment.md. In kind it serves every path. On
-# Google Cloud (neg set) a load balancer sends /api/ and /password/ to
-# it and serves every other path from a Cloud CDN backend bucket.
+# nginx proxies web requests to the Rust edge and API requests to their hosts.
 image:
   repository: nginx
   # nginx:1.27-alpine. A digest selects exact bytes, and a tag does not.
@@ -10,16 +8,12 @@ image:
 # The applications the edge serves, one server each. host is the public host,
 # the config.host of the environment's http workload, so the edge passes the
 # Host header to the router unchanged. api is the URL of the http Service of
-# the environment's release, plain HTTP, which upgrade-environment writes from
-# release_chart::release_name; the edge removes /api before it forwards. bucketPath is the path that `wamn web upload` wrote, readable
-# without credentials: <bucket>/<prefix>/<package>/<release digest hex>.
-# The optional control root has the same host/api/bucketPath shape.
-# Its bucketPath is <bucket>/platform-ui/<platform version>.
+# the environment's release, plain HTTP. The edge removes /api before it forwards.
+# The optional control root has the same host/api shape.
 control: null
 applications: []
 #  - host: receiving.example.com
 #    api: http://r-prod-<hash>-http.wamn-system.svc.cluster.local
-#    bucketPath: web/clients/wamn_receiving/<release digest hex>
 
 # The serving certificate. With issuer set, the chart requests it from that
 # cert-manager ClusterIssuer into tlsSecret. Without it, tlsSecret must exist.
@@ -31,16 +25,7 @@ issuer: ""
 identity: ""
 identityCaConfigMap: ""
 
-# endpoint is the object store origin that the edge reads for every
-# application's bucketPath, which Google Cloud does not use. Each object carries
-# its own Cache-Control, which the edge and the CDN pass on.
-bucket:
-  endpoint: ""
-
-# Google Cloud: annotate the Service so that GKE makes a network endpoint group
-# for the load balancer. The load balancer then serves the bucket, so
-# bucket.endpoint stays empty. docs/operations/gcp.md creates the load balancer
-# with gcloud.
+# Google Cloud: annotate the Service for the load balancer's endpoint group.
 neg: false
 
 service:

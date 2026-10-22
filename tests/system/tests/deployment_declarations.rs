@@ -388,8 +388,6 @@ fn render_edge(root: &Path) -> Output {
         "applications[0].api=http://flow-http.wamn-system.svc.cluster.local".to_owned(),
         format!("identity={IDENTITY_ISSUER}"),
         format!("identityCaConfigMap={EDGE_IDENTITY_CA}"),
-        "bucket.endpoint=http://object-store.invalid:9000".to_owned(),
-        "applications[0].bucketPath=web/clients/wamn_receiving/release".to_owned(),
     ] {
         command.args(["--set-string", &value]);
     }
@@ -1024,8 +1022,6 @@ fn control_edge_serves_the_platform_ui_and_forwards_its_api() {
             "-f",
             "deploy/gcp/values-edge.yaml",
             "--set",
-            "bucket.endpoint=https://storage.googleapis.com",
-            "--set",
             "issuer=test-issuer",
         ])
         .output()
@@ -1056,7 +1052,9 @@ fn control_edge_serves_the_platform_ui_and_forwards_its_api() {
     assert!(control.contains("proxy_pass http://c-dkk-http.hosts.svc.cluster.local/;"));
     assert!(control.contains("proxy_pass https://identity.identity.svc.cluster.local;"));
     assert!(control.contains("location / {"));
-    assert!(control.contains("/wamn-dev-web/platform-ui/0.1.31/index.html? break;"));
+    assert!(control.contains("proxy_pass http://wamn-edge-web.edge.svc.cluster.local;"));
+    assert!(control.contains("proxy_set_header Host $host;"));
+    assert!(!control.contains("rewrite "));
     let certificate = objects
         .iter()
         .find(|value| value["kind"] == "Certificate")

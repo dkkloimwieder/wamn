@@ -5,6 +5,7 @@ pub mod build;
 mod cdc;
 pub(crate) mod control;
 pub mod document;
+mod edge;
 mod environments;
 mod identity;
 pub mod install;

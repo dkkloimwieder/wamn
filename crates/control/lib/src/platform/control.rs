@@ -254,6 +254,8 @@ pub(super) async fn release(
     let chart = directory.join("release-chart");
     let values = directory.join("values-control.yaml");
     let mut desired = host_values(&document.org);
+    desired["routeHost"] = document.route_hosts.control.clone().into();
+    desired["platformUi"] = true.into();
     let mut changed = registry_ca(target, &document.org, registry, &mut desired).await?;
     std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
     let name = format!("c-{}", document.org);

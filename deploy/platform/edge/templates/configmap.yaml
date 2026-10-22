@@ -4,10 +4,6 @@
 {{- end -}}
 {{- $applications = required "Set applications or control to the hosts the edge serves." $applications -}}
 {{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
-{{- $endpoint := .Values.bucket.endpoint -}}
-{{- if not (or $endpoint .Values.neg) -}}
-{{- fail "Set bucket.endpoint to the object store origin." -}}
-{{- end -}}
 {{- if not (hasPrefix "https://" $identity) -}}
 {{- fail "identity must use HTTPS." -}}
 {{- end -}}
@@ -37,7 +33,6 @@ data:
 {{- range $applications }}
 {{- $host := required "Set host of each application to its public host name." .host }}
 {{- $api := required "Set api of each application to the URL of the http Service of its release." .api }}
-{{- $bucket := required "Set bucketPath of each application to the path that wamn web upload wrote." .bucketPath | trimAll "/" }}
       server {
         listen 8443 ssl;
         server_name {{ $host }};
@@ -67,31 +62,14 @@ data:
         location = /healthz {
           return 200;
         }
-{{- if $endpoint }}
 
-        # The upload wrote each object with its Cache-Control, which passes on.
-        location /assets/ {
-          limit_except GET { deny all; }
-          rewrite ^/assets/(.*)$ /{{ $bucket }}/assets/$1? break;
-          proxy_pass {{ trimSuffix "/" $endpoint }};
-        }
-
-        # The org and the project the client signs in to, which the upload
-        # writes beside index.html.
-        location = /config.json {
-          limit_except GET { deny all; }
-          rewrite ^ /{{ $bucket }}/config.json? break;
-          proxy_pass {{ trimSuffix "/" $endpoint }};
-        }
-
-        # Every other path is a page of the application, which the client
-        # routes, so the edge answers with the one index.
+        # The Rust edge selects the live release and reads its private bucket.
         location / {
           limit_except GET { deny all; }
-          rewrite ^ /{{ $bucket }}/index.html? break;
-          proxy_pass {{ trimSuffix "/" $endpoint }};
+          proxy_pass http://wamn-edge-web.edge.svc.cluster.local;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
         }
-{{- end }}
       }
 {{- end }}
     }
