@@ -141,3 +141,82 @@ Run publication refusal tests after the package build:
 TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \
   -p wamn-control --test netsuite_publication
 ```
+
+## Owner-run live calls
+
+`tools/netsuite/live.sh` calls the deployed `record_get` and `suiteql_query` wirings once each through `wamn-ctl workflow start`.
+It prints each completed run and its result from `wamn_run.runs`.
+SuiteQL can send several HTTP pages within that one operation.
+The script never runs from a test target.
+
+Create a private JSON file with the real account values:
+
+```json
+{
+  "account_host": "1234567-sb1.suitetalk.api.netsuite.com",
+  "realm": "1234567_SB1",
+  "consumer_key": "<consumer key>",
+  "consumer_secret": "<consumer secret>",
+  "token_id": "<token id>",
+  "token_secret": "<token secret>"
+}
+```
+
+Prepare files on the owner machine:
+
+```sh
+chmod 600 /private/netsuite.json
+tools/netsuite/live.sh prepare /private/netsuite.json acme /private/netsuite-host
+```
+
+Declare `netsuite` with the generated `definition.json` through the connection command above.
+Mount the generated `credentials.json` as the host credential file, or merge its org entry into the existing file.
+Set the deployed host's `WAMN_CREDENTIALS_FILE` to that mount.
+Bind `upstream` to `{ org = "netsuite" }`, then apply the environment and restart the host with that file.
+Publish all seven wirings, including `record_get` and `suiteql_query`, with the package.
+The selected `record_get` wiring supplies the record type, which defaults to `customer`.
+
+The owner machine needs `jq`, `psql`, and the built `wamn-ctl` binary.
+Set `WAMN_PG_ADMIN_URL` to the deployed project database and `WAMN_CONTROL_DATABASE_URL` to the control database.
+Set local `WAMN_CREDENTIALS_FILE` to the same source file that the host mounts.
+The script compares that source with the supplied keys and compares the org connection with `account_host`.
+The owner must make sure that the running host uses that source and connection binding.
+The script does not deploy or rotate credentials.
+
+Save an ordered SuiteQL query in `/private/customer.sql`, then run:
+
+```sh
+export WAMN_PG_ADMIN_URL='<project admin PostgreSQL URL>'
+export WAMN_CONTROL_DATABASE_URL='<control PostgreSQL URL>'
+export WAMN_CREDENTIALS_FILE=/private/netsuite-host/credentials.json
+printf '%s\n' 'SELECT id, entityid FROM customer ORDER BY id' > /private/customer.sql
+tools/netsuite/live.sh run /private/netsuite.json acme acme--billing--dev dev \
+  'sha256:<installed release digest>' '<NetSuite application principal UUID>' \
+  '42' /private/customer.sql
+```
+
+Use the principal that apply creates for `netsuite`.
+A timeout prints the run ID because the deployed run can continue after the script exits.
+Inspect that run before another invocation.
+
+## Kind fixture
+
+The ignored `environment_apply_kind` target runs the Epic 4 release, then a separate NetSuite release in the same private cluster.
+The NetSuite release contains `wamn_integration`, `rest_consumer_fixture`, and `netsuite`.
+It binds one org connection to the HTTP fixture, which acts as the SuiteTalk authority.
+The case does not call a RESTlet. The fixture unit tests cover the RESTlet echo route.
+
+The lead supplies the platform images and stamped chart described in `environment_apply_kind.rs`.
+Build the three packages above and `rest_connector`, plus the debug CLI and CDC reader, before the closeout run.
+Export `WAMN_HTTP_FIXTURE_CONSUMER_KEY`, `WAMN_HTTP_FIXTURE_CONSUMER_SECRET`, `WAMN_HTTP_FIXTURE_TOKEN`, `WAMN_HTTP_FIXTURE_TOKEN_SECRET`, and `WAMN_HTTP_FIXTURE_REALM`.
+Use disposable fixture values, not real account credentials.
+The test passes these values independently to the host credential mount and the fixture process.
+The fixture image builds from `tests/support/http-fixture` under `crates/control/lib`.
+
+The case uses two full SuiteQL pages, with a limit of two and `hasMore: false` on the second page.
+It seeds four consumer rows and advances the private, inactive CDC slot past those seed writes before starting the reader.
+The consumer command result proves that the pull delivered all four keys.
+A later insert triggers one push, and a replay of its input sends the same external-ID path again.
+The case reads HTTP evidence from `/recorded` and application state from PostgreSQL.
+It uses a daily tick five minutes ahead of publication, so a second pull cannot race the assertions.
+The lead runs the ignored kind target once at epic close.

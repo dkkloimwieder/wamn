@@ -89,14 +89,18 @@
 //! The native debug `wamn-cdc-reader` runs against the forwarded database.
 //! Event NATS runs on the kind network with separate generated credentials.
 //! The integration applies one release containing `wamn_integration`,
-//! `rest_connector` and `rest_consumer_fixture`. The ctl role verbs grant the
-//! connector principal the consumer permission before the release apply, so
-//! no host runs the schedule before the grant.
-//! Each schedule assertion has a 150-second bound.
+//! `rest_connector` and `rest_consumer_fixture`. Apply grants the application
+//! principal its declared consumer permission. A second release replaces
+//! `rest_connector` with `netsuite`, using an org-scoped OAuth1 credential.
+//! Export WAMN_HTTP_FIXTURE_CONSUMER_KEY, WAMN_HTTP_FIXTURE_CONSUMER_SECRET,
+//! WAMN_HTTP_FIXTURE_TOKEN, WAMN_HTTP_FIXTURE_TOKEN_SECRET and
+//! WAMN_HTTP_FIXTURE_REALM with disposable fixture values before the run.
+//! Epic 4 waits at most 150 seconds. NetSuite waits at most 360 seconds for
+//! its one scheduled pull. HTTP evidence comes from GET /recorded.
 //!
 //! Before the epic closeout run, build the debug `wamn-ctl` and `wamn-cdc-reader`
 //! binaries. Build the packages `edge_device`, `platform/wamn_integration`,
-//! `rest_consumer_fixture` and `rest_connector` with `wamn build`.
+//! `rest_consumer_fixture`, `rest_connector` and `netsuite` with `wamn build`.
 //! Build the pinned `http-route` guest in release mode at
 //! `apps/target/wasm32-wasip2/release/http_route.wasm`, or set
 //! `WAMN_FLOW_HTTP_COMPONENT` to those pinned guest bytes.
@@ -131,6 +135,8 @@ use wamn_engine::release_manifest::release_label;
 mod http_connection;
 #[path = "support/integration.rs"]
 mod integration;
+#[path = "support/netsuite.rs"]
+mod netsuite;
 #[path = "support/platform_images.rs"]
 mod platform_images;
 #[path = "support/session_issuer.rs"]
@@ -384,8 +390,20 @@ impl Run {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, stamped chart or cloud credentials; epic closeout only"]
+#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, stamped chart or cloud credentials, OAuth1 fixture env; epic closeout only"]
 async fn environment_apply_kind() -> anyhow::Result<()> {
+    for name in [
+        "WAMN_HTTP_FIXTURE_CONSUMER_KEY",
+        "WAMN_HTTP_FIXTURE_CONSUMER_SECRET",
+        "WAMN_HTTP_FIXTURE_TOKEN",
+        "WAMN_HTTP_FIXTURE_TOKEN_SECRET",
+        "WAMN_HTTP_FIXTURE_REALM",
+    ] {
+        ensure!(
+            std::env::var(name).is_ok_and(|value| !value.is_empty()),
+            "set {name} to a disposable fixture value before the kind case"
+        );
+    }
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let target =
         repository.join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()));
@@ -1359,6 +1377,17 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         &package_registry,
         &set,
         &admin_url,
+        "rest_connector",
+    ))
+    .await?;
+    Box::pin(integration::exercise(
+        run,
+        repository,
+        &platform,
+        &package_registry,
+        &set,
+        &admin_url,
+        "netsuite",
     ))
     .await?;
     system_task.abort();

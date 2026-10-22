@@ -28,6 +28,16 @@ pub const OAUTH1_HANDLE: &str = "oauth1-upstream";
 pub const BODY: &str = "{ \"id\" : 1 }";
 
 pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
+    let consumer_key = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_KEY")?;
+    let consumer_secret = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_SECRET")?;
+    let token = std::env::var("WAMN_HTTP_FIXTURE_TOKEN")?;
+    let token_secret = std::env::var("WAMN_HTTP_FIXTURE_TOKEN_SECRET")?;
+    let realm = std::env::var("WAMN_HTTP_FIXTURE_REALM")?;
+    let oauth1 = json!({"oauth1": {
+        "consumer-key": consumer_key, "consumer-secret": consumer_secret,
+        "token": token, "token-secret": token_secret, "realm": realm
+    }})
+    .to_string();
     let image = format!("{}-http-fixture:debug", run.cluster);
     run.run(
         "docker",
@@ -54,7 +64,7 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                 {
                     "apiVersion": "v1", "kind": "Secret",
                     "metadata": {"name": SECRET, "namespace": NAMESPACE},
-                    "stringData": {"credentials.json": json!({"orgs": {}, "projects": {
+                    "stringData": {"credentials.json": json!({"orgs": {ORG: {"netsuite": oauth1}}, "projects": {
                         PROJECT: {
                             "upstream": json!({
                                 "headers": {"authorization": "Bearer fixture-token"}
@@ -63,10 +73,7 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                                 "token-url": format!("{ORIGIN}/oauth/token"),
                                 "client-id": "fixture-client", "client-secret": "fixture-client-secret"
                             }}).to_string(),
-                            OAUTH1_HANDLE: json!({"oauth1": {
-                                "consumer-key": "fixture-consumer", "consumer-secret": "fixture-consumer-secret",
-                                "token": "fixture-token", "token-secret": "fixture-token-secret"
-                            }}).to_string(),
+                            OAUTH1_HANDLE: oauth1,
                             INBOUND_HANDLE: json!({"hmac": {
                                 "algorithm": "sha256", "secret": INBOUND_SECRET
                             }}).to_string(),
@@ -89,12 +96,13 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                                     "value": OUTBOUND_SECRET},
                                     {"name":"WAMN_HTTP_FIXTURE_CLIENT_ID", "value":"fixture-client"},
                                     {"name":"WAMN_HTTP_FIXTURE_CLIENT_SECRET", "value":"fixture-client-secret"},
-                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_KEY", "value":"fixture-consumer"},
-                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_SECRET", "value":"fixture-consumer-secret"},
-                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN", "value":"fixture-token"},
-                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN_SECRET", "value":"fixture-token-secret"},
+                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_KEY", "value":consumer_key},
+                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_SECRET", "value":consumer_secret},
+                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN", "value":token},
+                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN_SECRET", "value":token_secret},
                                     {"name":"WAMN_HTTP_FIXTURE_ACCESS_TOKEN", "value":"fixture-issued-token"},
-                                    {"name":"WAMN_HTTP_FIXTURE_LIMIT", "value":"2"}],
+                                    {"name":"WAMN_HTTP_FIXTURE_LIMIT", "value":"2"},
+                                    {"name":"WAMN_HTTP_FIXTURE_REALM", "value":realm}],
                                 "readinessProbe": {"tcpSocket": {"port": 8080}}
                             }]}}}
                 },

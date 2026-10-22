@@ -116,6 +116,7 @@ dependencies = [
  "base64",
  "hex",
  "hmac",
+ "percent-encoding",
  "serde_json",
  "sha2",
  "url",

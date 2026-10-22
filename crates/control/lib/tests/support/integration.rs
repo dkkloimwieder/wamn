@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use chrono::Timelike as _;
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
@@ -32,7 +33,6 @@ use super::{
 };
 
 const ENVIRONMENT: &str = "integration";
-const CONNECTOR: &str = "rest_connector";
 const CONSUMER: &str = "rest_consumer_fixture";
 
 pub async fn exercise(
@@ -42,13 +42,14 @@ pub async fn exercise(
     registry: &PackageRegistry,
     images: &ImageSet,
     admin_url: &str,
+    connector: &str,
 ) -> anyhow::Result<()> {
     let scope = wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT);
     let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, ENVIRONMENT);
     let roots = [
         "apps/platform/wamn_integration",
         "apps/rest_consumer_fixture",
-        "apps/rest_connector",
+        &format!("apps/{connector}"),
     ]
     .map(|path| repository.join(path));
     let manifests: Vec<wamn_schema_generator::PackageManifest> = roots
@@ -59,32 +60,6 @@ pub async fn exercise(
             )?)?)
         })
         .collect::<anyhow::Result<_>>()?;
-    let bytes = publish(run, repository, registry, &roots, &manifests, &tenant).await?;
-    let pushed = wamn_control::publish_release::push_manifest_bytes(
-        &bytes,
-        &platform.release_artifact_base,
-        false,
-        &platform.oci_ca_paths,
-        &platform.registry_auth_file,
-    )
-    .await?;
-    let digest = pushed.digest.as_str().to_owned();
-    let mut releases = registry.clone();
-    releases
-        .artifact_base
-        .clone_from(&platform.release_artifact_base);
-    qualification_artifact::push(
-        &releases,
-        &qualification_artifact::QualificationPayload {
-            format: qualification_artifact::QUALIFICATION_PAYLOAD_FORMAT,
-            release_digest: digest.clone(),
-            image_set: qualification_artifact::image_set_digests(images)?,
-            cases: Vec::new(),
-        },
-        bytes.len(),
-    )
-    .await?;
-
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let consumers = registration_consumers(&scope, &tenant, &manifests);
     let broker = event_broker::prepare(
@@ -116,10 +91,25 @@ pub async fn exercise(
         connections: BTreeMap::new(),
         floors: BTreeMap::new(),
     };
-    document.connections.insert("upstream".into(), ConnectionDefinition::Inline {
-        requirement_type: wamn_catalog::RequirementType::Http,
-        definition: json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
-    });
+    if connector == "netsuite" {
+        wamn_control::org_connection::declare(&wamn_control::org_connection::DeclareConnectionRequest {
+            system_database_url: platform.system_database_url.clone(),
+            org: ORG.into(), name: "netsuite".into(),
+            requirement_type: wamn_catalog::RequirementType::Http,
+            definition: json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
+        }).await?;
+        document.connections.insert(
+            "upstream".into(),
+            ConnectionDefinition::Org {
+                org: "netsuite".into(),
+            },
+        );
+    } else {
+        document.connections.insert("upstream".into(), ConnectionDefinition::Inline {
+            requirement_type: wamn_catalog::RequirementType::Http,
+            definition: json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
+        });
+    }
     // The preceding edge paging assertion used the same route. A fresh process
     // gives this independent flow its own page-two refusal and request log.
     run.run(
@@ -156,7 +146,12 @@ pub async fn exercise(
         "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
         &[&ORG, &PROJECT, &ENVIRONMENT],
     ).await?.get(0);
-    let issuer = super::session_issuer::deploy(run, repository, &platform).await?;
+    let issuer = if connector == "netsuite" {
+        // The preceding Epic 4 case installed this issuer in the shared fixture.
+        format!("https://integration-session.{NAMESPACE}.svc.cluster.local")
+    } else {
+        super::session_issuer::deploy(run, repository, &platform).await?
+    };
     platform.host_group =
         Some(event_host_group(run, &platform, &broker, &server, &issuer, &suffix).await?);
     let mut project_url = url::Url::parse(admin_url)?;
@@ -164,14 +159,43 @@ pub async fn exercise(
         "/{}",
         wamn_control_provision::project_env_database_name(ORG, PROJECT, ENVIRONMENT, &suffix)
     ));
+    let bytes = publish(
+        run, repository, registry, &roots, &manifests, &tenant, connector,
+    )
+    .await?;
+    let pushed = wamn_control::publish_release::push_manifest_bytes(
+        &bytes,
+        &platform.release_artifact_base,
+        false,
+        &platform.oci_ca_paths,
+        &platform.registry_auth_file,
+    )
+    .await?;
+    let digest = pushed.digest.as_str().to_owned();
+    let mut releases = registry.clone();
+    releases
+        .artifact_base
+        .clone_from(&platform.release_artifact_base);
+    qualification_artifact::push(
+        &releases,
+        &qualification_artifact::QualificationPayload {
+            format: qualification_artifact::QUALIFICATION_PAYLOAD_FORMAT,
+            release_digest: digest.clone(),
+            image_set: qualification_artifact::image_set_digests(images)?,
+            cases: Vec::new(),
+        },
+        bytes.len(),
+    )
+    .await?;
+
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    let subject = wamn_platform_identity::application_subject(&tenant, CONNECTOR)?;
+    let subject = wamn_platform_identity::application_subject(&tenant, connector)?;
     document.release = DeclaredRelease::Digest(digest.clone());
     super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
     let (project, project_task) = connect(project_url.as_str()).await?;
     let version = manifests
         .iter()
-        .find(|m| m.package.id == CONNECTOR)
+        .find(|m| m.package.id == connector)
         .context("connector manifest")?
         .package
         .version
@@ -202,8 +226,23 @@ pub async fn exercise(
         captured == CONSUMER,
         "CDC must capture only the consumer schema: {captured}"
     );
+    if connector == "netsuite" {
+        super::netsuite::seed(&project).await?;
+    }
     let mut reader = start_reader(run, repository, &broker, &server, admin_url).await?;
-    let observed = assertions(run, &project, &tenant, &principal, &digest, &mut reader).await;
+    let observed = if connector == "netsuite" {
+        super::netsuite::assertions(
+            run,
+            &project,
+            project_url.as_str(),
+            &tenant,
+            &principal,
+            &digest,
+        )
+        .await
+    } else {
+        assertions(run, &project, &tenant, &principal, &digest, &mut reader).await
+    };
     reader.kill().await.context("stop the fixture CDC reader")?;
     reader.wait().await?;
     project_task.abort();
@@ -215,12 +254,16 @@ pub async fn exercise(
         )
     })?;
     run.pass(
-        "integration schedule pushes five records and CDC logs each once under its principal",
-        "scheduled rest_item after apply; SELECT runs, item, setting, log; GET /recorded",
+        &format!(
+            "{connector} scheduled pull and consumer event push under the application principal"
+        ),
+        "scheduled pull after apply; SELECT runs, item, setting and command results; GET /recorded",
         observed,
         true,
     );
     environment::delete::delete(&platform, &scope, true).await?;
+    run.run("docker", &["rm", "-f", &format!("{}-events", run.cluster)])
+        .await?;
     Ok(())
 }
 
@@ -231,6 +274,7 @@ async fn publish(
     roots: &[PathBuf],
     manifests: &[wamn_schema_generator::PackageManifest],
     tenant: &str,
+    connector: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let mut admissions = Vec::new();
     for (root, manifest) in roots.iter().zip(manifests) {
@@ -251,15 +295,21 @@ async fn publish(
             package_id: manifest.package.id.clone(),
             package_version: manifest.package.version.clone(),
         };
-        let names = if manifest.package.id == CONNECTOR {
-            vec![CONNECTOR, "http-page", "jsonata"]
+        let names = if manifest.package.id == connector {
+            if connector == "netsuite" {
+                vec![connector, "http-request", "http-page", "jsonata"]
+            } else {
+                vec![connector, "http-page", "jsonata"]
+            }
         } else {
             vec![manifest.package.id.as_str()]
         };
         for name in names {
             let declaration = match name {
-                "http-page" | "jsonata" => render_palette_declaration(
-                    &repository.join(if name == "http-page" {
+                "http-request" | "http-page" | "jsonata" => render_palette_declaration(
+                    &repository.join(if name == "http-request" {
+                        "apps/platform/no-std/http-request/declaration.json.in"
+                    } else if name == "http-page" {
                         "apps/platform/no-std/http-page/declaration.json.in"
                     } else {
                         "apps/platform/execution/jsonata/declaration.json.in"
@@ -291,24 +341,39 @@ async fn publish(
             })?);
         }
     }
-    let connector = manifests
+    let connector_manifest = manifests
         .iter()
-        .find(|m| m.package.id == CONNECTOR)
+        .find(|m| m.package.id == connector)
         .context("connector package")?;
     let scope = ComponentPackageScope {
         tenant_id: tenant.into(),
-        package_id: CONNECTOR.into(),
-        package_version: connector.package.version.clone(),
+        package_id: connector.into(),
+        package_version: connector_manifest.package.version.clone(),
     };
-    let documents = ["rest_item", "rest_item_pushed"]
-        .into_iter()
+    let names: &[&str] = if connector == "netsuite" {
+        &[
+            "netsuite_pull",
+            "netsuite_push",
+            "record_get",
+            "record_create",
+            "record_update",
+            "suiteql_query",
+            "restlet_call",
+        ]
+    } else {
+        &["rest_item", "rest_item_pushed"]
+    };
+    let documents = names
+        .iter()
         .map(|name| {
-            let value = wamn_schema_generator::operation_reference::read_authored_document(
-                &repository.join(format!(
-                    "apps/rest_connector/publication/wirings/{name}.json"
-                )),
+            let mut value = wamn_schema_generator::operation_reference::read_authored_document(
+                &repository.join(format!("apps/{connector}/publication/wirings/{name}.json")),
                 wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
             )?;
+            if connector == "netsuite" && matches!(*name, "netsuite_pull" | "suiteql_query") {
+                value["nodes"]["page"]["params"]["path-and-query"] =
+                    json!("/services/rest/query/v1/suiteql?limit=2");
+            }
             Ok((
                 scope.clone(),
                 serde_json::from_value::<WiringDocument>(value)?,
@@ -337,11 +402,21 @@ async fn publish(
             })
             .collect(),
     };
-    Ok(
-        assemble_local_release(&request, roots, &admissions, documents)?
-            .published
-            .canonical_bytes,
-    )
+    let bytes = assemble_local_release(&request, roots, &admissions, documents)?
+        .published
+        .canonical_bytes;
+    if connector != "netsuite" {
+        return Ok(bytes);
+    }
+    // Leave time for rollout and seeding. The next daily tick cannot race the assertions.
+    let due = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let (mut manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    for schedule in manifest.workflow.schedules.values_mut() {
+        schedule.schedule = format!("{} {} * * *", due.minute(), due.hour());
+    }
+    let bytes = manifest.canonical_bytes();
+    wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    Ok(bytes)
 }
 
 async fn start_broker(run: &Run, broker: &event_broker::EventBroker) -> anyhow::Result<String> {
@@ -574,7 +649,7 @@ async fn assertions(
                     && scheduled["manifest_digest"] == digest
                     && scheduled["idempotency_key"]
                         == format!(
-                            "rest_connector/item:{}",
+                            "schedule:rest_connector/item:{}",
                             due.as_str().context("schedule due")?
                         )
                     && rows["last_synced_at"] == *due,
