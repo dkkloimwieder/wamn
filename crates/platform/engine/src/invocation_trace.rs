@@ -11,6 +11,33 @@ use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
+/// Request context retained by the HTTP Store, including anonymous calls.
+#[derive(Debug)]
+pub struct RequestTrace(pub InvocationTrace);
+
+/// Capture incoming HTTP trace fields at the authentication import boundary.
+pub fn request_trace(headers: &[(String, String)]) -> InvocationTrace {
+    use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+    struct Headers<'a>(&'a [(String, String)]);
+    impl opentelemetry::propagation::Extractor for Headers<'_> {
+        fn get(&self, key: &str) -> Option<&str> {
+            self.0
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(key))
+                .map(|(_, value)| value.as_str())
+        }
+        fn keys(&self) -> Vec<&str> {
+            self.0.iter().map(|(name, _)| name.as_str()).collect()
+        }
+    }
+    let parent = opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.extract(&Headers(headers))
+    });
+    let span = tracing::info_span!("wamn.operation.http");
+    let _ = span.set_parent(parent);
+    span.in_scope(InvocationTrace::capture)
+}
+
 /// Create a span unless the active OpenTelemetry trace is unsampled.
 ///
 /// The entered upstream span already activates its sampled context. Borrowing
@@ -126,11 +153,18 @@ impl HostPlugin for InvocationTraces {
 
 /// Read native invocation context, preserving ambient tracing on other host paths.
 #[must_use]
-pub fn invocation_trace(active: &ActiveCtx<'_>) -> InvocationTrace {
+pub fn invocation_trace(active: &mut ActiveCtx<'_>) -> InvocationTrace {
     active
         .ctx
         .try_get_plugin::<InvocationTraces>(INVOCATION_TRACES_ID)
         .ok()
         .and_then(|traces| traces.get(&active.ctx.component_id))
+        .or_else(|| {
+            active.table.iter_mut().find_map(|value| {
+                value
+                    .downcast_ref::<RequestTrace>()
+                    .map(|trace| trace.0.clone())
+            })
+        })
         .unwrap_or_else(InvocationTrace::capture)
 }

@@ -64,25 +64,18 @@ pub(super) fn emit_model_component(
          #[allow(unused_imports)]\n\
          use super::data::error::Error;\n\
          #[allow(unused_imports)]\n\
-         use wamn_postgres_statements::{{Connection, Transaction}};\n"
+         use wamn_postgres_statements::Transaction;\n"
     )
     .expect("writing to a String cannot fail");
     for (action, operation) in &model.operations {
         let name = action.as_str();
         let contract = rust_type_identifier(name);
         let (state, signature, body) = handler(*action, &contract, operation);
-        // A change works in the host's operation transaction, so its export
-        // takes no state.
-        let export_state = if action.changes_records() {
-            ""
-        } else {
-            " Connection::new(),"
-        };
         writeln!(
             source,
             "pub(crate) mod {name} {{\n\
              #[allow(unused_imports)]\n\
-             use super::{{Connection, Error, Transaction, model}};\n\
+             use super::{{Error, Transaction, model}};\n\
              use crate::exports::{namespace}::{package}::{name} as contract;\n\
              pub(crate) mod codec {{\n\
              use super::contract;\n\
@@ -91,7 +84,7 @@ pub(super) fn emit_model_component(
              pub(crate) async fn handle({state}, request: contract::{contract}Request{signature}) -> Result<contract::{contract}{end}, contract::{contract}Error> {{\n\
              {body}\
              }}\n\
-             codec::export_operation!(crate::Component, contract, crate::wamn::node::types,{export_state} handle, codec);\n\
+             codec::export_operation!(crate::Component, contract, crate::wamn::node::types, handle, codec);\n\
              }}\n",
             end = if *action == CrudAction::Query { "End" } else { "Result" },
         )
@@ -116,7 +109,7 @@ fn handler(
     contract: &str,
     operation: &OperationDeclaration,
 ) -> (&'static str, String, String) {
-    let connection = "connection: &mut Connection";
+    let connection = "connection: &mut Transaction";
     let transaction = "transaction: &mut Transaction";
     let revision = || {
         let revision = operation

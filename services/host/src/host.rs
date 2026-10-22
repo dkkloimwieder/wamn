@@ -22,7 +22,9 @@ use wash_runtime::host::{HostApi, HostConfig};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
 use wash_runtime::sockets::policy::EgressMode;
-use wash_runtime::washlet::ClusterHostBuilder;
+use wash_runtime::washlet::AttachedHostControl;
+
+mod commands;
 
 use wamn_catalog::ServingManifest;
 use wamn_control_provision::session_target::session_audience;
@@ -1249,6 +1251,23 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         }
         None => None,
     };
+    if let (Some(operations), Some(((workload, reference), _))) = (&operations, &local_workload) {
+        let component = workload
+            .workload
+            .components
+            .first()
+            .context("HTTP workload has no entry")?;
+        postgres.bind_operation_workload(
+            &workload.workload_id,
+            Arc::clone(&operations.release),
+            reference,
+            &component.name,
+            operations.claims(
+                &operations.release.scope().tenant_id,
+                Some(operations.release_identity()),
+            ),
+        )?;
+    }
     let router_driver = operations.as_ref().map(|operations| {
         Arc::new(RouterDriver::new(
             Arc::clone(operations),
@@ -1489,27 +1508,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             release_label(digest).context("--release-manifest-digest is not a sha256 digest")?;
         host_builder = host_builder.with_label("wamn.release", label);
     }
-    let mut builder = ClusterHostBuilder::default()
-        .with_host_builder(host_builder)
+    let mut builder = host_builder
         .with_engine((*engine).clone())
-        .with_host_config(host_config)
+        .with_config(host_config)
         .with_meters(Meters::new(MeterKind::Duration))
-        .with_nats_client(Arc::new(scheduler_nats_client))
-        .with_host_group(args.host_group.clone());
-
+        .with_label("hostgroup", args.host_group.clone());
     if let Some(host_name) = &args.host_name {
-        builder = builder.with_host_name(host_name);
+        builder = builder.with_hostname(host_name);
     }
     if let Some(namespace) = host_namespace(std::env::var("WASMCLOUD_HOST_ENVIRONMENT").ok()) {
-        builder = builder.with_environment(&namespace);
+        builder = builder.with_environment(namespace);
     }
-
-    if let Some(starts) = args.max_concurrent_starts {
-        builder = builder.with_max_concurrent_starts(starts);
-    }
-    let silence_budget = wash_runtime::washlet::liveness_silence(builder.heartbeat_interval());
+    let silence_budget = wash_runtime::washlet::liveness_silence(
+        wash_runtime::washlet::ClusterHostBuilder::default().heartbeat_interval(),
+    );
     let liveness = Liveness::new(silence_budget);
-    builder = builder.with_liveness(Arc::clone(&liveness));
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut schedule_tasks = tokio::task::JoinSet::new();
@@ -1580,7 +1593,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None => None,
     };
 
-    let cluster_host = builder.build().context("failed to build cluster host")?;
+    let prepared_host = builder.build().context("failed to build native host")?;
     tracing::info!(
         router_delivery = router_driver.is_some(),
         "wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing)"
@@ -1611,17 +1624,42 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             std::future::pending(),
         ));
     }
-    let (native_host, native_cleanup) = cluster_host
+    let native_host = prepared_host
         .start()
         .await
-        .context("failed to start cluster host")?;
+        .context("failed to start native host")?;
+    let mut control_builder =
+        AttachedHostControl::builder(Arc::clone(&native_host), Arc::new(scheduler_nats_client))
+            .with_host_group(args.host_group.clone())
+            .with_liveness(Arc::clone(&liveness))
+            .with_handler(Arc::new(commands::Commands {
+                postgres: Arc::clone(&postgres),
+                operations: operations.clone(),
+            }));
+    if let Some(starts) = args.max_concurrent_starts {
+        control_builder = control_builder.with_max_concurrent_starts(starts);
+    }
+    let control = match control_builder.attach().await {
+        Ok(control) => control,
+        Err(error) => {
+            native_host.clone().stop().await?;
+            return Err(error.context("attach host control"));
+        }
+    };
+    let cleanup_host = Arc::clone(&native_host);
+    let native_cleanup = async move {
+        let control_result = control.shutdown().await;
+        let host_result = cleanup_host.stop().await;
+        control_result?;
+        host_result
+    };
     // The host heartbeats from here on. The preload compiles after it, so a
     // cold compile cache delays the workload and not the heartbeat.
     let preloaded = preload_release(operations.as_ref(), router_driver.as_ref()).await;
     let started = match (preloaded, local_workload) {
         (Err(error), _) => Err(error),
         (Ok(()), None) => Ok(()),
-        (Ok(()), Some((workload, materializer))) => {
+        (Ok(()), Some(((workload, _), materializer))) => {
             // The materializer is a platform workload beside the release, so
             // it starts after the release's flow-http workload runs.
             match start_local(&native_host, workload).await {
@@ -1790,7 +1828,7 @@ async fn preload_release(
 /// Load the existing workload description with explicitly local component bytes.
 async fn load_local_workload(
     directory: &Path,
-) -> anyhow::Result<wash_runtime::types::WorkloadStartRequest> {
+) -> anyhow::Result<(wash_runtime::types::WorkloadStartRequest, String)> {
     use wash_runtime::types::{Component, Workload, WorkloadStartRequest};
     use wash_runtime::washlet::types::v2;
 
@@ -1826,33 +1864,62 @@ async fn load_local_workload(
             && component.image_pull_policy == v2::ImagePullPolicy::Never as i32,
         "local flow-http must use explicit local bytes without registry credentials"
     );
-    let loaded = load_local_bytes(directory, &component.image, "local flow-http").await?;
-    Ok(WorkloadStartRequest {
-        workload_id: request.workload_id,
-        workload: Workload {
-            namespace: workload.namespace,
-            name: workload.name,
-            annotations: workload.annotations,
-            service: None,
-            volumes: Vec::new(),
-            host_interfaces: world.host_interfaces.into_iter().map(Into::into).collect(),
-            components: vec![Component {
-                name: component.name,
-                bytes: loaded.bytes,
-                digest: loaded.digest,
-                local_resources: component
-                    .local_resources
-                    .map(TryInto::try_into)
-                    .transpose()?
-                    .unwrap_or_default(),
-                pool_size: component.pool_size,
-                max_invocations: component.max_invocations,
-                max_concurrency: component.max_concurrency,
-                reclaim_window_seconds: component.reclaim_window_seconds,
-                reclaim_min_instances: component.reclaim_min_instances,
-            }],
+    let entry_path = component
+        .image
+        .strip_prefix("file:")
+        .context("local flow-http requires an absolute file reference")?;
+    anyhow::ensure!(
+        Path::new(entry_path).is_absolute(),
+        "local entry path is not absolute"
+    );
+    let entry_path = Path::new(entry_path);
+    let entry_digest = entry_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .context("local entry file has no digest name")?;
+    anyhow::ensure!(
+        entry_path
+            == wamn_engine::artifact_source::local_component_path(
+                directory,
+                &format!("sha256:{entry_digest}")
+            )?,
+        "local entry reference is outside its artifact directory"
+    );
+    let loaded = load_local_bytes(
+        directory,
+        &format!("sha256:{entry_digest}"),
+        "local flow-http",
+    )
+    .await?;
+    Ok((
+        WorkloadStartRequest {
+            workload_id: request.workload_id,
+            workload: Workload {
+                namespace: workload.namespace,
+                name: workload.name,
+                annotations: workload.annotations,
+                service: None,
+                volumes: Vec::new(),
+                host_interfaces: world.host_interfaces.into_iter().map(Into::into).collect(),
+                components: vec![Component {
+                    name: component.name,
+                    bytes: loaded.bytes,
+                    digest: loaded.digest,
+                    local_resources: component
+                        .local_resources
+                        .map(TryInto::try_into)
+                        .transpose()?
+                        .unwrap_or_default(),
+                    pool_size: 0,
+                    max_invocations: component.max_invocations,
+                    max_concurrency: component.max_concurrency,
+                    reclaim_window_seconds: component.reclaim_window_seconds,
+                    reclaim_min_instances: component.reclaim_min_instances,
+                }],
+            },
         },
-    })
+        component.image,
+    ))
 }
 
 /// Start one local workload and require it to run.
@@ -2788,7 +2855,7 @@ mod tests {
                 wit_world: Some(v2::WitWorld {
                     components: vec![v2::Component {
                         name: "flow-http".to_owned(),
-                        image: digest.clone(),
+                        image: format!("file:{}", path.display()),
                         image_pull_policy: v2::ImagePullPolicy::Never as i32,
                         pool_size: 3,
                         max_invocations: 11,
@@ -2807,7 +2874,8 @@ mod tests {
         .unwrap();
         assert!(load_local_workload(&directory).await.is_err());
         std::fs::write(&path, bytes).unwrap();
-        let loaded = load_local_workload(&directory).await.unwrap();
+        let (loaded, reference) = load_local_workload(&directory).await.unwrap();
+        assert_eq!(reference, format!("file:{}", path.display()));
         assert_eq!(loaded.workload_id, request.workload_id);
         assert_eq!(loaded.workload.namespace, "local");
         let component = &loaded.workload.components[0];
@@ -2819,7 +2887,7 @@ mod tests {
                 component.max_invocations,
                 component.max_concurrency
             ),
-            (3, 11, 2)
+            (0, 11, 2)
         );
         std::fs::write(&path, b"changed component bytes").unwrap();
         assert!(

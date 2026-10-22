@@ -538,8 +538,8 @@ impl HostPlugin for Observe {
             "record",
             move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
                   (phase,): (u32,)| {
-                let active = extract_active_ctx(store.data_mut());
-                let trace = wamn_engine::invocation_trace::invocation_trace(&active);
+                let mut active = extract_active_ctx(store.data_mut());
+                let trace = wamn_engine::invocation_trace::invocation_trace(&mut active);
                 trace.in_scope(|| {
                     let scope = active.ctx.component_id.to_string();
                     let native_identity = policy

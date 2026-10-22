@@ -139,7 +139,9 @@ impl std::fmt::Debug for WamnPostgres {
 }
 
 pub struct WamnPostgres {
-    pub(super) operation_workloads: HashMap<String, super::operation::OperationWorkload>,
+    pub(super) operation_metrics: super::operation::OperationMetrics,
+    pub(super) operation_workloads:
+        std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
     pub(super) local_application: Option<Arc<crate::local_application::LocalApplication>>,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
@@ -929,7 +931,8 @@ impl WamnPostgres {
             current_run: std::sync::RwLock::new(HashMap::new()),
             invocations: std::sync::RwLock::new(HashMap::new()),
             statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
-            operation_workloads: HashMap::new(),
+            operation_workloads: std::sync::RwLock::default(),
+            operation_metrics: super::operation::OperationMetrics::default(),
             operation_transactions: std::sync::Mutex::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
@@ -1681,6 +1684,10 @@ impl WamnPostgres {
         if let Ok(mut invocations) = self.invocations.write() {
             invocations.retain(|c, _| retain(c));
         }
+        self.operation_workloads
+            .write()
+            .expect("operation workloads lock poisoned")
+            .retain(|c, _| retain(c));
         self.clear_statement_bindings(workload_id);
     }
 

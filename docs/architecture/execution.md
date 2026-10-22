@@ -75,6 +75,10 @@ There are two sets.
 Release publish writes the set `application` into every application release.
 Its routes admit a PAT or a session and read the project environment database of the release.
 The control serving root serves only the set `control`, whose routes admit a browser session only.
+Platform builds compose the pinned route guest with an empty private dispatcher for this root.
+The route digest pin identifies its source, and the platform HTTP role records its OCI manifest reference.
+The control host links `wamn:operation` without binding operation authority, so every operation call refuses.
+Control roots have no release record.
 Publish refuses an authored attachment under `/wamn_control/`.
 
 [`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
@@ -186,20 +190,47 @@ A read without a revision field, or with no declared relations, has no ETag, and
 A `get` tag follows `row_version`, so a row that is deleted and created again under the same natural key can match an old tag.
 [`read_cache`](../../crates/execution/host/src/read_cache.rs) owns the tags.
 
+The entry-only `wamn:operation/operation@0.1.0` interface also provides `wal-position()`.
+It reads the WAL position on the open operation's connection and refuses `not-begun` outside an operation.
+The [operation boundary](data-access.md#the-write-log) owns its transaction lifetime.
+The composed entry computes ETags and handles conditional reads for base routes.
+The delivery bridge retains this behavior for wiring attachments.
+The routing provider also projects the ETag inputs from the loaded release.
+Those inputs declare the release digest and either the result's revision field or the sorted relations for a list.
+A get without a revision field and a list without relations carry no ETag inputs.
+The guest receives the kind and fields as data, without application-specific names in the route code.
+
+For base reads, `route-definition.stream-ceiling` carries the platform limit of 100,000 rows.
+The entry refuses a streamed request above that limit before it begins the operation.
+Host routes and wiring attachments carry no entry ceiling.
+`route-definition.read-limits` carries page bounds and required band starts from the released input schema.
+The entry enforces those bounds and keeps the existing HTTP 400 pointer response.
+
+`route-definition.operation-deadline-ms` carries the host operation limit.
+The entry measures one shared budget with its monotonic clock.
+An unreached item receives `timeout` with the message `not reached before deadline` and claims no key.
+The host epoch deadline remains the hard execution bound.
+
+Authentication retains incoming trace context in the HTTP Store, including anonymous requests.
+PostgreSQL callbacks restore that context when they create spans.
+The host records operation delivery counters at begin, commit, and rollback.
+A dropped open operation records an execution failure and releases its authority.
+
 A `query` replies in one of two shapes, and the `shape` parameter of its canonical query string names the shape.
 The value `page` is the default, and the value `stream` asks for a streamed load.
 The router removes `shape` from the request item, so the operation never reads it.
 A page is the outcome list of one item, with the rows under `item` and the cursor under `next_cursor`.
-The route input schema bounds the limit of a page by the contract maximum of 100.
-A streamed load takes a cap up to the host ceiling of 100,000 rows, and the host refuses a larger cap before the query runs.
-The router checks the rest of the item against the input schema.
+The entry bounds a page by the declared contract maximum, usually 100.
+A streamed load takes a cap up to the host ceiling of 100,000 rows.
+The entry refuses a larger cap before the query runs.
+The generated application codec validates the remaining input.
 
 A streamed load answers with `Content-Type: application/x-ndjson`, one JSON value per line.
 Each row is one line `{"row":…}`, and the last line is `{"outcome":…}`.
 The outcome is `{"value":{"more":…}}` when the read ended, `{"error":…}` when the query refused, or `{"uncertain":{}}` when the host cannot say how the read ended.
 `more` is true when rows exist past the cap.
 A body that ends without the outcome line is a failed load.
-The response is `private, no-cache` with the weak list ETag, which the host reads before the query runs, so an unchanged load answers 304.
+The response is `private, no-cache` with the weak list ETag, which the entry computes before the query runs, so an unchanged load answers 304.
 It sends `X-Accel-Buffering: no`, and the router writes one body chunk for each batch of lines, so no proxy holds a line back.
 Nothing on the platform path compresses a reply.
 A read that ends before its first row answers as a page answers: a refusal keeps its status and its body, and a match with `If-None-Match` answers 304.
@@ -208,16 +239,20 @@ Every stage between the database and the socket holds a few batches at most, so 
 A load that stops ends its database query, whether it reached its cap, the client aborted it, or the connection dropped.
 A closed connection drops the reply lines, the host then drops the rows and the component's stream, and the host rolls the query's transaction back.
 The test `a_streamed_load_that_stops_ends_its_database_query` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) watches the server's open transactions for each of the three stops.
-The router calls `deliver-stream` of [`wamn:router-delivery` 0.3.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit), the one version in the tree.
-[`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
+The composed entry calls the application query through its private dispatch interface.
+The query reads through `transaction.run-stream`, and the entry writes JSON lines into the HTTP body.
+Host routes and wiring attachments retain [`wamn:router-delivery` 0.4.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit).
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
-The cloud route, the router driver and the edge each pass one for every route, so every create, update, delete and command claims through the engine.
+The router driver and the edge pass that context for each write operation.
+Composed base routes claim through `begin-operation`, with the same item keys and canonical request hashes.
 In the cloud the store is the [write log](data-access.md#the-write-log). On the edge it is SQLite, and the [edge plan](../history/edge.md#47-sqlite-schema) states the rules.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
 Publish writes two input facts into the serving manifest route from the generated contracts: the key field (`idempotency`) and the canonical item form (`canonicalization`).
 
-A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
+A host or wiring route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
+Base routes keep this response for declared page and band limits.
+Their generated application codecs refuse other invalid input through the operation contract.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 
 ```json
@@ -248,6 +283,16 @@ The deployment owner can select reviewed component digests for native warm-insta
 Application manifests cannot grant that trust.
 
 An application is one composed component, and it loads as its own native workload.
+Publication composes the pinned HTTP route guest with the application and records the entry reference in serving manifest format 11.
+A deployed reference names an OCI manifest with `repository@sha256:<manifest-digest>`.
+The host records the reference by workload id before it calls the runtime's default start handler.
+The runtime pulls, verifies, and compiles the component. The operation binding compares the recorded reference with the loaded release.
+The composed entry uses fresh Stores and calls base operations inside the component.
+The release chart fixes its `poolSize` at zero and reads its image from the release entry reference.
+Receiving carries no trusted warm digest or native pool override.
+Host routes and wiring attachments keep the router-delivery import.
+Local publication records an absolute `file:` reference to a digest-named artifact. The existing local file loader checks its bytes before binding.
+
 No two applications share a store, and wash-runtime links no application to another.
 Applications in one release can use different lifetimes.
 A call across applications is a workflow call through the host.

@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use wamn_catalog::{ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::router_delivery::DeliveryClass;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource, ResourceTable};
 
@@ -18,88 +19,193 @@ use super::{
     WAMN_POSTGRES_ID, WamnPostgres,
 };
 
+/// Delivery counters shared by all operations of this PostgreSQL plugin.
+#[derive(Debug)]
+pub(super) struct OperationMetrics {
+    attempts: opentelemetry::metrics::Counter<u64>,
+    errors: opentelemetry::metrics::Counter<u64>,
+}
+
+impl Default for OperationMetrics {
+    fn default() -> Self {
+        let meter = opentelemetry::global::meter(wamn_engine::router_delivery::ROUTER_DELIVERY_ID);
+        Self {
+            attempts: meter.u64_counter("wamn.router.delivery.attempts").build(),
+            errors: meter.u64_counter("wamn.router.delivery.errors").build(),
+        }
+    }
+}
+
+impl OperationMetrics {
+    fn record(&self, source: &str, class: DeliveryClass) {
+        let mut attributes = vec![
+            opentelemetry::KeyValue::new("wamn.source.kind", "attachment"),
+            opentelemetry::KeyValue::new("wamn.source.id", source.to_owned()),
+        ];
+        self.attempts.add(1, &attributes);
+        if let Some(error) = class.error() {
+            attributes.push(opentelemetry::KeyValue::new("wamn.delivery.error", error));
+            self.errors.add(1, &attributes);
+        }
+    }
+}
+
 /// Immutable authority installed by the host before a workload starts.
 #[derive(Debug)]
 pub(super) struct OperationWorkload {
+    start: (String, String),
     release: Arc<LoadedRelease>,
     claims: SessionClaims,
     operations: BTreeMap<String, PreparedStatementSet>,
+    grants: BTreeMap<String, Option<String>>,
+    schemas: BTreeMap<String, String>,
     members: PreparedStatementMembers,
 }
 
 impl WamnPostgres {
-    /// Bind an entry to one component in the process's loaded release.
-    ///
-    /// The host supplies the admitted component identity and its database claims.
-    /// No current Receiving loader calls this entry interface.
+    /// Record the host-selected entry reference and released SQL ownership.
     pub fn bind_operation_workload(
-        &mut self,
-        workload: String,
+        &self,
+        workload: &str,
         release: Arc<LoadedRelease>,
-        package: &str,
-        component: &str,
-        digest: &str,
-        mut claims: SessionClaims,
+        reference: &str,
+        component_name: &str,
+        claims: SessionClaims,
     ) -> anyhow::Result<()> {
+        let entry = release
+            .manifest()
+            .composed_entry
+            .as_ref()
+            .context("release has no composed entry")?;
         anyhow::ensure!(
-            claims.tenant == release.scope().tenant_id,
-            "operation tenant mismatch"
+            reference == entry.reference,
+            "composed entry reference differs from the release"
         );
         anyhow::ensure!(
-            claims.release.as_ref() == Some(&ReleaseIdentity::from_loaded(&release)),
+            claims.tenant == release.scope().tenant_id
+                && claims.release.as_ref() == Some(&ReleaseIdentity::from_loaded(&release)),
             "operation release mismatch"
         );
-        anyhow::ensure!(
-            !self.operation_workloads.contains_key(&workload),
-            "operation workload already bound"
-        );
-        let served = release
-            .manifest()
-            .components
+        let components = entry
+            .members
             .iter()
-            .find(|served| {
-                served.package_id == package
-                    && served.descriptor.component == component
-                    && served.descriptor.component_digest.as_str() == digest
+            .map(|member| {
+                release
+                    .manifest()
+                    .components
+                    .iter()
+                    .find(|component| {
+                        component.package_id == member.package_id
+                            && component.descriptor.component == member.component
+                            && component.descriptor.component_digest == member.digest
+                    })
+                    .expect("manifest validates entry members")
             })
-            .context("operation component not in loaded release")?;
-        if let Some(schema) = &served.runtime_schema {
-            claims.schema = Some(schema.clone());
-        }
-        let operations = served
-            .operations
-            .iter()
-            .filter(|(id, fact)| fact.registered_operation.as_deref() == Some(id.as_str()))
-            .map(|(id, fact)| {
-                let read = release.manifest().routes.iter().any(|route| {
-                    route.package_id == served.package_id
-                        && route.component == served.descriptor.component
-                        && &route.operation == id
-                        && route.type_.is_read()
-                });
-                (
+            .collect::<Vec<_>>();
+        let mut operations = BTreeMap::new();
+        let mut grants = BTreeMap::new();
+        let mut schemas = BTreeMap::new();
+        for component in &components {
+            for (id, fact) in &component.operations {
+                let read = release
+                    .manifest()
+                    .routes
+                    .iter()
+                    .any(|route| &route.operation == id && route.type_.is_read());
+                operations.insert(
                     id.clone(),
                     Self::prepare_statement_set(lower_statements(&fact.statements), read),
-                )
-            })
-            .collect();
-        let members = Self::prepare_statement_members(served.statement_instances.iter().map(
-            |(name, statements)| {
-                (
+                );
+                grants.insert(id.clone(), fact.registered_operation.clone());
+                if let Some(schema) = &component.runtime_schema {
+                    schemas.insert(id.clone(), schema.clone());
+                }
+            }
+        }
+        // Publication preserves the application's named SQL imports in the entry.
+        // The composed application's descriptor already binds every nested member.
+        let application = components
+            .iter()
+            .max_by_key(|component| component.statement_instances.len())
+            .context("entry has no application members")?;
+        let mut members = BTreeMap::new();
+        if application.statement_instances.is_empty() {
+            let statements = application
+                .operations
+                .values()
+                .flat_map(|fact| fact.statements.clone())
+                .collect();
+            members.insert(
+                "sql-0".to_owned(),
+                Self::prepare_statement_set(lower_statements(&statements), false),
+            );
+        } else {
+            for (name, statements) in &application.statement_instances {
+                members.insert(
                     name.clone(),
                     Self::prepare_statement_set(lower_statements(statements), false),
-                )
-            },
-        ));
-        self.operation_workloads.insert(
-            workload,
-            OperationWorkload {
+                );
+            }
+        }
+        let mut workloads = self
+            .operation_workloads
+            .write()
+            .expect("operation workloads lock poisoned");
+        anyhow::ensure!(
+            !workloads.contains_key(workload),
+            "operation workload already bound"
+        );
+        workloads.insert(
+            workload.to_owned(),
+            Arc::new(OperationWorkload {
+                start: (component_name.to_owned(), reference.to_owned()),
                 release,
                 claims,
                 operations,
-                members,
-            },
+                grants,
+                schemas,
+                members: Self::prepare_statement_members(members),
+            }),
         );
+        Ok(())
+    }
+
+    /// Remove a completed or cancelled start's pending reference.
+    pub fn forget_operation_start(&self, workload: &str) {
+        self.operation_workloads
+            .write()
+            .expect("operation workloads lock poisoned")
+            .remove(workload);
+    }
+
+    pub(super) fn bind_entry_instance(
+        &self,
+        workload: &str,
+        component: &str,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let mut bound = self
+            .operation_workloads
+            .write()
+            .expect("operation workloads lock poisoned");
+        let entry = bound
+            .get(workload)
+            .cloned()
+            .context("operation entry workload is not bound")?;
+        {
+            let (started_name, reference) = &entry.start;
+            anyhow::ensure!(started_name == name, "operation authority is entry-only");
+            anyhow::ensure!(
+                entry
+                    .release
+                    .manifest()
+                    .composed_entry
+                    .as_ref()
+                    .is_some_and(|released| &released.reference == reference),
+                "started entry reference differs from the release"
+            );
+        }
+        bound.insert(component.to_owned(), entry);
         Ok(())
     }
 }
@@ -152,10 +258,17 @@ struct OpenOperation {
     operation: String,
     key: String,
     transaction: Option<OperationTransaction>,
+    source: String,
+    settled: bool,
 }
 
 impl Drop for OpenOperation {
     fn drop(&mut self) {
+        if !self.settled {
+            self.postgres
+                .operation_metrics
+                .record(&self.source, DeliveryClass::ExecutionFailed);
+        }
         self.postgres.revoke_operation_transaction(&self.scope);
         self.postgres.revoke_session_claims(&self.scope);
         self.postgres.clear_statement_scope(&self.scope);
@@ -209,13 +322,36 @@ fn binding_error(kind: OperationErrorKind, scope: &str, source: anyhow::Error) -
     Refusal::Postgres(super::PgError::PermissionDenied)
 }
 
-impl wit::Host for ActiveCtx<'_> {
-    async fn rollback(&mut self) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
-        let Some(store) = state(self.table).cloned() else {
+impl wit::Host for ActiveCtx<'_> {}
+
+impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
+    async fn wal_position(
+        accessor: &Accessor<T, Self>,
+    ) -> wash_runtime::wasmtime::Result<Result<String, Refusal>> {
+        let Some(store) = accessor.with(|mut access| state(access.get().table).cloned()) else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        let current = store.open.lock().await;
+        let Some(open) = current.as_ref() else {
+            return Ok(Err(Refusal::NotBegun));
+        };
+        Ok(open
+            .transaction
+            .as_ref()
+            .expect("new begin owns a transaction")
+            .wal_position()
+            .await
+            .map_err(Refusal::Postgres))
+    }
+
+    async fn rollback(
+        accessor: &Accessor<T, Self>,
+    ) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
+        let Some(store) = accessor.with(|mut access| state(access.get().table).cloned()) else {
             return Ok(Err(Refusal::NotBegun));
         };
         let mut current = store.open.lock().await;
-        let Some(open) = current.take() else {
+        let Some(mut open) = current.take() else {
             return Ok(Err(Refusal::NotBegun));
         };
         let rolled_back = open
@@ -225,16 +361,24 @@ impl wit::Host for ActiveCtx<'_> {
             .rollback()
             .await
             .map_err(Refusal::Postgres);
+        open.postgres.operation_metrics.record(
+            &open.source,
+            if rolled_back.is_ok() {
+                DeliveryClass::Delivered
+            } else {
+                DeliveryClass::ExecutionFailed
+            },
+        );
+        open.settled = true;
         drop(open);
-        self.component_id = Arc::clone(&store.workload);
+        accessor.with(|mut access| {
+            access.get().component_id = Arc::clone(&store.workload);
+        });
         Ok(rolled_back)
     }
-}
-
-impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
     async fn begin_operation(
         accessor: &Accessor<T, Self>,
-        caller: Resource<AuthenticatedCaller>,
+        caller: Option<Resource<AuthenticatedCaller>>,
         operation: String,
         idempotency_key: String,
         request_hash: Vec<u8>,
@@ -262,7 +406,10 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
         });
         let input = accessor.with(|mut access| {
             let ctx = access.get();
-            let Ok(caller) = ctx.table.get(&caller).cloned() else {
+            let Ok(caller) = caller
+                .map(|caller| ctx.table.get(&caller).cloned())
+                .transpose()
+            else {
                 return Ok(Err(Refusal::InvalidCaller));
             };
             let postgres = ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?;
@@ -272,15 +419,34 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
             Ok(input) => input,
             Err(refusal) => return Ok(Err(refusal)),
         };
-        let result = begin(
-            postgres,
-            &store.workload,
-            &caller,
-            operation,
-            idempotency_key,
-            request_hash,
-        )
-        .await;
+        let source = caller.as_ref().map_or_else(
+            || operation.clone(),
+            |caller| caller.attachment_id().to_owned(),
+        );
+        let trace = accessor
+            .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
+        let result = trace
+            .run(begin(
+                Arc::clone(&postgres),
+                &store.workload,
+                caller.as_ref(),
+                operation,
+                idempotency_key,
+                request_hash,
+            ))
+            .await;
+        if !matches!(&result, Ok((Some(_), _))) {
+            let class = match &result {
+                Ok(_) | Err(Refusal::Conflict | Refusal::Uncertain | Refusal::Resolved(_)) => {
+                    DeliveryClass::Delivered
+                }
+                Err(Refusal::GrantDenied | Refusal::InvalidCaller) => {
+                    DeliveryClass::PermissionDenied
+                }
+                Err(_) => DeliveryClass::ExecutionFailed,
+            };
+            postgres.operation_metrics.record(&source, class);
+        }
         match result {
             Ok((open, begun)) => {
                 if let Some(open) = &open {
@@ -304,18 +470,29 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
             return Ok(Err(Refusal::NotBegun));
         };
         let mut current = store.open.lock().await;
-        let Some(open) = current.take() else {
+        let Some(mut open) = current.take() else {
             return Ok(Err(Refusal::NotBegun));
         };
         let transaction = open
             .transaction
             .as_ref()
             .expect("new begin owns a transaction");
-        transaction.finish_opaque(&open.operation, &open.key, result);
+        if !open.postgres.active_read(&open.scope) {
+            transaction.finish_opaque(&open.operation, &open.key, result);
+        }
         let committed = transaction.commit().await.map_err(|error| match error {
             CommitFailure::RolledBack(error) => Refusal::Postgres(error),
             CommitFailure::Uncertain(_) => Refusal::Uncertain,
         });
+        open.postgres.operation_metrics.record(
+            &open.source,
+            if committed.is_ok() {
+                DeliveryClass::Delivered
+            } else {
+                DeliveryClass::ExecutionFailed
+            },
+        );
+        open.settled = true;
         // Drop clears all authority on both success and refusal.
         drop(open);
         accessor.with(|mut access| {
@@ -328,41 +505,58 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
 async fn begin(
     postgres: Arc<WamnPostgres>,
     workload: &str,
-    caller: &AuthenticatedCaller,
+    caller: Option<&AuthenticatedCaller>,
     operation: String,
     key: String,
     request: Vec<u8>,
 ) -> Result<(Option<OpenOperation>, Begun), Refusal> {
     let facts = postgres
         .operation_workloads
+        .read()
+        .expect("operation workloads lock poisoned")
         .get(workload)
+        .cloned()
         .ok_or(Refusal::UnknownOperation)?;
     let statements = facts
         .operations
         .get(&operation)
         .ok_or(Refusal::UnknownOperation)?;
-    if !caller.permits(&operation) {
-        return Err(Refusal::GrantDenied);
-    }
-    // The handle was issued for an attachment of this loaded release.
-    if facts
-        .release
-        .manifest()
-        .attachment(caller.attachment_id())
-        .is_none()
+    wamn_engine::router_delivery::authorize_registered_operation(
+        caller,
+        facts.grants[&operation].as_deref(),
+    )
+    .map_err(|_| Refusal::GrantDenied)?;
+    // A present handle was issued for an attachment of this loaded release.
+    if let Some(caller) = caller
+        && facts
+            .release
+            .manifest()
+            .attachment(caller.attachment_id())
+            .is_none()
     {
         return Err(Refusal::InvalidCaller);
     }
     let delivery = uuid::Uuid::new_v4().to_string();
+    let source = caller.map_or_else(
+        || operation.clone(),
+        |caller| caller.attachment_id().to_owned(),
+    );
     let mut open = OpenOperation {
         postgres: Arc::clone(&postgres),
         scope: wamn_engine::operation::next_scope(workload).into_string(),
         operation,
         key,
         transaction: None,
+        source,
+        settled: true,
     };
     let claims = SessionClaims {
-        user_id: Some(caller.principal_id().to_owned()),
+        schema: facts
+            .schemas
+            .get(&open.operation)
+            .cloned()
+            .or_else(|| facts.claims.schema.clone()),
+        user_id: caller.map(|caller| caller.principal_id().to_owned()),
         operation: Some(open.operation.clone()),
         ..facts.claims.clone()
     };
@@ -374,7 +568,7 @@ async fn begin(
         &open.scope,
         Some(wamn_event_wire::Causation {
             run: delivery.clone(),
-            root: delivery,
+            root: delivery.clone(),
             depth: 0,
         }),
     );
@@ -389,21 +583,24 @@ async fn begin(
         .begin_operation_transaction(&open.scope)
         .await
         .map_err(Refusal::Postgres)?;
-    match transaction
-        .begin_opaque(&open.operation, &open.key, request)
-        .await
-        .map_err(Refusal::Postgres)?
-    {
-        OpaqueBegun::New => {}
-        OpaqueBegun::Finished(result) => return Ok((None, Begun::Finished(result))),
-        OpaqueBegun::Uncertain => return Err(Refusal::Uncertain),
-        OpaqueBegun::Conflict => return Err(Refusal::Conflict),
+    if !postgres.active_read(&open.scope) {
+        match transaction
+            .begin_opaque(&open.operation, &open.key, request)
+            .await
+            .map_err(Refusal::Postgres)?
+        {
+            OpaqueBegun::New => {}
+            OpaqueBegun::Finished(result) => return Ok((None, Begun::Finished(result))),
+            OpaqueBegun::Uncertain => return Err(Refusal::Uncertain),
+            OpaqueBegun::Conflict => return Err(Refusal::Conflict),
+        }
     }
     postgres
         .bind_operation_transaction(&open.scope, &transaction)
         .map_err(|error| binding_error(OperationErrorKind::Transaction, &open.scope, error))?;
     open.transaction = Some(transaction);
-    Ok((Some(open), Begun::New))
+    open.settled = false;
+    Ok((Some(open), Begun::New(delivery)))
 }
 
 #[cfg(test)]

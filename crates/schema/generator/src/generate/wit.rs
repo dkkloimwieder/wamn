@@ -12,7 +12,9 @@ use super::{
 };
 use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
-use crate::manifest::{FilterMatch, OperationErrorDetailKey, authored_name, serde_field};
+use crate::manifest::{
+    CustomOperationType, FilterMatch, OperationErrorDetailKey, authored_name, serde_field,
+};
 
 /// How many items one generated CRUD call carries. The codec refuses any
 /// other count, and the route input schema states the same bounds.
@@ -536,11 +538,7 @@ fn emit_crud_codec(
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
         revision_width(table, operation),
     ));
-    source.push_str(&emit_export_adapter(
-        &type_name,
-        false,
-        action.changes_records(),
-    ));
+    source.push_str(&emit_export_adapter(&type_name, false, true));
     source
 }
 
@@ -718,7 +716,7 @@ where
 const QUERY_EXPORT: &str = r#"
 #[allow(unused_macros)]
 macro_rules! export_operation {
-    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {
+    ($component:ty, $contract:path, $node:path, $handler:path, $codec:ident) => {
         const _: () = {
             use $contract as __contract;
             use $node as __node;
@@ -733,7 +731,6 @@ macro_rules! export_operation {
             }
 
             impl __contract::Guest for $component {
-                #[allow(clippy::unused_async_trait_impl)]
                 async fn run(
                     _context: __node::NodeContext,
                     input: __contract::QueryRequest,
@@ -744,12 +741,15 @@ macro_rules! export_operation {
                     ),
                     __node::NodeError,
                 > {
+                    let mut state = wamn_postgres_statements::operation_transaction().await
+                        .map_err(|error| __node::NodeError::Terminal(__node::ErrorDetail {
+                            message: error.to_string(), code: Some("internal_error".to_owned()),
+                        }))?;
                     let (writer, rows) = crate::wit_stream::new::<__contract::QueryRow>();
                     let (end, ended) = crate::wit_future::new::<
                         Result<__contract::QueryEnd, __contract::QueryError>,
                     >(|| Err(__contract::QueryError::InternalError));
                     spawn_local(async move {
-                        let mut state = $state;
                         let mut sink = __codec::Rows::typed(writer);
                         let outcome = __codec::run(Ok(input), &mut state, &mut sink, $handler).await;
                         drop(sink);
@@ -758,18 +758,20 @@ macro_rules! export_operation {
                     Ok((rows, ended))
                 }
 
-                #[allow(clippy::unused_async_trait_impl)]
                 async fn run_json(
                     _context: __node::NodeContext,
                     input: String,
                 ) -> Result<(StreamReader<String>, FutureReader<String>), __node::NodeError> {
                     let request = __codec::decode(&input).map_err(invalid)?;
+                    let mut state = wamn_postgres_statements::operation_transaction().await
+                        .map_err(|error| __node::NodeError::Terminal(__node::ErrorDetail {
+                            message: error.to_string(), code: Some("internal_error".to_owned()),
+                        }))?;
                     let (writer, rows) = crate::wit_stream::new::<String>();
                     let (end, ended) = crate::wit_future::new::<String>(|| {
                         __codec::encode_end(&Err(__contract::QueryError::InternalError))
                     });
                     spawn_local(async move {
-                        let mut state = $state;
                         let mut sink = __codec::Rows::json(writer);
                         let outcome = __codec::run(request, &mut state, &mut sink, $handler).await;
                         drop(sink);
@@ -2154,7 +2156,9 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     source.push_str(&emit_export_adapter(
         &type_name,
         false,
-        operation.has_host_transaction(),
+        operation.has_host_transaction()
+            || (operation.type_ == CustomOperationType::Projection
+                && !operation.statements.is_empty()),
     ));
     source
 }

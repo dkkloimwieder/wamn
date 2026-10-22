@@ -592,14 +592,6 @@ pub(super) fn emit_projection(
         ),
     };
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
-    // A read runs on the connection; a change runs in the host's transaction.
-    if wamn_api.is_some_and(|api| {
-        api.accessors
-            .iter()
-            .any(|accessor| !accessor.operation.changes_records())
-    }) {
-        source.push_str("use wamn_postgres_statements::Connection;\n\n");
-    }
     let model_row = RustRow {
         name: format!("{}Row", rust_type_identifier(model_name)),
         visibility: RustVisibility::Public,
@@ -765,8 +757,6 @@ fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
 }
 
 fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
-    // A change runs in the transaction the host began for its operation.
-    let transactional = accessor.operation.changes_records();
     emit_argument_count_expectation(source, accessor.binds.len());
     writeln!(
         source,
@@ -775,11 +765,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
         accessor.name
     )
     .expect("writing to a String cannot fail");
-    if transactional {
-        source.push_str("    transaction: &mut wamn_postgres_statements::Transaction,\n");
-    } else {
-        source.push_str("    connection: &mut Connection,\n");
-    }
+    source.push_str("    transaction: &mut wamn_postgres_statements::Transaction,\n");
     for bind in &accessor.binds {
         writeln!(source, "    {}: {},", bind.parameter, bind.wamn_rust)
             .expect("writing to a String cannot fail");
@@ -796,12 +782,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     }
     writeln!(
         source,
-        "    let rows = {}.run({}, vec![",
-        if transactional {
-            "transaction"
-        } else {
-            "connection"
-        },
+        "    let rows = transaction.run({}, vec![",
         accessor.statement_constant
     )
     .expect("writing to a String cannot fail");
@@ -834,7 +815,7 @@ fn accessor_result_type(accessor: &WamnAccessor) -> String {
 fn emit_stream_accessor_body(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
     writeln!(
         source,
-        "    connection.run_stream({}, vec![",
+        "    transaction.run_stream({}, vec![",
         accessor.statement_constant
     )
     .expect("writing to a String cannot fail");

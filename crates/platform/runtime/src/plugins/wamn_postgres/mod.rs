@@ -495,6 +495,25 @@ impl HostPlugin for WamnPostgres {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
+        if interfaces.contains("wamn", "operation", &["operation"]) {
+            let WorkloadItem::Component(component) = item else {
+                anyhow::bail!("operation authority requires an entry component");
+            };
+            if self
+                .operation_workloads
+                .read()
+                .expect("operation workloads lock poisoned")
+                .contains_key(component.workload_id())
+            {
+                self.bind_entry_instance(
+                    component.workload_id(),
+                    component.id(),
+                    component.name(),
+                )?;
+            }
+            // A control root links the interface without operation authority.
+            // Calls on an unbound instance refuse before accessing SQL or claims.
+        }
         // The wash host path: one workload, one bind, both halves in order.
         self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces)?;
         let component = item.component().clone();

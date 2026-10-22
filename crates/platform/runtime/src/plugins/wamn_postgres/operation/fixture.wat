@@ -51,24 +51,29 @@
   (import "wamn:operation/operation@0.1.0" (instance $operation
     (type $id' string)
     (export "sealed-operation-id" (type $id (eq $id')))
-    (type $refusal' (variant (case "uncertain") (case "resolved") (case "conflict")
+    (type $refusal' (variant (case "uncertain") (case "resolved" string) (case "conflict")
       (case "unknown-operation") (case "grant-denied") (case "invalid-caller")
       (case "not-begun") (case "already-begun") (case "postgres" $pg-error)))
     (export "refusal" (type $refusal (eq $refusal')))
-    (type $begun' (variant (case "new") (case "finished" string)))
+    (type $begun' (variant (case "new" string) (case "finished" string)))
     (export "begun" (type $begun (eq $begun')))
-    (export "begin-operation" (func async (param "caller" (borrow $caller))
+    (export "begin-operation" (func async (param "caller" (option (borrow $caller)))
       (param "operation" $id) (param "idempotency-key" string) (param "request-hash" (list u8))
       (result (result $begun (error $refusal)))))
     (export "commit" (func async (param "result" string) (result (result (error $refusal)))))
-    (export "rollback" (func (result (result (error $refusal)))))))
+    (export "rollback" (func async (result (result (error $refusal)))))
+    (export "wal-position" (func async (result (result string (error $refusal)))))))
+  (alias export $operation "refusal" (type $refusal))
   (core module $memory
     (memory (export "memory") 1)
+    (data (i32.const 640) "base:widget/get@1.0.0")
+    (data (i32.const 672) "read.sql")
     (data (i32.const 512) "base:widget/update@1.0.0")
     (data (i32.const 544) "key")
     (data (i32.const 560) "\ff\00\80")
     (data (i32.const 576) "update.sql")
     (data (i32.const 608) "{ \22value\22 : 7 }")
+    (data (i32.const 736) "external-evidence")
     (global $next (mut i32) (i32.const 1024))
     (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
       (local $ptr i32)
@@ -82,6 +87,8 @@
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $rollback (canon lower (func $operation "rollback")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $wal (canon lower (func $operation "wal-position")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $transaction (canon lower (func $statements "operation-transaction")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $run (canon lower (func $statements "[method]transaction.run")
@@ -89,15 +96,29 @@
   (core func $return (canon task.return (result bool)))
   (core module $main
     (import "memory" "memory" (memory 1))
-    (import "host" "begin" (func $begin (param i32 i32 i32 i32 i32 i32 i32 i32)))
+    (import "host" "begin" (func $begin (param i32 i32 i32 i32 i32 i32 i32 i32 i32)))
     (import "host" "commit" (func $commit (param i32 i32 i32)))
     (import "host" "rollback" (func $rollback (param i32)))
+    (import "host" "wal" (func $wal (param i32)))
     (import "host" "transaction" (func $transaction (param i32)))
     (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32)))
     (import "host" "return" (func $return (param i32)))
     (func $begin-call (param $caller i32)
-      local.get $caller i32.const 512 i32.const 24 i32.const 544 i32.const 3
-      i32.const 560 i32.const 3 i32.const 64 call $begin)
+      i32.const 1 local.get $caller i32.const 512 i32.const 24 i32.const 544 i32.const 3
+      i32.const 560 i32.const 3 i32.const 64 call $begin
+      i32.const 64 i32.load8_u i32.eqz if
+        i32.const 72 i32.load8_u i32.eqz if
+          ;; Preserve the host's id before another import overwrites the result.
+          i32.const 256 i32.const 76 i32.load i32.store
+          i32.const 260 i32.const 80 i32.load i32.store
+        end
+      end)
+    (func (export "delivery-id") (result i32) i32.const 256)
+    (func (export "resolved-refusal") (result i32)
+      i32.const 704 i32.const 1 i32.store
+      i32.const 712 i32.const 736 i32.store
+      i32.const 716 i32.const 17 i32.store
+      i32.const 704)
     (func $commit-call
       i32.const 608 i32.const 15 i32.const 64 call $commit)
     (func $run-statement
@@ -109,8 +130,85 @@
     (func $refused (param $tag i32)
       i32.const 64 i32.load8_u i32.const 1 i32.ne if unreachable end
       i32.const 72 i32.load8_u local.get $tag i32.ne if unreachable end)
+    (func $wal-call
+      (local $ptr i32) (local $end i32) (local $byte i32) (local $slashes i32)
+      i32.const 64 call $wal
+      i32.const 64 i32.load8_u if unreachable end
+      i32.const 72 i32.load local.set $ptr
+      i32.const 76 i32.load i32.const 3 i32.lt_u if unreachable end
+      local.get $ptr i32.const 76 i32.load i32.add local.set $end
+      loop $next
+        local.get $ptr i32.load8_u local.set $byte
+        local.get $byte i32.const 47 i32.eq if
+          local.get $slashes i32.const 1 i32.add local.set $slashes
+        else
+          local.get $byte i32.const 48 i32.ge_u
+          local.get $byte i32.const 57 i32.le_u i32.and
+          local.get $byte i32.const 65 i32.ge_u
+          local.get $byte i32.const 70 i32.le_u i32.and i32.or
+          i32.eqz if unreachable end
+        end
+        local.get $ptr i32.const 1 i32.add local.tee $ptr
+        local.get $end i32.lt_u br_if $next
+      end
+      local.get $slashes i32.const 1 i32.ne if unreachable end)
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
     (func (export "run") (param $caller i32) (param $mode i32) (result i32)
+      local.get $mode i32.const 21 i32.eq if
+        local.get $caller call $begin-call i32.const 3 call $refused
+        call $commit-call i32.const 6 call $refused
+        i32.const 64 call $rollback i32.const 6 call $refused
+        i32.const 64 call $wal i32.const 6 call $refused
+        i32.const 1 call $return i32.const 0 return
+      end
+      local.get $mode i32.const 19 i32.ge_u if
+        i32.const 0 i32.const 0
+        local.get $mode i32.const 19 i32.eq
+        if (result i32) i32.const 640 else i32.const 512 end
+        local.get $mode i32.const 19 i32.eq
+        if (result i32) i32.const 21 else i32.const 24 end
+        i32.const 544 i32.const 3 i32.const 560 i32.const 3 i32.const 64 call $begin
+        local.get $mode i32.const 19 i32.eq if
+          i32.const 64 i32.load8_u if unreachable end
+          i32.const 64 call $rollback
+          i32.const 64 i32.load8_u if unreachable end
+        else
+          i32.const 4 call $refused
+        end
+        i32.const 1 call $return i32.const 0 return
+      end
+      local.get $mode i32.const 18 i32.eq if
+        i32.const 1 local.get $caller i32.const 640 i32.const 21 i32.const 544 i32.const 3
+        i32.const 560 i32.const 3 i32.const 64 call $begin
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 72 i32.load8_u if unreachable end
+        call $wal-call
+        i32.const 128 call $transaction
+        i32.const 128 i32.load8_u if unreachable end
+        i32.const 136 i32.load i32.const 672 i32.const 8
+        i32.const 0 i32.const 0 i32.const 192 call $run
+        i32.const 192 i32.load8_u if unreachable end
+        call $commit-call
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 64 call $wal i32.const 6 call $refused
+        i32.const 1 call $return i32.const 0 return
+      end
+      local.get $mode i32.const 16 i32.eq if
+        i32.const 64 call $wal i32.const 6 call $refused
+        i32.const 1 call $return i32.const 0 return
+      end
+      local.get $mode i32.const 17 i32.eq if
+        local.get $caller call $begin-call
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 72 i32.load8_u if unreachable end
+        call $wal-call
+        call $run-statement
+        call $wal-call
+        call $commit-call
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 64 call $wal i32.const 6 call $refused
+        i32.const 1 call $return i32.const 0 return
+      end
       local.get $mode i32.const 13 i32.eq if
         i32.const 64 call $rollback i32.const 6 call $refused
         i32.const 1 call $return i32.const 0 return
@@ -219,8 +317,13 @@
     (with "memory" (instance $memory))
     (with "host" (instance (export "begin" (func $begin)) (export "commit" (func $commit))
       (export "rollback" (func $rollback))
+      (export "wal" (func $wal))
       (export "transaction" (func $transaction)) (export "run" (func $run))
       (export "return" (func $return))))))
+  (func (export "delivery-id") (result string)
+    (canon lift (core func $main "delivery-id") (memory $memory "memory")))
+  (func (export "resolved-refusal") (result $refusal)
+    (canon lift (core func $main "resolved-refusal") (memory $memory "memory")))
   (func (export "run") async (param "caller" (own $caller)) (param "mode" u32) (result bool)
     (canon lift (core func $main "run") (memory $memory "memory")
       (realloc (func $memory "realloc")) async (callback (func $main "callback")))))

@@ -9,7 +9,7 @@
 
 /// The largest cap of a streamed load. Measurement replaces this value
 /// (`wamn-utci.6`).
-pub(crate) const STREAM_CEILING: i64 = 100_000;
+pub(crate) const STREAM_CEILING: i64 = wamn_engine::flow_http_routing::STREAM_CEILING as i64;
 
 /// The reply line of one row: `{"row":…}`.
 pub(crate) fn row_line(row: &str) -> String {

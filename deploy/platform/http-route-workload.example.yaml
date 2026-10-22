@@ -1,16 +1,9 @@
-# HTTP ingress. This component owns only transport adaptation: authoritative
-# route/auth lookup and inline router delivery remain host capabilities. It
-# imports no PostgreSQL, graph, or run-queue interface.
-#
-# Push the locked build artifact before applying:
-#   wamn_wash=$(tools/install-wash)
-#   DOCKER_CONFIG="$WAMN_REGISTRY_DOCKER_CONFIG" "$wamn_wash" oci push \
-#     localhost:5000/wamn/http-route:dev /bench/http-route.wasm \
-#     --ca-path /tmp/wamn-ca.crt
-# Use deploy/platform/registry.yaml for the CA, credential directory, and port-forward.
-#
-# The host group must supply wamn:flow-http-routing@0.1.0 and
-# wamn:router-delivery@0.4.0. Neither capability grants direct run-state SQL.
+# The published application includes the pinned HTTP route guest.
+# Publish the release as docs/operations/deployment.md describes.
+# Set image to composed-entry.reference from that release's serving manifest.
+# Replace the example SQL import names with the application's statement instances.
+# The entry calls base operations inside the component and uses router-delivery
+# for host routes and wiring attachments. Each request uses a fresh Store.
 ---
 apiVersion: v1
 kind: Service
@@ -68,10 +61,24 @@ spec:
           package: router-delivery
           version: "0.4.0"
           interfaces: [delivery]
+        - namespace: wamn
+          package: operation
+          version: "0.1.0"
+          interfaces: [operation]
+        - namespace: wamn
+          package: postgres
+          version: "0.4.0"
+          interfaces: [statements]
+        - namespace: wamn
+          package: postgres
+          version: "0.4.0"
+          name: sql-0
+          interfaces: [statements]
       components:
         - name: flow-http
-          image: registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+          image: registry.wamn-system.svc.cluster.local:5000/wamn/releases/entries@sha256:0000000000000000000000000000000000000000000000000000000000000000
           imagePullPolicy: Always
+          poolSize: 0
           localResources:
             allowedIpNameLookups: []
             config:

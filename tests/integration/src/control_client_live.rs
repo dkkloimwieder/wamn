@@ -66,7 +66,10 @@ async fn application_routes_answer_through_the_generated_client() -> anyhow::Res
         .await?;
 
     let engine = Arc::new(build_engine(&[])?);
-    let flow_http = Component::new(engine.inner(), std::fs::read(&flow_http_wasm)?)?;
+    let flow_http = Component::new(
+        engine.inner(),
+        wamn_component_composer::compose_control_entry(std::fs::read(&flow_http_wasm)?)?,
+    )?;
     let (endpoint, task) = serve(
         engine,
         flow_http,
@@ -227,7 +230,10 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     ));
 
     let engine = Arc::new(build_engine(&[])?);
-    let flow_http = Component::new(engine.inner(), std::fs::read(&flow_http_wasm)?)?;
+    let flow_http = Component::new(
+        engine.inner(),
+        wamn_component_composer::compose_control_entry(std::fs::read(&flow_http_wasm)?)?,
+    )?;
     let (endpoint, task) = serve(
         engine,
         flow_http,

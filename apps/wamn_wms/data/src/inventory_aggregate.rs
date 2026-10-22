@@ -4,7 +4,7 @@
 //! consumed packagings and says why. The result is the bounded list the contract
 //! declares; the input carries nothing but its correlation id.
 
-use wamn_postgres_statements::Connection;
+use wamn_postgres_statements::Transaction;
 
 use crate::error::{self, AccessError};
 use crate::statements::wamn::inventory_aggregate as sql;
@@ -15,17 +15,9 @@ pub use crate::statements::wamn::inventory_aggregate::InventoryAggregateRow;
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
 pub async fn execute(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
 ) -> Result<Vec<InventoryAggregateRow>, AccessError> {
-    let mut transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    let rows = sql::inventory_aggregate(&mut transaction)
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    transaction
-        .commit()
+    let rows = sql::inventory_aggregate(transaction)
         .await
         .map_err(|e| error::from_statement(&e))?;
     Ok(rows)

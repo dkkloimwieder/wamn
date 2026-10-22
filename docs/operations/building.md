@@ -54,7 +54,26 @@ A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifac
 The build and the Dockerfile stage refuse a guest that does not match its pin.
 If you change the router on purpose, write its new digest to `apps/platform/ingress/http-route/http_route.wasm.sha256`.
 A plain `cargo build` of a guest does not use the guest RUSTFLAGS, so its bytes depend on the machine. Do not pin such a guest.
+The release publisher also needs the pinned `http-route` guest.
+The ctl image carries it at `/usr/local/share/wamn/http_route.wasm`.
+For native publication, set `WAMN_FLOW_HTTP_COMPONENT` to the built guest and `WAMN_COMPONENT_ARTIFACT_BASE` to the component repository.
+Publication pushes the composed entry beneath `<release-artifact-base>/entries` and records its OCI manifest reference.
+
 The workload guests `http-route` and `materializer` belong to no package. Release qualification and the cluster cases build each one with the same guest build, through `wamn_schema_generator::build::build_guest`.
+
+The Docker `roles` target exports the control HTTP entry as `http_route.wasm`.
+It composes the pinned route guest with an empty dispatcher at platform build time.
+The publisher image retains the raw route guest for application composition.
+To build the control entry locally from that raw guest, run:
+
+```bash
+cargo run --offline -p wamn-component-composer -- \
+  --control-route "$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
+  --output "$CARGO_TARGET_DIR/control_http.wasm"
+```
+
+Local development composes the same control entry before it starts the host.
+It names the entry with an absolute `file:` reference to its digest-named artifact.
 
 The build virtualizes each component that the package owns and each crate that [`tools/component-virtualization.json`](../../tools/component-virtualization.json) lists under `packages`.
 It writes the virtualized guest to `virtualized/std-empty-environment` in the Cargo target directory.

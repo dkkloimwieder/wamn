@@ -202,6 +202,7 @@ pub(super) async fn assemble(
     let engine = Arc::new(build_engine(&[])?);
     let mut component_digests = HashMap::new();
     let mut admitted = Vec::new();
+    let mut admissions = Vec::new();
     let mut statement_instances = BTreeMap::new();
     let mut wirings = Vec::new();
     let mut roots = BTreeMap::new();
@@ -261,6 +262,7 @@ pub(super) async fn assemble(
         }
         roots.insert(applied.package_id.clone(), package.root);
         admitted.push((applied.package_id, facts));
+        admissions.push(admission);
     }
     wamn_control::reconcile_package_data_access::reconcile_package_data_access(
         wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
@@ -293,7 +295,24 @@ pub(super) async fn assemble(
         &routes,
         &attachments,
     )?;
-    let canonical = manifest.canonical_bytes();
+    let canonical_bytes = manifest.canonical_bytes();
+    let (_, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
+    let mut published = wamn_control::publish_release::PublishedRelease {
+        manifest,
+        digest,
+        canonical_bytes,
+    };
+    let entry = wamn_control::publish_release::compose_release_entry(
+        &published,
+        &admissions,
+        &std::fs::read(input.flow_http_wasm)?,
+    )?;
+    let entry_path =
+        wamn_engine::artifact_source::local_component_path(input.scratch, entry.digest())?;
+    std::fs::write(&entry_path, entry.bytes())?;
+    let entry_reference = format!("file:{}", entry_path.display());
+    wamn_control::publish_release::record_composed_entry(&mut published, &entry, &entry_reference)?;
+    let canonical = published.canonical_bytes;
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "local application",
@@ -315,6 +334,24 @@ pub(super) async fn assemble(
             None,
         ),
     )));
+    postgres.bind_operation_workload(
+        super::LOCAL_WORKLOAD_ID,
+        Arc::clone(&release),
+        &entry_reference,
+        "flow-http",
+        wamn_runtime::plugins::wamn_postgres::SessionClaims {
+            tenant: input.tenant.to_owned(),
+            project: Some(input.project.to_owned()),
+            schema: Some(input.schema.to_owned()),
+            runner: Some("local-application".into()),
+            role: None,
+            user_id: None,
+            operation: None,
+            release: Some(
+                wamn_runtime::plugins::wamn_postgres::ReleaseIdentity::from_loaded(&release),
+            ),
+        },
+    )?;
     let auth_nats = super::LocalAuthNats::start(input.scratch).await?;
     wamn_runtime::auth_cache::replicate(
         &auth_nats.client,
@@ -402,7 +439,7 @@ pub(super) async fn assemble(
                 PlatformRouteAuthenticator::default().with_authentication(Arc::new(
                     RouteAuthentication::new(
                         Arc::new(reader),
-                        postgres,
+                        Arc::clone(&postgres),
                         input.org,
                         input.project,
                         subject,
@@ -412,7 +449,7 @@ pub(super) async fn assemble(
             ),
         ),
     );
-    let flow_http = Component::new(engine.inner(), std::fs::read(input.flow_http_wasm)?)?;
+    let flow_http = Component::new(engine.inner(), entry.bytes())?;
     let secret = input.scratch.join("operator-pat.json");
     wamn_control::provision_project_env::write_secret_json(
         &secret,
@@ -425,6 +462,7 @@ pub(super) async fn assemble(
         runtime: LocalApplicationRuntime {
             engine,
             flow_http,
+            plugins: vec![postgres],
             routing,
             bridge,
             queue,

@@ -40,6 +40,10 @@ spec:
           version: "0.1.0"
           interfaces: [routing]
         - namespace: wamn
+          package: operation
+          version: "0.1.0"
+          interfaces: [operation]
+        - namespace: wamn
           package: router-delivery
           version: "0.4.0"
           interfaces: [delivery]
@@ -47,5 +51,6 @@ spec:
         - name: flow-http
           image: __HTTP_IMAGE__
           imagePullPolicy: Always
+          poolSize: 0
           localResources:
             allowedIpNameLookups: []

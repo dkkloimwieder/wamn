@@ -26,7 +26,7 @@ pub(super) mod approve_codec {
 }
 
 pub(super) async fn handle_detail(
-    connection: &mut wamn_postgres_statements::Connection,
+    connection: &mut wamn_postgres_statements::Transaction,
     request: detail_contract::LoadPurchaseOrderDetailRequest,
 ) -> Result<
     detail_contract::LoadPurchaseOrderDetailResult,

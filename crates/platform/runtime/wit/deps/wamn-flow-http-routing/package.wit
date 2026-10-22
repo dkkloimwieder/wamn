@@ -29,6 +29,60 @@ interface routing {
     cardinality: cardinality,
   }
 
+  enum canonical-spelling {
+    numeric,
+    timestamptz,
+  }
+
+  record field-spelling {
+    path: string,
+    spelling: canonical-spelling,
+  }
+
+  record line-order {
+    path: string,
+    ascending-by: string,
+  }
+
+  /// Apply spelling and line order before invocation and hashing.
+  /// Exclude the listed dotted paths only from the hash, not the input.
+  /// A [] path segment visits each list element. Hash canonical JSON with
+  /// SHA-256, retaining the sha256: prefix in the bytes sent to begin-operation.
+  record request-hash-rule {
+    excluded: list<string>,
+    lines: option<line-order>,
+    spelling: list<field-spelling>,
+  }
+
+  record relation {
+    schema: string,
+    name: string,
+  }
+
+  variant etag-kind {
+    /// The revision field in the returned value, for a strong get tag.
+    get(string),
+    /// Sorted relations and wal-position, for a weak list tag.
+    %list(list<relation>),
+  }
+
+  record etag-inputs {
+    release: string,
+    kind: etag-kind,
+  }
+
+  record band-start {
+    field: string,
+    required: bool,
+  }
+
+  /// Read bounds projected from the released input schema.
+  record read-limits {
+    page-minimum: option<u32>,
+    page-maximum: option<u32>,
+    band-starts: list<band-start>,
+  }
+
   record route-definition {
     attachment-id: string,
     host: string,
@@ -41,6 +95,17 @@ interface routing {
     /// derives from the route's operation kind and auth policy. None for a
     /// route that is not a read: its responses are not stored.
     cache-control: option<string>,
+    /// None for host routes and wiring attachments, which use router-delivery.
+    sealed-operation-id: option<string>,
+    /// The dotted item path of the key. None means this route logs no intent.
+    idempotency-rule: option<string>,
+    request-hash-rule: option<request-hash-rule>,
+    etag-inputs: option<etag-inputs>,
+    /// The platform limit of a streamed read.
+    stream-ceiling: option<u32>,
+    /// The shared operation budget, bounded by the host operation limit.
+    operation-deadline-ms: u64,
+    read-limits: option<read-limits>,
   }
 
   record auth-rejection {

@@ -375,20 +375,35 @@ A new id comes from its insert's `RETURNING`, and nothing mints an id before the
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 
 The host also provides `wamn:operation/operation@0.1.0` for the composed application entry.
-The current Receiving path does not call this interface.
+Receiving calls this interface through its composed HTTP entry.
 The host binds its workload to a component in the loaded release before serving calls.
 Only the composed entry imports `wamn:operation`.
+The control-only entry links this interface without operation authority.
+Its begin calls return `unknown-operation`, and its commit, rollback, and WAL calls return `not-begun`.
 Package members that import `wamn:postgres/statements` need only the PostgreSQL WIT package path.
 The `wamn:postgres@0.4.0` package has no dependency on `wamn:flow-http-routing`.
 
 `begin-operation` takes the opaque caller handle from `authenticate`, the sealed operation id, an idempotency key, and request hash bytes.
+The caller is optional only for an operation that registers no grant in the loaded release.
+An absent caller on a granted operation returns `grant-denied`.
 The host checks the handle, release facts, and caller grant, then mints a delivery id.
-It pipelines the claims and write-log insert in a new transaction for that operation.
+It returns that id as `begun::new(string)` for the application's operation context.
+The application reads the id and never supplies it.
+The host pipelines the claims and write-log insert in a new transaction for that operation.
 The host stores the hash bytes unchanged and returns stored result text unchanged as `begun::finished` on replay.
 The entry returns that text and runs no work. `finished` leaves no operation open, so another begin is allowed immediately.
 
+The host projects each base route's operation id and idempotency key path through `wamn:flow-http-routing/routing@0.1.0`.
+The request-hash rule declares excluded paths, line order, and numeric or timestamp spelling.
+It excludes `request_id` from the hash and keeps the key.
+The guest applies spelling and line order before invocation, then excludes the declared paths only for hashing.
+The hash bytes retain the `sha256:` prefix of the canonical JSON digest.
+Host routes and wiring attachments carry no base-operation rules.
+The route also carries the host operation deadline in milliseconds.
+All items share that budget, and an unreached item claims no key.
+
 `commit(result)` stores the application's JSON text without parsing it, emits the causation message, and commits the transaction.
-`rollback()` rolls back the open transaction, drops its claim, and stores no result.
+The async `rollback()` call rolls back the open transaction, drops its claim, and stores no result.
 The key is unclaimed again, so a retry runs the operation.
 Rollback clears the open operation on success or refusal. Rollback without an open operation returns `not-begun`.
 Dropping the Store rolls back unfinished work and clears its authority.
@@ -397,9 +412,21 @@ A begin while one is open returns `already-begun` and leaves that operation open
 Commit clears the open operation on success or refusal. Any other refused begin leaves nothing open.
 The next begin on the same Store is allowed, with its own transaction and delivery id.
 Commit without a new open operation returns `not-begun`.
-Member statement handles borrow the same transaction, while `run`, `run-stream`, and guest transaction creation remain refused inside it.
+Member statement handles borrow the same transaction.
+`statements.run`, `statements.run-stream`, and guest transaction creation remain refused inside it.
+`transaction.run-stream` reads on that transaction and uses the statement-declared row limit.
+The caller reads its completion future before another transaction call.
+Dropping an unfinished stream aborts the transaction by closing its connection.
+The host sends no protocol cancellation that can affect a later statement.
 
-This interface returns `uncertain`, `resolved`, `conflict`, `unknown-operation`, `grant-denied`, `invalid-caller`, `not-begun`, `already-begun`, or `postgres(pg-error)`.
+The async `wal-position()` call returns `pg_current_wal_lsn()::text` on the open operation's connection.
+It leaves the operation open and returns `not-begun` when no operation is open.
+The call uses no separate connection or transaction.
+Read operations use a read-only snapshot and claim no write-log key.
+Their commit writes neither a stored result nor a causation message, so a read does not invalidate a list tag.
+
+This interface returns `uncertain`, `resolved(string)`, `conflict`, `unknown-operation`, `grant-denied`, `invalid-caller`, `not-begun`, `already-begun`, or `postgres(pg-error)`.
+The `resolved` payload carries the operator basis text for the existing `intent-resolved` response.
 The write log supports no operator resolution, so it does not currently produce `resolved`.
 An unread commit answer returns `uncertain`.
 
@@ -427,11 +454,13 @@ The export takes one request and returns a row stream and a future of the final 
 Its `run-json` entry returns each row as one JSON object and the outcome as one JSON value.
 The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100.
 The query's codec fills the default and refuses a limit below 1.
-The host holds the maximum of each reply shape and refuses a larger limit before the query runs.
-The engine gathers the rows and the cursor into one page outcome for a caller that reads one outcome, such as a route or a wiring node.
-A query reads through `statements.run-stream` of `wamn:postgres` 0.4.0.
+The host declares the maximum of each reply shape, and the entry refuses a larger limit before the query runs.
+The entry gathers rows and the cursor for a page response, and forwards batches for a streamed response.
+The engine gathers rows for a wiring caller that reads one outcome.
+An application query reads through `transaction.run-stream` of `wamn:postgres` 0.4.0.
+The entry opens that transaction before the query.
 The host executes the exact prepared statement once, with the claims of `run`, and buffers up to 500 rows per batch.
-Caller claims keep their transaction. Reads without caller claims use the connection configuration and one implicit transaction.
+Caller claims and anonymous reads both use the open operation transaction.
 Dropping an unfinished stream closes its session and ends the query.
 The statement reads one snapshot, so a write that commits during a load does not show in it.
 The test `a_streamed_load_reads_one_statement_as_of_its_start` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) holds a load after its first rows and finds its statement open.

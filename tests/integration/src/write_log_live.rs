@@ -232,6 +232,37 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     );
     anyhow::ensure!(counts(&database, "k-3").await? == (1, 1));
 
+    // Replay keeps stored JSON bytes inside the response array. Only the
+    // current request_id is inserted into the stored item.
+    let stored = " \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} }\t";
+    database
+        .execute(
+            "UPDATE app_system.write_log SET result = $1 \
+             WHERE operation = 'platform-fixture:widget/create' AND idempotency_key = 'k-3'",
+            &[&stored],
+        )
+        .await?;
+    let response = routes
+        .client
+        .post(format!("{}/widget/create", routes.endpoint))
+        .header("Host", &routes.host)
+        .bearer_auth(&routes.bearer)
+        .json(&json!([
+            {"request_id": "r-8", "idempotency_key": "k-3", "code": "standard"},
+            {"request_id": "r-9", "idempotency_key": "k-1", "code": "priority"},
+        ]))
+        .send()
+        .await?;
+    anyhow::ensure!(response.status() == reqwest::StatusCode::OK);
+    let text = response.text().await?;
+    anyhow::ensure!(
+        text.starts_with("[ \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} ,\"request_id\":\"r-8\"}\t,"),
+        "replay preserves stored bytes in a mixed response: {text}"
+    );
+    let answer: Value = serde_json::from_str(&text)?;
+    anyhow::ensure!(answer[1]["error"]["code"] == "idempotency_conflict");
+    anyhow::ensure!(counts(&database, "k-3").await? == (1, 1));
+
     application.shutdown().await?;
     Ok(())
 }

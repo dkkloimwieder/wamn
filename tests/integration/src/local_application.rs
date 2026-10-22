@@ -36,6 +36,7 @@ pub use auth_nats::LocalAuthNats;
 pub struct LocalApplicationRuntime {
     pub engine: Arc<wash_runtime::engine::Engine>,
     pub flow_http: Component,
+    pub plugins: Vec<Arc<dyn HostPlugin + Send + Sync>>,
     pub routing: Arc<FlowHttpRouting>,
     pub bridge: Arc<RouterDeliveryBridge>,
     pub queue: LocalQueue,
@@ -150,9 +151,10 @@ impl LocalApplication {
             component_digests,
         } = assembly::assemble(config).await?;
         let queue = runtime.queue.clone();
-        let (endpoint, task) = serve(
+        let (endpoint, task) = serve_with_plugins(
             Arc::clone(&runtime.engine),
             runtime.flow_http.clone(),
+            runtime.plugins.clone(),
             Arc::clone(&runtime.routing),
             Arc::clone(&runtime.bridge) as Arc<dyn RouteDelivery>,
         )
@@ -197,6 +199,19 @@ pub async fn serve(
     routing: Arc<FlowHttpRouting>,
     delivery: Arc<dyn RouteDelivery>,
 ) -> anyhow::Result<(String, JoinHandle<()>)> {
+    let postgres = Arc::new(wamn_runtime::plugins::WamnPostgres::from_env_for_project(
+        "control", None,
+    )?);
+    serve_with_plugins(engine, flow_http, vec![postgres], routing, delivery).await
+}
+
+async fn serve_with_plugins(
+    engine: Arc<wash_runtime::engine::Engine>,
+    flow_http: Component,
+    plugins: Vec<Arc<dyn HostPlugin + Send + Sync>>,
+    routing: Arc<FlowHttpRouting>,
+    delivery: Arc<dyn RouteDelivery>,
+) -> anyhow::Result<(String, JoinHandle<()>)> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .context("bind the local application HTTP endpoint")?;
@@ -209,19 +224,32 @@ pub async fn serve(
             };
             let engine = Arc::clone(&engine);
             let flow_http = flow_http.clone();
+            let plugins = plugins.clone();
             let routing = Arc::clone(&routing);
             let delivery = Arc::clone(&delivery);
             requests.spawn(async move {
                 let service = service_fn(move |request: Request<hyper::body::Incoming>| {
                     let engine = Arc::clone(&engine);
                     let flow_http = flow_http.clone();
+                    let plugins = plugins.clone();
                     let routing = Arc::clone(&routing);
                     let delivery = Arc::clone(&delivery);
                     async move {
                         let request =
                             request.map(|body| body.map_err(|_| ErrorCode::ConnectionTerminated));
-                        stream_request(engine.as_ref(), &flow_http, routing, delivery, request)
-                            .await
+                        let result = stream_request_with_plugins(
+                            engine.as_ref(),
+                            &flow_http,
+                            plugins,
+                            routing,
+                            delivery,
+                            request,
+                        )
+                        .await;
+                        if let Err(error) = &result {
+                            eprintln!("local application request failed: {error:#}");
+                        }
+                        result
                     }
                 });
                 if let Err(error) = http1::Builder::new()
@@ -278,6 +306,7 @@ fn serve_request_host<B>(routing: &FlowHttpRouting, request: &Request<B>) {
 async fn instantiate(
     engine: &wash_runtime::engine::Engine,
     flow_http: &Component,
+    extra_plugins: Vec<Arc<dyn HostPlugin + Send + Sync>>,
     routing: Arc<FlowHttpRouting>,
     bridge: Arc<dyn RouteDelivery>,
 ) -> anyhow::Result<(Store<SharedCtx>, Service)> {
@@ -285,6 +314,8 @@ async fn instantiate(
     let mut linker = Linker::new(raw);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
+    wasmtime_wasi::p3::clocks::add_to_linker(&mut linker)
+        .map_err(|error| anyhow::anyhow!("link WASI clocks into flow-http: {error}"))?;
     wasmtime_wasi_http::p3::add_to_linker(&mut linker)
         .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
     let loopback = Arc::new(std::sync::Mutex::new(
@@ -304,6 +335,14 @@ async fn instantiate(
     );
     let delivery = Arc::new(RouterDelivery::new(bridge));
     let imports = workload.world().imports;
+    for plugin in &extra_plugins {
+        plugin
+            .on_workload_item_bind(
+                &mut WorkloadItem::Component(&mut workload),
+                WitInterfaces::new(&imports),
+            )
+            .await?;
+    }
     {
         let mut item = WorkloadItem::Component(&mut workload);
         routing
@@ -316,6 +355,11 @@ async fn instantiate(
             .context("bind router delivery")?;
     }
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
+    plugins.extend(
+        extra_plugins
+            .into_iter()
+            .map(|plugin| (plugin.id(), plugin)),
+    );
     plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
     plugins.insert(ROUTER_DELIVERY_ID, delivery);
     let ctx = Ctx::builder(workload.workload_id().to_owned(), workload.id().to_owned())
@@ -370,9 +414,24 @@ where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Into<wasmtime_wasi_http::Error>,
 {
+    stream_request_with_plugins(engine, flow_http, Vec::new(), routing, bridge, request).await
+}
+
+async fn stream_request_with_plugins<B>(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    plugins: Vec<Arc<dyn HostPlugin + Send + Sync>>,
+    routing: Arc<FlowHttpRouting>,
+    bridge: Arc<dyn RouteDelivery>,
+    request: Request<B>,
+) -> anyhow::Result<Response<FrameBody>>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<wasmtime_wasi_http::Error>,
+{
     let request = with_host_authority(request)?;
     serve_request_host(&routing, &request);
-    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
+    let (mut store, service) = instantiate(engine, flow_http, plugins, routing, bridge).await?;
     let (request, request_io) =
         wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
     let (head_tx, head_rx) = tokio::sync::oneshot::channel();
@@ -425,8 +484,8 @@ where
             .await;
         match run {
             Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::debug!(%error, "flow-http response ended"),
-            Err(error) => tracing::debug!(%error, "flow-http store ended"),
+            Ok(Err(error)) => eprintln!("flow-http response ended: {error:#}"),
+            Err(error) => eprintln!("flow-http store ended: {error:#}"),
         }
     });
     let parts = head_rx

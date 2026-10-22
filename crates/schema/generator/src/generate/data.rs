@@ -137,7 +137,7 @@ pub(super) fn emit_model_data(
         .iter()
         .any(|accessor| !accessor.operation.changes_records())
     {
-        "use wamn_postgres_statements::Connection;\n"
+        "use wamn_postgres_statements::Transaction;\n"
     } else {
         ""
     };
@@ -223,7 +223,7 @@ fn emit_get(source: &mut String, model_name: &str, model_type: &str) {
         source,
         "/// `{model_name}.get`: load one row by id.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn get(connection: &mut Connection, id: &str) -> Result<{model_type}Row, Error> {{\n\
+         pub async fn get(connection: &mut Transaction, id: &str) -> Result<{model_type}Row, Error> {{\n\
          let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n\
          sql::get(connection, id.clone()).await.map_err({refuse})?.ok_or_else(|| Error::not_found(&id))\n\
          }}\n"
@@ -548,7 +548,7 @@ fn emit_query(
          ///\n/// The contract's order holds: the sort and the cursor first, then the\n\
          /// statement. The codec checked the limit.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn query(connection: &mut Connection, input: QueryInput) -> Result<Page<{model_type}Row, Error>, Error> {{\n\
+         pub async fn query(connection: &mut Transaction, input: QueryInput) -> Result<Page<{model_type}Row, Error>, Error> {{\n\
          let sort = match (input.sort_field.as_deref(), input.sort_direction.as_deref()) {{\n\
          (None, None) => ({default_field:?}, {default_direction}),\n\
          (Some(field), Some(\"ascending\")) => (field, Direction::Ascending),\n\

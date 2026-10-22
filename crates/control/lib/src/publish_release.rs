@@ -32,6 +32,7 @@ use crate::verification_policy::AuthoritativeEnvironmentPolicy;
 
 mod attachments;
 mod components;
+mod entry_publication;
 mod package_sources;
 
 use attachments::{
@@ -422,10 +423,23 @@ impl ComposedApplication {
 /// Build an HTTP application from an admitted member and pinned platform route bytes.
 ///
 /// The member can already contain its admitted bases. The pin must identify
-/// the supplied route layer exactly. This builds an artifact only: the current
-/// release manifest and loaders still select the original operation component.
+/// the supplied route layer exactly.
 pub fn compose_application(
     application: &crate::component_admission::ComponentAdmission,
+    route_bytes: &[u8],
+    route_digest: &str,
+) -> anyhow::Result<ComposedApplication> {
+    compose_verified_application(
+        application.facts(),
+        application.bytes(),
+        route_bytes,
+        route_digest,
+    )
+}
+
+fn compose_verified_application(
+    application: &AdmittedComponent,
+    application_bytes: &[u8],
     route_bytes: &[u8],
     route_digest: &str,
 ) -> anyhow::Result<ComposedApplication> {
@@ -435,19 +449,20 @@ pub fn compose_application(
     );
     let bytes = wamn_component_composer::compose_application(
         route_bytes.to_vec(),
-        application.bytes().to_vec(),
+        application_bytes.to_vec(),
     )
     .context("compose the route layer with the admitted application")?;
     wamn_engine::statement_instances::statement_instances(&bytes)
         .context("validate composed application statement ownership")?;
     let digest = wamn_engine::component_admission::component_digest(&bytes);
-    let mut application_digests = BTreeSet::from([application.component_digest().to_owned()]);
-    for payload in wasmparser::Parser::new(0).parse_all(application.bytes()) {
+    let mut application_digests =
+        BTreeSet::from([application.component_digest.as_str().to_owned()]);
+    for payload in wasmparser::Parser::new(0).parse_all(application_bytes) {
         if let wasmparser::Payload::ComponentSection {
             unchecked_range, ..
         } = payload?
         {
-            let member = &application.bytes()
+            let member = &application_bytes
                 [usize::try_from(unchecked_range.start)?..usize::try_from(unchecked_range.end)?];
             application_digests.insert(wamn_engine::component_admission::component_digest(member));
         }
@@ -457,9 +472,9 @@ pub fn compose_application(
         digest,
         route_digest: route_digest.to_owned(),
         application: wamn_catalog::ServingEntryMember {
-            package_id: application.package_id().to_owned(),
-            component: application.component().to_owned(),
-            digest: application.component_digest().to_owned(),
+            package_id: application.scope.package_id.as_str().to_owned(),
+            component: application.component.as_str().to_owned(),
+            digest: application.component_digest.as_str().to_owned(),
         },
         application_digests,
     })
@@ -472,6 +487,7 @@ pub fn compose_application(
 pub fn record_composed_entry(
     published: &mut PublishedRelease,
     entry: &ComposedApplication,
+    reference: &str,
 ) -> anyhow::Result<()> {
     let members: BTreeSet<_> = published
         .manifest
@@ -487,7 +503,6 @@ pub fn record_composed_entry(
             component: component.descriptor.component.clone(),
             digest: component.descriptor.component_digest.clone(),
         })
-    reference: &str,
         .collect();
     ensure!(
         members.contains(&entry.application),
@@ -507,6 +522,39 @@ pub fn record_composed_entry(
         canonical_bytes,
     };
     Ok(())
+}
+
+/// Compose the routed application before its artifact reference is recorded.
+pub fn compose_release_entry(
+    published: &PublishedRelease,
+    admissions: &[crate::component_admission::ComponentAdmission],
+    route_bytes: &[u8],
+) -> anyhow::Result<ComposedApplication> {
+    let pin = format!(
+        "sha256:{}",
+        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
+            .split_whitespace()
+            .next()
+            .expect("route pin exists")
+    );
+    let mut candidates = admissions.iter().collect::<Vec<_>>();
+    candidates.sort_by_key(|admission| std::cmp::Reverse(admission.bytes().len()));
+    for application in candidates {
+        let entry = compose_application(application, route_bytes, &pin)?;
+        let covers_routes = published.manifest.routes.iter().all(|route| {
+            published.manifest.components.iter().any(|component| {
+                component.package_id == route.package_id
+                    && component.descriptor.component == route.component
+                    && entry
+                        .application_digests
+                        .contains(&component.descriptor.component_digest)
+            })
+        });
+        if covers_routes {
+            return Ok(entry);
+        }
+    }
+    anyhow::bail!("release routes have no composed application covering their members")
 }
 
 /// A local release assembled from its package files and admitted components.
@@ -870,6 +918,8 @@ async fn read_and_push(
         &ReleaseScope::new(request.tenant_id, request.environment),
         run_schema,
     )?;
+    let mut published = published;
+    entry_publication::publish(&mut published, components, registry, release_artifact_base).await?;
     push_manifest_bytes(
         &published.canonical_bytes,
         release_artifact_base,

@@ -90,6 +90,10 @@ pub(super) async fn apply(
             "WAMN_RELEASE_ARTIFACT_BASE".into(),
             packages::artifact_base(registry, "releases")?,
         );
+        request.environment.insert(
+            "WAMN_COMPONENT_ARTIFACT_BASE".into(),
+            packages::artifact_base(registry, "components")?,
+        );
         if !wirings.is_empty() {
             request.arguments[0] = "publish-wired-release".into();
             // The joined verb reads administrator URLs directly from its environment.

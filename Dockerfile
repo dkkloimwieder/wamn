@@ -62,7 +62,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-identity -p wamn-gates \
+ && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-identity -p wamn-gates -p wamn-component-composer \
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
@@ -72,6 +72,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
  && install -D -m 0755 target/release/wamn-scenario-worker /native-output/wamn-scenario-worker \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity \
+ && install -D -m 0755 target/release/wamn-component-composer /native-output/wamn-component-composer \
  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
 
 # ---- edge box binary: aarch64 release, cross-compiled ----------------------
@@ -164,6 +165,7 @@ ENTRYPOINT ["/usr/local/bin/wamn-host"]
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
+COPY --from=component-builder /component-output/http_route.wasm /usr/local/share/wamn/http_route.wasm
 COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 # The ctl image carries the wiring gate program beside the verbs (wamn-zua8.3).
 COPY --from=build-native /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
@@ -218,11 +220,16 @@ COPY --from=component-builder /component-output/materializer.wasm /bench/materia
 COPY --from=component-builder /component-output/connection_http_standard.wasm /bench/connection-http-standard.wasm
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
 
+# Compose the control-only platform entry after the route pin is checked.
+FROM component-builder AS control-entry
+COPY --from=build-native /native-output/wamn-component-composer /usr/local/bin/wamn-component-composer
+RUN wamn-component-composer --control-route /component-output/http_route.wasm --output /component-output/control_http.wasm
+
 # ---- role components: the http and materializer guests alone -------------
 # `wamn-ctl build-platform` exports them with --output and pushes each as a
 # role component of the platform image set (R15).
 FROM scratch AS roles
-COPY --from=component-builder /component-output/http_route.wasm /http_route.wasm
+COPY --from=control-entry /component-output/control_http.wasm /http_route.wasm
 COPY --from=component-builder /component-output/materializer.wasm /materializer.wasm
 
 # ---- qualification cases: the cluster case executables ----------------------

@@ -6,7 +6,7 @@ use crate::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
     receiving_load_receipt_screen as screen_sql,
 };
-use wamn_postgres_statements::{Connection, Uuid};
+use wamn_postgres_statements::{Transaction, Uuid};
 
 pub use location_sql::ListLocationsRow;
 pub use screen_sql::LoadReceiptScreenRow;
@@ -83,46 +83,26 @@ fn history_value(
 
 /// Read the declared locations in one transaction.
 pub async fn location_list(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
 ) -> Result<Vec<ListLocationsRow>, AccessError> {
-    let mut transaction = connection.begin().await.map_err(|source| {
-        AccessError::from_statement("begin location list", &source, AllowedConstraints::NONE)
-    })?;
-    let rows = location_sql::list_locations(&mut transaction)
+    let rows = location_sql::list_locations(transaction)
         .await
         .map_err(|source| {
             AccessError::from_statement("list locations", &source, AllowedConstraints::NONE)
         })?;
-    transaction.commit().await.map_err(|source| {
-        AccessError::from_statement("commit location list", &source, AllowedConstraints::NONE)
-    })?;
     Ok(rows)
 }
 
 /// Read the purchase order and its lines in one transaction.
 pub async fn receipt_screen(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
     id: Uuid,
 ) -> Result<Vec<LoadReceiptScreenRow>, AccessError> {
-    let mut transaction = connection.begin().await.map_err(|source| {
-        AccessError::from_statement(
-            "begin receipt screen load",
-            &source,
-            AllowedConstraints::NONE,
-        )
-    })?;
-    let rows = screen_sql::load_receipt_screen(&mut transaction, id)
+    let rows = screen_sql::load_receipt_screen(transaction, id)
         .await
         .map_err(|source| {
             AccessError::from_statement("load receipt screen", &source, AllowedConstraints::NONE)
         })?;
-    transaction.commit().await.map_err(|source| {
-        AccessError::from_statement(
-            "commit receipt screen load",
-            &source,
-            AllowedConstraints::NONE,
-        )
-    })?;
     if rows.is_empty() {
         return Err(AccessError::not_found("purchase_order does not exist"));
     }
@@ -131,7 +111,7 @@ pub async fn receipt_screen(
 
 /// Read retained history and project the declared purchase-order image.
 pub async fn purchase_order_history(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
     id: Uuid,
     after_cursor: Option<&str>,
     limit: i32,
@@ -143,34 +123,16 @@ pub async fn purchase_order_history(
         ));
     }
     let after_position = history_position(after_cursor, &id)?;
-    let mut transaction = connection.begin().await.map_err(|source| {
-        AccessError::from_statement(
-            "begin purchase order history load",
-            &source,
-            AllowedConstraints::NONE,
-        )
-    })?;
-    let rows = history_sql::load_purchase_order_history(
-        &mut transaction,
-        id.clone(),
-        after_position,
-        limit,
-    )
-    .await
-    .map_err(|source| {
-        AccessError::from_statement(
-            "load purchase order history",
-            &source,
-            AllowedConstraints::NONE,
-        )
-    })?;
-    transaction.commit().await.map_err(|source| {
-        AccessError::from_statement(
-            "commit purchase order history load",
-            &source,
-            AllowedConstraints::NONE,
-        )
-    })?;
+    let rows =
+        history_sql::load_purchase_order_history(transaction, id.clone(), after_position, limit)
+            .await
+            .map_err(|source| {
+                AccessError::from_statement(
+                    "load purchase order history",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
     rows.into_iter()
         .map(|row| history_value(row, &id))
         .collect()

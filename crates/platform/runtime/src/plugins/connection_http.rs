@@ -1430,11 +1430,11 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
         request: Request,
     ) -> wash_runtime::wasmtime::Result<Result<Response, ConnectionError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                wamn_engine::invocation_trace::invocation_trace(&mut ctx),
             ))
         })?;
         trace

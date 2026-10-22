@@ -445,11 +445,14 @@ mod tests {
         let raw = engine.inner();
         let component_bytes = std::fs::read(component_path)
             .with_context(|| format!("read {}", component_path.display()))?;
+        let component_bytes = wamn_component_composer::compose_control_entry(component_bytes)?;
         let component = Component::new(raw, &component_bytes)
             .map_err(|error| anyhow::anyhow!("compile flow-http: {error}"))?;
         let mut linker = Linker::new(raw);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
             .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
+        wasmtime_wasi::p3::clocks::add_to_linker(&mut linker)
+            .map_err(|error| anyhow::anyhow!("link WASI clocks into flow-http: {error}"))?;
         wasmtime_wasi_http::p3::add_to_linker(&mut linker)
             .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
         let loopback = Arc::new(std::sync::Mutex::new(
@@ -468,9 +471,15 @@ mod tests {
             InstancePolicy::Ephemeral,
         );
         let delivery = Arc::new(RouterDelivery::new(bridge));
+        let postgres = Arc::new(wamn_runtime::plugins::WamnPostgres::from_env_for_project(
+            PROJECT, None,
+        )?);
         let imports = workload.world().imports;
         {
             let mut item = WorkloadItem::Component(&mut workload);
+            postgres
+                .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                .await?;
             routing
                 .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
                 .await
@@ -486,6 +495,10 @@ mod tests {
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
         plugins.insert(ROUTER_DELIVERY_ID, delivery);
+        plugins.insert(
+            wamn_runtime::plugins::wamn_postgres::WAMN_POSTGRES_ID,
+            postgres,
+        );
         let workload_id = workload.workload_id().to_owned();
         let component_id = workload.id().to_owned();
         let ctx = Ctx::builder(workload_id, component_id)

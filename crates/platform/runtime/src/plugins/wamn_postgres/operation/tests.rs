@@ -7,9 +7,9 @@ use serde_json::json;
 use tokio::sync::oneshot;
 use wamn_catalog::{
     AttachmentTarget, AttachmentType, ComponentDescriptor, ComponentSqlField,
-    ComponentSqlStatement, ComponentSqlValueType, DefinitionHash, PackageCoordinate,
+    ComponentSqlStatement, ComponentSqlValueType, DefinitionHash, OperationType, PackageCoordinate,
     ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
-    ServingRelease, ServingWiring,
+    ServingRelease, ServingRoute, ServingWiring,
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
@@ -37,6 +37,7 @@ use crate::plugins::wamn_postgres::{
 const WORKLOAD: &str = "entry-fixture";
 const TENANT: &str = "entryfixture";
 const OPERATION: &str = "base:widget/update@1.0.0";
+const READ_OPERATION: &str = "base:widget/get@1.0.0";
 const RESULT: &str = "{ \"value\" : 7 }";
 
 fn release() -> Arc<LoadedRelease> {
@@ -53,21 +54,35 @@ fn release() -> Arc<LoadedRelease> {
         }],
         transactional: true,
     };
-    let manifest = ServingManifest::new(
+    let mut manifest = ServingManifest::new(
         ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0").unwrap()]) },
         BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: "base".into(),
             descriptor: ComponentDescriptor::named("entry", "0.1", digest('a')),
             statement_instances: BTreeMap::new(),
-            operations: BTreeMap::from([(OPERATION.into(), ServingComponentOperation {
+            operations: BTreeMap::from([(READ_OPERATION.into(), ServingComponentOperation {
+                registered_operation: None,
+                permissions: BTreeSet::from([READ_OPERATION.into()]),
+                committed_result_schema: None,
+                statements: BTreeMap::from([("read.sql".into(), ComponentSqlStatement {
+                    name: "read".into(), path: "read.sql".into(),
+                    sql: "SELECT value FROM widget WHERE id = 1".into(),
+                    transactional: false, ..statement.clone()
+                })]),
+            }), (OPERATION.into(), ServingComponentOperation {
                 registered_operation: Some(OPERATION.into()),
                 permissions: BTreeSet::from([OPERATION.into()]),
                 committed_result_schema: None,
                 statements: BTreeMap::from([("update.sql".into(), statement)]),
             })]),
         }]),
-        BTreeSet::new(),
+        BTreeSet::from([ServingRoute {
+            package_id: "base".into(), component: "entry".into(),
+            operation: READ_OPERATION.into(), type_: OperationType::Get,
+            reads: BTreeSet::new(), revision: None,
+            idempotency: None, canonicalization: None,
+        }]),
         BTreeSet::from([ServingWiring::new("base", wamn_catalog::fixture_graph("entry", 1))]),
         BTreeMap::from([("entry".into(), ServingAttachment {
             type_: AttachmentType::Http, package_id: "base".into(),
@@ -79,6 +94,15 @@ fn release() -> Arc<LoadedRelease> {
         })]),
         BTreeMap::new(),
     ).unwrap();
+    manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+        reference: format!("registry.example/entry@{}", digest('e')),
+        route_digest: digest('f'),
+        members: BTreeSet::from([wamn_catalog::ServingEntryMember {
+            package_id: "base".into(),
+            component: "entry".into(),
+            digest: digest('a'),
+        }]),
+    });
     Arc::new(
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
@@ -105,9 +129,33 @@ impl GuestCall for Run {
         instance: Instance,
     ) -> GuestCallFuture<'_> {
         Box::pin(async move {
-            accessor.with(|mut access| {
-                access.get().active_ctx.component_id = Arc::from(WORKLOAD);
-            });
+            if self.mode == 22 {
+                let resolved = accessor.with(|mut access| {
+                    let export = instance
+                        .get_export_index(&mut access, None, "resolved-refusal")
+                        .unwrap();
+                    let function = instance.get_func(&mut access, export).unwrap();
+                    function.typed::<(), (super::Refusal,)>(&access).unwrap();
+                    function
+                });
+                let mut results = [Val::Bool(false)];
+                resolved
+                    .call_concurrent(accessor, &[], &mut results)
+                    .await?;
+                assert_eq!(
+                    results[0],
+                    Val::Variant(
+                        "resolved".into(),
+                        Some(Box::new(Val::String("external-evidence".into()))),
+                    ),
+                );
+                let dropped = accessor.with(|mut access| access.get().dropped.token());
+                tokio::spawn(async move {
+                    dropped.cancelled().await;
+                    self.reply.send(()).expect("fixture receiver exists");
+                });
+                return Ok(None);
+            }
             let modes = if self.mode == 8 {
                 vec![8, 9, 10]
             } else {
@@ -124,7 +172,7 @@ impl GuestCall for Run {
                         if self.mode == 3 {
                             HashSet::new()
                         } else {
-                            HashSet::from(["base:widget/update".into()])
+                            HashSet::from(["base:widget/update".into(), "base:widget/get".into()])
                         },
                     ))?;
                     let caller = ResourceAny::try_from_resource(caller, &mut access)?;
@@ -141,12 +189,25 @@ impl GuestCall for Run {
                 .await?;
                 assert!(matches!(results[0], Val::Bool(true)));
                 if mode == 8 || mode == 9 {
-                    deliveries.push(accessor.with(|mut access| {
+                    let delivery = accessor.with(|mut access| {
                         let ctx = &access.get().active_ctx;
                         ctx.get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
                             .current_run_for(&ctx.component_id)
                             .expect("open operation has a delivery")
-                    }));
+                    });
+                    let read_id = accessor.with(|mut access| {
+                        let export = instance
+                            .get_export_index(&mut access, None, "delivery-id")
+                            .unwrap();
+                        instance.get_func(&mut access, export).unwrap()
+                    });
+                    let mut result = [Val::String(String::new())];
+                    read_id.call_concurrent(accessor, &[], &mut result).await?;
+                    let Val::String(id) = &result[0] else {
+                        panic!("fixture returns the delivery id as a string");
+                    };
+                    assert_eq!(id, &delivery.run, "guest reads the host-minted id");
+                    deliveries.push(delivery);
                 }
             }
             if self.mode == 8 {
@@ -198,7 +259,7 @@ async fn fixture() -> (
          GRANT USAGE ON SEQUENCE widget_history_position_seq TO wamn_app;",
     ]).unwrap();
     let release = release();
-    let mut postgres = WamnPostgres::new(WamnPostgresConfig {
+    let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(url)),
         guest_pool_max_size: 2,
         platform_pool_max_size: 1,
@@ -209,11 +270,15 @@ async fn fixture() -> (
     .unwrap();
     postgres
         .bind_operation_workload(
-            WORKLOAD.into(),
+            WORKLOAD,
             Arc::clone(&release),
-            "base",
+            &release
+                .manifest()
+                .composed_entry
+                .as_ref()
+                .unwrap()
+                .reference,
             "entry",
-            &format!("sha256:{}", "a".repeat(64)),
             SessionClaims {
                 tenant: TENANT.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
@@ -228,7 +293,7 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
     let engine = build_engine(&[]).unwrap();
     let workload = engine
         .initialize_workload(
-            "entry-boundary",
+            WORKLOAD,
             Workload {
                 namespace: "test".into(),
                 name: "entry-boundary".into(),
@@ -308,6 +373,78 @@ async fn value(database: &wamn_test_postgres::Database) -> i32 {
         .await
         .unwrap()
         .get(0)
+}
+
+#[tokio::test]
+async fn resolved_refusal_carries_its_basis_across_wit() {
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1000,
+            statement_timeout_ms: 1000,
+            row_limit: 10,
+        })
+        .unwrap(),
+    );
+    run_guest(postgres, Arc::new(LoadedRelease::control_root()), 22).await;
+}
+
+#[tokio::test]
+async fn read_operations_commit_without_a_write_log_claim_or_replay() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    for _ in 0..2 {
+        run_guest(Arc::clone(&postgres), Arc::clone(&release), 18).await;
+    }
+    let count: i64 = connect(&database)
+        .await
+        .query_one("SELECT count(*) FROM app_system.write_log", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn unbound_control_entry_links_but_refuses_every_operation_call() {
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1000,
+            statement_timeout_ms: 1000,
+            row_limit: 10,
+        })
+        .unwrap(),
+    );
+    run_guest(
+        Arc::clone(&postgres),
+        Arc::new(LoadedRelease::control_root()),
+        21,
+    )
+    .await;
+    assert!(postgres.operation_workloads.read().unwrap().is_empty());
+    assert!(postgres.operation_transactions.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn wal_position_without_begin_refuses() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 16).await;
+    assert_eq!(value(&database).await, 1);
+}
+
+#[tokio::test]
+async fn wal_position_inside_an_open_operation_preserves_its_transaction() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 17).await;
+    assert_eq!(value(&database).await, 2);
 }
 
 #[tokio::test]
@@ -491,4 +628,77 @@ async fn guest_begin_statement_commit_writes_the_log_and_history() {
         .unwrap();
     run_guest(postgres, release, 7).await;
     assert_eq!(value(&database).await, 2);
+}
+
+#[tokio::test]
+async fn anonymous_caller_begins_an_operation_without_a_grant() {
+    let _lock = wamn_test_postgres::lock();
+    let (_database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 19).await;
+}
+
+#[tokio::test]
+async fn anonymous_caller_on_a_granted_operation_refuses() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    run_guest(postgres, release, 20).await;
+    assert_eq!(value(&database).await, 1);
+}
+
+#[test]
+fn entry_binding_requires_the_started_reference_and_component_name() {
+    let release = release();
+    let postgres = WamnPostgres::new(WamnPostgresConfig {
+        credentials: None,
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 1000,
+        statement_timeout_ms: 1000,
+        row_limit: 10,
+    })
+    .unwrap();
+    let claims = SessionClaims {
+        tenant: TENANT.into(),
+        release: Some(ReleaseIdentity::from_loaded(&release)),
+        ..SessionClaims::default()
+    };
+    assert!(
+        postgres
+            .bind_operation_workload(
+                WORKLOAD,
+                Arc::clone(&release),
+                "registry.example/other@sha256:bad",
+                "entry",
+                claims.clone()
+            )
+            .is_err()
+    );
+    postgres
+        .bind_operation_workload(
+            WORKLOAD,
+            Arc::clone(&release),
+            &release
+                .manifest()
+                .composed_entry
+                .as_ref()
+                .unwrap()
+                .reference,
+            "entry",
+            claims,
+        )
+        .unwrap();
+    assert!(
+        postgres
+            .bind_entry_instance(WORKLOAD, "member", "member")
+            .is_err()
+    );
+    postgres
+        .bind_entry_instance(WORKLOAD, "entry-instance", "entry")
+        .unwrap();
+    postgres.forget_operation_start(WORKLOAD);
+    assert!(
+        postgres
+            .bind_entry_instance(WORKLOAD, "late-instance", "entry")
+            .is_err()
+    );
 }

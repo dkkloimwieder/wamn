@@ -606,13 +606,16 @@ impl PackageManifest {
                 declaration
                     .operations
                     .keys()
-                    .filter(|action| action.changes_records())
                     .map(move |action| format!("{model}.{}", action.as_str()))
             })
             .chain(
                 self.custom_operations
                     .iter()
-                    .filter(|(_, operation)| operation.begins_host_transaction())
+                    .filter(|(_, operation)| {
+                        operation.begins_host_transaction()
+                            || (operation.type_ == CustomOperationType::Projection
+                                && !operation.statements.is_empty())
+                    })
                     .map(|(name, _)| name.clone()),
             )
             .collect()

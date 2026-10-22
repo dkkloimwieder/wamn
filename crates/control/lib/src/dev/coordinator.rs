@@ -870,12 +870,42 @@ impl ProductionDevStageRunner {
                 )
             })
             .collect();
-        let (published, mut local_facts) =
+        let (mut published, mut local_facts) =
             publish_release::publish_local(request, &package_roots, &self.admissions, documents)
                 .await
                 .map_err(|source| {
                     ProductionDevStageError::owner("assemble local application", source)
                 })?;
+        fs::create_dir_all(&local.directory).map_err(|source| {
+            ProductionDevStageError::owner("create local artifact directory", source.into())
+        })?;
+        let entry = publish_release::compose_release_entry(
+            &published,
+            &self.admissions,
+            &fs::read(&local.flow_http_component).map_err(|source| {
+                ProductionDevStageError::owner("read pinned route component", source.into())
+            })?,
+        )
+        .map_err(|source| ProductionDevStageError::owner("compose released HTTP entry", source))?;
+        fs::create_dir_all(&local.directory).map_err(|source| {
+            ProductionDevStageError::owner("create local artifact directory", source.into())
+        })?;
+        let entry_path = wamn_engine::artifact_source::local_component_path(
+            &local.directory.canonicalize().map_err(|source| {
+                ProductionDevStageError::owner("name local artifacts", source.into())
+            })?,
+            entry.digest(),
+        )
+        .map_err(|source| ProductionDevStageError::owner("name local entry", source.into()))?;
+        publish_release::record_composed_entry(
+            &mut published,
+            &entry,
+            &format!("file:{}", entry_path.display()),
+        )
+        .map_err(|source| ProductionDevStageError::owner("record local entry", source))?;
+        fs::write(entry_path, entry.bytes()).map_err(|source| {
+            ProductionDevStageError::owner("stage composed entry", source.into())
+        })?;
         // A run admitted under the candidate pins its digest, and the run-plane
         // foreign key needs the release row, which apply's stage writes.
         crate::environment::stage::write_release(

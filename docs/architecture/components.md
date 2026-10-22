@@ -49,6 +49,7 @@ A composed component also exports the interfaces of its members. The host routes
 Each export carries its own statements, and the host begins a transaction for an export whose admitted operation declares one ([data access](data-access.md#inputs-queries-and-transactions)).
 Each member that imports `wamn:postgres/statements` gets its own outer import, named by its position: `sql-0`, `sql-1`.
 Each import is labelled as an instance of the one statements interface, so policy admits it by that interface.
+The composer emits a separate instance type for each import, so resource ownership remains distinct when the route layer wraps an overlay.
 A custom section of the composed component, `wamn:statement-instances`, records the digest of the member that each import was made for.
 Admission reads the instantiation graph and refuses the component unless each import reaches exactly that member ([per-member import instances](../plan/trx-pkg-plan.md#per-member-import-instances)).
 Admission copies that record into the admitted descriptor as `statement-instances`, and the imports fingerprint covers it.

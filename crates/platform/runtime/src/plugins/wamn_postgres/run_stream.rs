@@ -11,14 +11,15 @@ use tracing::Instrument as _;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::StoreContextMut;
 use wash_runtime::wasmtime::component::{
-    Accessor, Destination, FutureReader, StreamProducer, StreamReader, StreamResult, VecBuffer,
+    Accessor, Destination, FutureReader, Resource, StreamProducer, StreamReader, StreamResult,
+    VecBuffer,
 };
 
 use super::claims::reject_claim_mutation;
 use super::claims::transactions::{bind_session_settings, prepare_session_settings};
 use super::resources::{
-    StatementConnectionGuard, admit_transaction_statement, db_span_for_project, plugin_of,
-    record_query_ms,
+    PgStatementTransaction, SharedTxnState, StatementConnectionGuard, admit_transaction_statement,
+    db_span_for_project, plugin_of, record_query_ms, take_conn,
 };
 use super::statements::{
     VerifiedStatement, validate_prepared_statement, validate_statement_result,
@@ -54,11 +55,12 @@ pub(super) async fn run_stream<T: 'static + Send>(
     >,
 > {
     let (plugin, component_id, trace) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            wamn_engine::invocation_trace::invocation_trace(&ctx),
+            trace,
         ))
     })?;
     let opened = trace
@@ -89,6 +91,24 @@ pub(super) async fn run_stream<T: 'static + Send>(
             opened
         })
         .await;
+    into_guest_stream(accessor, opened)
+}
+
+pub(super) type StreamCallResult = WasmResult<
+    Result<
+        (
+            Vec<Column>,
+            StreamReader<Vec<SqlValue>>,
+            FutureReader<Result<(), StatementError>>,
+        ),
+        StatementError,
+    >,
+>;
+
+fn into_guest_stream<T: 'static + Send>(
+    accessor: &Accessor<T, SharedCtx>,
+    opened: Result<OpenedStream, StatementError>,
+) -> StreamCallResult {
     let OpenedStream {
         columns,
         batches,
@@ -105,6 +125,125 @@ pub(super) async fn run_stream<T: 'static + Send>(
             )))
         })?;
         Ok(Ok((columns, stream, finished)))
+    })
+}
+
+/// Stream on the connection owned by this transaction, never a second session.
+pub(super) async fn transaction_run_stream<T: 'static + Send>(
+    accessor: &Accessor<T, SharedCtx>,
+    rep: Resource<PgStatementTransaction>,
+    statement_path: String,
+    binds: Vec<SqlValue>,
+) -> StreamCallResult {
+    let (plugin, component_id, trace, state, destroyed, statements) =
+        accessor.with(|mut access| {
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
+            let transaction = ctx.table.get(&rep)?;
+            wash_runtime::wasmtime::ensure!(
+                transaction.owner_scope == ctx.component_id.as_ref(),
+                "statement transaction belongs to a different invocation"
+            );
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                trace,
+                Arc::clone(&transaction.transaction.state),
+                Arc::clone(&transaction.transaction.destroyed),
+                transaction.statements.clone(),
+            ))
+        })?;
+    let opened = trace
+        .run(async move {
+            let statement = admit_transaction_statement(
+                &plugin,
+                &component_id,
+                statements.as_deref(),
+                &statement_path,
+                &binds,
+            )?;
+            reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
+            let connection = StatementConnectionGuard::new(
+                take_conn(&state).map_err(StatementError::Postgres)?,
+                destroyed,
+            );
+            let project = plugin.project_for(&component_id);
+            let span =
+                db_span_for_project(&plugin, &component_id, &project, "statement.txn.stream");
+            let started = std::time::Instant::now();
+            let result =
+                open_transaction_stream(connection, state, statement_path, statement, binds)
+                    .instrument(span)
+                    .await;
+            record_query_ms("statement.txn.stream", &project, started.elapsed());
+            result
+        })
+        .await;
+    into_guest_stream(accessor, opened)
+}
+
+pub(super) async fn open_transaction_stream(
+    connection: StatementConnectionGuard,
+    state: SharedTxnState,
+    statement_path: String,
+    statement: Arc<VerifiedStatement>,
+    binds: Vec<SqlValue>,
+) -> Result<OpenedStream, StatementError> {
+    let (opened, started) = oneshot::channel();
+    let (rows, batches) = mpsc::channel(1);
+    let (outcome, finished) = oneshot::channel();
+    tokio::spawn(
+        async move {
+            let mut opened = Some(opened);
+            let read = async {
+                let conn = connection.connection();
+                let prepared = conn
+                    .prepare_cached(&statement.exact_sql)
+                    .await
+                    .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
+                validate_prepared_statement(&statement_path, &statement, &prepared)?;
+                let stream = conn
+                    .query_raw(&prepared, binds.iter().map(PgParam))
+                    .await
+                    .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
+                let columns = columns_of(&prepared);
+                opened
+                    .take()
+                    .expect("a stream opens once")
+                    .send(Ok(columns.clone()))
+                    .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
+                pump(stream, &statement_path, &statement, columns, &rows).await
+            };
+            let result = tokio::select! {
+                biased;
+                result = read => result,
+                () = rows.closed() => Err(StatementError::Postgres(PgError::ConnectionUnavailable)),
+            };
+            if result.is_ok() {
+                connection.restore(&state);
+            } else {
+                if let Ok(mut transaction) = state.lock() {
+                    transaction.finished = true;
+                }
+                // Closing the session aborts the whole transaction, without sending
+                // a protocol cancellation that could reach the next statement.
+                drop(connection);
+            }
+            if let Some(opened) = opened {
+                let _ = opened.send(result.map(|()| Vec::new()));
+            } else {
+                let _ = outcome.send(result);
+            }
+        }
+        .instrument(tracing::Span::current()),
+    );
+    let columns = started
+        .await
+        .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))??;
+    Ok(OpenedStream {
+        columns,
+        batches,
+        finished,
     })
 }
 

@@ -13,9 +13,13 @@ sha2.workspace = true
 wac-graph.workspace = true
 wamn-component-policy.workspace = true
 wasmparser.workspace = true
+wasm-encoder = { workspace = true, features = ["wasmparser"] }
+wat = "=1.254.2"
+wit-component = "=0.254.2"
+wit-parser = "=0.254.2"
 
 [dev-dependencies]
-wat = "=1.254.2"
+wit-component = { version = "=0.254.2", features = ["dummy-module"] }
 
 [lints]
 workspace = true

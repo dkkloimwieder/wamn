@@ -11,7 +11,7 @@ interface operation {
 
   variant refusal {
     uncertain,
-    resolved,
+    resolved(string),
     conflict,
     unknown-operation,
     grant-denied,
@@ -22,20 +22,22 @@ interface operation {
   }
 
   variant begun {
-    new,
+    /// The host-minted delivery id, which the application only reads.
+    new(string),
     /// The stored result text. The entry returns it and runs no work.
     finished(string),
   }
 
   /// Check the host-issued caller and its grant, mint the delivery id, and
   /// claim the key inside a new transaction. The host stores the request
-  /// hash unchanged. Only one operation can be open per Store.
+  /// hash unchanged. Reads claim no key and store no result.
+  /// Only one operation can be open per Store.
   /// A begin while one is open returns already-begun and leaves it open.
   /// Commit or rollback (ok or refusal) clears the open operation.
   /// Finished leaves no operation open. Another begin is then allowed,
   /// with its own transaction and delivery id.
   /// Dropping the Store rolls back its open operation.
-  begin-operation: async func(caller: borrow<authenticated-caller>, operation: sealed-operation-id, idempotency-key: string, request-hash: list<u8>) -> result<begun, refusal>;
+  begin-operation: async func(caller: option<borrow<authenticated-caller>>, operation: sealed-operation-id, idempotency-key: string, request-hash: list<u8>) -> result<begun, refusal>;
 
   /// Store the application's result JSON as text without inspecting it, emit
   /// the causation message, and commit. Without a new begin, this refuses.
@@ -43,5 +45,9 @@ interface operation {
 
   /// Roll back the open transaction and release its claim without a result.
   /// The key is unclaimed again. No open operation returns not-begun.
-  rollback: func() -> result<_, refusal>;
+  rollback: async func() -> result<_, refusal>;
+
+  /// Return pg_current_wal_lsn()::text on the open operation's connection.
+  /// Without an open operation, this returns not-begun.
+  wal-position: async func() -> result<string, refusal>;
 }

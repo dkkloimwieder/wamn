@@ -5501,8 +5501,11 @@ dependencies = [
  "sha2 0.11.0",
  "wac-graph 0.12.0",
  "wamn-component-policy",
+ "wasm-encoder 0.261.0",
  "wasmparser 0.261.0",
  "wat",
+ "wit-component 0.254.2",
+ "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -5745,6 +5748,7 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
  "wamn-catalog",
  "wamn-component-policy",
  "wamn-event-wire",
@@ -5900,6 +5904,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "async-trait",
  "clap",
  "humantime",
  "opentelemetry",
@@ -6015,6 +6020,7 @@ dependencies = [
  "uuid",
  "wamn-catalog",
  "wamn-client",
+ "wamn-component-composer",
  "wamn-component-policy",
  "wamn-control",
  "wamn-control-provision",

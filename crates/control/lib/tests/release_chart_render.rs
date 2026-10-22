@@ -102,11 +102,15 @@ fn input(env: &str) -> ValuesInput {
         roles: vec![
             Role {
                 name: RoleName::Http,
+                entry: Some(format!("registry/entry@sha256:{}", "a".repeat(64))),
+                statements: vec!["sql-0".to_owned(), "sql-1".to_owned()],
                 config: config.clone(),
                 environment: None,
             },
             Role {
                 name: RoleName::Materializer,
+                entry: None,
+                statements: Vec::new(),
                 config,
                 environment: Some(environment),
             },
@@ -302,7 +306,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         .collect();
     assert!(secrets.contains("wasmcloud-runtime-tls") && secrets.contains("wasmcloud-data-tls"));
 
-    // R15 (1), (2): the rendered images are exactly the chart's default set.
+    // Platform services use the chart set; HTTP uses the release's entry.
     let set = image_set(&chart).await.expect("the stamped image set");
     assert_eq!(set, image_set_fixture());
     // R15 (4): the defaults also pin the runner, gates and identity images.
@@ -328,7 +332,12 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
             .as_str()
             .or_else(|| spec["service"]["image"].as_str())
             .expect("a role image");
-        assert!(image == set.http || image == set.materializer);
+        if spec["components"].is_sequence() {
+            assert_eq!(image, format!("registry/entry@sha256:{}", "a".repeat(64)));
+            assert_eq!(spec["components"][0]["poolSize"].as_i64(), Some(0));
+        } else {
+            assert_eq!(image, set.materializer);
+        }
     }
 }
 

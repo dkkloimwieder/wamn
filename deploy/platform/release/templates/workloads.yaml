@@ -34,11 +34,26 @@ spec:
           package: router-delivery
           version: "0.4.0"
           interfaces: [delivery]
+        - namespace: wamn
+          package: operation
+          version: "0.1.0"
+          interfaces: [operation]
+        - namespace: wamn
+          package: postgres
+          version: "0.4.0"
+          interfaces: [statements]
+        {{- range .statements }}
+        - namespace: wamn
+          package: postgres
+          version: "0.4.0"
+          name: {{ . | quote }}
+          interfaces: [statements]
+        {{- end }}
       components:
         - name: flow-http
-          image: {{ $.Values.platform.roles.http.image }}
+          image: {{ required "roles[http].entry is required from the serving manifest" .entry | quote }}
           imagePullPolicy: Always
-          poolSize: {{ $.Values.platform.roles.http.poolSize }}
+          poolSize: 0
           maxConcurrency: {{ $.Values.platform.roles.http.maxConcurrency }}
           localResources:
             allowedIpNameLookups: []

@@ -9,6 +9,10 @@ mod bindings {
         world: "wamn:flow-http/flow-http@0.1.0",
         path: [
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
+            "../../../../crates/platform/runtime/wit/deps/wamn-operation-0.1",
+            "../../../../crates/execution/workflow/router/wit",
+            "../../../../crates/platform/component-composer/wit",
             "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.4",
             "../../execution/materializer/wit/deps/wasi-clocks",
             "wit",
@@ -37,6 +41,9 @@ use super::{
     StreamedHead, handle_request,
 };
 
+#[path = "entry.rs"]
+mod entry;
+
 struct Component;
 
 impl Guest for Component {
@@ -62,8 +69,18 @@ bindings::export!(Component with_types_in bindings);
 /// read, which outlive `handle_request`.
 #[derive(Default)]
 struct GuestBackend {
-    lines: Option<StreamReader<String>>,
+    routes: std::collections::HashMap<
+        String,
+        bindings::wamn::flow_http_routing::routing::RouteDefinition,
+    >,
+    base_route: bool,
+    lines: Option<ReplyStream>,
     permit: Option<bindings::wamn::flow_http_routing::routing::RoutePermit>,
+}
+
+enum ReplyStream {
+    Lines(StreamReader<String>),
+    Bytes(StreamReader<u8>),
 }
 
 impl Backend for GuestBackend {
@@ -77,6 +94,10 @@ impl Backend for GuestBackend {
     ) -> Result<Vec<RouteDefinition>, ProviderError> {
         let routes = bindings::wamn::flow_http_routing::routing::routes(method, authority)
             .map_err(|_| ProviderError)?;
+        self.routes = routes
+            .iter()
+            .map(|route| (route.attachment_id.clone(), route.clone()))
+            .collect();
         routes.into_iter().map(route_definition).collect()
     }
 
@@ -86,6 +107,10 @@ impl Backend for GuestBackend {
         headers: &[Header],
         body: &[u8],
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection> {
+        self.base_route = self
+            .routes
+            .get(attachment_id)
+            .is_some_and(|route| route.sealed_operation_id.is_some());
         let headers = headers
             .iter()
             .map(
@@ -108,6 +133,9 @@ impl Backend for GuestBackend {
     }
 
     fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid> {
+        if self.base_route {
+            return entry::validate_read_limits(&self.routes[attachment_id], payload);
+        }
         bindings::wamn::flow_http_routing::routing::validate_input(attachment_id, payload)
             .map_err(SchemaInvalid::from_refusal)
     }
@@ -121,6 +149,9 @@ impl Backend for GuestBackend {
     }
 
     fn new_delivery_id(&mut self) -> String {
+        if self.base_route {
+            return String::new();
+        }
         const RANDOM_BYTES: u64 = 16;
         hex(&bindings::wasi::random::random::get_random_bytes(
             RANDOM_BYTES,
@@ -131,6 +162,11 @@ impl Backend for GuestBackend {
         &mut self,
         request: DeliveryRequest<Self::AuthenticatedCaller>,
     ) -> DeliveryReport {
+        if let Some(route) = self.routes.get(&request.attachment_id)
+            && route.sealed_operation_id.is_some()
+        {
+            return entry::deliver(route, request).await;
+        }
         delivery_report(
             bindings::wamn::router_delivery::delivery::deliver(wire_request(request)).await,
         )
@@ -140,10 +176,17 @@ impl Backend for GuestBackend {
         &mut self,
         request: DeliveryRequest<Self::AuthenticatedCaller>,
     ) -> Result<StreamedHead, DeliveryReport> {
+        if let Some(route) = self.routes.get(&request.attachment_id)
+            && route.sealed_operation_id.is_some()
+        {
+            let (lines, etag) = entry::deliver_stream(route, request).await?;
+            self.lines = Some(ReplyStream::Bytes(lines));
+            return Ok(StreamedHead { etag });
+        }
         match bindings::wamn::router_delivery::delivery::deliver_stream(wire_request(request)).await
         {
             Ok(reply) => {
-                self.lines = Some(reply.lines);
+                self.lines = Some(ReplyStream::Lines(reply.lines));
                 Ok(StreamedHead { etag: reply.etag })
             }
             Err(report) => Err(delivery_report(report)),
@@ -441,10 +484,12 @@ fn send_response(response: HttpResponse, mut backend: GuestBackend) -> Response 
     let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
     let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
     let _ = outgoing.set_status_code(response.status);
+    let permit = backend.permit.take();
     // The host consumes the stream after handle returns the response.
     spawn_local(async move {
         let _ = writer.write_all(response.body).await;
         drop(writer);
+        drop(permit);
         let _ = trailers.write(Ok(None)).await;
     });
     outgoing
@@ -459,7 +504,7 @@ const LINES_PER_READ: usize = 256;
 fn send_stream(
     response: &HttpResponse,
     headers: Fields,
-    mut lines: StreamReader<String>,
+    lines: ReplyStream,
     permit: Option<bindings::wamn::flow_http_routing::routing::RoutePermit>,
 ) -> Response {
     for (name, value) in response.cache_headers() {
@@ -468,6 +513,20 @@ fn send_stream(
     let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
     // Proxies such as nginx hold a response body back unless told not to.
     let _ = headers.set("x-accel-buffering", &[b"no".to_vec()]);
+    let mut lines = match lines {
+        ReplyStream::Bytes(reader) => {
+            let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
+            let (outgoing, sent) = Response::new(headers, Some(reader), trailer_reader);
+            let _ = outgoing.set_status_code(response.status);
+            spawn_local(async move {
+                let _ = trailers.write(Ok(None)).await;
+                let _ = sent.await;
+                drop(permit);
+            });
+            return outgoing;
+        }
+        ReplyStream::Lines(lines) => lines,
+    };
     let (mut writer, reader) = bindings::wit_stream::new::<u8>();
     let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
     let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
@@ -475,12 +534,12 @@ fn send_stream(
     spawn_local(async move {
         loop {
             let (status, batch) = lines.read(Vec::with_capacity(LINES_PER_READ)).await;
-            if !batch.is_empty() {
-                let mut bytes = Vec::new();
-                for line in batch {
-                    bytes.extend_from_slice(line.as_bytes());
-                    bytes.push(b'\n');
-                }
+            let mut bytes = Vec::new();
+            for line in batch {
+                bytes.extend_from_slice(line.as_bytes());
+                bytes.push(b'\n');
+            }
+            if !bytes.is_empty() {
                 if !writer.write_all(bytes).await.is_empty() {
                     break;
                 }

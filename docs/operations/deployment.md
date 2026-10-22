@@ -235,6 +235,11 @@ wamn-ctl qualify-release \
 ```
 
 `publish-release` records the release by its canonical manifest digest.
+Publication composes the pinned route guest with the application and pushes the entry beneath `<release-artifact-base>/entries`.
+Format 11 records the entry's OCI manifest reference and the member byte digests.
+Publish every release again before you use the format-11 host.
+The release chart starts that entry with `poolSize: 0`.
+Receiving no longer declares a trusted warm digest or native pool override.
 It pushes the manifest to the release repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the digest.
 The credential of `--registry-auth-file` must pull the packages and push to the release repository.
 Each component of the release carries its admitted descriptor from the package artifact.
@@ -295,6 +300,7 @@ Package uploads retain their coordinate, release digest, bucket and prefix.
 
 The control root is `https://control.wamn.dev`.
 Its host group runs `wamn-host host --control --org=dkk` in namespace `hosts`.
+Its platform HTTP role contains the pinned route guest and an empty dispatcher, with `poolSize: 0` and no release record.
 The HTTP transport workload selects that host group and supplies endpoints for the fixed Service `c-dkk-http`.
 [Google Cloud section 4](gcp.md#4191-control-host-and-platform-ui) owns its installation and credentials.
 

@@ -42,6 +42,7 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use crate::operation::intent::logs_intent;
 use crate::release_manifest::{LoadedRelease, ReleaseScope};
 use crate::route_bindings::wamn::flow_http_routing::routing::{
     self, Cardinality, Mapping, MappingSource, RouteDefinition,
@@ -56,6 +57,9 @@ pub const DEFAULT_HTTP_ROUTE_IN_FLIGHT_LIMIT: usize = 64;
 
 /// Host environment key rendered by the platform chart.
 pub const HTTP_ROUTE_IN_FLIGHT_LIMIT_ENV: &str = "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT";
+
+/// The platform ceiling of a streamed load.
+pub const STREAM_CEILING: u32 = 100_000;
 
 const UNKNOWN_ROUTE_REFUSAL: &str = "http-route-not-in-release";
 const ROUTE_LABEL: &str = "wamn.attachment.id";
@@ -293,7 +297,7 @@ impl InputSchemaValidators {
         let mut validators = HashMap::new();
         for (attachment_id, attachment) in release.manifest().every_served_attachment() {
             if !carries_http_route(attachment.attachment_type())
-                || route_definition(release.manifest(), attachment_id, attachment).is_none()
+                || route_definition(release.manifest(), attachment_id, attachment, "").is_none()
             {
                 continue;
             }
@@ -667,7 +671,11 @@ impl FlowHttpRouting {
         {
             return Ok(Vec::new());
         }
-        Ok(route_definitions(loaded_release.manifest(), method))
+        Ok(route_definitions(
+            loaded_release.manifest(),
+            method,
+            loaded_release.release().manifest_digest.as_str(),
+        ))
     }
 
     /// Record the `config.host` the http workload `workload_id` binds.
@@ -821,7 +829,11 @@ fn authority_host(authority: &str) -> String {
 ///
 /// Free of `self` and of the loaded release so the projection can be shown against a
 /// manifest fixture without a mount.
-fn route_definitions(manifest: &ServingManifest, method: &str) -> Vec<RouteDefinition> {
+fn route_definitions(
+    manifest: &ServingManifest,
+    method: &str,
+    release_digest: &str,
+) -> Vec<RouteDefinition> {
     manifest
         .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
@@ -829,7 +841,7 @@ fn route_definitions(manifest: &ServingManifest, method: &str) -> Vec<RouteDefin
             // Decoded before it is matched, so a malformed attachment is reported
             // whenever this pod serves at all rather than only once some request
             // happens to name its route.
-            let definition = route_definition(manifest, attachment_id, attachment);
+            let definition = route_definition(manifest, attachment_id, attachment, release_digest);
             if definition.is_none() {
                 tracing::warn!(
                     attachment_id,
@@ -858,7 +870,7 @@ pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
         .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
         .any(|(attachment_id, attachment)| {
-            route_definition(manifest, attachment_id, attachment).is_some()
+            route_definition(manifest, attachment_id, attachment, "").is_some()
                 && parse_attachment_auth_policy(attachment.auth_policy())
                     .is_some_and(AttachmentAuthPolicy::allows_pat)
         })
@@ -870,7 +882,7 @@ pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool
         .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
         .any(|(id, attachment)| {
-            route_definition(manifest, id, attachment).is_some()
+            route_definition(manifest, id, attachment, "").is_some()
                 && parse_attachment_auth_policy(attachment.auth_policy())
                     .is_some_and(AttachmentAuthPolicy::allows_session)
         })
@@ -899,6 +911,7 @@ fn route_definition(
     manifest: &ServingManifest,
     attachment_id: &str,
     attachment: ServedAttachment<'_>,
+    release_digest: &str,
 ) -> Option<RouteDefinition> {
     let route = attachment.definition().get("route")?;
     let body_limit = match attachment.definition().get("raw-body-bytes") {
@@ -916,7 +929,108 @@ fn route_definition(
             .collect::<Option<Vec<_>>>()?,
         None => Vec::new(),
     };
+    let operation = match attachment {
+        ServedAttachment::Authored(AttachmentRef::Route(attachment)) => manifest.route(
+            &attachment.package_id,
+            &attachment.component,
+            &attachment.operation,
+        ),
+        ServedAttachment::Authored(AttachmentRef::Wiring(_)) | ServedAttachment::Host(_) => None,
+    };
     Some(RouteDefinition {
+        read_limits: operation.filter(|route| route.type_.is_read()).map(|_| {
+            let item = &attachment.definition()["input-schema"]["items"];
+            let properties = &item["properties"];
+            let filter = &properties["filter"];
+            routing::ReadLimits {
+                page_minimum: properties["limit"]["minimum"]
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok()),
+                page_maximum: properties["limit"]["maximum"]
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok()),
+                band_starts: filter["properties"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, schema)| {
+                        schema["required"]
+                            .as_array()
+                            .is_some_and(|fields| fields.iter().any(|field| field == "min"))
+                    })
+                    .map(|(field, _)| routing::BandStart {
+                        field: field.clone(),
+                        required: filter["required"]
+                            .as_array()
+                            .is_some_and(|fields| fields.iter().any(|required| required == field)),
+                    })
+                    .collect(),
+            }
+        }),
+        operation_deadline_ms: crate::router_delivery::bounded_node_deadline_ms(None),
+        stream_ceiling: operation
+            .filter(|route| route.type_.is_read())
+            .map(|_| STREAM_CEILING),
+        sealed_operation_id: operation.map(|route| route.operation.clone()),
+        idempotency_rule: operation
+            .filter(|route| logs_intent(route.type_))
+            .map(|route| {
+                route
+                    .idempotency
+                    .clone()
+                    .unwrap_or_else(|| "request_id".to_owned())
+            }),
+        request_hash_rule: operation
+            .filter(|route| logs_intent(route.type_))
+            .map(|route| {
+                let form = route.canonicalization.clone().unwrap_or_default();
+                let mut excluded = form.excluded;
+                excluded.insert("request_id".to_owned());
+                routing::RequestHashRule {
+                    excluded: excluded.into_iter().collect(),
+                    lines: form.lines.map(|order| routing::LineOrder {
+                        path: order.path,
+                        ascending_by: order.ascending_by,
+                    }),
+                    spelling: form
+                        .spelling
+                        .into_iter()
+                        .map(|(path, spelling)| routing::FieldSpelling {
+                            path,
+                            spelling: match spelling {
+                                wamn_catalog::CanonicalSpelling::Numeric => {
+                                    routing::CanonicalSpelling::Numeric
+                                }
+                                wamn_catalog::CanonicalSpelling::Timestamptz => {
+                                    routing::CanonicalSpelling::Timestamptz
+                                }
+                            },
+                        })
+                        .collect(),
+                }
+            }),
+        etag_inputs: operation.and_then(|route| {
+            let kind = match route.type_ {
+                OperationType::Get => routing::EtagKind::Get(route.revision.clone()?),
+                OperationType::Query | OperationType::Projection if !route.reads.is_empty() => {
+                    routing::EtagKind::List(
+                        route
+                            .reads
+                            .iter()
+                            .map(|relation| routing::Relation {
+                                schema: relation.schema.clone(),
+                                name: relation.relation.clone(),
+                            })
+                            .collect(),
+                    )
+                }
+                _ => return None,
+            };
+            Some(routing::EtagInputs {
+                release: release_digest.to_owned(),
+                kind,
+            })
+        }),
         attachment_id: attachment_id.to_string(),
         // The WIT field stays, and the release names no host, so it is empty.
         host: String::new(),
@@ -1256,10 +1370,15 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
     {
         let (plugin, trace) = accessor.with(|mut access| {
             let ctx = access.get();
-            Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
-                crate::invocation_trace::invocation_trace(&ctx),
-            ))
+            let trace = crate::invocation_trace::request_trace(
+                &headers
+                    .iter()
+                    .map(|header| (header.name.clone(), header.value.clone()))
+                    .collect::<Vec<_>>(),
+            );
+            ctx.table
+                .push(crate::invocation_trace::RequestTrace(trace.clone()))?;
+            Ok::<_, wash_runtime::wasmtime::Error>((plugin_of(&ctx)?, trace))
         })?;
         trace
             .run(async move {
@@ -1394,6 +1513,10 @@ mod tests {
     };
 
     use super::*;
+
+    fn route_definitions(manifest: &ServingManifest, method: &str) -> Vec<RouteDefinition> {
+        super::route_definitions(manifest, method, manifest.digest().as_str())
+    }
 
     const COMPONENT: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1692,6 +1815,125 @@ mod tests {
 
         let wiring = route_definitions(&one_http_route(), "POST");
         assert_eq!(wiring[0].cache_control, None, "a wiring can write");
+    }
+
+    #[test]
+    fn entry_rules_come_from_the_released_operation() {
+        let mut attachment = attachment(
+            AttachmentType::Http,
+            json!({"route": {"path": "/orders", "method": "POST"}}),
+        );
+        attachment.target = wamn_catalog::AttachmentTarget::Route {
+            component: "http-request".into(),
+            operation: "request".into(),
+        };
+        let form = wamn_catalog::RouteCanonicalization {
+            excluded: BTreeSet::from(["value.note".into()]),
+            lines: Some(wamn_catalog::RouteLineOrder {
+                path: "value.lines".into(),
+                ascending_by: "id".into(),
+            }),
+            spelling: BTreeMap::from([
+                (
+                    "value.lines[].quantity".into(),
+                    wamn_catalog::CanonicalSpelling::Numeric,
+                ),
+                (
+                    "value.at".into(),
+                    wamn_catalog::CanonicalSpelling::Timestamptz,
+                ),
+            ]),
+        };
+        for kind in [
+            OperationType::Command,
+            OperationType::Update,
+            OperationType::Get,
+            OperationType::Query,
+        ] {
+            let manifest = release_manifest_with_routes(
+                BTreeSet::from([ServingRoute {
+                    package_id: "cat".into(),
+                    component: "http-request".into(),
+                    operation: "request".into(),
+                    type_: kind,
+                    reads: BTreeSet::from([wamn_catalog::ServingRelation {
+                        schema: "app".into(),
+                        relation: "orders".into(),
+                    }]),
+                    revision: Some("revision".into()),
+                    idempotency: (kind == OperationType::Command).then(|| "value.key".into()),
+                    canonicalization: Some(form.clone()),
+                }]),
+                BTreeMap::from([("route".into(), attachment.clone())]),
+            );
+            let definitions = route_definitions(&manifest, "POST");
+            let [definition] = definitions.as_slice() else {
+                panic!("one route");
+            };
+            assert_eq!(definition.sealed_operation_id.as_deref(), Some("request"));
+            assert_eq!(
+                definition.operation_deadline_ms,
+                crate::router_delivery::bounded_node_deadline_ms(None)
+            );
+            if logs_intent(kind) {
+                assert_eq!(definition.stream_ceiling, None);
+                assert_eq!(
+                    definition.idempotency_rule.as_deref(),
+                    Some(if kind == OperationType::Command {
+                        "value.key"
+                    } else {
+                        "request_id"
+                    })
+                );
+                let rule = definition.request_hash_rule.as_ref().unwrap();
+                assert_eq!(rule.excluded, ["request_id", "value.note"]);
+                let order = rule.lines.as_ref().unwrap();
+                assert_eq!(order.path, "value.lines");
+                assert_eq!(order.ascending_by, "id");
+                assert_eq!(rule.spelling[0].path, "value.at");
+                assert!(matches!(
+                    rule.spelling[0].spelling,
+                    routing::CanonicalSpelling::Timestamptz
+                ));
+                assert_eq!(rule.spelling[1].path, "value.lines[].quantity");
+                assert!(matches!(
+                    rule.spelling[1].spelling,
+                    routing::CanonicalSpelling::Numeric
+                ));
+                assert!(definition.etag_inputs.is_none());
+            } else {
+                assert_eq!(definition.stream_ceiling, Some(100_000));
+                assert!(definition.idempotency_rule.is_none());
+                assert!(definition.request_hash_rule.is_none());
+                let inputs = definition.etag_inputs.as_ref().unwrap();
+                assert_eq!(inputs.release, manifest.digest().as_str());
+                match &inputs.kind {
+                    routing::EtagKind::Get(field) => assert_eq!(field, "revision"),
+                    routing::EtagKind::List(relations) => {
+                        assert_eq!(relations.len(), 1);
+                        assert_eq!(relations[0].schema, "app");
+                        assert_eq!(relations[0].name, "orders");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn host_routes_and_wirings_carry_no_entry_operation_rules() {
+        let mut manifest = one_http_route();
+        manifest
+            .host_routes
+            .insert(wamn_catalog::HostRouteSet::Application);
+        for method in ["GET", "POST"] {
+            for definition in route_definitions(&manifest, method) {
+                assert_eq!(definition.stream_ceiling, None);
+                assert!(definition.sealed_operation_id.is_none());
+                assert!(definition.idempotency_rule.is_none());
+                assert!(definition.request_hash_rule.is_none());
+                assert!(definition.etag_inputs.is_none());
+            }
+        }
     }
 
     #[test]

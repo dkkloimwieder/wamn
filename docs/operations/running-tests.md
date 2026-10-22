@@ -38,6 +38,7 @@ A passing workspace test result does not establish compilation of those guest ta
 If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)"`.
 These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
 The stage checks the router pin, as the guest build of `wamn build` does, because the two builds diverged once (`wamn-lt7y`).
+Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
 `tools/test-changes --cluster` runs no guest build.
 Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
 Run the reading package's tests for such a change.
@@ -100,6 +101,7 @@ The expected value of the test must not come from the code under test.
 ## Local application business tests
 
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
+The fixture composes the pinned HTTP entry with the application and binds operation authority from its format-11 manifest.
 They share the in-process runtime setup in `tests/integration/src/local_application.rs`.
 The fixture starts a private scheduler NATS with TLS and replicates the host auth cache from its `wamn-auth` bucket.
 Set `WAMN_NATIVE_C_NATS_BIN` to a local `nats-server` executable.
@@ -110,8 +112,8 @@ Build the packages that these tests use, with a PostgreSQL server URL in `DATABA
 
 ```bash
 target/debug/wamn build apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
-cargo build --manifest-path apps/Cargo.toml --locked --offline \
-  --target wasm32-wasip2 -p http-route
+RUSTFLAGS="$(tools/guest-rustflags)" cargo build --manifest-path apps/Cargo.toml --locked --offline \
+  --target wasm32-wasip2 --release -p http-route
 ```
 
 The build composes Acme with the Receiving base into one component.
@@ -123,17 +125,17 @@ Run the local business assertions:
 
 ```bash
 WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
-WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/release/http_route.wasm" \
 WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
   cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
-The publish composition tests also use the debug `http-route` guest from the build above.
+The publish composition tests use the pinned `http-route` guest from the build above.
 They inspect composed bytes and SQL ownership without serving requests or starting a database:
 
 ```bash
-WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_route.wasm" \
+WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
   cargo test --offline -p wamn-control --test application_composition -- --include-ignored
 ```
 

@@ -160,6 +160,10 @@ pub async fn qualification_images(chart: &Path) -> anyhow::Result<QualificationI
 #[derive(Debug, Clone)]
 pub struct Role {
     pub name: RoleName,
+    /// The HTTP entry reference recorded by the release.
+    pub entry: Option<String>,
+    /// The entry's named SQL import instances.
+    pub statements: Vec<String>,
     /// `localResources.config` of the role's component.
     pub config: Mapping,
     /// `localResources.environment.config`; the materializer only.
@@ -214,6 +218,30 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
     {
         roles.push(Role {
             name: RoleName::Http,
+            entry: manifest
+                .composed_entry
+                .as_ref()
+                .map(|entry| entry.reference.clone()),
+            statements: manifest
+                .composed_entry
+                .as_ref()
+                .map_or_else(Vec::new, |entry| {
+                    let application = manifest
+                        .components
+                        .iter()
+                        .filter(|component| {
+                            entry.members.iter().any(|member| {
+                                member.digest == component.descriptor.component_digest
+                            })
+                        })
+                        .max_by_key(|component| component.statement_instances.len());
+                    match application {
+                        Some(application) if !application.statement_instances.is_empty() => {
+                            application.statement_instances.keys().cloned().collect()
+                        }
+                        _ => vec!["sql-0".to_owned()],
+                    }
+                }),
             config: scope(&[]),
             environment: None,
         });
@@ -232,6 +260,8 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
         .collect();
         roles.push(Role {
             name: RoleName::Materializer,
+            entry: None,
+            statements: Vec::new(),
             config: scope(&[("wamn.postgres.authority", "event-materializer")]),
             environment: Some(environment),
         });
@@ -375,6 +405,13 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             let mut entry = Mapping::new();
             entry.insert("name".into(), role.name.as_str().into());
             entry.insert("config".into(), Value::Mapping(role.config.clone()));
+            if let Some(reference) = &role.entry {
+                entry.insert("entry".into(), reference.clone().into());
+            }
+            entry.insert(
+                "statements".into(),
+                Value::Sequence(role.statements.iter().cloned().map(Value::String).collect()),
+            );
             if let Some(environment) = &role.environment {
                 entry.insert("environment".into(), Value::Mapping(environment.clone()));
             }
@@ -562,6 +599,8 @@ mod tests {
             artifact_base: "registry.example/releases".into(),
             route_host: "wms.acme.example".into(),
             roles: vec![Role {
+                entry: Some(format!("registry/entry@sha256:{}", "a".repeat(64))),
+                statements: vec!["sql-0".to_owned()],
                 name: RoleName::Http,
                 config: Mapping::new(),
                 environment: None,
@@ -608,7 +647,7 @@ mod tests {
     }
 
     #[test]
-    fn values_pin_the_release_by_digest_and_carry_no_image() {
+    fn values_pin_the_release_and_entry_without_overriding_the_runtime_image() {
         let values = values(&input()).expect("values render");
         let name = release_name("acme", "wms", "prod").expect("valid coordinate");
         let label = release_label(DIGEST).expect("digest");
@@ -655,11 +694,9 @@ mod tests {
         assert!(runtime.get("image").is_none());
         assert_eq!(values["audit"]["actor"].as_str(), Some("ops"));
         assert!(values.get("platform").is_none());
-        let text = serde_yaml::to_string(&values).expect("yaml");
         assert_eq!(
-            text.matches("sha256:").count(),
-            3,
-            "the digest appears only as the release"
+            values["roles"][0]["entry"].as_str(),
+            input().roles[0].entry.as_deref()
         );
     }
 

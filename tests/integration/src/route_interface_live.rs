@@ -367,16 +367,11 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         &json!({"field": "id", "id": MISSING}),
     )?;
 
-    // A server-owned field is invalid input on both paths: the route input
-    // schema admits no member the caller does not own.
+    // The generated operation type refuses fields the caller does not own.
     let invalid = paths
-        .alike("/widget/get", &json!([{"id": id, "edit_version": 1}]))
+        .route("/widget/get", &json!([{"id": id, "edit_version": 1}]))
         .await?;
-    anyhow::ensure!(
-        invalid["error"]["code"] == "schema-invalid"
-            && invalid["error"]["data"]["pointer"] == "/0/edit_version",
-        "a server-owned field is refused by the route schema: {invalid}"
-    );
+    refused(&invalid, "invalid_input", &json!({"field": "input"}))?;
 
     // UPDATE. A stale revision is refused alike, and each path advances the
     // revision by one.

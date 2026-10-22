@@ -57,12 +57,11 @@ pub(super) async fn start(
     .await?;
     let local = root.join("control-artifacts");
     std::fs::create_dir_all(&local)?;
-    let bytes = std::fs::read(&args.flow_http_component)?;
+    let bytes =
+        wamn_component_composer::compose_control_entry(std::fs::read(&args.flow_http_component)?)?;
     let digest = wamn_engine::component_admission::component_digest(&bytes);
-    std::fs::write(
-        wamn_engine::artifact_source::local_component_path(&local, &digest)?,
-        bytes,
-    )?;
+    let entry_path = wamn_engine::artifact_source::local_component_path(&local, &digest)?;
+    std::fs::write(&entry_path, bytes)?;
     // Read the deployed interfaces instead of defining another HTTP contract.
     let deployment = serde_yaml::Deserializer::from_str(include_str!(
         "../../../../../deploy/gcp/control-service.yaml"
@@ -89,7 +88,7 @@ pub(super) async fn start(
                 host_interfaces: interfaces,
                 components: vec![v2::Component {
                     name: "flow-http".to_owned(),
-                    image: digest,
+                    image: format!("file:{}", entry_path.canonicalize()?.display()),
                     image_pull_policy: v2::ImagePullPolicy::Never.into(),
                     ..Default::default()
                 }],

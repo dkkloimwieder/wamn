@@ -1032,3 +1032,6 @@ fn body_too_large_response(limit: usize) -> HttpResponse {
 
 #[cfg(target_arch = "wasm32")]
 mod guest;
+
+#[cfg(any(target_arch = "wasm32", test))]
+mod entry_response;

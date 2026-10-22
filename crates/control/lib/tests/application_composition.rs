@@ -372,3 +372,31 @@ fn publication_composes_the_built_http_route_guest() {
     );
     assert_composition(&std::fs::read(path).expect("read the built HTTP route guest"));
 }
+
+#[test]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT built from the http-route guest"]
+fn platform_control_entry_resolves_dispatch_and_requires_the_route_pin() {
+    let path = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").expect("built route guest");
+    let mut route = std::fs::read(path).expect("read the built HTTP route guest");
+    let bytes = wamn_component_composer::compose_control_entry(route.clone())
+        .expect("compose the platform control entry");
+    wamn_component_composer::validate_application_dispatch(&bytes)
+        .expect("the host supplies no private dispatch");
+    let engine = wamn_engine::build_engine(&[]).expect("build inspection engine");
+    let component = wash_runtime::wasmtime::component::Component::new(engine.inner(), bytes)
+        .expect("the control entry compiles");
+    let exports = component
+        .component_type()
+        .exports(engine.inner())
+        .map(|(name, _)| name.to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(exports, BTreeSet::from([HANDLER.to_owned()]));
+    route.push(0);
+    let error = wamn_component_composer::compose_control_entry(route)
+        .expect_err("the platform control entry requires the pinned guest");
+    assert!(
+        error
+            .to_string()
+            .contains("differs from the platform route pin")
+    );
+}

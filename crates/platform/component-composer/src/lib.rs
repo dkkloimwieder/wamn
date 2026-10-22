@@ -12,8 +12,8 @@
 //!
 //! Each member that imports `wamn:postgres/statements` gets an outer import
 //! of its own, named by the member's position in the composition (`sql-0`,
-//! `sql-1`). The interface stays one type: each outer import carries an
-//! `(implements ..)` label of it. A custom section records the digest of the
+//! `sql-1`). Each import has a separate instance type and carries the same
+//! `(implements ..)` interface label. A custom section records the digest of the
 //! member each outer import was made for, so admission can check the wiring
 //! in the composed bytes and the host can bind each import to the statements
 //! of that member (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
@@ -22,13 +22,31 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail};
 use sha2::{Digest as _, Sha256};
-use wac_graph::types::{Package, Types};
+use wac_graph::types::{ItemKind, Package, Types};
 use wac_graph::{CompositionGraph, EncodeOptions, NodeId, PackageId};
 use wamn_component_policy::{STATEMENT_INSTANCES_SECTION, STATEMENTS_INTERFACE};
 use wasmparser::{Parser, Payload};
 
+mod dispatch;
+
+/// The private call interface supplied only by application composition.
+pub const APPLICATION_DISPATCH: &str = "wamn:application-dispatch/dispatch@0.1.0";
+
 /// The HTTP entry exported only by the platform route layer.
 pub const HTTP_HANDLER: &str = "wasi:http/handler@0.3.0";
+
+/// Compose the pinned platform route with a dispatcher that has no operations.
+pub fn compose_control_entry(route: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    let pin = include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
+        .split_whitespace()
+        .next()
+        .expect("route pin exists");
+    anyhow::ensure!(
+        digest_text(&Sha256::digest(&route).into()) == format!("sha256:{pin}"),
+        "control route differs from the platform route pin"
+    );
+    compose_application(route, wat::parse_str("(component)")?)
+}
 
 /// Refuse entry authority anywhere in an application member's component tree.
 pub fn validate_application_member(bytes: &[u8]) -> anyhow::Result<()> {
@@ -41,6 +59,9 @@ pub fn validate_application_member(bytes: &[u8]) -> anyhow::Result<()> {
                         import.name.name,
                         import.name.implements,
                     );
+                    if wamn_component_policy::import_pkg(interface) == "wamn:application-dispatch" {
+                        bail!("application member imports composition-private dispatch");
+                    }
                     if wamn_component_policy::import_pkg(interface) == "wamn:operation" {
                         bail!("application member imports entry-only package wamn:operation");
                     }
@@ -72,10 +93,17 @@ pub fn compose_application(route: Vec<u8>, application: Vec<u8>) -> anyhow::Resu
         "route layer does not export {HTTP_HANDLER}"
     );
     let route_imports = names(&route, "route", false)?;
+    let dispatch = route_imports
+        .contains(APPLICATION_DISPATCH)
+        .then(|| dispatch::build(&application))
+        .transpose()?;
     let mut statement_instances = application_statement_instances(&application)?;
     let mut graph = CompositionGraph::new();
     let application = instantiate(&mut graph, "wamn-member:application", application)?;
     let route = instantiate(&mut graph, "wamn-member:route", route)?;
+    let dispatch = dispatch
+        .map(|bytes| instantiate(&mut graph, "wamn-member:dispatch", bytes))
+        .transpose()?;
     // Preserve the application's type dependency order, including base exports
     // that an overlay's exported interface uses.
     let application_exports = graph.types()[graph[application.package].ty()]
@@ -92,14 +120,29 @@ pub fn compose_application(route: Vec<u8>, application: Vec<u8>) -> anyhow::Resu
                 .set_instantiation_argument(route.instance, name, export)
                 .with_context(|| format!("plug {name} into the route layer"))?;
         }
+        if let Some(dispatch) = dispatch
+            && graph.types()[graph[dispatch.package].ty()]
+                .imports
+                .contains_key(name)
+        {
+            graph.set_instantiation_argument(dispatch.instance, name, export)?;
+        }
         graph
             .export(export, name)
             .with_context(|| format!("export application operation {name}"))?;
+    }
+    if let Some(dispatch) = dispatch {
+        let export = graph.alias_instance_export(dispatch.instance, APPLICATION_DISPATCH)?;
+        graph.set_instantiation_argument(route.instance, APPLICATION_DISPATCH, export)?;
     }
     // An already composed application keeps its named statement imports and
     // their original member digests. A plain application gets its own instance.
     if statement_instances.is_empty() {
         statement_instances = name_statement_instances(&mut graph, &[application])?;
+    } else {
+        for name in statement_instances.keys() {
+            statement_import(&mut graph, application, name, name)?;
+        }
     }
     let handler = graph
         .alias_instance_export(route.instance, HTTP_HANDLER)
@@ -114,6 +157,7 @@ pub fn compose_application(route: Vec<u8>, application: Vec<u8>) -> anyhow::Resu
             processor: None,
         })
         .context("encode application with route layer")?;
+    composed = label_statement_imports(&composed, &statement_instances)?;
     if !statement_instances.is_empty() {
         append_custom_section(
             &mut composed,
@@ -121,7 +165,34 @@ pub fn compose_application(route: Vec<u8>, application: Vec<u8>) -> anyhow::Resu
             &serde_json::to_vec(&statement_instances)?,
         );
     }
+    validate_application_dispatch(&composed)?;
     Ok(composed)
+}
+
+/// Refuse a private dispatch import left to the host, including named imports.
+pub fn validate_application_dispatch(bytes: &[u8]) -> anyhow::Result<()> {
+    let mut depth = 0_usize;
+    for payload in Parser::new(0).parse_all(bytes) {
+        match payload? {
+            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
+            Payload::End(_) => depth = depth.saturating_sub(1),
+            Payload::ComponentImportSection(imports) if depth == 0 => {
+                for import in imports {
+                    let import = import?;
+                    let interface = wamn_component_policy::instance_type(
+                        import.name.name,
+                        import.name.implements,
+                    );
+                    anyhow::ensure!(
+                        wamn_component_policy::import_pkg(interface) != "wamn:application-dispatch",
+                        "application dispatch must be supplied inside the composition"
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn application_statement_instances(bytes: &[u8]) -> anyhow::Result<BTreeMap<String, String>> {
@@ -226,6 +297,7 @@ pub fn compose(overlay: Vec<u8>, bases: Vec<Vec<u8>>) -> anyhow::Result<Vec<u8>>
             processor: None,
         })
         .context("encode the composed component")?;
+    composed = label_statement_imports(&composed, &statement_instances)?;
     if !statement_instances.is_empty() {
         append_custom_section(
             &mut composed,
@@ -258,23 +330,83 @@ fn name_statement_instances(
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let mut instances = BTreeMap::new();
     for (position, member) in members.iter().enumerate() {
-        let Some(kind) = graph.types()[graph[member.package].ty()]
+        if !graph.types()[graph[member.package].ty()]
             .imports
-            .get(STATEMENTS_INTERFACE)
-            .copied()
-        else {
+            .contains_key(STATEMENTS_INTERFACE)
+        {
             continue;
-        };
+        }
         let name = format!("sql-{position}");
-        let import = graph
-            .import(name.clone(), kind)
-            .with_context(|| format!("import {name} as {STATEMENTS_INTERFACE}"))?;
-        graph
-            .set_instantiation_argument(member.instance, STATEMENTS_INTERFACE, import)
-            .with_context(|| format!("plug {name} into member {position}"))?;
+        statement_import(graph, *member, &name, STATEMENTS_INTERFACE)?;
         instances.insert(name, digest_text(&member.digest));
     }
     Ok(instances)
+}
+
+fn statement_import(
+    graph: &mut CompositionGraph,
+    member: Member,
+    name: &str,
+    argument: &str,
+) -> anyhow::Result<()> {
+    let ItemKind::Instance(interface) = graph.types()[graph[member.package].ty()].imports[argument]
+    else {
+        bail!("statements import is not an instance");
+    };
+    // Anonymous interfaces keep the graph aggregator from merging these
+    // resource owners. Restore their implements labels after encoding.
+    let mut interface = graph.types()[interface].clone();
+    interface.id = None;
+    let kind = ItemKind::Instance(graph.types_mut().add_interface(interface));
+    let import = graph.import(name, kind)?;
+    graph.set_instantiation_argument(member.instance, argument, import)?;
+    Ok(())
+}
+
+fn label_statement_imports(
+    bytes: &[u8],
+    instances: &BTreeMap<String, String>,
+) -> anyhow::Result<Vec<u8>> {
+    use wasm_encoder::reencode::{ReencodeComponent as _, RoundtripReencoder};
+    use wasm_encoder::{Component, ComponentExternName, ComponentImportSection, RawSection};
+
+    let mut output = Component::new();
+    let mut depth = 0_usize;
+    for payload in Parser::new(0).parse_all(bytes) {
+        let payload = payload?;
+        if depth == 0 {
+            if let Payload::ComponentImportSection(imports) = payload {
+                let mut section = ComponentImportSection::new();
+                for import in imports {
+                    let import = import?;
+                    let mut name = ComponentExternName::from(import.name.name);
+                    name.external_id = import.name.external_id.map(Into::into);
+                    name.version_suffix = import.name.version_suffix.map(Into::into);
+                    name.implements = if instances.contains_key(import.name.name) {
+                        Some(STATEMENTS_INTERFACE.into())
+                    } else {
+                        import.name.implements.map(Into::into)
+                    };
+                    section.import(name, RoundtripReencoder.component_type_ref(import.ty)?);
+                }
+                output.section(&section);
+                continue;
+            }
+            if let Some((id, range)) = payload.as_section() {
+                let range = usize::try_from(range.start)?..usize::try_from(range.end)?;
+                output.section(&RawSection {
+                    id,
+                    data: &bytes[range],
+                });
+            }
+        }
+        match payload {
+            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
+            Payload::End(_) => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(output.finish())
 }
 
 fn digest_text(digest: &[u8; 32]) -> String {
@@ -386,6 +518,23 @@ mod tests {
     }
 
     #[test]
+    fn admission_refuses_unsatisfied_dispatch() {
+        let bytes = wat::parse_str(
+            r#"(component
+            (import "wamn:application-dispatch/dispatch@0.1.0" (instance)))"#,
+        )
+        .unwrap();
+        assert!(super::validate_application_dispatch(&bytes).is_err());
+    }
+
+    #[test]
+    fn admission_refuses_dispatch_imported_from_outside_the_composition() {
+        let bytes = wat::parse_str(r#"(component
+            (import "external" (implements "wamn:application-dispatch/dispatch@0.1.0") (instance)))"#).unwrap();
+        assert!(super::validate_application_dispatch(&bytes).is_err());
+    }
+
+    #[test]
     fn composition_embeds_each_member_unchanged_and_plugs_by_export_name() {
         let overlay = overlay();
         let base = base();
@@ -423,6 +572,33 @@ mod tests {
 
     const STATEMENTS_IMPORT: &str = r#"(import "wamn:postgres/statements@0.4.0" (instance
         (export "run" (func (param "statement" string) (result u32)))))"#;
+
+    #[test]
+    fn resource_bearing_sql_imports_decode_after_overlay_and_entry_composition() {
+        let sql = r#"(import "wamn:postgres/statements@0.4.0" (instance
+            (export "transaction" (type (sub resource)))
+            (type $row (record (field "value" string)))
+            (export "row" (type (eq $row)))))"#;
+        let base = component(sql, "test:base/op@1.0.0");
+        let overlay = component(
+            &format!("{sql}{}", operation_import("test:base/op@1.0.0")),
+            "test:overlay/main@1.0.0",
+        );
+        let application = compose(overlay, vec![base]).expect("Acme-shaped overlay composes");
+        wit_component::decode(&application).expect("overlay WIT decodes");
+        let mut types = Types::default();
+        Package::from_bytes("application", None, application.as_slice(), &mut types)
+            .expect("overlay graph decodes");
+        let provenance = super::application_statement_instances(&application).unwrap();
+        assert_eq!(provenance.len(), 2);
+        let route = component(&operation_import("test:base/op@1.0.0"), HTTP_HANDLER);
+        let entry = compose_application(route, application).expect("entry composes");
+        wit_component::decode(&entry).expect("entry WIT decodes");
+        assert_eq!(
+            super::application_statement_instances(&entry).unwrap(),
+            provenance
+        );
+    }
 
     #[test]
     fn each_statements_importer_gets_its_own_outer_import_with_its_digest() {

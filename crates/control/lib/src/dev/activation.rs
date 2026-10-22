@@ -501,7 +501,30 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
     std::fs::create_dir_all(&local.directory).map_err(stage_error)?;
     std::fs::set_permissions(&local.directory, std::fs::Permissions::from_mode(0o700))
         .map_err(stage_error)?;
-    let component_bytes = std::fs::read(&local.flow_http_component).map_err(stage_error)?;
+    let manifest_bytes = std::fs::read(
+        local
+            .directory
+            .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
+    )
+    .map_err(stage_error)?;
+    let (manifest, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(&manifest_bytes)
+        .map_err(|source| stage_error(std::io::Error::other(source)))?;
+    if digest != request.release.manifest_digest {
+        return Err(stage_error(std::io::Error::other(
+            "local release digest mismatch",
+        )));
+    }
+    let entry = manifest.composed_entry.as_ref().ok_or_else(|| {
+        stage_error(std::io::Error::other(
+            "publish the release with its composed HTTP entry",
+        ))
+    })?;
+    let entry_path = entry.reference.strip_prefix("file:").ok_or_else(|| {
+        stage_error(std::io::Error::other(
+            "local entry requires a file reference",
+        ))
+    })?;
+    let component_bytes = std::fs::read(entry_path).map_err(stage_error)?;
     let checked = (|| -> anyhow::Result<()> {
         let engine = wamn_engine::engine::build_engine(&[])?;
         let component =
@@ -524,11 +547,22 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
             NativeBackendError::from(source),
         )
     })?;
-    let digest = wamn_engine::component_admission::component_digest(&component_bytes);
-    let path = wamn_engine::artifact_source::local_component_path(&local.directory, &digest)
-        .expect("a computed component digest is valid");
-    std::fs::write(path, component_bytes).map_err(stage_error)?;
     let mut workload = flow_http_request(request);
+    let world = workload
+        .workload
+        .as_mut()
+        .expect("HTTP workload exists")
+        .wit_world
+        .as_mut()
+        .expect("HTTP world exists");
+    for name in wamn_engine::statement_instances::statement_instances(&component_bytes)
+        .map_err(|source| stage_error(std::io::Error::other(source)))?
+        .keys()
+    {
+        let mut interface = wit_interface("wamn", "postgres", "0.4.0", "statements");
+        interface.name.clone_from(name);
+        world.host_interfaces.push(interface);
+    }
     let component = &mut workload
         .workload
         .as_mut()
@@ -537,7 +571,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
         .as_mut()
         .expect("flow-http world exists")
         .components[0];
-    component.image = digest;
+    component.image.clone_from(&entry.reference);
     component.image_pull_policy = v2::ImagePullPolicy::Never.into();
     let bytes = serde_json::to_vec(&workload).map_err(|source| {
         DevActivationError::with_source(
@@ -755,13 +789,13 @@ pub async fn activate(
     request: DevActivationRequest<'_>,
 ) -> Result<DevActivation, DevActivationError> {
     validate_request(&request)?;
-    let digest = staged_http_digest(&request)?;
+    staged_http_reference(&request)?;
     let backend = NativeActivationBackend::connect(request.config.scheduler_nats_url()).await?;
-    let active = activate_backend(request, backend, &digest).await?;
+    let active = activate_backend(request, backend).await?;
     Ok(DevActivation { active })
 }
 
-fn staged_http_digest(request: &DevActivationRequest<'_>) -> Result<String, DevActivationError> {
+fn staged_http_reference(request: &DevActivationRequest<'_>) -> Result<String, DevActivationError> {
     let path = request
         .config
         .local_artifacts()
@@ -851,7 +885,7 @@ fn host_namespace(identity: &DevActivationIdentity) -> &str {
     &identity.environment
 }
 
-fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> HostProcessSpec {
+fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
     let platform: serde_yaml::Value = serde_yaml::from_str(include_str!(
         "../../../../../deploy/platform/release/values.yaml"
     ))
@@ -1038,10 +1072,6 @@ fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> H
             ),
         ));
     }
-    env.push((
-        "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS".to_owned(),
-        http_digest.to_owned(),
-    ));
     if let Some(path) = request.config.credentials_file() {
         env.push((
             "WAMN_CREDENTIALS_FILE".to_owned(),
@@ -1125,8 +1155,7 @@ fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartReq
                 components: vec![v2::Component {
                     image: "flow-http.wasm".to_owned(),
                     local_resources: Some(local_resources),
-                    pool_size: serde_yaml::from_value(http["poolSize"].clone())
-                        .expect("the HTTP store pool size is an i32"),
+                    pool_size: 0,
                     reclaim_window_seconds: 0,
                     reclaim_min_instances: 0,
                     max_invocations: 0,
@@ -1150,6 +1179,8 @@ fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartReq
                     },
                     wit_interface("wamn", "flow-http-routing", "0.1.0", "routing"),
                     wit_interface("wamn", "router-delivery", "0.4.0", "delivery"),
+                    wit_interface("wamn", "operation", "0.1.0", "operation"),
+                    wit_interface("wamn", "postgres", "0.4.0", "statements"),
                 ],
             }),
             volumes: Vec::new(),
@@ -1176,7 +1207,6 @@ fn wit_interface(
 async fn activate_backend<B>(
     request: DevActivationRequest<'_>,
     mut backend: B,
-    http_digest: &str,
 ) -> Result<BackendActivation<B>, DevActivationError>
 where
     B: ActivationBackend,
@@ -1191,7 +1221,7 @@ where
         .flush()
         .await
         .map_err(|source| backend_error("flush-heartbeats", source))?;
-    let spec = host_process_spec(&request, http_digest);
+    let spec = host_process_spec(&request);
     backend.spawn_host(&spec).await.map_err(|source| {
         DevActivationError::with_source(
             DevActivationErrorType::HostProcess,
@@ -2042,6 +2072,8 @@ mod tests {
             artifact_base: "local/releases".into(),
             route_host: "receiving.localhost".into(),
             roles: vec![release_chart::Role {
+                entry: Some(format!("registry/entry@sha256:{}", "a".repeat(64))),
+                statements: Vec::new(),
                 name: release_chart::RoleName::Http,
                 config: serde_yaml::Mapping::from_iter([(
                     "wamn.tenant".into(),
@@ -2128,7 +2160,7 @@ mod tests {
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
         };
-        let local = host_process_spec(&request, &digest);
+        let local = host_process_spec(&request);
         let workload = flow_http_request(&request).workload.unwrap();
         let world = workload.wit_world.unwrap();
         let component = &world.components[0];
@@ -2155,7 +2187,7 @@ mod tests {
         let mut local = settings(&local.env, &local.args);
         // Exact names only: new settings remain visible and fail the comparison.
         for key in [
-            "WASMCLOUD_HOST_IP",                   // Kubernetes supplies the pod IP.
+            "WASMCLOUD_HOST_IP",              // Kubernetes supplies the pod IP.
             "WASMCLOUD_HOST_ENVIRONMENT", // Local workloads use the session environment, not a pod namespace.
             "--host-name", // Local sessions choose a process identity instead of a pod IP.
             "--host-group", // Local sessions choose an isolated host group.
@@ -2180,7 +2212,6 @@ mod tests {
             "WAMN_COMPONENT_ARTIFACT_BASE", // Local components use staged files.
             "WAMN_REGISTRY_TOKEN_METADATA", // Local releases require no registry token.
             "WAMN_WASMTIME_CACHE_DIR", // Local sessions own their cache directory.
-            "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS", // The developer trusts the locally staged HTTP component.
             "WAMN_PG_URL", // Local databases use disposable credentials and endpoints.
             "WAMN_SYSTEM_URL", // Local databases use disposable credentials and endpoints.
             "WAMN_EXECUTOR_PLATFORM_PG_URL", // Local databases use disposable credentials and endpoints.
@@ -2220,7 +2251,7 @@ mod tests {
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
         };
-        let spec = host_process_spec(&request, "sha256:fixture");
+        let spec = host_process_spec(&request);
         for (name, value) in [
             ("WAMN_SESSION_ISSUER", "https://127.0.0.1:8443"),
             ("WAMN_SESSION_JWKS_CA", "/tmp/owned-identity-ca.pem"),
@@ -2251,7 +2282,7 @@ mod tests {
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
         };
-        let spec = host_process_spec(&request, "sha256:fixture");
+        let spec = host_process_spec(&request);
         assert!(
             !spec
                 .env
@@ -2264,7 +2295,7 @@ mod tests {
             config: &config,
             ..request
         };
-        let spec = host_process_spec(&request, "sha256:fixture");
+        let spec = host_process_spec(&request);
         assert!(
             spec.env
                 .iter()
@@ -2319,9 +2350,37 @@ mod tests {
         )
         .unwrap();
         let identity = identity();
+        let digest = wamn_engine::component_admission::component_digest(&component_bytes);
+        let member = json!({"package-id": "fixture", "component": "entry", "digest": digest});
+        let manifest: wamn_catalog::ServingManifest = serde_json::from_value(json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": [{"package-id": "fixture", "package-version": "1.0.0"}]},
+            "components": [{"package-id": "fixture", "descriptor": {
+                "component": "entry", "interface-version": "0.1", "component-digest": digest,
+                "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []
+            }, "operations": {"fixture:item/get@1.0.0": {}}}],
+            "routes": [], "attachments": {}, "workflow": {"wirings": []},
+            "composed-entry": {
+                "reference": format!("file:{}", wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap().display()),
+                "route-digest": digest, "members": [member]
+            }
+        })).unwrap();
+        let manifest_bytes = manifest.canonical_bytes();
+        let (_, manifest_digest) =
+            wamn_catalog::ServingManifest::from_canonical_bytes(&manifest_bytes).unwrap();
+        std::fs::write(
+            directory.join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
+            manifest_bytes,
+        )
+        .unwrap();
+        std::fs::write(
+            wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap(),
+            &component_bytes,
+        )
+        .unwrap();
         let release = ReleaseCarrier {
             artifact_base: format!("local:{}", directory.display()),
-            ..release()
+            manifest_digest,
         };
         let request = DevActivationRequest {
             config: &config,
@@ -2378,12 +2437,12 @@ mod tests {
         )
         .unwrap();
         std::fs::remove_file(&source).unwrap();
-        let trusted_digest = staged_http_digest(&request).unwrap();
+        let entry_reference = staged_http_reference(&request).unwrap();
         assert_eq!(
-            trusted_digest,
-            wamn_engine::component_admission::component_digest(&component_bytes)
+            entry_reference,
+            format!("file:{}", component_path.display())
         );
-        let spec = host_process_spec(&request, &trusted_digest);
+        let spec = host_process_spec(&request);
         assert!(
             spec.args
                 .iter()
@@ -2419,9 +2478,7 @@ mod tests {
             ],
             [],
         );
-        let active = activate_backend(request, backend, &trusted_digest)
-            .await
-            .unwrap();
+        let active = activate_backend(request, backend).await.unwrap();
         assert_eq!(&*active.host_id, "local-host");
         assert!(
             shared
@@ -2432,9 +2489,7 @@ mod tests {
                 .unwrap()
                 .env
                 .iter()
-                .any(|(key, value)| key == "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS"
-                    && value
-                        == &wamn_engine::component_admission::component_digest(&component_bytes))
+                .all(|(key, _)| key != "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS")
         );
         assert_eq!(
             std::fs::read(directory.join("flow-http.json")).unwrap(),
@@ -2497,7 +2552,7 @@ mod tests {
         );
         let workload = flow_http_request(&request);
 
-        let mut active = activate_backend(request, backend, "sha256:fixture")
+        let mut active = activate_backend(request, backend)
             .await
             .expect("the exact local host activates");
         assert_eq!(&*active.host_id, "selected-host-id");
@@ -2637,7 +2692,6 @@ mod tests {
                     "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT".to_owned(),
                     "8192".to_owned(),
                 ),
-                ("WAMN_COMPONENT_POOL_SIZE".to_owned(), "16".to_owned()),
                 ("WAMN_PG_GUEST_POOL_MAX".to_owned(), "16".to_owned()),
                 ("WAMN_PG_PLATFORM_POOL_MAX".to_owned(), "8".to_owned()),
                 (
@@ -2648,10 +2702,6 @@ mod tests {
                 ("WASH_CORE_INSTANCES".to_owned(), "512".to_owned()),
                 ("WASH_GUEST_MEMORY_MODE".to_owned(), "count".to_owned()),
                 ("WASH_MAX_CONCURRENT_STARTS".to_owned(), "4".to_owned()),
-                (
-                    "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS".to_owned(),
-                    "sha256:fixture".to_owned()
-                ),
             ]
         );
 
@@ -2794,7 +2844,7 @@ mod tests {
         let shared = Arc::new(Shared::default());
         let backend = FakeBackend::new(Arc::clone(&shared), [], [], []);
 
-        let Err(error) = activate_backend(request, backend, "sha256:fixture").await else {
+        let Err(error) = activate_backend(request, backend).await else {
             panic!("missing exact identity must refuse")
         };
 

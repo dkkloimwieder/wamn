@@ -156,6 +156,10 @@ interface statements {
 
   resource transaction {
     run: async func(statement: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+    /// Stream on this transaction, with the statement-declared row limit.
+    /// Read the completion future before another call on the transaction.
+    /// Dropping an unfinished stream aborts the transaction.
+    run-stream: async func(statement: string, binds: list<sql-value>) -> result<tuple<list<column>, stream<list<sql-value>>, future<result<_, statement-error>>>, statement-error>;
     commit: async func() -> result<_, statement-error>;
     rollback: async func() -> result<_, statement-error>;
   }

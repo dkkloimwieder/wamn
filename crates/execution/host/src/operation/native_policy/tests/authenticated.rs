@@ -547,32 +547,34 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
 /// exchanged: each member's bytes and the record stay, the graph changes.
 fn swap_statement_bindings(composed: &[u8]) -> Vec<u8> {
     let mut depth = 0_usize;
-    let mut imports = None;
+    let mut imports = Vec::new();
     for payload in wasmparser::Parser::new(0).parse_all(composed) {
         match payload.expect("the composed bytes parse") {
             wasmparser::Payload::ModuleSection { .. }
             | wasmparser::Payload::ComponentSection { .. } => depth += 1,
             wasmparser::Payload::End(_) => depth = depth.saturating_sub(1),
             wasmparser::Payload::ComponentImportSection(reader) if depth == 0 => {
-                imports = Some(reader.range());
+                imports.push(reader.range());
             }
             _ => {}
         }
     }
-    let range = imports.expect("the composed component has imports");
+    assert!(!imports.is_empty(), "the composed component has imports");
     let mut swapped = composed.to_vec();
-    let start = usize::try_from(range.start).expect("offset fits memory");
-    let end = usize::try_from(range.end).expect("offset fits memory");
-    let section = &mut swapped[start..end];
     let mut exchanged = 0;
-    for start in 0..section.len().saturating_sub(4) {
-        let name = &mut section[start..start + 5];
-        if name == b"sql-0" {
-            name.copy_from_slice(b"sql-1");
-            exchanged += 1;
-        } else if name == b"sql-1" {
-            name.copy_from_slice(b"sql-0");
-            exchanged += 1;
+    for range in imports {
+        let start = usize::try_from(range.start).expect("offset fits memory");
+        let end = usize::try_from(range.end).expect("offset fits memory");
+        let section = &mut swapped[start..end];
+        for start in 0..section.len().saturating_sub(4) {
+            let name = &mut section[start..start + 5];
+            if name == b"sql-0" {
+                name.copy_from_slice(b"sql-1");
+                exchanged += 1;
+            } else if name == b"sql-1" {
+                name.copy_from_slice(b"sql-0");
+                exchanged += 1;
+            }
         }
     }
     assert_eq!(exchanged, 2, "both outer import names are exchanged");

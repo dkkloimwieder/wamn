@@ -567,11 +567,12 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
             ))
         })?;
         trace
@@ -599,11 +600,12 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
             ))
         })?;
         trace
@@ -631,11 +633,12 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransaction>, PgError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
             ))
         })?;
         trace
@@ -674,11 +677,12 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
             ))
         })?;
         trace
@@ -707,11 +711,12 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
             ))
         })?;
         trace
@@ -740,11 +745,12 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWit
         id: super::NamedProject,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransaction>, PgError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
             ))
         })?;
         trace
@@ -776,12 +782,13 @@ async fn txn_query<T: 'static>(
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
     let (plugin, component_id, trace, state, destroyed, row_limit) =
         accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             let txn = ctx.table.get(&rep)?;
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
                 Arc::clone(&txn.state),
                 Arc::clone(&txn.destroyed),
                 txn.row_limit,
@@ -814,12 +821,13 @@ async fn txn_execute<T: 'static>(
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
     let (plugin, component_id, trace, state, destroyed) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         let txn = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            wamn_engine::invocation_trace::invocation_trace(&ctx),
+            trace,
             Arc::clone(&txn.state),
             Arc::clone(&txn.destroyed),
         ))
@@ -851,10 +859,11 @@ async fn txn_open_cursor<T: 'static>(
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
     let (plugin, component_id, trace, state, destroyed, name) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         let plugin = plugin_of(&ctx)?;
         let component_id = ctx.component_id.to_string();
-        let trace = wamn_engine::invocation_trace::invocation_trace(&ctx);
+
         let txn = ctx.table.get_mut(&rep)?;
         txn.cursor_seq += 1;
         Ok::<_, wash_runtime::wasmtime::Error>((
@@ -916,12 +925,13 @@ async fn txn_finish<T: 'static>(
     verb: &'static str,
 ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
     let (plugin, component_id, trace, state, destroyed) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         let txn = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            wamn_engine::invocation_trace::invocation_trace(&ctx),
+            trace,
             Arc::clone(&txn.state),
             Arc::clone(&txn.destroyed),
         ))
@@ -959,12 +969,13 @@ async fn cursor_fetch<T: 'static>(
     max_rows: u32,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
     let (plugin, component_id, trace, state, destroyed, name) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         let cursor = ctx.table.get(&rep)?;
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            wamn_engine::invocation_trace::invocation_trace(&ctx),
+            trace,
             Arc::clone(&cursor.state),
             Arc::clone(&cursor.destroyed),
             cursor.name.clone(),
@@ -1279,6 +1290,15 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
 }
 
 impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
+    async fn run_stream(
+        accessor: &Accessor<T, Self>,
+        rep: Resource<PgStatementTransaction>,
+        statement_path: String,
+        binds: Vec<SqlValue>,
+    ) -> super::run_stream::StreamCallResult {
+        super::run_stream::transaction_run_stream(accessor, rep, statement_path, binds).await
+    }
+
     async fn run(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
@@ -1327,11 +1347,12 @@ async fn statement_run<T: 'static>(
     binds: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
     let (plugin, component_id, trace) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            wamn_engine::invocation_trace::invocation_trace(&ctx),
+            trace,
         ))
     })?;
     trace
@@ -1365,11 +1386,12 @@ async fn statement_begin<T: 'static>(
     instance: Option<&str>,
 ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>> {
     let (plugin, component_id, trace) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            wamn_engine::invocation_trace::invocation_trace(&ctx),
+            trace,
         ))
     })?;
     trace
@@ -1451,7 +1473,8 @@ async fn statement_txn_run<T: 'static>(
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
     let (plugin, component_id, trace, state, destroyed, row_limit, statements) =
         accessor.with(|mut access| {
-            let ctx = access.get();
+            let mut ctx = access.get();
+            let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
             let transaction = ctx.table.get(&rep)?;
             wash_runtime::wasmtime::ensure!(
                 transaction.owner_scope == ctx.component_id.as_ref(),
@@ -1460,7 +1483,7 @@ async fn statement_txn_run<T: 'static>(
             Ok::<_, wash_runtime::wasmtime::Error>((
                 plugin_of(&ctx)?,
                 ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                trace,
                 Arc::clone(&transaction.transaction.state),
                 Arc::clone(&transaction.transaction.destroyed),
                 transaction.transaction.row_limit,
@@ -1538,7 +1561,8 @@ async fn statement_txn_finish<T: 'static>(
     verb: &'static str,
 ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
     let (plugin, component_id, trace, state, destroyed, lent) = accessor.with(|mut access| {
-        let ctx = access.get();
+        let mut ctx = access.get();
+        let trace = wamn_engine::invocation_trace::invocation_trace(&mut ctx);
         let transaction = ctx.table.get(&rep)?;
         wash_runtime::wasmtime::ensure!(
             transaction.owner_scope == ctx.component_id.as_ref(),
@@ -1547,7 +1571,7 @@ async fn statement_txn_finish<T: 'static>(
         Ok::<_, wash_runtime::wasmtime::Error>((
             plugin_of(&ctx)?,
             ctx.component_id.to_string(),
-            wamn_engine::invocation_trace::invocation_trace(&ctx),
+            trace,
             Arc::clone(&transaction.transaction.state),
             Arc::clone(&transaction.transaction.destroyed),
             transaction.transaction.lent,
@@ -1703,6 +1727,16 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
 impl<T: 'static + Send>
     bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore<T> for SharedCtx
 {
+    async fn run_stream(
+        accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+        rep: Resource<PgStatementTransaction>,
+        statement_path: String,
+        binds: Vec<SqlValue>,
+    ) -> super::run_stream::StreamCallResult {
+        super::run_stream::transaction_run_stream(accessor, rep, statement_path, binds).await
+    }
+
     async fn run(
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,

@@ -61,6 +61,22 @@ impl std::fmt::Display for CommitFailure {
 impl std::error::Error for CommitFailure {}
 
 impl OperationTransaction {
+    /// Read the WAL position on this operation's connection.
+    pub(super) async fn wal_position(&self) -> Result<String, PgError> {
+        self.start().await?;
+        let connection = StatementConnectionGuard::new(
+            take_conn(&self.transaction.state)?,
+            Arc::clone(&self.transaction.destroyed),
+        );
+        let row = connection
+            .connection()
+            .query_one("SELECT pg_current_wal_lsn()::text", &[])
+            .await
+            .map_err(|error| super::types::map_pg_error(&error))?;
+        connection.restore(&self.transaction.state);
+        Ok(row.get(0))
+    }
+
     /// A guest handle of this transaction. Dropping it leaves the transaction
     /// open, and it refuses `commit` and `rollback`.
     pub(super) async fn lend(&self) -> Result<PgTransaction, PgError> {
@@ -274,7 +290,11 @@ impl WamnPostgres {
             transaction: Arc::new(transaction),
             claims: Arc::new(Mutex::new(Some(claims))),
             finish: Arc::new(Mutex::new(None)),
-            causation: self.current_run_for(scope),
+            causation: if self.active_read(scope) {
+                None
+            } else {
+                self.current_run_for(scope)
+            },
         })
     }
 

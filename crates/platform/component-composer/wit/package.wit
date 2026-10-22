@@ -1,0 +1,16 @@
+package wamn:application-dispatch@0.1.0;
+
+/// Private composition seam. The host never supplies this interface.
+interface dispatch {
+  use wamn:node/types@0.1.0.{node-context, emission, node-error};
+
+  /// The composition derives this from the operation export signature.
+  is-query: func(operation: string) -> bool;
+
+  run: async func(operation: string, ctx: node-context, input: string) -> result<emission, node-error>;
+  query: async func(operation: string, ctx: node-context, input: string) -> result<tuple<stream<string>, future<string>>, node-error>;
+}
+
+world adapter {
+  export dispatch;
+}
