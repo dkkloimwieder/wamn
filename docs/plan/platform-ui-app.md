@@ -1,6 +1,9 @@
 # Platform UI application — spec
 
-**Status:** draft. Owner rulings of 2026-10-19 are applied.
+Status: live, `wamn-n8q9m`. M1 through M5 merged except `wamn-n8q9m.5.4`, the move onto `@wfe/shell`.
+That issue waits on wfe gap `wamn-n8q9m.5.5` for header and navigation overrides. M6 owns documentation.
+[Execution](../architecture/execution.md#operator-clients) records current client and shell behavior.
+Owner rulings of 2026-10-19 are applied.
 **Baseline:** wamn `main` at `02e87bb4f`; wfe `main` at `45faa4aed7de92a7cd3e0a0b772bbd845e52ba63`.
 
 ## 1. Goal and scope
@@ -31,7 +34,7 @@ Out of scope (own beads, after this plan):
 | D4 | The shell is ported, not rewritten: `web/shell` addresses, session renewal, and the sign-in / invite / recover / reset pages keep their rules from `execution.md`. | The rules are tested. Only the rendering layer changes. |
 | D5 | Every screen reads and writes through the existing `wamn-control:*` routes at 0.9.0. No new route. | The routes exist. The gap is the client. |
 | D6 | `client_component.rs` emits wfe generator descriptions (`TableDescription`, `FormDescription`) instead of Solid 1 components. `client_ts.rs` bindings are unchanged. | The generator package renders descriptions. Emitting components again would be a second renderer. |
-| D7 | Labels come from a `label` member on operations and fields in `wamn.k`, optional, defaulting to the field path. | `web-operator-client.md` §8 "What hurts" item 3. `label` is an optional additive member of the manifest: the generator identity bumps, the manifest schema version does not. |
+| D7 | Labels come from a `label` member on operations and fields in `wamn.k`, optional, defaulting to the field path. | [Web operator client history](../history/web-operator-client.md#8-the-epic-4-verdict) §8 "What hurts" item 3. `label` is an optional additive member of the manifest: the generator identity bumps, the manifest schema version does not. |
 | D8 | No new route. `wamn-control:environment/status@0.9.0` gains three additive answer members: `users_with_role`, `roles`, `memberships` (nullable `int32`). A failed count read returns null without failing status. Additive members do not bump 0.9.0. | The splash tiles need one read per environment, not four. |
 
 ## 3. Audiences and access
@@ -88,7 +91,7 @@ Permissions overview is a read-only grid with one served operation per row and o
 
 ### 4.3 Application screens
 
-Unchanged in rule from `web-operator-client.md`: one screen per operation role (table, detail, form, delete), rendered from the emitted description (D6), navigation from the package's route table.
+Unchanged in rule from [web operator client history](../history/web-operator-client.md): one screen per operation role (table, detail, form, delete), rendered from the emitted description (D6), navigation from the package's route table.
 
 ## 5. Splash tiles
 

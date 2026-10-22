@@ -12,24 +12,24 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Manifest authoring](manifest-authoring.md): done, `wamn-j1ti`.
 - [NATS outage](nats-outage.md): deferred, `wamn-gdex` and `wamn-ifh7`.
 - [Operator image](operator-image.md): done, `wamn-n5d1` and `wamn-lo7z`.
-- [Operator UI](operator-ui.md): deferred by owner ruling, `wamn-z7j99`. The [web client](web-operator-client.md) is the only operator client plan.
+- [Operator UI](operator-ui.md): deferred by owner ruling, `wamn-z7j99`. The [platform UI application](platform-ui-app.md) owns current browser work.
 - [Package upgrade](package-upgrade.md): live, `wamn-eycl` (Epic 4); Epic 3 `wamn-5ihq` is deferred.
 - [Platform deploy](platform-deploy.md): done, `wamn-jqdja`.
 - [Platform install](platform-install.md): live, `wamn-whdih` (E1).
 - [Platform UI](platform-ui.md): done, `wamn-a40n`.
-- [Platform UI application](platform-ui-app.md): draft, `wamn-n8q9m`.
+- [Platform UI application](platform-ui-app.md): live, `wamn-n8q9m`. M1 through M5 merged except `wamn-n8q9m.5.4`, blocked on wfe gap `wamn-n8q9m.5.5`. M6 owns documentation.
 - [Request round-trips](request-round-trips.md): live, `wamn-stxy9`.
 - [Routes, workflows, and the router](routes-router.md): done, `wamn-upl3`.
 - [Table data loading](table-adv-data.md): done, `wamn-3nsf`.
 - [Table presentation](table-adv-ui.md): done, `wamn-8iul`.
 - [Transactional composition](trx-pkg-plan.md): done, `wamn-14bx8`, `wamn-lqtai`, `wamn-ponya` and `wamn-aemxz`.
 - [Web deployment](web-deployment.md): done, `wamn-xyxj`.
-- [Web operator client](web-operator-client.md): deferred, item 9 of §7 has no bead.
 - [Workflow feature](workflow-feature.md): done, `wamn-upl3`.
 - [Write log](write-log.md): done, `wamn-an24`.
 
 ## Moved to history
 
+- [Web operator client](../history/web-operator-client.md): closed to history under `wamn-n8q9m.6.2`. [Platform UI application](platform-ui-app.md) replaces it. Item 9 of section 7 remains deferred without a bead.
 - [Google Cloud deployment](../history/gcp-deployment.md): done, `wamn-ghx2`; [platform deploy](platform-deploy.md) replaced it.
 - [Edge](../history/edge.md): done, `wamn-e5in`; its status section is now [architecture](../architecture/edge.md).
 - [Upgrades](../history/upgrades.md): done, `wamn-orb5`.
