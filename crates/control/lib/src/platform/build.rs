@@ -193,6 +193,12 @@ fn images_match(values: &Value, registry: &str, version: &str) -> bool {
                 &format!("{registry}/wamn-{name}:{version}"),
             )
         })
+        && pinned(
+            values["platform"]["edge"]["image"]
+                .as_str()
+                .unwrap_or_default(),
+            &format!("{registry}/wamn-edge-web:{version}"),
+        )
         && ["http", "materializer"].iter().all(|name| {
             pinned(
                 values["platform"]["roles"][name]["image"]
@@ -393,6 +399,8 @@ mod tests {
             values["platform"][name] =
                 json!({"image":format!("localhost:5001/wamn-{name}:1.2.3@sha256:{digest}")});
         }
+        values["platform"]["edge"] =
+            json!({"image": format!("localhost:5001/wamn-edge-web:1.2.3@sha256:{digest}")});
         values["platform"]["roles"] = json!({});
         for name in ["http", "materializer"] {
             values["platform"]["roles"][name] =
@@ -406,6 +414,7 @@ mod tests {
             "/platform/runner/image",
             "/platform/gates/image",
             "/platform/identity/image",
+            "/platform/edge/image",
             "/platform/roles/http/image",
             "/platform/roles/materializer/image",
         ] {

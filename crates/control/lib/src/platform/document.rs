@@ -334,7 +334,7 @@ mod tests {
         assert!(build.inputs.contains(&("platform_version", "2.3.4".into())));
         assert!(build.inputs.contains(&(
             "platform images",
-            "us-central1-docker.pkg.dev/wamn-dev/wamn/{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn/http,wamn/materializer}:2.3.4".into(),
+            "us-central1-docker.pkg.dev/wamn-dev/wamn/{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn-edge-web,wamn/http,wamn/materializer}:2.3.4".into(),
         )));
     }
 
