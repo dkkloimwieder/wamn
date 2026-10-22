@@ -847,6 +847,32 @@ pub(crate) fn write_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]
         fs::write(&path, *bytes)
             .with_context(|| format!("write generated artifact {}", path.display()))?;
     }
+    remove_empty_directories(output_root)?;
+    Ok(())
+}
+
+/// Remove obsolete directories, including WIT dependencies whose last file disappeared.
+fn remove_empty_directories(root: &Path) -> Result<()> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read generated directory {}", root.display()));
+        }
+    };
+    for entry in entries {
+        let entry = entry.context("read generated directory entry")?;
+        if !entry.file_type()?.is_dir() || entry.file_name() == ".sqlx" {
+            continue;
+        }
+        let path = entry.path();
+        remove_empty_directories(&path)?;
+        if fs::read_dir(&path)?.next().is_none() {
+            fs::remove_dir(&path)
+                .with_context(|| format!("remove empty generated directory {}", path.display()))?;
+        }
+    }
     Ok(())
 }
 
@@ -1020,6 +1046,59 @@ mod tests {
         materialize_package_from_catalog(&catalog(), &stale.root).expect("replace stale output");
         materialize_package_from_catalog(&catalog(), &clean.root).expect("generate clean output");
         assert_eq!(stale.generated_snapshot(), clean.generated_snapshot());
+    }
+
+    #[test]
+    fn renaming_a_model_removes_its_previous_wit_package_directory() {
+        let package = TestPackage::new("removed-model-wit");
+        let output = crate::output_root(&package.root);
+        assert!(!output.exists());
+        materialize_package_from_catalog(&catalog(), &package.root).expect("generate model WIT");
+        let dependency = output.join("wit/deps/test-package-thing");
+        assert!(dependency.join("package.wit").is_file());
+
+        let mut manifest: serde_json::Value = serde_json::from_slice(MANIFEST).unwrap();
+        let models = manifest["models"].as_object_mut().unwrap();
+        let mut model = models.remove("thing").unwrap();
+        model["operations"]["get"]["permission"] = serde_json::json!("replacement.get");
+        models.insert("replacement".to_owned(), model);
+        fs::write(
+            package.root.join("wamn.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .expect("rename the model");
+        materialize_package_from_catalog(&catalog(), &package.root)
+            .expect("regenerate the renamed model");
+        assert!(
+            !dependency.exists(),
+            "an empty dependency directory makes wit-bindgen reject the package"
+        );
+        assert!(
+            output
+                .join("wit/deps/test-package-replacement/package.wit")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn materialization_removes_empty_dependencies_and_preserves_sqlx_metadata() {
+        let package = TestPackage::new("empty-wit-dependency");
+        let output = crate::output_root(&package.root);
+        let empty = output.join("wit/deps/obsolete");
+        fs::create_dir_all(&empty).expect("create an already empty WIT dependency");
+        fs::create_dir_all(output.join(".sqlx")).expect("create the SQLx directory");
+        let metadata = output.join(".sqlx/query.json");
+        fs::write(&metadata, b"metadata").expect("write SQLx metadata");
+
+        materialize_package_from_catalog(&catalog(), &package.root)
+            .expect("regenerate the package");
+        assert!(!empty.exists(), "an already empty dependency survives");
+        assert!(
+            output
+                .join("wit/deps/test-package-thing/package.wit")
+                .is_file()
+        );
+        assert_eq!(fs::read(metadata).unwrap(), b"metadata");
     }
 
     #[test]
