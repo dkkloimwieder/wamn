@@ -159,6 +159,14 @@ pub async fn apply(
         if changed { "done" } else { "skipped" },
         started.elapsed().as_secs_f64()
     ))?;
+    let started = Instant::now();
+    progress("4.19.1 Control host: starting")?;
+    let changed = super::control::release(&target, document, repository, work_directory).await?;
+    progress(&format!(
+        "4.19.1 Control host: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
     progress("Steps after 4.19.1 come later.")?;
     Ok(())
 }

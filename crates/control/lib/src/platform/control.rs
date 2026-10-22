@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use serde::Serialize;
-use serde_json::json;
+use serde::{Deserialize as _, Serialize};
+use serde_json::{Value, json};
 
 use crate::{kubectl, release_chart::Target};
 
@@ -167,5 +167,157 @@ pub(super) async fn credentials(
     )
     .await
     .context("copy the control operator Secret")?;
+    Ok(changed)
+}
+
+/// Render the org host values shared by the cluster and local control host.
+pub(crate) fn host_values(org: &str) -> Value {
+    let name = format!("c-{org}");
+    json!({"runtime-operator": {"runtime": {
+        "terminationGracePeriodSeconds": 70,
+        "hostGroups": [{
+            "name": name, "namespace": "hosts", "replicas": 1,
+            "schedulerNatsUrl": "nats://nats.platform.svc.cluster.local:4222",
+            "dataNatsUrl": "nats://nats.platform.svc.cluster.local:4222",
+            "extraArgs": ["--control", format!("--org={org}")],
+            "env": [
+                {"name": "WAMN_DRAIN_BOUND_SECONDS", "value": "70"},
+                {"name": "DOCKER_CONFIG", "value": "/etc/wamn/registry"},
+                {"name": "WAMN_REGISTRY_TOKEN_METADATA", "value": "true"},
+                {"name": "WAMN_CONTROL_URL", "valueFrom": {"secretKeyRef": {
+                    "name": format!("wamn-control-{org}"), "key": "url"
+                }}},
+                {"name": "WAMN_SESSION_ISSUER", "value": "https://identity.identity.svc.cluster.local"},
+                {"name": "WAMN_SESSION_JWKS_CA", "value": "/etc/identity-ca/ca.crt"},
+                {"name": "WAMN_PAT_ISSUER", "value": "https://identity.identity.svc.cluster.local"},
+                {"name": "WAMN_PAT_CLIENT_CERT", "value": "/etc/identity-operator/tls.crt"},
+                {"name": "WAMN_PAT_CLIENT_KEY", "value": "/etc/identity-operator/tls.key"},
+                {"name": "WAMN_PAT_SERVER_CA", "value": "/etc/identity-ca/ca.crt"},
+                {"name": "WAMN_CONTROL_ADMINISTRATION_DIR", "value": "/etc/wamn/control-administration"}
+            ],
+            "volumes": [
+                {"name": "registry-pull", "configMap": {"name": "wamn-registry-helper"}},
+                {"name": "identity-ca", "configMap": {"name": "identity-ca"}},
+                {"name": "identity-operator", "secret": {"secretName": format!("operator-{org}")}},
+                {"name": "control-administration", "secret": {"secretName": format!("wamn-control-administration-{org}")}}
+            ],
+            "volumeMounts": [
+                {"name": "registry-pull", "mountPath": "/etc/wamn/registry", "readOnly": true},
+                {"name": "identity-ca", "mountPath": "/etc/identity-ca", "readOnly": true},
+                {"name": "identity-operator", "mountPath": "/etc/identity-operator", "readOnly": true},
+                {"name": "control-administration", "mountPath": "/etc/wamn/control-administration", "readOnly": true}
+            ],
+            "http": {"enabled": true, "port": 80},
+            "resources": {"requests": {"memory": "256Mi", "cpu": "250m"},
+                "limits": {"memory": "4Gi", "cpu": "2"}}
+        }]
+    }}})
+}
+
+fn service_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+    chart: &Value,
+) -> anyhow::Result<Vec<Value>> {
+    let image = chart["platform"]["roles"]["http"]["image"]
+        .as_str()
+        .filter(|image| image.contains("@sha256:"))
+        .context("the chart has no pinned HTTP image")?;
+    let source = std::fs::read_to_string(repository.join("deploy/gcp/control-service.yaml"))?;
+    let mut objects = serde_yaml::Deserializer::from_str(&source)
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()?;
+    let name = format!("c-{}", document.org);
+    for object in &mut objects {
+        object["metadata"]["name"] = format!("{name}-http").into();
+        if object["kind"] == "WorkloadDeployment" {
+            let spec = &mut object["spec"]["template"]["spec"];
+            spec["hostSelector"]["hostgroup"] = name.clone().into();
+            spec["kubernetes"]["service"]["name"] = format!("{name}-http").into();
+            spec["hostInterfaces"][0]["config"]["host"] =
+                document.route_hosts.control.clone().into();
+            spec["components"][0]["image"] = image.into();
+        }
+    }
+    Ok(objects)
+}
+
+pub(super) async fn release(
+    target: &Target,
+    document: &ClusterDocument,
+    repository: &Path,
+    directory: &Path,
+) -> anyhow::Result<bool> {
+    let chart = directory.join("release-chart");
+    let values = directory.join("values-control.yaml");
+    std::fs::write(&values, serde_yaml::to_string(&host_values(&document.org))?)?;
+    let name = format!("c-{}", document.org);
+    let rendered = super::install::helm(
+        target,
+        &[
+            "template".as_ref(),
+            name.as_ref(),
+            chart.as_os_str(),
+            "--namespace".as_ref(),
+            "hosts".as_ref(),
+            "-f".as_ref(),
+            values.as_os_str(),
+        ],
+    )
+    .await?;
+    let source = std::str::from_utf8(&rendered)?;
+    let objects = serde_yaml::Deserializer::from_str(source)
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut changed = false;
+    for object in objects.iter().filter(|object| !object.is_null()) {
+        let kind = object["kind"].as_str().context("control manifest kind")?;
+        let object_name = object["metadata"]["name"]
+            .as_str()
+            .context("control manifest name")?;
+        let live: Option<Value> = kubectl::get(
+            &target.kubeconfig,
+            &target.context,
+            "hosts",
+            kind,
+            object_name,
+        )
+        .await?;
+        changed |= live
+            .as_ref()
+            .is_none_or(|live| !super::manifests::already_applied(object, live));
+    }
+    if changed {
+        let hosts = Target {
+            namespace: "hosts".into(),
+            ..target.clone()
+        };
+        crate::release_chart::upgrade(
+            &hosts,
+            &chart,
+            &name,
+            &values,
+            std::time::Duration::from_secs(600),
+            "platform control host",
+        )
+        .await?;
+    }
+    let stamped: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
+    for object in service_objects(repository, document, &stamped)? {
+        changed |= super::install::apply_object(target, &object).await?;
+    }
+    kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        "hosts",
+        &[
+            "rollout",
+            "status",
+            &format!("deployment/hostgroup-{name}"),
+            "--timeout=600s",
+        ],
+        None,
+    )
+    .await?;
     Ok(changed)
 }

@@ -113,9 +113,7 @@ pub(super) async fn start(
         )?;
     }
     let issuer = &environment.issuer.args;
-    let group: serde_json::Value = serde_yaml::from_str(include_str!(
-        "../../../../../deploy/gcp/host-group-control.yaml"
-    ))?;
+    let group = crate::platform::control::host_values(org);
     let group = &group["runtime-operator"]["runtime"]["hostGroups"][0];
     let mut env = serde_json::Map::new();
     let platform: serde_json::Value = serde_yaml::from_str(include_str!(

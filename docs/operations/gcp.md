@@ -926,34 +926,19 @@ The kind fixture has no web bucket.
 
 ### 4.19.1 Control host and platform UI
 
-The stamped chart supplies the control host image.
-[host-group-control.yaml](../../deploy/gcp/host-group-control.yaml) runs the org `dkk` control host in `hosts`.
-[control-service.yaml](../../deploy/gcp/control-service.yaml) gives it the fixed Service `c-dkk-http` and its HTTP transport workload.
-The host reads the org control credential, the identity CA, the operator certificate and the administration credentials.
-It uses org scope and carries no application release.
+`platform apply` runs `provision-org` in a Job with the mounted database credential.
+The Job writes the control credential and the first-install administration Secret to `hosts`.
+It preserves an existing administration Secret and its environment credentials.
+A second Job copies the operator Secret with a typed metadata patch.
+Credential values stay inside the cluster and never enter Job logs.
 
-Prepare the org credential and the initial administration Secret with the system database connection from section 4.7:
+The verb renders the control host values from the document and the stamped chart.
+It sets the HTTP image and control route in [control-service.yaml](../../deploy/gcp/control-service.yaml) in memory.
+It compares the rendered objects with live objects and skips an unchanged release.
+It waits for `hosts/hostgroup-c-<org>` to roll out.
 
-```bash
-(umask 077; target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg \
-  --admin dkkloimwieder@gmail.com --prepare-control-generation a --namespace hosts \
-  --db-host wamn-pg-rw.platform.svc.cluster.local --emit-control-secret $W/control-db.json \
-  --emit-control-administration-secret $W/control-administration.json)
-kubectl apply -f $W/control-db.json -f $W/control-administration.json
-kubectl -n identity get secret operator-dkk -o json | \
-  jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.managedFields) | .metadata.namespace="hosts"' | kubectl apply -f -
-helm upgrade --install c-dkk "$W/release-chart" --namespace hosts \
-  -f deploy/gcp/host-group-control.yaml
-HTTP_IMAGE=$(sed -n 's/^      image: \(.*\/wamn\/http@sha256:.*\)$/\1/p' "$W/release-chart/values.yaml")
-test -n "$HTTP_IMAGE"
-sed "s|__HTTP_IMAGE__|$HTTP_IMAGE|" deploy/gcp/control-service.yaml > "$W/control-service.yaml"
-kubectl apply -f "$W/control-service.yaml"
-kubectl -n hosts rollout status deploy/hostgroup-c-dkk --timeout=600s
-```
-
-Create the administration Secret only on the first install.
 Keep each environment's administration credential current through `provision-project-env --emit-control-administration-patch` before control writes.
-The existing runtime TLS Secrets and service account from section 4.9 must exist in `hosts`.
+The runtime TLS Secrets and service account from section 4.9 must exist in `hosts`.
 
 Upload the local bundle whose digest the stamped chart records:
 

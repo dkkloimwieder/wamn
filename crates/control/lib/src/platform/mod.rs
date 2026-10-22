@@ -3,7 +3,7 @@
 mod broker;
 pub mod build;
 mod cdc;
-mod control;
+pub(crate) mod control;
 pub mod document;
 mod environments;
 mod identity;
