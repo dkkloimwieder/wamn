@@ -1693,6 +1693,7 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
             },
             components: BTreeSet::from([ServingComponent {
+                runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 descriptor: wamn_catalog::ComponentDescriptor::named(
                     snapshot.component.clone().expect("component"),

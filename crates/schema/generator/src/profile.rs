@@ -175,6 +175,7 @@ mod tests {
         operations: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
     ) -> ServingComponent {
         ServingComponent {
+            runtime_schema: None,
             package_id: package.to_owned(),
             descriptor: ComponentDescriptor {
                 component: package.to_owned(),

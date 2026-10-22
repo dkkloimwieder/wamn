@@ -24,7 +24,7 @@ fn appended(record_id: String, row: Option<sql::AppendLogRow>) -> contract::Appe
 async fn append(
     transaction: &mut Transaction,
     request: contract::AppendRequest,
-) -> Result<contract::AppendResult, contract::AppendError> {
+) -> Result<contract::AppendResult, super::NodeError> {
     let row = sql::append_log(
         transaction,
         request.delivery_id,
@@ -33,15 +33,19 @@ async fn append(
         request.detail.map(Json),
     )
     .await
-    .map_err(|error| codec::map_error(super::statement_error(&error), |_| None))?;
+    .map_err(super::statement_error)?;
     Ok(appended(request.record_id, row))
 }
-codec::export_operation!(
-    super::Component,
+export_operation!(
     contract,
-    super::wamn::node::types,
-    append,
-    codec
+    codec,
+    AppendItem,
+    AppendOutcome,
+    AppendError,
+    wamn_postgres_statements::operation_transaction()
+        .await
+        .map_err(super::statement_error)?,
+    append
 );
 
 #[cfg(test)]

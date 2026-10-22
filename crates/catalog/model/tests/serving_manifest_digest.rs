@@ -39,6 +39,7 @@ fn release() -> ServingRelease {
 fn components() -> BTreeSet<ServingComponent> {
     BTreeSet::from([
         ServingComponent {
+            runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture".into(),
             operations: BTreeMap::from([(
@@ -53,6 +54,7 @@ fn components() -> BTreeSet<ServingComponent> {
             descriptor: ComponentDescriptor::named("transform", "0.1", COMPONENT_B),
         },
         ServingComponent {
+            runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture_overlay".into(),
             operations: BTreeMap::from([(
@@ -338,6 +340,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
         },
         BTreeSet::from([
             ServingComponent {
+                runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: package.into(),
                 operations: BTreeMap::from([(
@@ -363,6 +366,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
                 descriptor: ComponentDescriptor::named("provider", "0.1.0", COMPONENT_A),
             },
             ServingComponent {
+                runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: "consumer".into(),
                 operations: BTreeMap::from([("consumer:entry/run@1.0.0".into(), operation)]),

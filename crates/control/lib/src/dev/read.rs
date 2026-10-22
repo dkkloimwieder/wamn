@@ -689,6 +689,7 @@ mod tests {
             statements: BTreeMap::new(),
         };
         let component = ServingComponent {
+            runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture".to_owned(),
             operations: BTreeMap::from([("widget/get".to_owned(), operation)]),

@@ -456,13 +456,12 @@ fn sql_free_instances_component() -> (Vec<u8>, Vec<u8>) {
 }
 
 /// The root's statement inserts `a`.
-const MEMBER_ROOT_SQL: &str =
-    "INSERT INTO public.native_policy_members VALUES ('a') RETURNING value";
+const MEMBER_ROOT_SQL: &str = "INSERT INTO native_policy_members VALUES ('a') RETURNING value";
 const MEMBER_ROOT_SQL_PATH: &str = "sql/root.sql";
 /// The child's statement inserts `b` and the count of rows it sees, so `b1`
 /// shows that it ran in the root's open transaction.
-const MEMBER_CHILD_SQL: &str = "INSERT INTO public.native_policy_members \
-     SELECT 'b' || count(*) FROM public.native_policy_members RETURNING value";
+const MEMBER_CHILD_SQL: &str = "INSERT INTO native_policy_members \
+     SELECT 'b' || count(*) FROM native_policy_members RETURNING value";
 const MEMBER_CHILD_SQL_PATH: &str = "sql/child.sql";
 
 fn member_statement(path: &str, sql: &str) -> BTreeMap<String, ComponentSqlStatement> {
@@ -702,6 +701,7 @@ impl Fixture {
         let mut served =
             ServingComponent::project(&root, Vec::new()).expect("publish projects the root");
         if members {
+            served.runtime_schema = Some("native_member".into());
             // Publish binds each member's own set by import name, as the
             // admitted descriptor's record names the members.
             let instances = wamn_engine::statement_instances::statement_instances(&root_bytes)

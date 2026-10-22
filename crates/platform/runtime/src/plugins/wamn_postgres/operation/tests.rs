@@ -56,6 +56,7 @@ fn release() -> Arc<LoadedRelease> {
     let manifest = ServingManifest::new(
         ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0").unwrap()]) },
         BTreeSet::from([ServingComponent {
+            runtime_schema: None,
             package_id: "base".into(),
             descriptor: ComponentDescriptor::named("entry", "0.1", digest('a')),
             statement_instances: BTreeMap::new(),

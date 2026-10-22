@@ -39,7 +39,7 @@ impl WamnPostgres {
         package: &str,
         component: &str,
         digest: &str,
-        claims: SessionClaims,
+        mut claims: SessionClaims,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             claims.tenant == release.scope().tenant_id,
@@ -63,6 +63,9 @@ impl WamnPostgres {
                     && served.descriptor.component_digest.as_str() == digest
             })
             .context("operation component not in loaded release")?;
+        if let Some(schema) = &served.runtime_schema {
+            claims.schema = Some(schema.clone());
+        }
         let operations = served
             .operations
             .iter()

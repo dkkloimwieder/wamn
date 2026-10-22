@@ -208,11 +208,15 @@ impl StatementError {
                 None,
                 "database permission denied",
             ),
-            wire::PgError::QueryError(_) => (
-                StatementErrorType::QueryError,
-                None,
-                "database query failed",
-            ),
+            wire::PgError::QueryError((state, message)) => {
+                return Self {
+                    type_: StatementErrorType::QueryError,
+                    statement: None,
+                    constraint: None,
+                    contract_mismatch: None,
+                    context: format!("database query failed ({state}): {message}").into(),
+                };
+            }
         };
         Self {
             type_: kind,
@@ -614,4 +618,22 @@ fn decode_row<T>(
     let decoded = decode(&mut row)?;
     row.finish()?;
     Ok(decoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_errors_keep_the_sqlstate_and_database_message() {
+        let error = StatementError::from_postgres(wire::PgError::QueryError((
+            "42P01".into(),
+            "relation setting does not exist".into(),
+        )));
+        assert_eq!(error.type_(), StatementErrorType::QueryError);
+        assert_eq!(
+            error.to_string(),
+            "database query failed (42P01): relation setting does not exist"
+        );
+    }
 }

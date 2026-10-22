@@ -356,6 +356,7 @@ pub(crate) async fn finish_whole_row_stage(
             .iter()
             .map(read_package_root)
             .collect::<anyhow::Result<Vec<_>>>()?,
+        manifest,
     )?;
     crate::reconcile_package_data_access::upgrade::reconcile_upgrade_in_transaction(
         tx, tenant, roots,

@@ -639,8 +639,9 @@ fn native_member_statement_instances() {
         let admin = connect(database.url()).await.expect("admin connection");
         admin
             .batch_execute(
-                "CREATE TABLE public.native_policy_members(value text NOT NULL); \
-                     GRANT SELECT, INSERT ON public.native_policy_members TO wamn_app",
+                "CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
+                     CREATE TABLE native_member.native_policy_members(value text NOT NULL); \
+                     GRANT SELECT, INSERT ON native_member.native_policy_members TO wamn_app",
             )
             .await
             .expect("member table");
@@ -656,7 +657,7 @@ fn native_member_statement_instances() {
         let rows = async || {
             admin
                 .query(
-                    "SELECT value FROM public.native_policy_members ORDER BY value",
+                    "SELECT value FROM native_member.native_policy_members ORDER BY value",
                     &[],
                 )
                 .await
@@ -751,8 +752,9 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
             let admin = connect(database.url()).await.expect("admin connection");
             admin
                 .batch_execute(
-                    "CREATE TABLE public.native_policy_members(value text NOT NULL); \
-                     GRANT SELECT, INSERT ON public.native_policy_members TO wamn_app",
+                    "CREATE SCHEMA native_member; GRANT USAGE ON SCHEMA native_member TO wamn_app; \
+                     CREATE TABLE native_member.native_policy_members(value text NOT NULL); \
+                     GRANT SELECT, INSERT ON native_member.native_policy_members TO wamn_app",
                 )
                 .await
                 .expect("member table");
@@ -784,7 +786,7 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
             let rows = async || {
                 admin
                     .query(
-                        "SELECT value FROM public.native_policy_members ORDER BY value",
+                        "SELECT value FROM native_member.native_policy_members ORDER BY value",
                         &[],
                     )
                     .await

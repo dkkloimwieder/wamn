@@ -516,6 +516,7 @@ mod tests {
             })
             .collect();
         ServingComponent {
+            runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "orders".to_owned(),
             operations: BTreeMap::new(),

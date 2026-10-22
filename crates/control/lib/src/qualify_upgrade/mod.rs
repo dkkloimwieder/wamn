@@ -557,7 +557,7 @@ async fn prove_connected_copy(
     manifest: &ServingManifest,
     evidence: &mut UpgradeQualification,
 ) -> anyhow::Result<()> {
-    let runtime = &runtime_schemas(packages.iter().map(|package| &package.directory))?;
+    let runtime = &runtime_schemas(packages.iter().map(|package| &package.directory), manifest)?;
     let candidate = packages
         .iter()
         .find(|package| package.identity == evidence.candidate_package)
@@ -769,6 +769,7 @@ pub(crate) async fn plan_predecessor_in_transaction(
 /// The single application schema of each SQL-bearing package, by package id.
 pub(crate) fn runtime_schemas<'a>(
     directories: impl IntoIterator<Item = &'a PackageDirectory>,
+    release: &ServingManifest,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let mut runtime = BTreeMap::new();
     for directory in directories {
@@ -776,14 +777,21 @@ pub(crate) fn runtime_schemas<'a>(
         if manifest.declares_no_sql() {
             continue;
         }
-        let schemas = wamn_schema_generator::data_access_schemas(&directory.manifest_bytes)?;
-        let [schema] = schemas.as_slice() else {
-            anyhow::bail!(
-                "Epic 1 requires one runtime schema for package {}",
+        let schema = crate::publish_release::application_runtime_schema(&manifest)?
+            .context("SQL-bearing package has no runtime schema")?;
+        let pinned = release
+            .components
+            .iter()
+            .find(|component| component.package_id == manifest.package.id)
+            .and_then(|component| component.runtime_schema.as_ref());
+        if let Some(pinned) = pinned {
+            ensure!(
+                pinned == &schema,
+                "runtime schema changed for package {}: released {pinned}, candidate {schema}",
                 manifest.package.id
             );
-        };
-        runtime.insert(manifest.package.id, schema.clone());
+        }
+        runtime.insert(manifest.package.id, pinned.cloned().unwrap_or(schema));
     }
     Ok(runtime)
 }
@@ -792,7 +800,7 @@ fn require_runtime_schemas(
     packages: &[PresentedPackage],
     manifest: &ServingManifest,
 ) -> anyhow::Result<()> {
-    runtime_schemas(packages.iter().map(|package| &package.directory))?;
+    runtime_schemas(packages.iter().map(|package| &package.directory), manifest)?;
     for package in packages {
         if package.manifest.declares_no_sql() {
             ensure!(

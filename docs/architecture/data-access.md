@@ -20,6 +20,15 @@ Application migration declarations select qualified schemas.
 Guest SQL names relations without schema qualification and uses the host-selected `search_path`.
 Guest input cannot choose a database, schema, or database role.
 
+The release pins one runtime schema per SQL-bearing application in each serving component's `runtime-schema` field.
+Publication derives this schema from the application's models and internal relations, including models that use a base package's schema.
+Declared SQL relations must use that same schema.
+Publication refuses an application that spans multiple schemas.
+The host binds the pinned schema before it opens the application's transactions, including transactions shared by composed members.
+Two applications in one release each resolve unqualified SQL only in their own schema.
+For a release without the field, the host uses its process-wide `WAMN_SCHEMA` fallback.
+Upgrade qualification reads the pinned schema and refuses a candidate that changes it.
+
 The migration policy admits the supported additive table, field, and named-constraint forms.
 It also admits plain indexes on tables created earlier in the package's migrations, under the table's owner.
 An added column is nullable with a modeled type and no default, or it carries one of the two demanded non-null defaults.
@@ -31,7 +40,8 @@ Its exact supported forms live in [introspection](../../crates/schema/introspect
 An installed successor with new migrations also requires `qualify-upgrade` evidence before production application.
 Its narrower policy permits new ordinary tables and the admitted column additions, but refuses added constraints on existing relations.
 Qualification copies the installed database with its data and object ownership.
-It takes the one runtime schema of each SQL-bearing package from its manifest, reads no serving workload, and requires that schema to stay unchanged.
+It reads each SQL-bearing application's runtime schema from the selected release and requires the candidate's declared schema to match.
+For a release without a schema pin, qualification uses the package's declared schema.
 Predecessor SQL must plan against the candidate schema before grants change and again after the complete candidate root set reconciles.
 Candidate SQL must plan under those same final grants. Planning preserves the grants it examines.
 

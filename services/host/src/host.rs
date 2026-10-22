@@ -2969,6 +2969,7 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::from([ServingComponent {
+                runtime_schema: None,
                 package_id: "cat".into(),
                 descriptor,
                 operations: BTreeMap::from([(

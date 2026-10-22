@@ -167,6 +167,7 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
             .unwrap()]),
         },
         BTreeSet::from([ServingComponent {
+            runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture".to_owned(),
             operations,
@@ -182,6 +183,43 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
         BTreeMap::new(),
     )
     .unwrap()
+}
+
+#[test]
+fn runtime_schema_must_match_the_selected_release_pin() {
+    let root = wamn_fixture_package::package_root();
+    let directory = read_package_directory(&root).unwrap();
+    let mut release = predecessor_manifest(&root);
+    assert_eq!(
+        runtime_schemas([&directory], &release).unwrap()["platform_fixture"],
+        "inventory"
+    );
+    release.components = release
+        .components
+        .into_iter()
+        .map(|mut component| {
+            component.runtime_schema = Some("inventory".into());
+            component
+        })
+        .collect();
+    assert_eq!(
+        runtime_schemas([&directory], &release).unwrap()["platform_fixture"],
+        "inventory"
+    );
+    release.components = release
+        .components
+        .into_iter()
+        .map(|mut component| {
+            component.runtime_schema = Some("different".into());
+            component
+        })
+        .collect();
+    assert!(
+        runtime_schemas([&directory], &release)
+            .unwrap_err()
+            .to_string()
+            .contains("runtime schema changed")
+    );
 }
 
 fn runtime() -> BTreeMap<String, String> {

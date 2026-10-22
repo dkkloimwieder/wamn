@@ -38,52 +38,51 @@ fn read_value(row: Option<read_sql::ReadSettingRow>) -> read_contract::ReadResul
 async fn read(
     connection: &mut Connection,
     request: read_contract::ReadRequest,
-) -> Result<read_contract::ReadResult, read_contract::ReadError> {
-    let mut transaction = connection
-        .begin()
-        .await
-        .map_err(|error| read_codec::map_error(super::statement_error(&error), |_| None))?;
+) -> Result<read_contract::ReadResult, super::NodeError> {
+    let mut transaction = connection.begin().await.map_err(super::statement_error)?;
     let row = read_sql::read_setting(&mut transaction, request.key)
         .await
-        .map_err(|error| read_codec::map_error(super::statement_error(&error), |_| None))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|error| read_codec::map_error(super::statement_error(&error), |_| None))?;
+        .map_err(super::statement_error)?;
+    transaction.commit().await.map_err(super::statement_error)?;
     Ok(read_value(row))
 }
 
 async fn write(
     transaction: &mut Transaction,
     request: write_contract::WriteRequest,
-) -> Result<write_contract::WriteResult, write_contract::WriteError> {
+) -> Result<write_contract::WriteResult, super::NodeError> {
     write_sql::insert_setting(
         transaction,
         request.key.clone(),
         Json(request.value.clone()),
     )
     .await
-    .map_err(|error| write_codec::map_error(super::statement_error(&error), |_| None))?;
+    .map_err(super::statement_error)?;
     write_sql::write_setting(transaction, request.key, Json(request.value))
         .await
         .map(|row| write_contract::WriteResult { key: row.key })
-        .map_err(|error| write_codec::map_error(super::statement_error(&error), |_| None))
+        .map_err(super::statement_error)
 }
 
-read_codec::export_operation!(
-    super::Component,
+export_operation!(
     read_contract,
-    super::wamn::node::types,
+    read_codec,
+    ReadItem,
+    ReadOutcome,
+    ReadError,
     Connection::new(),
-    read,
-    read_codec
+    read
 );
-write_codec::export_operation!(
-    super::Component,
+export_operation!(
     write_contract,
-    super::wamn::node::types,
-    write,
-    write_codec
+    write_codec,
+    WriteItem,
+    WriteOutcome,
+    WriteError,
+    wamn_postgres_statements::operation_transaction()
+        .await
+        .map_err(super::statement_error)?,
+    write
 );
 
 #[cfg(test)]

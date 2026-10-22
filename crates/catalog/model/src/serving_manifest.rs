@@ -210,6 +210,9 @@ impl ServingComponentOperation {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
     pub package_id: String,
+    /// The application schema selected at publication. Absent releases use the host fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_schema: Option<String>,
     /// The admitted descriptor of this component. Its canonical bytes are the
     /// descriptor layer of the package artifact that lists the component, so
     /// the release is the one owner of component facts (R2): the name, the
@@ -232,6 +235,7 @@ impl Ord for ServingComponent {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (
             &self.package_id,
+            &self.runtime_schema,
             &self.descriptor.component,
             &self.descriptor.interface_version,
             &self.descriptor.component_digest,
@@ -240,6 +244,7 @@ impl Ord for ServingComponent {
         )
             .cmp(&(
                 &other.package_id,
+                &other.runtime_schema,
                 &other.descriptor.component,
                 &other.descriptor.interface_version,
                 &other.descriptor.component_digest,
@@ -294,6 +299,7 @@ impl ServingComponent {
         }
         Ok(Self {
             package_id: fact.scope.package_id.clone(),
+            runtime_schema: None,
             descriptor: ComponentDescriptor::new(fact.clone(), connections),
             operations,
             statement_instances: BTreeMap::new(),
@@ -1242,7 +1248,25 @@ impl ServingManifest {
             }
         }
 
+        let mut runtime_schemas = BTreeMap::new();
         for component in &self.components {
+            if let Some(schema) = &component.runtime_schema
+                && (schema.is_empty()
+                    || schema.len() > 63
+                    || !schema.bytes().enumerate().all(|(i, byte)| {
+                        byte == b'_'
+                            || byte.is_ascii_alphabetic()
+                            || (i > 0 && byte.is_ascii_digit())
+                    }))
+            {
+                return invalid("runtime schema must be a bare PostgreSQL identifier");
+            }
+            if let Some(previous) =
+                runtime_schemas.insert(&component.package_id, &component.runtime_schema)
+                && previous != &component.runtime_schema
+            {
+                return invalid("components of one application must carry the same runtime schema");
+            }
             validate_package_member(&package_versions, &component.package_id)?;
             let descriptor = &component.descriptor;
             validate_text(&descriptor.component, "component")?;
@@ -1664,6 +1688,7 @@ mod tests {
     fn components() -> BTreeSet<ServingComponent> {
         BTreeSet::from([
             ServingComponent {
+                runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: "overlay".into(),
                 operations: BTreeMap::from([(
@@ -1681,6 +1706,7 @@ mod tests {
                 descriptor: ComponentDescriptor::named("transform", "0.1", COMPONENT_B),
             },
             ServingComponent {
+                runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: "base".into(),
                 operations: BTreeMap::from([(
@@ -1772,6 +1798,39 @@ mod tests {
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("fixture manifest is valid")
+    }
+
+    #[test]
+    fn runtime_schema_is_pinned_and_consistent_within_an_application() {
+        let original = manifest();
+        let mut pinned = original.clone();
+        pinned.components = pinned
+            .components
+            .into_iter()
+            .map(|mut component| {
+                component.runtime_schema = Some(format!("schema_{}", component.package_id));
+                component
+            })
+            .collect();
+        let (loaded, digest) =
+            ServingManifest::from_canonical_bytes(&pinned.canonical_bytes()).unwrap();
+        assert_eq!(loaded, pinned);
+        assert_ne!(digest, original.digest());
+        let mut conflicting = pinned.components.first().unwrap().clone();
+        conflicting.descriptor.component = "another".into();
+        conflicting.runtime_schema = Some("other_schema".into());
+        pinned.components.insert(conflicting);
+        assert!(ServingManifest::from_canonical_bytes(&pinned.canonical_bytes()).is_err());
+        let mut invalid = original;
+        invalid.components = invalid
+            .components
+            .into_iter()
+            .map(|mut component| {
+                component.runtime_schema = Some("first, second".into());
+                component
+            })
+            .collect();
+        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
     }
 
     #[test]

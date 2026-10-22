@@ -571,7 +571,7 @@ pub fn assemble_local_release(
         release: ServingRelease {
             packages: packages.clone(),
         },
-        components,
+        components: pin_runtime_schemas(components, &package_manifests)?,
         routes,
         attachments: route_attachments,
         workflow: WorkflowSection {
@@ -1063,7 +1063,7 @@ async fn publish_release_from_sources(
         release: ServingRelease {
             packages: request.packages.clone(),
         },
-        components,
+        components: pin_runtime_schemas(components, package_manifests)?,
         routes,
         attachments: route_attachments,
         workflow: WorkflowSection {
@@ -1230,6 +1230,64 @@ async fn validate_release_package_manifests(
         }
     }
     Ok(())
+}
+
+/// Derive the one schema that an application's SQL resolves against.
+pub(crate) fn application_runtime_schema(
+    manifest: &wamn_schema_generator::PackageManifest,
+) -> anyhow::Result<Option<String>> {
+    let schemas = manifest
+        .models
+        .values()
+        .map(|model| model.schema.as_str())
+        .chain(
+            manifest
+                .internal_relations
+                .values()
+                .map(|relation| relation.schema.as_str()),
+        )
+        .chain(manifest.custom_operations.values().flat_map(|operation| {
+            operation
+                .relations
+                .iter()
+                .map(|relation| relation.schema.as_str())
+        }))
+        .collect::<BTreeSet<_>>();
+    match schemas.into_iter().collect::<Vec<_>>().as_slice() {
+        [] if manifest.declares_no_sql() => Ok(None),
+        [schema] => Ok(Some((*schema).to_owned())),
+        _ => anyhow::bail!(
+            "one runtime schema is required for package {}",
+            manifest.package.id
+        ),
+    }
+}
+
+fn pin_runtime_schemas(
+    components: BTreeSet<ServingComponent>,
+    manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
+    components
+        .into_iter()
+        .map(|mut component| {
+            let schema = manifests
+                .get(&component.package_id)
+                .map(application_runtime_schema)
+                .transpose()
+                .map_err(|error| {
+                    PublishManifestError::new(
+                        PublishManifestErrorType::PackageManifest,
+                        format!(
+                            "derive runtime schema for {}: {error:#}",
+                            component.package_id
+                        ),
+                    )
+                })?
+                .flatten();
+            component.runtime_schema = schema;
+            Ok(component)
+        })
+        .collect()
 }
 
 /// The admitted components of the release packages: the facts of each package
@@ -2573,6 +2631,32 @@ mod tests {
             "../tests/fixtures/component_package/wamn.json"
         ))
         .expect("the fixture source manifest parses")
+    }
+
+    #[test]
+    fn runtime_schema_follows_relations_instead_of_the_application_name() {
+        let mut manifest = source_manifest();
+        manifest.custom_operations.clear();
+        manifest.internal_relations.clear();
+        for model in manifest.models.values_mut() {
+            model.schema = "own_schema".into();
+        }
+        assert_eq!(
+            application_runtime_schema(&manifest).unwrap().as_deref(),
+            Some("own_schema")
+        );
+        for model in manifest.models.values_mut() {
+            model.schema = "base_schema".into();
+            model.owner = "base_package".into();
+        }
+        assert_eq!(
+            application_runtime_schema(&manifest).unwrap().as_deref(),
+            Some("base_schema")
+        );
+        let mut extra = manifest.models.values().next().unwrap().clone();
+        extra.schema = "other_schema".into();
+        manifest.models.insert("other".into(), extra);
+        assert!(application_runtime_schema(&manifest).is_err());
     }
 
     fn handler_manifest_with_entity(entity: &str) -> wamn_schema_generator::PackageManifest {

@@ -9,8 +9,9 @@ use wamn_control::publish_release::{
 };
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
-#[test]
-fn both_applications_publish_with_exact_dependencies_and_private_state() {
+#[tokio::test]
+async fn both_applications_publish_with_exact_dependencies_and_private_state() -> anyhow::Result<()>
+{
     let repository = support::repository();
     let integration = repository.join("apps/platform/wamn_integration");
     let consumer = repository.join("apps/rest_consumer_fixture");
@@ -121,6 +122,7 @@ fn both_applications_publish_with_exact_dependencies_and_private_state() {
     };
     let assembled = assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
     let release = &assembled.published.manifest;
+    composed_sql_uses_released_schemas(&roots, release).await?;
     assert_eq!(release.release.packages.len(), 3);
     assert_eq!(release.workflow.schedules.len(), 1);
     assert_eq!(release.workflow.registrations.len(), 1);
@@ -180,4 +182,142 @@ fn both_applications_publish_with_exact_dependencies_and_private_state() {
         .unwrap()
         .operation = "item.other".into();
     assert!(assemble_local_release(&args, &roots, &admissions, wrong_dependency).is_err());
+    Ok(())
+}
+
+async fn composed_sql_uses_released_schemas(
+    roots: &[std::path::PathBuf],
+    release: &wamn_catalog::ServingManifest,
+) -> anyhow::Result<()> {
+    use wamn_schema_generator::{
+        DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
+        render_effective_data_access_sql,
+    };
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let (mut client, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    let driver = tokio::spawn(connection);
+    client.batch_execute("DO $$ BEGIN CREATE ROLE wamn_app NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$; CREATE SCHEMA wamn_integration; CREATE SCHEMA rest_consumer_fixture;").await?;
+    let mut overlays = Vec::new();
+    let mut relations = std::collections::BTreeMap::new();
+    for root in roots {
+        let migration = root.join("migrations/0001_initial.sql");
+        if migration.exists() {
+            client
+                .batch_execute(&std::fs::read_to_string(migration)?)
+                .await?;
+        }
+        let overlay = DataAccessOverlay::from_slice(&std::fs::read(
+            wamn_schema_generator::output_root(root).join("platform-policy/data-access.json"),
+        )?)?;
+        for relation in overlay.relations() {
+            relations.insert(
+                (relation.schema().to_owned(), relation.table().to_owned()),
+                DataAccessRelationFields::new(
+                    relation.schema(),
+                    relation.table(),
+                    relation.all_fields().to_vec(),
+                ),
+            );
+        }
+        overlays.push(overlay);
+    }
+    client
+        .batch_execute(&render_effective_data_access_sql(
+            &derive_effective_data_access(&relations.into_values().collect::<Vec<_>>(), &overlays)?,
+        )?)
+        .await?;
+    for (package, expected_schema) in [
+        ("rest_connector", "wamn_integration"),
+        ("rest_consumer_fixture", "rest_consumer_fixture"),
+    ] {
+        let component = release
+            .components
+            .iter()
+            .find(|component| {
+                component.package_id == package && component.descriptor.component == package
+            })
+            .unwrap();
+        assert_eq!(component.runtime_schema.as_deref(), Some(expected_schema));
+        let transaction = client.transaction().await?;
+        transaction.batch_execute("SET LOCAL ROLE wamn_app").await?;
+        transaction
+            .query_one(
+                "SELECT set_config('search_path', $1, true)",
+                &[&component.runtime_schema],
+            )
+            .await?;
+        let schema: String = transaction
+            .query_one("SELECT current_schema()::text", &[])
+            .await?
+            .get(0);
+        assert_eq!(schema, expected_schema);
+        if package == "rest_connector" {
+            let statements: Vec<_> = component
+                .statement_instances
+                .values()
+                .flat_map(|set| set.values())
+                .collect();
+            let sql = |path: &str| {
+                statements
+                    .iter()
+                    .find(|statement| statement.path == path)
+                    .unwrap()
+                    .sql
+                    .as_str()
+            };
+            transaction
+                .query(
+                    sql("command/setting/insert.sql"),
+                    &[&"last_synced_at", &json!("2026-10-21T12:00:00Z")],
+                )
+                .await?;
+            let value: serde_json::Value = transaction
+                .query_one(sql("command/setting/read.sql"), &[&"last_synced_at"])
+                .await?
+                .get(0);
+            assert_eq!(value, json!("2026-10-21T12:00:00Z"));
+            transaction
+                .query_one(
+                    sql("command/setting/write.sql"),
+                    &[&"last_synced_at", &json!("2026-10-21T12:01:00Z")],
+                )
+                .await?;
+            transaction
+                .query(
+                    sql("command/log/append.sql"),
+                    &[&"delivery", &"item", &"pushed", &None::<serde_json::Value>],
+                )
+                .await?;
+            assert!(
+                transaction
+                    .query_one("SELECT to_regclass('item') IS NULL", &[])
+                    .await?
+                    .get::<_, bool>(0)
+            );
+        } else {
+            let statement = component
+                .operations
+                .values()
+                .flat_map(|operation| operation.statements.values())
+                .next()
+                .unwrap();
+            let key: String = transaction
+                .query_one(&statement.sql, &[&"item", &"name"])
+                .await?
+                .get(0);
+            assert_eq!(key, "item");
+            assert!(
+                transaction
+                    .query_one("SELECT to_regclass('setting') IS NULL", &[])
+                    .await?
+                    .get::<_, bool>(0)
+            );
+        }
+        transaction.commit().await?;
+    }
+    drop(client);
+    driver.await??;
+    Ok(())
 }

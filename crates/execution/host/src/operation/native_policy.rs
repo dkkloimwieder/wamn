@@ -63,6 +63,7 @@ struct ComponentPolicy {
     statements: BTreeMap<String, PreparedStatementSet>,
     /// The set of each named `statements` import, one per member.
     members: PreparedStatementMembers,
+    runtime_schema: Option<String>,
 }
 
 /// The facts of one native call that only this policy reads.
@@ -133,6 +134,7 @@ pub(super) fn new_native_policy(
             operations: served.operations.clone(),
             statements: prepare_statement_sets(served, &resources.release.manifest().routes),
             members: prepare_statement_members(&instances, served)?,
+            runtime_schema: served.runtime_schema.clone(),
         };
         facts.insert(name, Arc::new(policy));
     }
@@ -200,8 +202,12 @@ impl NativePolicy {
         scope: &str,
         operation: &str,
         facts: &NativeFacts,
+        component: &ComponentPolicy,
     ) -> anyhow::Result<()> {
-        let claims = facts.acquisition.executing_claims(facts.caller.as_ref());
+        let mut claims = facts.acquisition.executing_claims(facts.caller.as_ref());
+        if let Some(schema) = &component.runtime_schema {
+            claims.schema = Some(schema.clone());
+        }
         let postgres = &self.resources.postgres;
         // An item's transaction began under a bind of these same facts, which
         // read the principal, so the call inside it does not read again.
@@ -253,7 +259,8 @@ impl InvocationPolicy for NativePolicy {
         let postgres = &self.resources.postgres;
         let scope = wamn_engine::operation::next_scope("native-item");
         let begun = async {
-            self.bind_claims(&scope, operation, facts).await?;
+            self.bind_claims(&scope, operation, facts, &component)
+                .await?;
             postgres.set_current_run(&scope, facts.acquisition.causation.clone());
             postgres
                 .begin_operation_transaction(&scope)
@@ -290,13 +297,14 @@ impl InvocationPolicy for NativePolicy {
         // second read is the one the invariant below needs: it covers every
         // registry install, and a shutdown that lands in between clears the map
         // so the second lookup refuses instead of installing late.
-        self.admit(component_id, operation, &request.facts)?;
+        let component = self.admit(component_id, operation, &request.facts)?;
         let guard = NativeAuthorityGuard {
             policy: self.clone(),
             scope: scope.to_owned(),
         };
         let resources = &self.resources;
-        self.bind_claims(scope, operation, &request.facts).await?;
+        self.bind_claims(scope, operation, &request.facts, &component)
+            .await?;
         // Serialize late activation with caller cancellation. No await follows
         // this lock, so cancellation cannot leave a newly installed authority.
         let closed = invocation_scope

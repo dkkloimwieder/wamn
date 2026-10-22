@@ -1402,6 +1402,7 @@ mod tests {
 
     fn components() -> BTreeSet<ServingComponent> {
         BTreeSet::from([ServingComponent {
+            runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "cat".into(),
             operations: BTreeMap::from([(

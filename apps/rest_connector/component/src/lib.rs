@@ -57,6 +57,18 @@ fn base_failure(message: impl ToString) -> NodeError {
     })
 }
 
+fn checkpoint_failure(action: &str, mut error: NodeError) -> NodeError {
+    let message = match &mut error {
+        NodeError::InvalidInput(detail)
+        | NodeError::Retryable(detail)
+        | NodeError::Terminal(detail) => &mut detail.message,
+        NodeError::RateLimited(detail) => &mut detail.detail.message,
+        NodeError::Cancelled => return error,
+    };
+    *message = format!("checkpoint {action} failed: {message}");
+    error
+}
+
 fn checkpoint(value: Option<String>) -> Result<Option<Value>, NodeError> {
     value
         .map(|value| {
@@ -85,18 +97,19 @@ impl exports::wamn::node::async_handler::Guest for Component {
                 }),
             }],
         )
-        .await?;
+        .await
+        .map_err(|error| checkpoint_failure("read", error))?;
         let [row]: [read::ReadOutcome; 1] = rows
             .try_into()
             .map_err(|_| base_failure("checkpoint read returned the wrong result count"))?;
         let value = row.outcome.map_err(|error| match error {
             read::ReadError::Retry | read::ReadError::Timeout => {
                 NodeError::Retryable(ErrorDetail {
-                    message: "checkpoint read failed".into(),
+                    message: format!("checkpoint read failed: {error:?}"),
                     code: Some("retry".into()),
                 })
             }
-            _ => base_failure("checkpoint read failed"),
+            _ => base_failure(format!("checkpoint read failed: {error:?}")),
         })?;
         Ok(Emission {
             payload: json!({"due": due, "last_synced_at": checkpoint(value.value)?}).to_string(),
@@ -123,7 +136,8 @@ impl finish::Guest for Component {
     ) -> Result<Vec<finish::FinishOutcome>, NodeError> {
         finish_codec::validate(&input).map_err(invalid)?;
         let due = completed_due(&input)?;
-        Ok(finish_codec::run(input, &mut (), async |_, _request| {
+        let mut failure = None;
+        let rows = finish_codec::run(input, &mut failure, async |failure, _request| {
             let rows = write::run(
                 context.clone(),
                 vec![write::WriteItem {
@@ -136,7 +150,10 @@ impl finish::Guest for Component {
                 }],
             )
             .await
-            .map_err(|_| finish::FinishError::InternalError)?;
+            .map_err(|error| {
+                *failure = Some(checkpoint_failure("write", error));
+                finish::FinishError::InternalError
+            })?;
             let [row]: [write::WriteOutcome; 1] = rows
                 .try_into()
                 .map_err(|_| finish::FinishError::InternalError)?;
@@ -147,7 +164,11 @@ impl finish::Guest for Component {
             })?;
             Ok(finish::FinishResult { due: due.clone() })
         })
-        .await)
+        .await;
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(rows),
+        }
     }
 
     async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
@@ -210,6 +231,27 @@ impl pushed::Guest for Component {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_errors_keep_the_base_cause_and_retry_class() {
+        for action in ["read", "write"] {
+            let error = checkpoint_failure(
+                action,
+                NodeError::Retryable(ErrorDetail {
+                    message: "database connection unavailable".into(),
+                    code: Some("retry".into()),
+                }),
+            );
+            let NodeError::Retryable(detail) = error else {
+                panic!("retry class survives")
+            };
+            assert_eq!(
+                detail.message,
+                format!("checkpoint {action} failed: database connection unavailable")
+            );
+            assert_eq!(detail.code.as_deref(), Some("retry"));
+        }
+    }
 
     fn evaluate(expression: &str, input: &Value) -> Value {
         let ast = jsonata_core::parser::parse(expression).unwrap();
