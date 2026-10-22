@@ -519,7 +519,6 @@ cluster.Cluster {{
         input.with_extension("json"),
         selected_input.with_extension("json"),
     )?;
-    local_owner_mail(&kubeconfig, &context).await?;
     let mut applied = Vec::new();
     install::apply(
         &serving,
@@ -532,6 +531,9 @@ cluster.Cluster {{
             println!("{line}");
             writeln!(progress, "{line}")?;
             applied.push(line.to_owned());
+            if line == "4.19.1 Owner invite: starting" {
+                local_owner_mail(&kubeconfig, &context)?;
+            }
             Ok(())
         },
     )
@@ -783,12 +785,27 @@ cluster.Cluster {{
     Ok(())
 }
 
-// The released identity binary already supports private local mail. Change only
-// this disposable Deployment after the earlier install phase; no provider code changes.
-async fn local_owner_mail(kubeconfig: &Path, context: &str) -> anyhow::Result<()> {
-    let deployment: Value = kubectl::get(kubeconfig, context, "identity", "deployment", "identity")
-        .await?
-        .context("identity Deployment")?;
+// The released identity binary already supports private local mail. Select it
+// after the install upgrades identity and before the first invitation.
+fn local_owner_mail(kubeconfig: &Path, context: &str) -> anyhow::Result<()> {
+    let run = |args: &[&str]| -> anyhow::Result<Vec<u8>> {
+        let output = Command::new("kubectl")
+            .arg("--kubeconfig")
+            .arg(kubeconfig)
+            .args(["--context", context, "--namespace", "identity"])
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .context("configure fixture mail")?;
+        ensure!(
+            output.status.success(),
+            "fixture mail command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(output.stdout)
+    };
+    let deployment: Value =
+        serde_json::from_slice(&run(&["get", "deployment", "identity", "-o", "json"])?)?;
     let mut args = deployment["spec"]["template"]["spec"]["containers"][0]["args"].clone();
     args.as_array_mut().context("identity arguments")?.extend([
         json!("--local-mail"),
@@ -803,28 +820,15 @@ async fn local_owner_mail(kubeconfig: &Path, context: &str) -> anyhow::Result<()
             "name": "fixture-mail", "emptyDir": {"medium": "Memory"}
         }}
     ]);
-    kubectl::kubectl(
-        kubeconfig,
-        context,
+    run(&[
+        "patch",
+        "deployment",
         "identity",
-        &[
-            "patch",
-            "deployment",
-            "identity",
-            "--type=json",
-            "--patch-file=/dev/stdin",
-        ],
-        Some(&serde_json::to_vec(&patch)?),
-    )
-    .await?;
-    kubectl::kubectl(
-        kubeconfig,
-        context,
-        "identity",
-        &["rollout", "status", "deployment/identity", "--timeout=300s"],
-        None,
-    )
-    .await?;
+        "--type=json",
+        "--patch",
+        &serde_json::to_string(&patch)?,
+    ])?;
+    run(&["rollout", "status", "deployment/identity", "--timeout=300s"])?;
     Ok(())
 }
 
@@ -855,9 +859,13 @@ async fn control_secret_versions(
         "wamn-control-administration-test",
         "operator-test",
     ] {
-        let secret = kubectl::get(kubeconfig, context, "hosts", "secret", name)
+        let mut secret: Value = kubectl::get(kubeconfig, context, "hosts", "secret", name)
             .await?
             .with_context(|| format!("missing control Secret {name}"))?;
+        // Kubernetes omits data on the first-install empty administration Secret.
+        if secret.get("data").is_none() {
+            secret["data"] = json!({});
+        }
         secrets.push((name.into(), secret));
     }
     Ok(secrets)
