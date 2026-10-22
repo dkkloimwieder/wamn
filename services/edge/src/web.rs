@@ -195,35 +195,34 @@ impl Web {
         } else {
             self.files.read().await.get(&key).cloned()
         };
-        let file = match cached {
-            Some(file) => file,
-            None => {
-                let result = match store
-                    .get(&object_store::path::Path::from(key.clone()))
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(object_store::Error::NotFound { .. }) => {
-                        return Ok(empty(StatusCode::NOT_FOUND));
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                let content_type = result
-                    .attributes
-                    .get(&object_store::Attribute::ContentType)
-                    .map_or_else(
-                        || content_type(file).to_owned(),
-                        |value| value.as_ref().to_owned(),
-                    );
-                let file = File {
-                    bytes: result.bytes().await?,
-                    content_type,
-                };
-                if !config {
-                    self.files.write().await.insert(key, file.clone());
+        let file = if let Some(file) = cached {
+            file
+        } else {
+            let result = match store
+                .get(&object_store::path::Path::from(key.clone()))
+                .await
+            {
+                Ok(result) => result,
+                Err(object_store::Error::NotFound { .. }) => {
+                    return Ok(empty(StatusCode::NOT_FOUND));
                 }
-                file
+                Err(error) => return Err(error.into()),
+            };
+            let content_type = result
+                .attributes
+                .get(&object_store::Attribute::ContentType)
+                .map_or_else(
+                    || content_type(file).to_owned(),
+                    |value| value.as_ref().to_owned(),
+                );
+            let file = File {
+                bytes: result.bytes().await?,
+                content_type,
+            };
+            if !config {
+                self.files.write().await.insert(key, file.clone());
             }
+            file
         };
         let length = file.bytes.len();
         Ok(Response::builder()
