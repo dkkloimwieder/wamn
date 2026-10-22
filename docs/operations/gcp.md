@@ -227,7 +227,8 @@ Review the plan for the existing cluster and pools:
 ```bash
 (
   cd "$W/project"
-  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool
+  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool.main \
+    -target=google_container_node_pool.pg -target=google_container_node_pool.bench
 )
 ```
 
@@ -236,7 +237,8 @@ Apply the plan:
 ```bash
 (
   cd "$W/project"
-  "$TOFU" apply -target=google_container_cluster.cluster -target=google_container_node_pool
+  "$TOFU" apply -target=google_container_cluster.cluster -target=google_container_node_pool.main \
+    -target=google_container_node_pool.pg -target=google_container_node_pool.bench
 )
 ```
 
@@ -245,7 +247,8 @@ After the apply, make sure that the plan shows no changes:
 ```bash
 (
   cd "$W/project"
-  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool
+  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool.main \
+    -target=google_container_node_pool.pg -target=google_container_node_pool.bench
 )
 ```
 
