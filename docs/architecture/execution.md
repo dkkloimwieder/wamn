@@ -889,7 +889,7 @@ The [wfe icon](../../web/wfe/packages/components/src/components/Icon.tsx) is dec
 State toggles keep text, including Activate and Grant org admin in [Users](../../apps/platform_ui/src/users.tsx).
 Toolbar actions and form buttons also keep text.
 
-The shell uses `@wfe/components/layout` at the pinned wfe v0.0.7 revision, `8e019cd271446f3f05452b11f226977622c798c4`.
+The shell uses `@wfe/components/layout` at the pinned wfe v0.0.8 revision, `e4f8a6aaa3b52b669ba51e89a9e61398eed9fbbc`.
 The move onto `@wfe/shell`, `wamn-n8q9m.5.4`, waits on wfe gap bead `wamn-n8q9m.5.5`.
 At this pin, [ShellView](../../web/wfe/packages/shell/src/ShellView.tsx) renders a flat menu and a fixed header.
 Its [public properties](../../web/wfe/packages/shell/src/types.ts) cannot replace that header or navigation with the current hierarchy and breadcrumbs.
