@@ -26,8 +26,8 @@ try {
   const columns = async (title, labels) => {
     const headers = page.getByRole("table", { name: title, exact: true }).getByRole("columnheader");
     assert.equal(await headers.count(), labels.length);
-    for (const label of labels)
-      assert.equal(await headers.filter({ hasText: new RegExp(`^${label}(?:\\s|$)`) }).count(), 1);
+    const actual = await headers.locator(".column-heading :is(.column-sort-label, .column-title)").allTextContents();
+    assert.deepEqual(actual.sort(), [...labels].sort());
   };
   const capture = async (name, table = false) => {
     if (name === "purchase-order" || name === "receipt") await page.locator("[data-generator-detail]").waitFor();
@@ -104,12 +104,6 @@ try {
       .getByRole("columnheader", { name: /^Purchase order Drag/ })
       .count(),
     0,
-  );
-  assert.equal(
-    await table("Purchase orders")
-      .getByRole("columnheader", { name: /^Actions / })
-      .count(),
-    1,
   );
   assert.equal(await orderRow.getByRole("button", { name: "Change the supplier", exact: true }).count(), 0);
   await orderRow.getByRole("button", { name: "Record a receipt", exact: true }).click();

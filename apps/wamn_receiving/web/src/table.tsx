@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { Button, Field, Input, Label, ValueDisplay } from "@wfe/components";
+import { Button, Field, Input, ValueDisplay } from "@wfe/components";
 import { createTable } from "@wfe/components/table";
 import { TableView, type CustomCellProps, type TableDescription } from "@wfe/generator";
 import type { OperationRoute } from "@wamn/web-runtime";
@@ -204,10 +204,10 @@ export function Records(props: {
             status: `Page ${page() + 1}`,
           },
           headerEnd: (column) => (
-            <Show when={props.filters?.includes(column.id)}>
+            <Show when={column.id !== "actions" && props.filters?.includes(column.id)}>
               <Field>
-                <Label>{props.description.columns[column.id]?.label ?? column.id}</Label>
                 <Input
+                  aria-label={props.description.columns[column.id]?.label ?? column.id}
                   value={filters()[column.id] ?? ""}
                   onValueChange={(value) => setFilters((old) => ({ ...old, [column.id]: value }))}
                 />

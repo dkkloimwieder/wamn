@@ -49,6 +49,51 @@ function props(invoke: Transport["invoke"]): ScreenProps {
 }
 
 describe("Receiving descriptions and bindings", () => {
+  it("shows each filterable heading once and keeps its input accessible", async () => {
+    const invoke = vi.fn<Transport["invoke"]>(async () => ({
+      status: "completed",
+      value: { rows: [] },
+    }));
+    const Table = SECTIONS[0]!.screens[0]!.component;
+    render(() => <Table {...props(invoke)} />);
+    const table = await screen.findByRole("table", { name: "Purchase orders" });
+    for (const label of ["Order number", "Status", "Supplier"]) {
+      const input = within(table).getByRole("textbox", { name: label });
+      const header = input.closest("th")!;
+      expect(within(header).getAllByText(label, { exact: true, selector: ":not(.column-move)" })).toHaveLength(1);
+      expect(header.querySelector(".column-heading .column-sort-label")?.textContent).toBe(label);
+    }
+    fireEvent.input(within(table).getByRole("textbox", { name: "Order number" }), {
+      target: { value: "PO-FILTER" },
+    });
+    flush();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenLastCalledWith(
+        expect.objectContaining({ items: [{ limit: 25, filter: { purchase_order_number: ["PO-FILTER"] } }] }),
+      ),
+    );
+  });
+
+  // wamn-4xdfb: WFE v0.0.6 still renders the disabled Actions sort button.
+  // it.fails flips to a failure once a wfe tag carries the per-column sort control; then make it a plain it().
+  it.fails("never sorts or filters the Actions column", async () => {
+    const invoke: Transport["invoke"] = async () => ({ status: "completed", value: { rows: [] } });
+    render(() => (
+      <Records
+        screen={props(invoke)}
+        description={PurchaseOrderQueryTable}
+        route={PURCHASE_ORDER_QUERY_ROUTE}
+        filters={["actions"]}
+        rowActions={[{ description: { id: "action", title: "Row action" }, path: () => "action" }]}
+      />
+    ));
+    const table = await screen.findByRole("table", { name: "Purchase orders" });
+    const header = table.querySelector<HTMLElement>('th[data-column-header="actions"]')!;
+    expect(within(header).queryByRole("textbox")).toBeNull();
+    expect(within(header).queryByRole("button", { name: "Sort by Actions" })).toBeNull();
+  });
+
   it("selects human fields from the generated descriptions", () => {
     expect(Object.keys(PurchaseOrderQueryTable.columns).sort()).toEqual([
       "purchase_order_number",
