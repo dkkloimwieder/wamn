@@ -80,7 +80,7 @@ export function ApplicationRoles(props: ScreenProps & { overview?: boolean }) {
           columns={[
             { id: "role", header: "Role", accessorKey: "role" },
             { id: "operations", header: "Granted operations", accessorFn: (list) => grantedOperations(list).length },
-            { id: "actions", header: "Actions" },
+            { id: "actions", header: "Actions", size: 80, sortable: false, filterable: false },
           ]}
           cells={{
             role: (cell) => (

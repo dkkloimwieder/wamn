@@ -391,7 +391,12 @@ describe("Project member", () => {
     const breadcrumbs = within(screen.getByRole("navigation", { name: "Platform location" }));
     expect(breadcrumbs.getByRole("link", { name: "MEMBERS" })).toBeTruthy();
     expect(breadcrumbs.getByRole("link", { name: "WIDGETS" })).toBeTruthy();
-    fireEvent.click(within(table).getByRole("button", { name: "Revoke membership" }));
+    const revoke = within(table).getByRole("button", { name: "Revoke membership" });
+    expect(revoke.textContent).toBe("");
+    expect(revoke.title).toBe("Revoke membership");
+    expect(revoke.classList.contains("ui-icon-button")).toBe(true);
+    expect(revoke.querySelector('svg[aria-hidden="true"] path')?.getAttribute("d")).toBe("M3 3l10 10M13 3 3 13");
+    fireEvent.click(revoke);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership" })).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Grant membership" }));
     await screen.findByRole("heading", { name: "Grant membership" });

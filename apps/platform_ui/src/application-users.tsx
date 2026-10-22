@@ -82,7 +82,7 @@ export function ApplicationUsers(props: ScreenProps) {
               }}
               columns={[
                 { id: "role", header: "Role", accessorFn: (name) => name },
-                { id: "actions", header: "Actions" },
+                { id: "actions", header: "Actions", size: 80, sortable: false, filterable: false },
               ]}
               details={(cell) => (
                 <Records

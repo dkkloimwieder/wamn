@@ -330,9 +330,16 @@ describe("User decisions", () => {
     expect(memberships.getByRole("cell", { name: "active" })).toBeTruthy();
     expect(screen.queryByRole("form")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Grant project admin" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Revoke project admin" }));
+    const revokeAdmin = await screen.findByRole("button", { name: "Revoke project admin" });
+    expect(revokeAdmin.textContent).toBe("Revoke project admin");
+    fireEvent.click(revokeAdmin);
     await screen.findByRole("button", { name: "Grant project admin" });
-    fireEvent.click(memberships.getByRole("button", { name: "Revoke membership" }));
+    const revoke = memberships.getByRole("button", { name: "Revoke membership" });
+    expect(revoke.textContent).toBe("");
+    expect(revoke.title).toBe("Revoke membership");
+    expect(revoke.classList.contains("ui-icon-button")).toBe(true);
+    expect(revoke.querySelector('svg[aria-hidden="true"] path')?.getAttribute("d")).toBe("M3 3l10 10M13 3 3 13");
+    fireEvent.click(revoke);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke membership" })).toBeNull());
     expect(writes).toEqual([
       { path: "/api/wamn_control/member/grant", value: { principal_id: principalId, project: "widgets", env: "dev" } },

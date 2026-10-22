@@ -98,9 +98,18 @@ function mount(
 }
 
 async function confirm(label: string) {
-  fireEvent.click(await screen.findByRole("button", { name: label }));
+  const trigger = await screen.findByRole("button", { name: label });
+  expect(trigger.textContent).toBe("");
+  expect(trigger.title).toBe(label);
+  expect(trigger.classList.contains("ui-icon-button")).toBe(true);
+  expect(trigger.querySelector('svg[aria-hidden="true"] path')?.getAttribute("d")).toBe("M3 3l10 10M13 3 3 13");
+  fireEvent.click(trigger);
   const dialog = await screen.findByRole("alertdialog");
-  fireEvent.click(within(dialog).getByRole("button", { name: label }));
+  const action = within(dialog).getByRole("button", { name: label });
+  expect(action.textContent).toBe(label);
+  expect(action.querySelector("svg")).toBeNull();
+  expect(within(dialog).getByRole("button", { name: "Cancel" }).textContent).toBe("Cancel");
+  fireEvent.click(action);
 }
 
 describe("application roles", () => {

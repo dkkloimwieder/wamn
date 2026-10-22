@@ -1,7 +1,7 @@
 import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, FieldError, Input } from "@wfe/components/fields";
-import { Field, FieldValue, FormGrid, Label } from "@wfe/components";
+import { Field, FieldValue, FormGrid, Icon, Label } from "@wfe/components";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
 import { Records } from "./records";
 import { emailError } from "./email";
@@ -366,7 +366,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     { id: "project", header: "Project" },
                     { id: "env", header: "Environment" },
                     { id: "state", header: "State", accessorKey: "state" },
-                    { id: "revoke", header: "Action", size: 200, sortable: false, filterable: false },
+                    { id: "revoke", header: "Action", size: 80, sortable: false, filterable: false },
                   ]}
                   cells={{
                     project: (cell) => (
@@ -385,6 +385,9 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     revoke: (cell) => (
                       <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation, cell.row.project)}>
                         <Button
+                          class="ui-icon-button"
+                          aria-label="Revoke membership"
+                          title="Revoke membership"
                           disabled={pending()}
                           onClick={() =>
                             void write(() =>
@@ -397,7 +400,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                             )
                           }
                         >
-                          Revoke membership
+                          <Icon name="cross" />
                         </Button>
                       </Show>
                     ),

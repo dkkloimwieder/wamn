@@ -1,5 +1,5 @@
 import { createSignal, Show } from "solid-js";
-import { AlertDialog } from "@wfe/components";
+import { AlertDialog, Icon } from "@wfe/components";
 import { Button, FieldError } from "@wfe/components/fields";
 
 export function ConfirmAction(props: { label: string; description: string; run: () => Promise<void> }) {
@@ -29,7 +29,9 @@ export function ConfirmAction(props: { label: string; description: string; run: 
         }
       }}
     >
-      <AlertDialog.Trigger as={Button}>{props.label}</AlertDialog.Trigger>
+      <AlertDialog.Trigger as={Button} class="ui-icon-button" aria-label={props.label} title={props.label}>
+        <Icon name="cross" />
+      </AlertDialog.Trigger>
       <AlertDialog.Portal>
         <AlertDialog.Overlay />
         <AlertDialog.Content>

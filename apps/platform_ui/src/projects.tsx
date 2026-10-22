@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
+import { Icon } from "@wfe/components";
 import { Button, FieldError } from "@wfe/components/fields";
 import { FormView, type FormDescription } from "@wfe/generator";
 import { Records } from "./records";
@@ -331,7 +332,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 }
                 columns={[
                   { id: "env", header: "Environment" },
-                  { id: "revoke", header: "Action", size: 200, sortable: false, filterable: false },
+                  { id: "revoke", header: "Action", size: 80, sortable: false, filterable: false },
                 ]}
                 cells={{
                   env: (cell) => (
@@ -342,6 +343,9 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                   revoke: (cell) => (
                     <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation)}>
                       <Button
+                        class="ui-icon-button"
+                        aria-label="Revoke membership"
+                        title="Revoke membership"
                         disabled={pending()}
                         onClick={() =>
                           void write(() =>
@@ -354,7 +358,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                           )
                         }
                       >
-                        Revoke membership
+                        <Icon name="cross" />
                       </Button>
                     </Show>
                   ),

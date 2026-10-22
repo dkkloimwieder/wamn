@@ -46,7 +46,7 @@ export function RoleUsers(props: ScreenProps) {
           columns={[
             { id: "name", header: "User name" },
             { id: "email", header: "Email", accessorKey: "email" },
-            { id: "actions", header: "Actions" },
+            { id: "actions", header: "Actions", size: 80, sortable: false, filterable: false },
           ]}
           cells={{
             name: (cell) => (
