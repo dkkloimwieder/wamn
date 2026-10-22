@@ -269,7 +269,7 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
 /// # Errors
 /// Returns an error if the configuration, bucket client, Kubernetes CA or listener fails.
 pub async fn serve(path: &Path) -> anyhow::Result<()> {
-    let config: WebConfig = toml::from_str(&std::fs::read_to_string(path)?)?;
+    let config: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
     let store: Option<Arc<dyn ObjectStore>> = if config.bucket.is_empty() {
         None
     } else {

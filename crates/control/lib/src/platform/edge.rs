@@ -52,7 +52,7 @@ fn objects(
         .as_str()
         .filter(|image| image.contains("@sha256:"))
         .context("the chart has no pinned edge image")?;
-    let configuration = toml::to_string(&Configuration {
+    let configuration = serde_json::to_string(&Configuration {
         listen: "0.0.0.0:8080",
         bucket: if document.buckets.web.is_empty() {
             String::new()
@@ -78,12 +78,12 @@ fn objects(
             "metadata": {"name": NAME, "namespace": "hosts"},
             "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": NAME},
             "subjects": [{"kind": "ServiceAccount", "name": NAME, "namespace": "edge"}]}),
-        json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": NAME, "namespace": "edge"}, "data": {"web.toml": configuration}}),
+        json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": NAME, "namespace": "edge"}, "data": {"web.json": configuration}}),
         json!({"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": NAME, "namespace": "edge"},
             "spec": {"replicas": 1, "selector": {"matchLabels": {"app": NAME}},
                 "template": {"metadata": {"labels": {"app": NAME}, "annotations": {"checksum/config": checksum}},
                     "spec": {"serviceAccountName": NAME, "containers": [{"name": "edge", "image": image,
-                        "args": ["--config", "/etc/wamn-edge/web.toml", "web"],
+                        "args": ["--config", "/etc/wamn-edge/web.json", "web"],
                         "ports": [{"name": "http", "containerPort": 8080}],
                         "readinessProbe": {"httpGet": {"path": "/healthz", "port": "http"}},
                         "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "512Mi"}},
@@ -125,8 +125,8 @@ mod tests {
             json!([{"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get"], "resourceNames": ["c-acme"]}])
         );
         assert_eq!(objects[2]["subjects"][0]["namespace"], "edge");
-        let config: toml::Value =
-            toml::from_str(objects[3]["data"]["web.toml"].as_str().unwrap()).unwrap();
+        let config: Value =
+            serde_json::from_str(objects[3]["data"]["web.json"].as_str().unwrap()).unwrap();
         assert_eq!(config["bucket"].as_str(), Some("gs://web-bucket"));
         assert_eq!(
             config["releases"]["control.example.com"].as_str(),
