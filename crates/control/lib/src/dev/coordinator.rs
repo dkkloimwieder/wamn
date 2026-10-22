@@ -903,6 +903,8 @@ impl ProductionDevStageRunner {
             &format!("file:{}", entry_path.display()),
         )
         .map_err(|source| ProductionDevStageError::owner("record local entry", source))?;
+        // The entry record changes the manifest, so the facts name its new digest.
+        local_facts.manifest_digest = published.digest.clone();
         fs::write(entry_path, entry.bytes()).map_err(|source| {
             ProductionDevStageError::owner("stage composed entry", source.into())
         })?;
