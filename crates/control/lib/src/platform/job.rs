@@ -89,6 +89,8 @@ pub struct JobRequest {
     /// The command refuses a second run, so a completed Job never reruns for
     /// a new image (wamn-xjna8).
     pub once: bool,
+    /// Read changing live state, or perform an action guarded by that state.
+    pub refresh: bool,
 }
 
 /// A read-only projection of an existing Secret. Values stay in the cluster.
@@ -643,7 +645,7 @@ pub async fn run(
         &marker,
     )
     .await?;
-    if skip(completed.as_ref(), &digest) {
+    if !request.refresh && skip(completed.as_ref(), &digest) {
         return Ok(false);
     }
     let existing: Option<Value> = kubectl::get(

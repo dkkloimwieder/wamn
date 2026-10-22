@@ -168,6 +168,14 @@ pub async fn apply(
         started.elapsed().as_secs_f64()
     ))?;
     super::web::platform_ui(&target, document, repository, work_directory, &mut progress).await?;
+    let started = Instant::now();
+    progress("4.19.1 Owner invite: starting")?;
+    let changed = super::invite::apply(&target, document, work_directory).await?;
+    progress(&format!(
+        "4.19.1 Owner invite: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
     progress("Steps after 4.19.1 come later.")?;
     Ok(())
 }

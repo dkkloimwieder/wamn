@@ -7,6 +7,7 @@ pub(crate) mod control;
 pub mod document;
 mod environments;
 mod identity;
+mod invite;
 pub mod install;
 pub mod job;
 pub mod lock;

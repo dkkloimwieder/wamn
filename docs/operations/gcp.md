@@ -1028,34 +1028,16 @@ The list must be empty.
 
 ### 5.3 Invite a user
 
-The admin that `provision-org --admin` made has no password, so `/password/recover` answers `202` and sends no mail. Invite that user with the Job [invite.yaml](../../deploy/gcp/operator/invite.yaml). It runs in namespace `identity` with the mounted operator certificate. `__GRANT_FLAGS__` takes `--membership <project>/<env>` or `--org-admin`:
+`platform apply` invites the document's `owner_email` during step 4.19.1 with `--org-admin`.
+A PostgreSQL Job reads whether the owner has a password or an unexpired, unused invitation.
+Either state skips the invite Job.
+Otherwise, the invite Job uses the database credential and operator certificate inside the cluster.
+Identity sends the invitation by email.
+The Job prints only a fixed success message, never the invitation link or secret.
+The runner saves that log before it deletes the Job.
+An unchanged rerun reads the current state and skips the invitation.
 
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-(umask 077; sed -e 's/__EMAIL__/<email>/' -e 's/__DISPLAY_NAME__/<name>/' -e 's/__ORG__/dkk/' \
-  -e 's|__GRANT_FLAGS__|--membership receiving/dev|' deploy/gcp/operator/invite.yaml > $W/invite.yaml)
-kubectl apply -f $W/invite.yaml
-rm $W/invite.yaml
-JOB_UID=$(kubectl -n identity get job invite -o jsonpath='{.metadata.uid}')
-printf 'postgresql://postgres:%s@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system' "$PW" |
-  kubectl -n identity create secret generic wamn-system-admin --from-file=url=/dev/stdin --dry-run=client -o json |
-  jq --arg uid "$JOB_UID" '.metadata.ownerReferences = [{apiVersion: "batch/v1", kind: "Job", name: "invite", uid: $uid}]' |
-  kubectl create -f -
-kubectl -n identity wait --for=condition=complete job/invite --timeout=120s
-kubectl -n identity logs job/invite
-kubectl -n identity delete job invite
-```
-
-Identity answers `201 {"status":"accepted_for_delivery"}`. Then apply the environment, which writes the user's tenant `users` row, and give the user a role in it ([deployment](deployment.md#user-roles)):
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-use_env receiving
-export WAMN_RELEASE_HOST_GROUP=deploy/gcp/host-group-receiving.yaml
-target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--receiving--dev.k
-target/debug/wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$(db_url receiving)" \
-  --org dkk --project receiving --env dev --tenant dkk--receiving--dev --user <email> --role admin
-```
+Other users receive invitations through the platform UI.
 
 ### 5.4 Rotate the Resend key
 
