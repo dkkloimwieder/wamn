@@ -255,48 +255,18 @@ Name the release digest in the environment document, and run `env apply` of it (
 
 ## Web client files
 
-`wamn web upload` writes the built web client of each package of the release that an environment serves to a bucket.
-The built files are the `web` layer of each package artifact. `push-package` reads them from `apps/target/wamn/<package>/web`, which `wamn build` writes, so it must run after the build.
-Pass the coordinate and the manifest digest of the release. The command refuses a release that is not the one the newest successful revision of the environment's release chart installed.
-It reads the platform inputs of `wamn-ctl env`, including `WAMN_PACKAGE_ARTIFACT_BASE`.
-
-```bash
-AWS_ENDPOINT=<object store URL> AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret> \
-  wamn web upload <org>/<project>/<env> --release sha256:<manifest digest> --bucket s3://<bucket>/<prefix>
-```
-
-On Google Cloud, pass a `gs://` sink. The command then uses Application Default Credentials, which `gcloud auth application-default login` writes as a user OAuth token. No HMAC key exists:
-
-```bash
-wamn web upload <org>/<project>/<env> --release sha256:<manifest digest> --bucket gs://<bucket>/<prefix>
-```
-
-The files go to `<prefix>/<package id>/<digest hex>/`, so each release keeps its own path.
-The build carries no org or project, so the built files are the same bytes for every deployment.
-The command writes `config.json` beside `index.html`, with the org of the coordinate and the project of the client package: `{"org":"<org>","project":"<project>"}`.
+Use [Web upload](web-upload.md#package-clients) to write the clients from the served release to a bucket.
+That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
-Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` and `config.json` are `no-cache`.
-The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
-The command writes each object create-only and never replaces one. A package whose `index.html` is already there is reported as present and not written again.
 The bucket must allow reads without credentials.
 The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, the URL `api` of the `http` Service of its environment's release, and its upload path `bucketPath`. `upgrade-environment` writes `api` from `release_chart::release_name`, and the chart only reads it. The edge passes the headers of each object on.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
 ## Platform UI files
 
-Run the platform upload from the repository that holds `apps/platform_ui/dist`.
-Set `WAMN_RELEASE_CHART` to the chart from `build-platform`.
-The command compares the dist digest with `platform-build.json` before it writes any object.
-It needs Google Application Default Credentials, but no environment or release selection.
-
-```bash
-wamn web upload --platform-ui --org dkk
-```
-
-The upload writes to `gs://wamn-dev-web/platform-ui/<platform version>/`.
-It writes the assets first, `config.json` with only `{"org":"dkk"}` next, and `index.html` last.
-Every object is create-only. A repeated upload refuses existing objects.
-Package uploads retain their coordinate, release digest, bucket and prefix.
+Use [Web upload](web-upload.md#platform-ui) to upload the local platform UI with its matching stamped chart.
+The default destination is `gs://wamn-dev-web/platform-ui/<platform version>/`.
+The upload page owns the command, build comparison, organization configuration, and refusal of existing objects.
 
 The control root is `https://control.wamn.dev`.
 Its host group runs `wamn-host host --control --org=dkk` in namespace `hosts`.
