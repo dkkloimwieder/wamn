@@ -29,6 +29,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         env: triple.env.as_str().to_owned(),
         release: DeclaredRelease::None,
         route_host: String::new(),
+        client_package: None,
         policy: String::new(),
         connections: BTreeMap::new(),
         floors: BTreeMap::new(),
@@ -44,12 +45,13 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
     document.route_host = row.route_host.clone().unwrap_or_default();
     document.policy = row.policy_name.clone();
     let name = release_chart::release_name(&document.org, &document.project, &document.env)?;
-    if let Some(digest) = read_revision(platform, &name)
-        .await?
-        .as_ref()
-        .and_then(|revision| revision.manifest_digest().map(str::to_owned))
-    {
-        document.release = DeclaredRelease::Digest(digest);
+    if let Some(revision) = read_revision(platform, &name).await? {
+        if let Some(digest) = revision.manifest_digest() {
+            document.release = DeclaredRelease::Digest(digest.to_owned());
+        }
+        document.client_package = revision.values["webClients"][&document.route_host]
+            .as_str()
+            .map(str::to_owned);
     }
     if let Some(project) = read_project(platform, &document, &row).await? {
         for (instance, existing) in project.instances {

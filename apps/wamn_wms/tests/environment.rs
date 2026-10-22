@@ -727,6 +727,7 @@ pub async fn publish(
             env: identity().environment.clone(),
             release: DeclaredRelease::Digest(release_digest.clone()),
             route_host: identity().route_host.clone(),
+            client_package: None,
             policy: String::new(),
             connections: BTreeMap::new(),
             floors: BTreeMap::new(),

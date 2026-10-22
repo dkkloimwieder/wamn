@@ -97,6 +97,10 @@ release:
 # `org/project/env`.
 environment: ""
 routeHost: ""
+# Host to client package id; env apply resolves the package from its declaration.
+webClients: {}
+# The control release serves the platform UI at the chart version.
+platformUi: false
 # One entry per role: `{name: http | materializer, config: {}, environment: {}}`.
 # `environment` is for the materializer only.
 roles: []

@@ -5703,6 +5703,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
+ "object_store",
  "rcgen",
  "ring",
  "rusqlite",

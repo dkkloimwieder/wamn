@@ -27,7 +27,7 @@
 //!   `wamn-execution-host`.
 //! - Postgres: `tokio-postgres`, `deadpool-postgres`, `postgres-types`, and
 //!   `wamn-platform-identity`, which links `tokio-postgres`.
-//! - Network services: `async-nats`, `object_store`, `redis`.
+//! - Network services: `async-nats`, `redis`.
 //! - OCI: `oci-client`, `oci-wasm`.
 //! - OTLP gRPC: `opentelemetry-otlp`, `tonic`.
 //!
@@ -53,3 +53,4 @@ pub mod samples;
 pub mod serial;
 pub mod serve;
 pub mod status;
+pub mod web;

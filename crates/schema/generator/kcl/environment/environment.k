@@ -24,6 +24,8 @@ schema Environment:
     # A published, qualified release by its full digest, or "none".
     release: str
     route_host: str
+    # Package id of the web client for route_host; one client defaults itself.
+    client_package?: str
     # A policy of registry.env_policies, by name.
     policy: str
     connections: {str:Connection} = {}

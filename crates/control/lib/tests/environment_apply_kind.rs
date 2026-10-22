@@ -1008,6 +1008,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         events: None,
     };
     let document = |env: &str, route_host: &str| EnvironmentDocument {
+        client_package: None,
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: env.to_owned(),

@@ -27,6 +27,9 @@ pub struct EnvironmentDocument {
     /// `none`, or a full `sha256:` digest.
     pub release: DeclaredRelease,
     pub route_host: String,
+    /// The package whose web client this route host serves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_package: Option<String>,
     /// A policy of `registry.env_policies`, by name.
     pub policy: String,
     /// Connection definitions by instance id.
@@ -207,6 +210,9 @@ impl EnvironmentDocument {
             ("policy", self.policy.clone()),
         ] {
             lines.push(format!("    {key} = {}", quote(&value)));
+        }
+        if let Some(package) = &self.client_package {
+            lines.push(format!("    client_package = {}", quote(package)));
         }
         lines.push("    connections = {".to_owned());
         for (instance, connection) in &self.connections {

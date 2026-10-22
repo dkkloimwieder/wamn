@@ -12,6 +12,7 @@
 //! not document fields (epic decision D2).
 
 pub mod analyse;
+mod clients;
 pub mod contract;
 pub mod delete;
 pub mod document;
@@ -265,12 +266,12 @@ pub(crate) async fn apply_locked(
     ensure::ensure(platform, document, &analysis)
         .await
         .context("step 4, ensure the substrate")?;
-    expand::expand(platform, document, &analysis)
+    let clients = expand::expand(platform, document, &analysis)
         .await
         .context("step 5, expand")?;
     let release_name = analysis.authorities.release_name.clone();
     if let Some(release) = &analysis.authorities.release {
-        let written = write::write(platform, document, &analysis, release, reason)
+        let written = write::write(platform, document, &analysis, release, reason, &clients)
             .await
             .context("step 6, write the release chart")?;
         readiness::wait(platform, &written)

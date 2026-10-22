@@ -28,7 +28,6 @@ const REFUSED: &[(&str, &str)] = &[
     ("deadpool-postgres", "the edge links no Postgres"),
     ("postgres-types", "the edge links no Postgres"),
     ("async-nats", "the edge links no NATS"),
-    ("object_store", "the edge links no network service"),
     ("redis", "the edge links no network service"),
     ("oci-client", "the edge links no OCI registry client"),
     ("oci-wasm", "the edge links no OCI registry client"),

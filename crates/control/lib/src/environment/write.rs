@@ -72,6 +72,7 @@ pub async fn write(
     analysis: &Analysis,
     release: &ReleaseFacts,
     reason: Option<&str>,
+    clients: &std::collections::BTreeMap<String, String>,
 ) -> anyhow::Result<Written> {
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
@@ -92,7 +93,7 @@ pub async fn write(
         &document.env,
     );
     let names = roles.iter().map(|role| role.name).collect();
-    let rendered = release_chart::values(&ValuesInput {
+    let mut rendered = release_chart::values(&ValuesInput {
         org: document.org.clone(),
         project: document.project.clone(),
         env: document.env.clone(),
@@ -109,6 +110,7 @@ pub async fn write(
             &document.env,
         )?,
     })?;
+    rendered["webClients"] = serde_yaml::to_value(clients)?;
     let release_name = analysis.authorities.release_name.clone();
     let unchanged = analysis
         .authorities

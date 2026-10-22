@@ -1127,6 +1127,7 @@ mod tests {
             env: "prod".to_owned(),
             release,
             route_host: "wms.acme.example".to_owned(),
+            client_package: None,
             policy: "prod".to_owned(),
             connections: BTreeMap::new(),
             floors: floors

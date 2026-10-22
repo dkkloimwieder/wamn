@@ -122,11 +122,13 @@ fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
     let input = input(env);
     let name = release_name(&input.org, &input.project, &input.env).expect("valid coordinate");
     let path = scratch.0.join(format!("values-{env}.yaml"));
-    std::fs::write(
-        &path,
-        serde_yaml::to_string(&values(&input).expect("values")).expect("yaml"),
-    )
-    .expect("write values");
+    let mut rendered = values(&input).expect("values");
+    rendered["webClients"] = serde_yaml::to_value(std::collections::BTreeMap::from([(
+        input.route_host.clone(),
+        "wamn_wms",
+    )]))
+    .unwrap();
+    std::fs::write(&path, serde_yaml::to_string(&rendered).expect("yaml")).expect("write values");
     let output = helm(&[
         "template",
         &name,
@@ -177,6 +179,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // ServiceAccount (owner ruling 2026-10-13), hook, Job, Secret, CRD or other
     // custom resource.
     let expected: BTreeSet<(String, String)> = [
+        ("ConfigMap", name.clone()),
         ("Deployment", format!("hostgroup-{name}")),
         ("WorkloadDeployment", format!("{name}-http")),
         ("WorkloadDeployment", format!("{name}-materializer")),
@@ -187,6 +190,16 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     .map(|(kind, name)| (kind.to_owned(), name))
     .collect();
     assert_eq!(kinds, expected);
+    let row = documents
+        .iter()
+        .find(|object| object["kind"] == "ConfigMap" && object["metadata"]["name"] == name)
+        .expect("the release row");
+    let row: serde_json::Value =
+        serde_json::from_str(row["data"]["release.json"].as_str().unwrap()).unwrap();
+    assert_eq!(row["host"], "wms.acme.example");
+    assert_eq!(row["digest"], DIGEST);
+    assert_eq!(row["clients"]["wms.acme.example"], "wamn_wms");
+    assert_eq!(row["platformVersion"], "");
     for document in &documents {
         let annotations = &document["metadata"]["annotations"];
         assert!(

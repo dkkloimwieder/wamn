@@ -36,7 +36,7 @@ pub async fn expand(
     platform: &Platform,
     document: &EnvironmentDocument,
     analysis: &Analysis,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
     let triple = document.triple();
     let tenant =
         wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
@@ -84,6 +84,7 @@ pub async fn expand(
     // The package stage, CDC of its packages, then the release's bindings,
     // which name the release cache row the stage wrote.
     let mut targets = Vec::new();
+    let mut clients = std::collections::BTreeMap::new();
     if let Some(release) = &analysis.authorities.release {
         let analysed = analysis
             .authorities
@@ -100,6 +101,15 @@ pub async fn expand(
             &project_url,
         )
         .await?;
+        clients = super::clients::resolve(
+            document,
+            manifests.iter().filter_map(|manifest| {
+                manifest
+                    .client_package
+                    .as_ref()
+                    .map(|_| manifest.package.id.as_str())
+            }),
+        )?;
         ensure_cdc(platform, document, &manifests).await?;
         // The admitted descriptors the manifest carries name the release's
         // connections (R2 (3)); the projection the stage wrote is not read back.
@@ -181,7 +191,7 @@ pub async fn materialize_connections(
         unbound.is_empty(),
         "the release requires the connections {unbound:?}, which the document does not declare"
     );
-    Ok(())
+    Ok(clients)
 }
 
 /// The credential handle of a declared instance. Credentials are provisioned,
