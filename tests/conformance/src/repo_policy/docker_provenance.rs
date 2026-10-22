@@ -102,27 +102,53 @@ fn embedded_components_come_from_the_locked_builder(
         ),
         ("/component-output/sockprobe.wasm", "/bench/sockprobe.wasm"),
     ];
+    // The roles image exports the control-only entry that control-entry
+    // composes from the pinned route guest (wamn-l5sus.3).
     let roles = [
-        ("/component-output/http_route.wasm", "/http_route.wasm"),
-        ("/component-output/materializer.wasm", "/materializer.wasm"),
+        (
+            "control-entry",
+            "/component-output/control_http.wasm",
+            "/http_route.wasm",
+        ),
+        (
+            "component-builder",
+            "/component-output/materializer.wasm",
+            "/materializer.wasm",
+        ),
     ];
-    let mut expected: Vec<_> = gates.iter().chain(&roles).copied().collect();
+    // Publish composes the route guest with each application, so the ctl
+    // image carries the pinned route guest and nothing else (wamn-l5sus.2).
+    let ctl_route = "COPY --from=component-builder /component-output/http_route.wasm \
+                     /usr/local/share/wamn/http_route.wasm";
+    let mut expected: Vec<_> = gates
+        .iter()
+        .map(|(source, destination)| ("component-builder", *source, *destination))
+        .chain(roles)
+        .chain([(
+            "component-builder",
+            "/component-output/http_route.wasm",
+            "/usr/local/share/wamn/http_route.wasm",
+        )])
+        .collect();
 
     let mut actual = Vec::new();
     for line in dockerfile.lines().map(str::trim) {
         if !line.starts_with("COPY ") || !line.contains(".wasm") {
             continue;
         }
-        if !line.starts_with("COPY --from=component-builder ") {
+        let builder = ["component-builder", "control-entry"]
+            .into_iter()
+            .find(|builder| line.starts_with(&format!("COPY --from={builder} ")));
+        let Some(builder) = builder else {
             problems.push(format!("embedded Wasm bypasses component-builder: {line}"));
             continue;
-        }
+        };
         let fields: Vec<_> = line.split_ascii_whitespace().collect();
         if fields.len() != 4 {
             problems.push(format!("component COPY must have one source: {line}"));
             continue;
         }
-        actual.push((fields[2], fields[3]));
+        actual.push((builder, fields[2], fields[3]));
     }
 
     actual.sort_unstable();
@@ -137,26 +163,43 @@ fn embedded_components_come_from_the_locked_builder(
     // `stage` reports a stage name that disappears.
     for image_stage in ["host", "identity", "ctl", "scenario-worker", "cdc-reader"] {
         if let Some(contents) = stage(dockerfile, image_stage, problems) {
+            let contents = if image_stage == "ctl" {
+                problems.require(contents.contains(ctl_route), || {
+                    "ctl image lost the pinned route guest".to_owned()
+                });
+                contents.replacen(ctl_route, "", 1)
+            } else {
+                contents.to_owned()
+            };
             problems.require(!contents.contains(".wasm"), || {
                 format!("{image_stage} service image must not carry component bytes")
             });
         }
     }
-    for (name, components) in [("gates", gates.as_slice()), ("roles", roles.as_slice())] {
-        if let Some(contents) = stage(dockerfile, name, problems) {
-            for (source, destination) in components {
-                problems.require(
-                    contents.contains(&format!(
-                        "COPY --from=component-builder {source} {destination}"
-                    )),
-                    || format!("{name} image lost embedded component {destination}"),
-                );
-            }
+    if let Some(contents) = stage(dockerfile, "gates", problems) {
+        for (source, destination) in gates {
+            problems.require(
+                contents.contains(&format!(
+                    "COPY --from=component-builder {source} {destination}"
+                )),
+                || format!("gates image lost embedded component {destination}"),
+            );
+        }
+    }
+    if let Some(contents) = stage(dockerfile, "roles", problems) {
+        for (builder, source, destination) in roles {
+            problems.require(
+                contents.contains(&format!("COPY --from={builder} {source} {destination}")),
+                || format!("roles image lost embedded component {destination}"),
+            );
         }
     }
 
     for required in [
         "FROM component-toolchain AS component-builder",
+        "FROM component-builder AS control-entry",
+        "RUN wamn-component-composer --control-route /component-output/http_route.wasm \
+         --output /component-output/control_http.wasm",
         "COPY apps /build/apps",
         "rustup target add --toolchain 1.99.0 wasm32-wasip2",
         "cargo +1.99.0 build --locked --release --target wasm32-wasip2",
@@ -180,6 +223,7 @@ fn native_images_share_one_build_stage(dockerfile: &str, problems: &mut Problems
         "wamn-cdc-reader",
         "wamn-identity",
         "wamn-gates",
+        "wamn-component-composer",
     ];
     let outputs = [
         "wamn-host",
@@ -190,6 +234,7 @@ fn native_images_share_one_build_stage(dockerfile: &str, problems: &mut Problems
         "wamn-scenario-worker",
         "wamn-cdc-reader",
         "wamn-identity",
+        "wamn-component-composer",
         "wamn-gates",
     ];
     problems.require(!dockerfile.contains("cargo chef"), || {
