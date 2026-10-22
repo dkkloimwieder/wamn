@@ -13,7 +13,8 @@
 //! A TLS artifact registry serves Receiving, WMS, and their unqualified releases.
 //! WMS publishes through the native gate sidecar with an in-memory PAT.
 //! WMS stays unqualified and must refuse. The host qualifies Receiving, then
-//! the test applies only Receiving through the Rust edge in 4.20 and requires an unchanged rerun.
+//! the test applies only Receiving through HTTPS checks in 4.21 and requires an unchanged rerun.
+//! HTTPS Jobs pull the existing pinned curl image from the public registry.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -584,6 +585,12 @@ cluster.Cluster {{
         "control host did not roll out"
     );
     require_edge_skip(&applied)?;
+    let https_before = https_state(
+        &kubeconfig,
+        &context,
+        &[&serving.route_hosts.control, &environment.route_host],
+    )
+    .await?;
     let edge: Value = kubectl::get(&kubeconfig, &context, "edge", "deployment", "wamn-edge-web")
         .await?
         .context("missing Rust edge Deployment")?;
@@ -684,6 +691,16 @@ cluster.Cluster {{
     require_web_skip(&repeated)?;
     require_platform_ui_skip(&repeated)?;
     require_edge_skip(&repeated)?;
+    let https_after = https_state(
+        &kubeconfig,
+        &context,
+        &[&serving.route_hosts.control, &environment.route_host],
+    )
+    .await?;
+    ensure!(
+        https_after == https_before,
+        "unchanged apply rewrote the proxy or reran HTTPS checks"
+    );
     let edge_after: Value =
         kubectl::get(&kubeconfig, &context, "edge", "deployment", "wamn-edge-web")
             .await?
@@ -1169,6 +1186,140 @@ async fn serving_credentials(
     group["ociCaPaths"] = json!(["/etc/wamn/registry/ca.crt"]);
     std::fs::write(path, serde_yaml::to_string(&group)?)?;
     Ok(())
+}
+
+async fn https_state(
+    kubeconfig: &Path,
+    context: &str,
+    hosts: &[&str],
+) -> anyhow::Result<Vec<Value>> {
+    let proxy: Value = kubectl::get(kubeconfig, context, "edge", "deployment", "wamn-edge")
+        .await?
+        .context("missing nginx Deployment")?;
+    ensure!(
+        proxy["status"]["observedGeneration"] == proxy["metadata"]["generation"]
+            && proxy["status"]["availableReplicas"] == 1,
+        "nginx did not roll out"
+    );
+    let pod = &proxy["spec"]["template"]["spec"];
+    ensure!(
+        pod["volumes"]
+            .as_array()
+            .context("nginx volumes")?
+            .iter()
+            .any(|volume| volume["secret"]["secretName"] == "wamn-edge-tls"),
+        "nginx does not mount its certificate"
+    );
+    ensure!(
+        pod["volumes"]
+            .as_array()
+            .context("nginx volumes")?
+            .iter()
+            .any(|volume| volume["configMap"]["name"] == "identity-ca"),
+        "nginx does not mount the identity CA"
+    );
+    let service: Value = kubectl::get(kubeconfig, context, "edge", "service", "wamn-edge")
+        .await?
+        .context("missing nginx Service")?;
+    ensure!(
+        service["metadata"]["annotations"]["cloud.google.com/neg"].is_null(),
+        "kind requests a GCP NEG"
+    );
+    ensure!(
+        service["spec"]["ports"][0]["port"] == 443,
+        "nginx Service lacks HTTPS"
+    );
+    let secret: Value = kubectl::get(kubeconfig, context, "edge", "secret", "wamn-edge-tls")
+        .await?
+        .context("missing edge certificate")?;
+    let certificate = STANDARD.decode(
+        secret["data"]["tls.crt"]
+            .as_str()
+            .context("edge certificate data")?,
+    )?;
+    let mut openssl = Command::new("openssl")
+        .args(["x509", "-noout", "-serial"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    openssl
+        .stdin
+        .take()
+        .context("openssl stdin")?
+        .write_all(&certificate)?;
+    let output = openssl.wait_with_output()?;
+    ensure!(
+        output.status.success(),
+        "openssl could not read the edge certificate"
+    );
+    let output = String::from_utf8(output.stdout)?;
+    let serial = output
+        .trim()
+        .strip_prefix("serial=")
+        .context("openssl certificate serial")?
+        .to_ascii_lowercase();
+    let completion: Value = kubectl::get(
+        kubeconfig,
+        context,
+        "platform",
+        "configmap",
+        "wamn-install-platform-https-check",
+    )
+    .await?
+    .context("missing HTTPS completion")?;
+    ensure!(
+        completion["data"]["load_balancer"] == "skipped: kind"
+            && completion["data"]["web"] == "skipped: no bucket",
+        "HTTPS completion lacks kind skips"
+    );
+    let results: Vec<Value> = serde_json::from_str(
+        completion["data"]["results"]
+            .as_str()
+            .context("HTTPS results")?,
+    )?;
+    ensure!(
+        results.len() == hosts.len(),
+        "HTTPS completion has another host count"
+    );
+    let mut versions = vec![
+        proxy["metadata"]["resourceVersion"].clone(),
+        completion["metadata"]["resourceVersion"].clone(),
+    ];
+    for host in hosts {
+        let result = results
+            .iter()
+            .find(|result| result["host"].as_str() == Some(*host))
+            .with_context(|| format!("no HTTPS result for {host}"))?;
+        ensure!(
+            result["status"] == 401
+                && result["serial"] == serial
+                && result["path"]
+                    .as_str()
+                    .is_some_and(|path| path.starts_with("/api/")),
+            "HTTPS API or certificate mismatch for {host}"
+        );
+        let key = wamn_control::platform::job::input_digest(&json!([
+            host,
+            result["method"],
+            result["path"]
+        ]));
+        let job_name = format!("platform-https-{}", &key[..16]);
+        let record: Value = kubectl::get(
+            kubeconfig,
+            context,
+            "platform",
+            "configmap",
+            &format!("wamn-install-{job_name}"),
+        )
+        .await?
+        .context("missing HTTPS Job completion")?;
+        versions.push(record["metadata"]["resourceVersion"].clone());
+        let job: Option<Value> =
+            kubectl::get(kubeconfig, context, "edge", "job", &job_name).await?;
+        ensure!(job.is_none(), "completed HTTPS Job remains");
+    }
+    Ok(versions)
 }
 
 fn require_edge_skip(lines: &[String]) -> anyhow::Result<()> {
