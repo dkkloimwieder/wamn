@@ -833,15 +833,23 @@ pub async fn run(
         }
         let deadline = Instant::now() + INSTALL_DEADLINE;
         loop {
-            let status: Value = kubectl::get(
+            // A dropped connection says nothing about the Job, which keeps
+            // running, so the poll retries it until the deadline.
+            let status: Value = match kubectl::get(
                 &target.kubeconfig,
                 &target.context,
                 &target.namespace,
                 "job",
                 &request.name,
             )
-            .await?
-            .context("install Job disappeared")?;
+            .await
+            {
+                Err(error) if error.is::<kubectl::Unreachable>() && Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+                status => status?.context("install Job disappeared")?,
+            };
             if let Some(conditions) = status["status"]["conditions"].as_array() {
                 if conditions
                     .iter()

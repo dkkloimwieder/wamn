@@ -8,6 +8,25 @@ use serde::{Serialize, de::DeserializeOwned};
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 
+/// kubectl could not reach the API server, so the request did not run.
+///
+/// A caller that polls can retry it until its own deadline (wamn-axz4u).
+#[derive(Debug)]
+pub struct Unreachable(String);
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unreachable {}
+
+/// kubectl writes this prefix for every transport failure to the API server.
+fn unreachable(stderr: &str) -> bool {
+    stderr.starts_with("Unable to connect to the server:")
+}
+
 /// Run `kubectl` against the selected cluster and namespace.
 ///
 /// Calls with input suppress standard error because the input can contain Secrets.
@@ -73,12 +92,17 @@ async fn run(
                 output.status
             );
         }
-        bail!(
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let message = format!(
             "kubectl {} exited {}: {}",
             arguments.join(" "),
             output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            stderr.trim()
         );
+        if unreachable(stderr.trim()) {
+            return Err(Unreachable(message).into());
+        }
+        bail!(message);
     }
     Ok(String::from_utf8(output.stdout)
         .context("kubectl wrote text")?
@@ -193,7 +217,20 @@ fn wait_arguments(kind: &str, name: &str, condition: &str, duration: &str) -> [S
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_request, decode_object, get_arguments, wait_arguments};
+    use super::{apply_request, decode_object, get_arguments, unreachable, wait_arguments};
+
+    #[test]
+    fn only_a_transport_failure_is_unreachable() {
+        assert!(unreachable(
+            "Unable to connect to the server: net/http: TLS handshake timeout"
+        ));
+        assert!(unreachable(
+            "Unable to connect to the server: dial tcp 35.184.136.135:443: i/o timeout"
+        ));
+        assert!(!unreachable(
+            "Error from server (Forbidden): jobs.batch \"x\" is forbidden"
+        ));
+    }
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
