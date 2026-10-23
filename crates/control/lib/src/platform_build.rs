@@ -23,6 +23,17 @@ use wamn_execution_contract::canonical_json_bytes;
 
 use crate::release_chart::{CHART_VERSION, ImageSet, QualificationImages, stamp};
 
+mod inputs;
+
+/// The Dockerfile targets that build-platform pushes as images.
+const IMAGES: [&str; 5] = ["host", "runner", "gates", "identity", "edge-web"];
+
+/// The files of the roles target, each with the role it is pushed as.
+const ROLES: [(&str, &str); 2] = [
+    ("http_route.wasm", "http"),
+    ("materializer.wasm", "materializer"),
+];
+
 /// Print the elapsed time when a build stage ends, including on failure.
 pub(crate) struct Stage {
     name: String,
@@ -213,7 +224,10 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         return cloud_build(request, &processes).await;
     }
     let roles = std::env::temp_dir().join(format!("wamn-roles-{}", std::process::id()));
-    let pushed = build_then_push(request, &roles, output).await;
+    let mut components = OciComponents {
+        insecure: loopback(&request.registry),
+    };
+    let pushed = build_then_push(request, &roles, output, &mut components).await;
     let _ = std::fs::remove_dir_all(&roles);
     let pushed = pushed?;
     stamp_chart(request, pushed, &ui_receipt(&request.repository)?)
@@ -355,13 +369,311 @@ fn loopback(registry: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1")
 }
 
-/// Build the host, runner, gates, identity and edge images and export the role
-/// components to `roles`, each through `run`; only when every build
-/// succeeded, push them and return them pinned by digest.
+/// The role component registry: the registry over OCI, or a fake in tests.
+trait Components {
+    /// Push `bytes` as a new component and return its manifest digest.
+    async fn push(&mut self, reference: &str, bytes: &[u8]) -> anyhow::Result<String>;
+    /// Every tag of `repository`.
+    async fn tags(&mut self, repository: &str) -> anyhow::Result<Vec<String>>;
+    /// The raw manifest of `reference` and its media type.
+    async fn manifest(&mut self, reference: &str) -> anyhow::Result<(Vec<u8>, String)>;
+    /// Store the raw `manifest` under `reference`, byte for byte.
+    async fn put_manifest(
+        &mut self,
+        reference: &str,
+        manifest: &[u8],
+        media_type: &str,
+    ) -> anyhow::Result<()>;
+}
+
+/// The role components of the registry, over OCI.
+struct OciComponents {
+    insecure: bool,
+}
+
+impl OciComponents {
+    /// A client for `reference` with the credential that the Docker
+    /// configuration, or its credential helper, holds for its registry.
+    fn client(
+        &self,
+        reference: &str,
+    ) -> anyhow::Result<(
+        oci_client::Client,
+        oci_client::Reference,
+        oci_client::secrets::RegistryAuth,
+    )> {
+        use docker_credential::{CredentialRetrievalError, DockerCredential};
+        use oci_client::secrets::RegistryAuth;
+        let reference: oci_client::Reference = reference
+            .parse()
+            .with_context(|| format!("parse {reference}"))?;
+        let (client, _) =
+            crate::component_admission::registry_client(&reference, self.insecure, &[], None)?;
+        let auth = match docker_credential::get_credential(reference.resolve_registry()) {
+            Ok(DockerCredential::UsernamePassword(user, password)) => {
+                RegistryAuth::Basic(user, password)
+            }
+            Ok(DockerCredential::IdentityToken(_)) => {
+                anyhow::bail!("an identity token is not a registry credential")
+            }
+            Err(
+                CredentialRetrievalError::ConfigNotFound
+                | CredentialRetrievalError::ConfigReadError
+                | CredentialRetrievalError::NoCredentialConfigured,
+            ) => RegistryAuth::Anonymous,
+            Err(error) => anyhow::bail!("read the registry credential: {error}"),
+        };
+        Ok((client, reference, auth))
+    }
+}
+
+impl Components for OciComponents {
+    async fn push(&mut self, reference: &str, bytes: &[u8]) -> anyhow::Result<String> {
+        wash_runtime::oci::push_component(
+            reference,
+            bytes,
+            wash_runtime::oci::OciConfig {
+                insecure: self.insecure,
+                ..wash_runtime::oci::OciConfig::default()
+            },
+            None,
+        )
+        .await
+    }
+
+    async fn tags(&mut self, repository: &str) -> anyhow::Result<Vec<String>> {
+        let (client, reference, auth) = self.client(repository)?;
+        let mut tags = Vec::new();
+        loop {
+            let page = client
+                .list_tags(
+                    &reference,
+                    &auth,
+                    Some(1000),
+                    tags.last().map(String::as_str),
+                )
+                .await
+                .with_context(|| format!("list the tags of {repository}"))?;
+            let full = page.tags.len() == 1000;
+            tags.extend(page.tags);
+            if !full {
+                return Ok(tags);
+            }
+        }
+    }
+
+    async fn manifest(&mut self, reference: &str) -> anyhow::Result<(Vec<u8>, String)> {
+        let (client, parsed, auth) = self.client(reference)?;
+        let (manifest, _) = client
+            .pull_manifest_raw(
+                &parsed,
+                &auth,
+                &[oci_client::manifest::OCI_IMAGE_MEDIA_TYPE],
+            )
+            .await
+            .with_context(|| format!("read the manifest of {reference}"))?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&manifest).context("parse the role manifest")?;
+        let media_type = value["mediaType"]
+            .as_str()
+            .unwrap_or(oci_client::manifest::OCI_IMAGE_MEDIA_TYPE)
+            .to_owned();
+        Ok((manifest.to_vec(), media_type))
+    }
+
+    async fn put_manifest(
+        &mut self,
+        reference: &str,
+        manifest: &[u8],
+        media_type: &str,
+    ) -> anyhow::Result<()> {
+        let (client, parsed, auth) = self.client(reference)?;
+        client
+            .auth(&parsed, &auth, oci_client::RegistryOperation::Push)
+            .await
+            .with_context(|| format!("authenticate the push of {reference}"))?;
+        client
+            .push_manifest_raw(&parsed, manifest.to_vec(), media_type.parse()?)
+            .await
+            .with_context(|| format!("store the manifest of {reference}"))?;
+        Ok(())
+    }
+}
+
+/// The highest `x.y.z` tag below `current`.
+fn previous_version(tags: &[String], current: &str) -> Option<String> {
+    let parse = |tag: &str| -> Option<(u64, u64, u64)> {
+        let mut parts = tag.split('.').map(|part| part.parse().ok());
+        let version = (parts.next()??, parts.next()??, parts.next()??);
+        parts.next().is_none().then_some(version)
+    };
+    let current = parse(current)?;
+    tags.iter()
+        .filter_map(|tag| parse(tag).map(|version| (version, tag)))
+        .filter(|(version, _)| *version < current)
+        .max()
+        .map(|(_, tag)| tag.clone())
+}
+
+/// The digest of the single layer of a role manifest: the SHA-256 of its wasm.
+fn wasm_layer(manifest: &[u8]) -> anyhow::Result<String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(manifest).context("parse the role manifest")?;
+    match value["layers"].as_array().map(Vec::as_slice) {
+        Some([layer]) => layer["digest"]
+            .as_str()
+            .map(str::to_owned)
+            .context("the role layer has no digest"),
+        _ => anyhow::bail!("a role manifest has one layer"),
+    }
+}
+
+/// When the role of the previous chart version has the wasm layer `layer`,
+/// store its manifest unchanged under the chart version and return the role
+/// pinned by that manifest's digest (owner ruling wamn-vcpvf: detection by
+/// layer digest, never by manifest digest).
+async fn reuse_role(
+    components: &mut impl Components,
+    registry: &str,
+    role: &str,
+    layer: &str,
+) -> anyhow::Result<Option<String>> {
+    let repository = format!("{registry}/wamn/{role}");
+    let tags = components.tags(&repository).await?;
+    let Some(previous) = previous_version(&tags, CHART_VERSION) else {
+        return Ok(None);
+    };
+    let (manifest, media_type) = components
+        .manifest(&format!("{repository}:{previous}"))
+        .await?;
+    if wasm_layer(&manifest)? != layer {
+        eprintln!("build-platform {role} layer {layer} differs from {previous}");
+        return Ok(None);
+    }
+    components
+        .put_manifest(
+            &format!("{repository}:{CHART_VERSION}"),
+            &manifest,
+            &media_type,
+        )
+        .await?;
+    eprintln!("build-platform {role} layer {layer} copy {previous}");
+    Ok(Some(format!("{repository}@{}", sha256(&manifest))))
+}
+
+/// How each image reaches the chart version tag: built, or copied from the
+/// tag that carries its input hash (wamn-vcpvf). The role components are
+/// always built.
+struct Plan {
+    /// The hex input hash of each image.
+    hashes: BTreeMap<&'static str, String>,
+    /// The manifest digest of each image whose input tag exists.
+    images: BTreeMap<&'static str, String>,
+}
+
+/// The tag that carries the input hash of an image.
+fn input_tag(registry: &str, target: &str, hash: &str) -> String {
+    format!("{registry}/wamn-{target}:input-{hash}")
+}
+
+/// Hash the inputs of every image, then look up the input tags. A tag that
+/// does not resolve, for any reason, leaves its image to be built.
+async fn plan(
+    request: &BuildPlatformRequest,
+    run: &mut impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
+) -> anyhow::Result<Plan> {
+    let mut hashes = BTreeMap::new();
+    {
+        let _stage = start_stage("input-hashes");
+        let mut graphs = Vec::new();
+        for manifest in ["Cargo.toml", "apps/Cargo.toml"] {
+            let metadata = run(Command::new("cargo")
+                .current_dir(&request.repository)
+                .args([
+                    "metadata",
+                    "--format-version",
+                    "1",
+                    "--locked",
+                    "--all-features",
+                    "--manifest-path",
+                    manifest,
+                ]))
+            .await?;
+            graphs.push(inputs::parse_metadata(
+                &serde_json::from_str(&metadata).context("parse cargo metadata")?,
+            )?);
+        }
+        for target in IMAGES {
+            let files = inputs::input_files(&request.repository, target, &graphs[0], &graphs[1])?;
+            hashes.insert(target, inputs::input_hash(target, &files));
+        }
+    }
+    let _stage = start_stage("input-lookups");
+    let registry = &request.registry;
+    let mut images = BTreeMap::new();
+    for target in IMAGES {
+        let reference = input_tag(registry, target, &hashes[target]);
+        let digest = run(Command::new("docker").args([
+            "buildx",
+            "imagetools",
+            "inspect",
+            "--format",
+            "{{json .Manifest}}",
+            &reference,
+        ]))
+        .await
+        .and_then(|json| manifest_digest(&json));
+        if let Ok(digest) = digest {
+            images.insert(target, digest);
+        }
+    }
+    for (target, hash) in &hashes {
+        let action = if images.contains_key(target) {
+            "copy"
+        } else {
+            "build"
+        };
+        eprintln!("build-platform {target} input-{hash} {action}");
+    }
+    Ok(Plan { hashes, images })
+}
+
+/// Point the chart version tag of `target` at the image of its input tag,
+/// in the registry, and return it pinned by that image's digest.
+async fn copy_image(
+    run: &mut impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
+    registry: &str,
+    target: &str,
+    hash: &str,
+    digest: &str,
+) -> anyhow::Result<String> {
+    let _stage = start_stage(format!("copy-{target}"));
+    let reference = format!("{registry}/wamn-{target}:{CHART_VERSION}");
+    // With one source, --prefer-index=false copies the manifest as it is, so
+    // the digest holds.
+    run(Command::new("docker").args([
+        "buildx",
+        "imagetools",
+        "create",
+        "--prefer-index=false",
+        "--tag",
+        &reference,
+        &input_tag(registry, target, hash),
+    ]))
+    .await?;
+    Ok(format!("{reference}@{digest}"))
+}
+
+/// Build the host, runner, gates, identity and edge images, each through `run`
+/// unless its input tag exists, and export the role components to `roles`.
+/// Only when every build succeeded, push the built images under the chart
+/// version and input tags, copy the others, push the role components, and
+/// return them all pinned by digest.
 async fn build_then_push(
     request: &BuildPlatformRequest,
     roles: &Path,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
+    components: &mut impl Components,
 ) -> anyhow::Result<([String; 5], (String, String))> {
     {
         let _stage = start_stage("ui-build");
@@ -378,16 +690,23 @@ async fn build_then_push(
         "HEAD",
     ]))
     .await?;
+    let Plan { hashes, images } = plan(request, &mut run).await?;
+    let registry = &request.registry;
     let mut references = Vec::new();
-    for target in ["host", "runner", "gates", "identity", "edge-web"] {
-        let _stage = start_stage(format!("image-build-{target}"));
-        let reference = format!("{}/wamn-{target}:{CHART_VERSION}", request.registry);
-        run(docker(&request.repository)?
-            .args(["--target", target, "--tag", &reference])
-            .arg(format!("--label=wamn.dev/source-head={}", head.trim()))
-            .arg("--label=wamn.dev/build-profile=release")
-            .arg(&request.repository))
-        .await?;
+    for target in IMAGES {
+        let reference = format!("{registry}/wamn-{target}:{CHART_VERSION}");
+        let hash = &hashes[target];
+        if !images.contains_key(target) {
+            let _stage = start_stage(format!("image-build-{target}"));
+            run(docker(&request.repository)?
+                .args(["--target", target, "--tag", &reference, "--tag"])
+                .arg(input_tag(registry, target, hash))
+                .arg(format!("--label=wamn.dev/source-head={}", head.trim()))
+                .arg("--label=wamn.dev/build-profile=release")
+                .arg(format!("--label=wamn.dev/input-hash={hash}"))
+                .arg(&request.repository))
+            .await?;
+        }
         references.push((target, reference));
     }
     {
@@ -398,22 +717,28 @@ async fn build_then_push(
             .arg(&request.repository))
         .await?;
     }
-    let mut components = Vec::new();
-    for (file, role) in [
-        ("http_route.wasm", "http"),
-        ("materializer.wasm", "materializer"),
-    ] {
+    let mut role_components = Vec::new();
+    for (file, role) in ROLES {
         let bytes = std::fs::read(roles.join(file)).with_context(|| format!("read {file}"))?;
-        components.push((role, bytes));
+        role_components.push((role, bytes));
     }
     let mut pushed = Vec::new();
     for (target, reference) in &references {
+        let hash = &hashes[target];
+        if let Some(digest) = images.get(target) {
+            pushed.push(copy_image(&mut run, registry, target, hash, digest).await?);
+            continue;
+        }
         let _stage = start_stage(format!("push-{target}"));
-        pushed.push(push_image(&mut run, &request.registry, target, reference).await?);
+        pushed.push(push_image(&mut run, registry, target, reference).await?);
+        run(Command::new("docker").args(["push", &input_tag(registry, target, hash)])).await?;
     }
     let images = <[String; 5]>::try_from(pushed)
         .map_err(|_| anyhow::anyhow!("five platform images were pushed"))?;
-    Ok((images, push_roles(&request.registry, components).await?))
+    Ok((
+        images,
+        push_roles(registry, role_components, components).await?,
+    ))
 }
 
 /// `docker build` of one target of the root `Dockerfile`, for amd64. The
@@ -456,26 +781,25 @@ async fn push_image(
 }
 
 /// Push the http and materializer components as `<registry>/wamn/<role>`,
-/// and return each pinned by digest.
+/// and return each pinned by digest. A role whose wasm layer equals that of
+/// the previous chart version keeps that version's manifest and digest.
 async fn push_roles(
     registry: &str,
-    components: Vec<(&str, Vec<u8>)>,
+    role_components: Vec<(&str, Vec<u8>)>,
+    components: &mut impl Components,
 ) -> anyhow::Result<(String, String)> {
-    let insecure = loopback(registry);
     let mut pushed = Vec::new();
-    for (role, bytes) in components {
+    for (role, bytes) in role_components {
         let _stage = start_stage(format!("push-{role}"));
-        let digest = wash_runtime::oci::push_component(
-            &format!("{registry}/wamn/{role}:{CHART_VERSION}"),
-            &bytes,
-            wash_runtime::oci::OciConfig {
-                insecure,
-                ..wash_runtime::oci::OciConfig::default()
-            },
-            None,
-        )
-        .await
-        .with_context(|| format!("push the {role} role component"))?;
+        // A lookup that fails, for any reason, leaves the role to be pushed.
+        if let Ok(Some(pinned)) = reuse_role(components, registry, role, &sha256(&bytes)).await {
+            pushed.push(pinned);
+            continue;
+        }
+        let digest = components
+            .push(&format!("{registry}/wamn/{role}:{CHART_VERSION}"), &bytes)
+            .await
+            .with_context(|| format!("push the {role} role component"))?;
         ensure!(
             digest.starts_with("sha256:"),
             "the {role} push returned {digest}"
@@ -485,6 +809,24 @@ async fn push_roles(
     let materializer = pushed.pop().context("the materializer component")?;
     let http = pushed.pop().context("the http component")?;
     Ok((http, materializer))
+}
+
+/// After Cloud Build pushed the roles, point each chart version tag back at
+/// the previous version's manifest when the wasm layer is the same.
+async fn reuse_pushed_roles(
+    registry: &str,
+    components: &mut impl Components,
+) -> anyhow::Result<()> {
+    for (_, role) in ROLES {
+        let _stage = start_stage(format!("reuse-{role}"));
+        let (manifest, _) = components
+            .manifest(&format!("{registry}/wamn/{role}:{CHART_VERSION}"))
+            .await?;
+        let layer = wasm_layer(&manifest)?;
+        // A failed lookup keeps the manifest that Cloud Build pushed.
+        let _ = reuse_role(components, registry, role, &layer).await;
+    }
+    Ok(())
 }
 
 fn process_list() -> anyhow::Result<Vec<(u32, Vec<String>)>> {
@@ -760,6 +1102,8 @@ async fn cloud_build(
         ]))
         .await?;
     }
+    let mut run = output;
+    let plan = plan(request, &mut run).await?;
     let stores = CounterStores {
         gcloud: "gcloud".into(),
         configuration: agent_configuration()?,
@@ -781,7 +1125,8 @@ async fn cloud_build(
             "Cloud Build refused: spend USD {spend_usd:.4} is at or above cap USD {cap_usd:.4}"
         );
     }
-    let build = submit_cloud_build(request, &cluster.project_id, &cluster.buckets.state).await?;
+    let build =
+        submit_cloud_build(request, &plan, &cluster.project_id, &cluster.buckets.state).await?;
     // Record failed builds before reporting their outcome.
     add_cloud_minutes(&stores, &day, cloud_minutes(&build)?).await?;
     ensure!(
@@ -790,11 +1135,29 @@ async fn cloud_build(
         build.id,
         build.status
     );
+    for (target, digest) in &plan.images {
+        copy_image(
+            &mut run,
+            &request.registry,
+            target,
+            &plan.hashes[target],
+            digest,
+        )
+        .await?;
+    }
+    reuse_pushed_roles(
+        &request.registry,
+        &mut OciComponents {
+            insecure: loopback(&request.registry),
+        },
+    )
+    .await?;
     stamp_only(request).await
 }
 
 async fn submit_cloud_build(
     request: &BuildPlatformRequest,
+    plan: &Plan,
     project: &str,
     state_bucket: &str,
 ) -> anyhow::Result<CloudBuild> {
@@ -813,7 +1176,7 @@ async fn submit_cloud_build(
         "HEAD",
     ]))
     .await?;
-    let config = cloud_configuration(request, &supplement, head.trim())?;
+    let config = cloud_configuration(request, &supplement, head.trim(), plan)?;
     let config_file = source.0.join("cloudbuild.json");
     std::fs::write(&config_file, serde_json::to_vec(&config)?)?;
     let submitted = cloud_output(
@@ -867,6 +1230,7 @@ fn cloud_configuration(
     request: &BuildPlatformRequest,
     supplement: &str,
     head: &str,
+    plan: &Plan,
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
     let mut steps = Vec::new();
@@ -894,19 +1258,28 @@ with open('/cloud-auth/config.json', 'w') as output:
         "args": ["buildx", "create", "--name", "wamn", "--driver", "docker-container"],
         "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
     }));
-    for target in ["host", "runner", "gates", "identity", "edge-web", "roles"] {
+    let registry = &request.registry;
+    for target in IMAGES.into_iter().chain(["roles"]) {
+        // An image whose input tag exists is copied after the build.
+        if plan.images.contains_key(target) {
+            continue;
+        }
         let mut args: Vec<String> = vec!["buildx".into(), "--builder".into(), "wamn".into()];
         args.extend(base.iter().cloned());
         args.extend(["--target".into(), target.into()]);
         if target == "roles" {
             args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
         } else {
+            let hash = &plan.hashes[target];
             steps.push(auth_step.clone());
             args.extend([
                 "--tag".into(),
-                format!("{}/wamn-{target}:{CHART_VERSION}", request.registry),
+                format!("{registry}/wamn-{target}:{CHART_VERSION}"),
+                "--tag".into(),
+                input_tag(registry, target, hash),
                 format!("--label=wamn.dev/source-head={head}"),
                 "--label=wamn.dev/build-profile=release".into(),
+                format!("--label=wamn.dev/input-hash={hash}"),
                 // Owner ruling 2026-10-21: buildx pushes each image directly.
                 "--push".into(),
             ]);
@@ -918,14 +1291,11 @@ with open('/cloud-auth/config.json', 'w') as output:
         }));
     }
     steps.push(auth_step);
-    for (file, role) in [
-        ("http_route.wasm", "http"),
-        ("materializer.wasm", "materializer"),
-    ] {
+    for (file, role) in ROLES {
         steps.push(json!({
             // This release uses the same wash-runtime revision as Cargo.toml.
             "name": "ghcr.io/wasmcloud/wash:2.11.0", "entrypoint": "/usr/local/bin/wash",
-            "args": ["oci", "push", format!("{}/wamn/{role}:{CHART_VERSION}", request.registry), format!("/workspace/roles/{file}")],
+            "args": ["oci", "push", format!("{registry}/wamn/{role}:{CHART_VERSION}"), format!("/workspace/roles/{file}")],
             "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
         }));
     }
@@ -973,6 +1343,7 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn build_location_uses_other_builds_and_the_daily_counter() {
@@ -1068,7 +1439,16 @@ mod tests {
             cluster: None,
             cloud: true,
         };
-        let config = cloud_configuration(&request, ".supplement", "head").unwrap();
+        let hashes: BTreeMap<_, _> = IMAGES
+            .into_iter()
+            .chain(["roles"])
+            .map(|target| (target, format!("{target}-hash")))
+            .collect();
+        let mut plan = Plan {
+            hashes,
+            images: BTreeMap::new(),
+        };
+        let config = cloud_configuration(&request, ".supplement", "head", &plan).unwrap();
         assert_eq!(config["options"]["logging"], "CLOUD_LOGGING_ONLY");
         let steps = config["steps"].as_array().unwrap();
         assert_eq!(steps[0]["args"][5], "docker-container");
@@ -1096,6 +1476,46 @@ mod tests {
             }
         }
         assert!(!steps.iter().any(|step| step["args"][0] == "push"));
+        let has = |step: &serde_json::Value, text: &str| {
+            step["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg.as_str() == Some(text))
+        };
+        assert!(builds.iter().filter(|step| pushes(step)).all(|step| {
+            IMAGES.iter().any(|target| {
+                has(
+                    step,
+                    &format!(
+                        "us-central1-docker.pkg.dev/test/wamn/wamn-{target}:input-{target}-hash"
+                    ),
+                ) && has(step, &format!("--label=wamn.dev/input-hash={target}-hash"))
+            })
+        }));
+        let wash = |steps: &[serde_json::Value]| {
+            steps
+                .iter()
+                .filter(|step| step["entrypoint"] == "/usr/local/bin/wash")
+                .count()
+        };
+        assert_eq!(
+            wash(steps),
+            2,
+            "each role pushes its chart version tag once"
+        );
+        // Copied targets are left out of the submission.
+        plan.images.insert("host", "sha256:host".into());
+        let config = cloud_configuration(&request, ".supplement", "head", &plan).unwrap();
+        let steps = config["steps"].as_array().unwrap();
+        let builds: Vec<_> = steps
+            .iter()
+            .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
+            .collect();
+        assert_eq!(builds.len(), 5);
+        assert!(!builds.iter().any(|step| has(step, "host")));
+        assert!(builds.iter().any(|step| has(step, "roles")));
+        assert_eq!(wash(steps), 2);
     }
 
     #[test]
@@ -1287,15 +1707,85 @@ mod tests {
         );
     }
 
-    /// `program args…` of each command `build_then_push` runs; `fail` fails
-    /// the command that contains it, and `image inspect` reports no digest.
-    async fn record(roles: &Path, fail: &str) -> (anyhow::Error, Vec<String>) {
+    /// A fake registry of role components. Each push writes a manifest
+    /// with a new creation time, as oci-wasm does.
+    #[derive(Default)]
+    struct FakeComponents {
+        manifests: BTreeMap<String, Vec<u8>>,
+        pushed: Vec<String>,
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the fake answers at once, and the trait is async for the registry"
+    )]
+    impl Components for FakeComponents {
+        async fn push(&mut self, reference: &str, bytes: &[u8]) -> anyhow::Result<String> {
+            let created = format!("created {}", self.manifests.len());
+            let manifest = serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {"digest": sha256(created.as_bytes())},
+                "layers": [{"mediaType": "application/wasm", "digest": sha256(bytes)}],
+            }))?;
+            let digest = sha256(&manifest);
+            self.manifests.insert(reference.to_owned(), manifest);
+            self.pushed.push(reference.to_owned());
+            Ok(digest)
+        }
+
+        async fn tags(&mut self, repository: &str) -> anyhow::Result<Vec<String>> {
+            let prefix = format!("{repository}:");
+            Ok(self
+                .manifests
+                .keys()
+                .filter_map(|reference| reference.strip_prefix(&prefix))
+                .map(str::to_owned)
+                .collect())
+        }
+
+        async fn manifest(&mut self, reference: &str) -> anyhow::Result<(Vec<u8>, String)> {
+            let manifest = self
+                .manifests
+                .get(reference)
+                .with_context(|| format!("{reference}: not found"))?;
+            Ok((
+                manifest.clone(),
+                "application/vnd.oci.image.manifest.v1+json".into(),
+            ))
+        }
+
+        async fn put_manifest(
+            &mut self,
+            reference: &str,
+            manifest: &[u8],
+            _: &str,
+        ) -> anyhow::Result<()> {
+            self.manifests
+                .insert(reference.to_owned(), manifest.to_vec());
+            Ok(())
+        }
+    }
+
+    type Pinned = ([String; 5], (String, String));
+
+    /// Run `build_then_push` on `checkout` against a fake registry that holds
+    /// the image tags `images`, and return its result with `program args…` of
+    /// each command. `fail` fails the command that contains it.
+    async fn record_in(
+        checkout: &(PathBuf, String, String),
+        roles: &Path,
+        fail: &str,
+        images: &BTreeSet<String>,
+        components: &mut FakeComponents,
+    ) -> (anyhow::Result<Pinned>, Vec<String>) {
+        let (repository, root, apps) = checkout;
         let mut calls = Vec::new();
-        let error = build_then_push(
+        let result = build_then_push(
             &BuildPlatformRequest {
                 cluster: None,
                 cloud: false,
-                repository: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
+                repository: repository.clone(),
                 registry: "localhost:5000".to_owned(),
                 out: PathBuf::from("/chart"),
             },
@@ -1308,13 +1798,222 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(" ");
                 calls.push(call.clone());
+                if call.starts_with("cargo metadata") {
+                    let apps_workspace = call.ends_with("apps/Cargo.toml");
+                    return Ok((if apps_workspace { apps } else { root }).clone());
+                }
                 ensure!(!call.contains(fail), "{call} failed");
+                let inspect = "docker buildx imagetools inspect --format {{json .Manifest}} ";
+                if let Some(reference) = call.strip_prefix(inspect) {
+                    ensure!(images.contains(reference), "ERROR: {reference}: not found");
+                    return Ok(format!(
+                        r#"{{"digest":"sha256:{}","size":1}}"#,
+                        "c".repeat(64)
+                    ));
+                }
+                let pushed =
+                    "docker image inspect --format {{range .RepoDigests}}{{println .}}{{end}} ";
+                if let Some(reference) = call.strip_prefix(pushed) {
+                    let (repository, _) = reference.rsplit_once(':').unwrap();
+                    return Ok(format!("{repository}@sha256:{}\n", "a".repeat(64)));
+                }
                 Ok(String::new())
             },
+            components,
         )
-        .await
-        .expect_err("the run fails");
-        (error, calls)
+        .await;
+        (result, calls)
+    }
+
+    /// Run `build_then_push` on a fresh fake checkout with an empty registry;
+    /// the run must fail.
+    async fn record(roles: &Path, fail: &str) -> (anyhow::Error, Vec<String>) {
+        let checkout = inputs::tests::fake_checkout(&format!("record-{}", fail.len()));
+        let (result, calls) = record_in(
+            &checkout,
+            roles,
+            fail,
+            &BTreeSet::new(),
+            &mut FakeComponents::default(),
+        )
+        .await;
+        let _ = std::fs::remove_dir_all(&checkout.0);
+        (result.expect_err("the run fails"), calls)
+    }
+
+    /// Write both role files to a fresh directory named `name`.
+    fn exported_roles(name: &str) -> PathBuf {
+        let roles =
+            std::env::temp_dir().join(format!("wamn-build-platform-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&roles).expect("create the roles directory");
+        for (file, _) in ROLES {
+            std::fs::write(roles.join(file), b"\0asm").expect("write a role component");
+        }
+        roles
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_target_is_copied_and_a_changed_one_is_built() {
+        let checkout = inputs::tests::fake_checkout("copy-or-build");
+        let roles = exported_roles("copy-or-build");
+        let mut components = FakeComponents::default();
+        // No input tag exists, so every target builds as before.
+        let (first, calls) =
+            record_in(&checkout, &roles, "\0", &BTreeSet::new(), &mut components).await;
+        first.expect("the first build succeeds");
+        let builds = |calls: &[String]| {
+            calls
+                .iter()
+                .filter(|call| call.starts_with("docker build "))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(builds(&calls).len(), 6, "{calls:?}");
+        assert!(
+            !calls.iter().any(|call| call.contains("imagetools create")),
+            "{calls:?}"
+        );
+        let tags: BTreeSet<String> = calls
+            .iter()
+            .filter_map(|call| call.strip_prefix("docker push "))
+            .filter(|reference| reference.contains(":input-"))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(tags.len(), 5, "{calls:?}");
+        assert!(
+            builds(&calls)
+                .iter()
+                .filter(|call| !call.contains("--target roles"))
+                .all(|call| call.contains("--label=wamn.dev/input-hash=")),
+            "{calls:?}"
+        );
+        assert_eq!(components.pushed.len(), 2, "{:?}", components.pushed);
+        // Only the runner reads the package outputs.
+        std::fs::write(
+            checkout.0.join("apps/target/wamn/wamn_wms/build.json"),
+            r#"{"changed":true}"#,
+        )
+        .unwrap();
+        components.pushed.clear();
+        let (second, calls) = record_in(&checkout, &roles, "\0", &tags, &mut components).await;
+        let _ = std::fs::remove_dir_all(&checkout.0);
+        let _ = std::fs::remove_dir_all(&roles);
+        let ([host, runner, ..], _) = second.expect("the second build succeeds");
+        // The roles always build; their manifests are compared by wasm layer.
+        let built = builds(&calls);
+        assert_eq!(built.len(), 2, "{calls:?}");
+        assert!(built[0].contains("--target runner"), "{built:?}");
+        assert!(built[1].contains("--target roles"), "{built:?}");
+        let copies: Vec<_> = calls
+            .iter()
+            .filter(|call| call.starts_with("docker buildx imagetools create --prefer-index=false"))
+            .collect();
+        assert_eq!(copies.len(), 4, "{calls:?}");
+        assert!(
+            copies.iter().all(|call| !call.contains("wamn-runner")),
+            "{copies:?}"
+        );
+        assert_eq!(
+            host,
+            format!(
+                "localhost:5000/wamn-host:{CHART_VERSION}@sha256:{}",
+                "c".repeat(64)
+            )
+        );
+        assert_eq!(
+            runner,
+            format!(
+                "localhost:5000/wamn-runner:{CHART_VERSION}@sha256:{}",
+                "a".repeat(64)
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_role_keeps_the_previous_manifest_and_a_changed_one_is_pushed() {
+        let checkout = inputs::tests::fake_checkout("roles");
+        let roles = exported_roles("roles");
+        let mut components = FakeComponents::default();
+        // The previous chart holds the same http wasm and another materializer.
+        let http = "localhost:5000/wamn/http";
+        let materializer = "localhost:5000/wamn/materializer";
+        let previous = components
+            .push(&format!("{http}:0.0.1"), b"\0asm")
+            .await
+            .unwrap();
+        let older = components
+            .push(&format!("{materializer}:0.0.1"), b"\0asm old")
+            .await
+            .unwrap();
+        components.pushed.clear();
+        let (result, _) =
+            record_in(&checkout, &roles, "\0", &BTreeSet::new(), &mut components).await;
+        let _ = std::fs::remove_dir_all(&checkout.0);
+        let _ = std::fs::remove_dir_all(&roles);
+        let (_, (http_pinned, materializer_pinned)) = result.expect("the build succeeds");
+        assert_eq!(http_pinned, format!("{http}@{previous}"));
+        assert_eq!(
+            components.manifests[&format!("{http}:{CHART_VERSION}")],
+            components.manifests[&format!("{http}:0.0.1")]
+        );
+        assert_ne!(materializer_pinned, format!("{materializer}@{older}"));
+        assert_eq!(
+            components.pushed,
+            [format!("{materializer}:{CHART_VERSION}")]
+        );
+        let manifest = &components.manifests[&format!("{materializer}:{CHART_VERSION}")];
+        assert_eq!(
+            materializer_pinned,
+            format!("{materializer}@{}", sha256(manifest))
+        );
+        assert_eq!(wasm_layer(manifest).unwrap(), sha256(b"\0asm"));
+    }
+
+    #[tokio::test]
+    async fn a_role_that_cloud_build_pushed_returns_to_the_previous_manifest_when_its_wasm_is_unchanged()
+     {
+        let mut components = FakeComponents::default();
+        let http = "localhost:5000/wamn/http";
+        let materializer = "localhost:5000/wamn/materializer";
+        components
+            .push(&format!("{http}:0.0.1"), b"same")
+            .await
+            .unwrap();
+        components
+            .push(&format!("{materializer}:0.0.1"), b"old")
+            .await
+            .unwrap();
+        components
+            .push(&format!("{http}:{CHART_VERSION}"), b"same")
+            .await
+            .unwrap();
+        let pushed = components
+            .push(&format!("{materializer}:{CHART_VERSION}"), b"new")
+            .await
+            .unwrap();
+        let before = components.manifests[&format!("{http}:{CHART_VERSION}")].clone();
+        reuse_pushed_roles("localhost:5000", &mut components)
+            .await
+            .unwrap();
+        let after = &components.manifests[&format!("{http}:{CHART_VERSION}")];
+        assert_ne!(&before, after);
+        assert_eq!(after, &components.manifests[&format!("{http}:0.0.1")]);
+        let materializer_now = &components.manifests[&format!("{materializer}:{CHART_VERSION}")];
+        assert_eq!(sha256(materializer_now), pushed);
+    }
+
+    #[test]
+    fn the_previous_version_is_the_highest_release_tag_below_the_chart() {
+        let tags = [
+            "0.1.9", "0.1.96", "0.1.100", "input-x", "0.1.97", "latest", "0.2",
+        ]
+        .map(str::to_owned);
+        assert_eq!(previous_version(&tags, "0.1.97").as_deref(), Some("0.1.96"));
+        assert_eq!(
+            previous_version(&tags, "0.1.200").as_deref(),
+            Some("0.1.100")
+        );
+        assert_eq!(previous_version(&tags, "0.1.9"), None);
     }
 
     /// Stamp from a fake registry whose tags all resolve except those that
@@ -1441,15 +2140,18 @@ mod tests {
 
     #[tokio::test]
     async fn every_build_runs_before_the_first_push() {
-        let roles =
-            std::env::temp_dir().join(format!("wamn-build-platform-order-{}", std::process::id()));
-        std::fs::create_dir_all(&roles).expect("create the roles directory");
-        for file in ["http_route.wasm", "materializer.wasm"] {
-            std::fs::write(roles.join(file), b"\0asm").expect("write a role component");
-        }
-        let (error, calls) = record(&roles, "\0").await;
+        let roles = exported_roles("order");
+        let checkout = inputs::tests::fake_checkout("order");
+        let (result, calls) = record_in(
+            &checkout,
+            &roles,
+            "\0",
+            &BTreeSet::new(),
+            &mut FakeComponents::default(),
+        )
+        .await;
         let _ = std::fs::remove_dir_all(&roles);
-        assert!(error.to_string().contains("no pushed digest"), "{error}");
+        result.expect("the build succeeds");
         let first_push = calls
             .iter()
             .position(|call| call.starts_with("docker push"))
@@ -1457,12 +2159,13 @@ mod tests {
         let builds = calls
             .iter()
             .enumerate()
-            .filter(|(_, call)| call.starts_with("docker build"))
+            .filter(|(_, call)| call.starts_with("docker build "))
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         assert_eq!(builds.len(), 6, "{calls:?}");
         assert!(builds.iter().all(|index| *index < first_push), "{calls:?}");
-        let key = checkout_key(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")).unwrap();
+        let key = checkout_key(&checkout.0).unwrap();
+        let _ = std::fs::remove_dir_all(&checkout.0);
         assert!(
             builds.iter().all(
                 |index| calls[*index].contains(&format!("--build-arg WAMN_CHECKOUT_KEY={key}"))

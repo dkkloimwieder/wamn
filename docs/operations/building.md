@@ -107,7 +107,7 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 
 `wamn-ctl build-platform` builds `apps/platform_ui/dist` with `pnpm --filter @wamn/platform-ui build` before it builds and pushes the platform images.
 The command writes one line to stderr when each stage starts and ends.
-The stages cover the UI build, four image builds, roles export, each push, and the chart stamp.
+The stages cover the UI build, the input hashes and their lookups, each image build, roles export, each push or copy, each role comparison on the cloud path, and the chart stamp.
 Each line includes a UTC timestamp in RFC 3339 format. End lines also include elapsed seconds:
 
 ```text
@@ -131,6 +131,85 @@ The chart version identifies the platform asset version.
 If the dist is absent, it refuses and names `pnpm --filter @wamn/platform-ui build`.
 It creates no OCI artifact for the static bundle.
 Keep the local dist with the stamped chart until [upload](deployment.md#platform-ui-files).
+
+## Unchanged platform images
+
+`build-platform` builds only the platform images whose inputs changed since an earlier push.
+The five images are `host`, `runner`, `gates`, `identity`, and `edge-web`.
+The command always builds the `roles` target, which holds the `http` and `materializer` role components.
+It then compares each role by its wasm layer. See [Unchanged role components](#unchanged-role-components).
+
+After the UI build, the command calculates an input hash for each image.
+The input hash is a SHA-256 digest of the target name, the Docker build arguments, and a list of input files.
+The list records the path, the SHA-256 digest, and the mode of each file, or the target of a symbolic link.
+
+These files are inputs of every image:
+
+- `Dockerfile` and `.dockerignore`.
+- `Cargo.toml`, `Cargo.lock`, `.cargo/config.toml`, `apps/Cargo.toml`, and `apps/Cargo.lock`.
+- The `Cargo.toml` of every local package in the root and `apps` workspaces. One Cargo command builds many packages, and the features of all of them apply to each one.
+
+Each image also hashes the local packages that its binaries compile.
+The command reads them from `cargo metadata --all-features`, with normal and build dependencies.
+For each package, it hashes the whole package directory.
+It also hashes each path outside that directory that a source file names in a file-reading macro.
+These macros are `include_str!`, `include_bytes!`, `include!`, `#[path]`, `bindgen!`, and `generate!`.
+If a package has a build script or a procedural macro, the image hashes every file that the Dockerfile copies.
+
+| Image | Packages | Other inputs |
+| --- | --- | --- |
+| `host` | `wamn-host`, `wamn-runtime` | none |
+| `identity` | `wamn-identity` | none |
+| `edge-web` | `wamn-edge` | none |
+| `gates` | `wamn-host`, `wamn-runtime`, `wamn-gates`, `wamn-ctl`, `wamn-cdc-reader`, and the five guests of the component builder | `tools/guest-rustflags` |
+| `runner` | `wamn-ctl`, `wamn-scenario-worker`, the five guests, and `wamn-wms-tests` and `wamn-receiving-tests` with their dev dependencies | `apps`, `deploy`, `tools`, and the `apps/target/wamn` context |
+
+The five guests are `http-route`, `materializer`, `busyloop`, `connection-http-standard`, and `sockprobe`.
+The command ignores a file that no `COPY` from the build context reaches, and a file that `.dockerignore` drops.
+The `wamn.dev/source-head` label is not an input.
+
+The command prints one line for each image, with the hash and the action:
+
+```text
+build-platform <image> input-<hash> build
+build-platform <image> input-<hash> copy
+```
+
+Each built image gets a second tag, `input-<hash>`, and the label `wamn.dev/input-hash=<hash>`.
+Before it builds, the command looks for the `input-<hash>` tag of each image in the destination registry.
+If the tag is absent, or the lookup fails, the command builds the image as before.
+If the tag exists, the command does not build the image.
+It runs `docker buildx imagetools create --prefer-index=false` instead.
+The chart version tag then points at the same manifest, with the same digest.
+The copies run after every build succeeds, so a failed build still pushes nothing.
+
+`wamn-ctl` reads the chart version that it was compiled with.
+The `gates` and `runner` images carry `wamn-ctl`, so a version bump always changes their input hashes.
+A bump that changes no other input copies `host`, `identity`, and `edge-web`.
+
+A copied image keeps the base image packages from its first build.
+To build every image again, change the `Dockerfile` or delete the `input-<hash>` tags.
+
+### Unchanged role components
+
+A role component has one layer, the wasm file. The layer digest is the SHA-256 digest of the wasm bytes.
+The manifest digest also covers a creation time, so the command never compares manifest digests.
+
+For each role, the command finds the previous chart version in the registry.
+That version is the highest `x.y.z` tag of `<registry>/wamn/<role>` below the chart version.
+The command reads the manifest of that tag and compares its layer digest with the digest of the new wasm.
+If they are equal, it stores that manifest byte for byte under the chart version tag.
+The chart then pins the role by the previous manifest digest, so a qualification of that digest still applies.
+If they differ, or the lookup fails, the command pushes the role as before.
+
+The command prints one line for each compared role:
+
+```text
+build-platform <role> layer <digest> copy <previous version>
+build-platform <role> layer <digest> differs from <previous version>
+```
+
+The manifest copy reads the registry credential from the Docker configuration or its credential helper.
 
 ## Cloud platform builds
 
@@ -157,7 +236,12 @@ Each image build runs `docker buildx build` in `docker:28.5.1-cli` on a `docker-
 Cloud Build writes the build log to Cloud Logging only.
 Read a failed build with `gcloud logging read 'resource.type="build" AND resource.labels.build_id="<id>"' --project wamn-dev`.
 If gcloud fails, the command prints the last 20 lines of its stderr.
-Each of the four image builds pushes its image with `--push` when it finishes, with a fresh registry token. After the role export, the two role components are pushed under the same registry tag.
+Each image build pushes its image with `--push` when it finishes, with a fresh registry token. After the role export, the two role components are pushed under the same registry tag.
+The cloud path uses the same input hashes. Cloud Build builds only the images that have no `input-<hash>` tag, and pushes each of them under both tags.
+Cloud Build always builds the roles and pushes each one once under the chart version tag.
+After Cloud Build succeeds, the command copies the other images from this machine.
+Then it compares the layer of each pushed role with the previous chart version.
+If the layers are equal, it copies the previous manifest under the chart version tag.
 The command waits for Cloud Build, then reads the pushed digests and stamps the chart.
 The local UI build and its recorded digest follow the local path.
 The `cloud-submit` stage prints start and end lines, including elapsed time.

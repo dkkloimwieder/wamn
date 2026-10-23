@@ -5572,6 +5572,7 @@ dependencies = [
  "async-nats",
  "base64 0.22.1",
  "chrono",
+ "docker_credential",
  "futures-util",
  "hex",
  "object_store",
