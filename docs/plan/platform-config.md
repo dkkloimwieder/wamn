@@ -2,7 +2,7 @@
 
 ## Mechanism
 
-One mechanism for everything the platform provides to an application: the platform owns schema `platform` in each project database (today's `app_system`, renamed), the control host writes it, the application reads it. The application role has `SELECT` on the listed tables (the tables below, plus roles, permissions and `environment`), `EXECUTE` on `platform.bump_counter`, and no other grant; `platform.write_log`, the engine's claim record, keeps its existing grants. No history table and no `schema_migrations` is readable. Platform routes that change platform rows (`file.put`, `set_counter`, settings) are operations in the application's ACL, granted per role like any other.
+One mechanism for everything the platform provides to an application: the platform owns schema `platform` in each project database (today's `app_system`, renamed), the control host writes it, the application reads it. The application role has `SELECT` on the listed tables (the tables below, plus roles, permissions and `environment`), `EXECUTE` on `platform.bump_counter` and `platform.assign_counter`, and no other grant; `platform.write_log`, the engine's claim record, keeps its existing grants. No history table and no `schema_migrations` is readable. Platform routes that change platform rows (`file.put`, `set_counter`, settings) are operations in the application's ACL, granted per role like any other.
 
 Each section carries the dependency it waits on, so it can be ruled and filed as that dependency lands.
 
@@ -37,7 +37,7 @@ Every table below lives in `platform` in the project environment's database. Cre
 | org / project / environment | `integration_allow` | scope\_type, scope\_id, integration | platform routes | yes |
 | project | `project_connection` | project\_id, connection\_id | platform routes | yes |
 | application, per env | `number_sequence` | id, application, name, pattern | created at env apply from the package default; pattern edited via platform routes | yes |
-| application, per env | `number_counter` | sequence\_id, counter, key\_value, value; PK (sequence\_id, counter, key\_value) | `next_number` inside the operation transaction; `set_counter` route | yes; advanced only through `bump_counter` |
+| application, per env | `number_counter` | sequence\_id, counter, key\_value, value; PK (sequence\_id, counter, key\_value) | `next_number` inside the operation transaction; `set_counter` route | yes; written only through `bump_counter` and `assign_counter` |
 | application, per env | `setting` | scope\_type, scope\_id, key, value (jsonb), locked | platform routes, per environment | no (UI reads via routes) |
 | application, per env | role and permission rows | as today | as today | yes |
 
@@ -128,9 +128,10 @@ The renderer is Rust in the `wamn:postgres` plugin, not a SQL function: the plug
 ```
 next_number(name, record) -> text        // plugin call; application from the app.application claim
 platform.bump_counter(sequence, counter, key) -> bigint   // Postgres only: SECURITY DEFINER, lock-insert-increment, no pattern, no parsing
+platform.assign_counter(sequence, counter, key) -> bigint // Postgres only: SECURITY DEFINER, per= mapping: return it, or allocate from '' and insert it
 ```
 
-On Postgres the plugin advances counters only through `bump_counter`, so the application role keeps no `UPDATE` on `number_counter`. On SQLite there are no roles; the plugin's statement admission refuses application SQL that writes `platform.*`, which it must do there regardless. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
+On Postgres the two platform functions, `bump_counter` and `assign_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. On SQLite there are no roles; the plugin's statement admission refuses application SQL that writes `platform.*`, which it must do there regardless. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
 
 ### Pattern
 
@@ -162,7 +163,7 @@ B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}
 1. Tokenize the pattern; resolve each key from `record`, from an already-rendered counter, or from the transaction time.
 2. For each counter in name order:
    - `reset=`: `bump_counter(sequence, counter, key_value)` locks the row, inserts at 1 if absent, returns the value and increments.
-   - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `bump_counter` on the `''` allocator, look again, and if still absent insert the key row with the allocated value. The first line of a batch pays the allocator lock; every later line pays only its own counter.
+   - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
 3. Render and return the text.
 
 - Rendering, preview, validation and `set_counter` all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere.
@@ -390,7 +391,7 @@ Each rule has one check that runs in the platform test set.
 
 | invariant | check |
 | --- | --- |
-| application role: `SELECT` on the listed tables (plus roles, permissions and `environment`), `EXECUTE` on `bump_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table or `schema_migrations` grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
+| application role: `SELECT` on the listed tables (plus roles, permissions and `environment`), `EXECUTE` on `bump_counter` and `assign_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table or `schema_migrations` grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
 | no manifest model names a `platform.*` table | build refusal; fixture with such a model is refused |
 | no write statement, command claim or history trigger targets a declared relation | build refusal; fixture with an `UPDATE platform.user` is refused |
 | a host-filled `number` field is filled only by the plugin's `next_number` | build refusal on a write that supplies it; the generated insert type has no such field |
@@ -508,7 +509,7 @@ C1 is done: `wamn-aqd0m` merged at `3bb4c488e`, and its epic-close kind run pass
 
 Rulings for C2:
 
-- `next-number(name, record) -> text` and `peek-number(name, record) -> text` are two added functions on `wamn:postgres/statements`, with no version bump. `peek` is generated from `peek-number` (owner ruling 2026-10-23). It renders the current value with no lock and no advance. The host refuses both outside an open operation transaction. The renderer lives in the plugin. `bump_counter` is the only writer of `number_counter`.
+- `next-number(name, record) -> text` and `peek-number(name, record) -> text` are two added functions on `wamn:postgres/statements`, with no version bump. `peek` is generated from `peek-number` (owner ruling 2026-10-23). It renders the current value with no lock and no advance. The host refuses both outside an open operation transaction. The renderer lives in the plugin. The two platform functions, `bump_counter` and `assign_counter`, are the only writers of `number_counter` (owner ruling 2026-10-23).
 - The application is the composing application of the `app.application` claim (C1.2 ruling). `next_number` refuses a sequence of another application by the claim, never by SQL text.
 - `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
 - `role = "actor"` fills from `app.user_id`. An insert fills every actor field. An update fills `updated_by` and never touches `created_by` (owner ruling 2026-10-23). A payload that supplies an actor field is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
