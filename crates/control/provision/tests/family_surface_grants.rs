@@ -436,7 +436,7 @@ fn expected_executor_grants() -> Vec<String> {
     rows.push("schema|wamn_run|wamn_run|USAGE".to_owned());
     rows.push("schema|platform|platform|USAGE".to_owned());
     for column in ["tenant_id", "id", "type", "status", "email"] {
-        rows.push(format!("column|platform|users.{column}|SELECT"));
+        rows.push(format!("column|platform|user.{column}|SELECT"));
     }
     rows.sort();
     rows
@@ -770,7 +770,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         .collect();
     expected.push("relation|platform|permissions|SELECT".to_owned());
     expected.push("relation|platform|user_roles|SELECT".to_owned());
-    expected.push("relation|platform|users|SELECT".to_owned());
+    expected.push("relation|platform|user|SELECT".to_owned());
     expected.push("schema|platform|platform|USAGE".to_owned());
     expected.push("schema|catalog|catalog|USAGE".to_owned());
     expected.sort();
@@ -833,7 +833,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         )
         .expect("writing to a String cannot fail");
     }
-    for relation in ["users", "user_roles"] {
+    for relation in ["user", "user_roles"] {
         writeln!(
             probes,
             "  ASSERT has_table_privilege(r, 'platform.{relation}', 'SELECT'), \
@@ -922,7 +922,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
              INSERT INTO platform.roles (tenant_id, name) \
              VALUES ('tenant-a', 'widget-reader');\n\
-             INSERT INTO platform.users (tenant_id, id, type, email) \
+             INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'user', 'caller@example.test');\n\
              INSERT INTO platform.user_roles (tenant_id, user_id, role_name) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'widget-reader');\n\
@@ -969,7 +969,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     assert_eq!(
         query(
             &as_login,
-            "SELECT p.permission FROM platform.users u \
+            "SELECT p.permission FROM platform.\"user\" u \
              JOIN platform.user_roles ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id \
              JOIN platform.permissions p ON p.tenant_id = ur.tenant_id AND p.role_name = ur.role_name \
              WHERE u.tenant_id = 'tenant-a' AND u.id = '00000000-0000-4000-8000-000000000001' \

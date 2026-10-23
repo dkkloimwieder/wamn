@@ -38,7 +38,7 @@ pub async fn queued_service_caller(
     let rows = client
         .query(
             "SELECT users.id::text, user_roles.role_name, permissions.permission \
-             FROM platform.users AS users \
+             FROM platform.\"user\" AS users \
              LEFT JOIN platform.user_roles AS user_roles \
                ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
              LEFT JOIN platform.permissions AS permissions \

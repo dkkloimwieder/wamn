@@ -156,7 +156,7 @@ pub struct ReconcileRunPlaneRequest {
     /// Plan without applying (strictly read-only).
     pub dry_run: bool,
 
-    /// Publishes the users rows the reconciliation wrote or removed.
+    /// Publishes the user rows the reconciliation wrote or removed.
     pub changes: wamn_platform_identity::auth_changes::AuthChanges,
 }
 
@@ -620,7 +620,7 @@ async fn converge_tenant_identity(
     let missing_platform: Vec<PlatformComponent> = if app_schema_present {
         let present: BTreeSet<String> = client
             .query(
-                "SELECT id::text FROM platform.users \
+                "SELECT id::text FROM platform.\"user\" \
                   WHERE tenant_id = $1 AND type = 'platform'",
                 &[&tenant_id],
             )
@@ -641,11 +641,11 @@ async fn converge_tenant_identity(
         if app_schema_present {
             client
                 .query(
-                    "SELECT id::text, type = 'user' FROM platform.users WHERE tenant_id = $1",
+                    "SELECT id::text, type = 'user' FROM platform.\"user\" WHERE tenant_id = $1",
                     &[&tenant_id],
                 )
                 .await
-                .context("read the tenant's users rows")?
+                .context("read the tenant's user rows")?
                 .into_iter()
                 .fold(Default::default(), |(mut all, mut users), row| {
                     let id: String = row.get(0);

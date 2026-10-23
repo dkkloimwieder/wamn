@@ -137,7 +137,7 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
         )?)
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    admin.batch_execute(&format!("INSERT INTO platform.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
+    admin.batch_execute(&format!("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
       INSERT INTO platform.roles (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');")).await?;
     let released = wamn_catalog::ServingComponentOperation {
@@ -257,7 +257,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         )?)
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    admin.batch_execute(&format!("INSERT INTO platform.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
+    admin.batch_execute(&format!("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
       INSERT INTO platform.roles (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
       INSERT INTO platform.permissions (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}');
@@ -452,7 +452,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         let subject = wamn_platform_identity::application_subject(TENANT, "automation")?;
         admin
             .execute(
-                "UPDATE platform.users SET email=$1 WHERE id=$2::text::uuid",
+                "UPDATE platform.\"user\" SET email=$1 WHERE id=$2::text::uuid",
                 &[&format!("{subject}@example.invalid"), &SERVICE],
             )
             .await?;
@@ -699,7 +699,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     assert!(row.get::<_, Option<String>>(1).is_none());
     admin
         .execute(
-            "UPDATE platform.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
+            "UPDATE platform.\"user\" SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
             &[&TENANT, &SERVICE],
         )
         .await?;

@@ -278,7 +278,7 @@ async fn seed_tenant_role(
         .await
         .context("begin test fixture seed")?;
     tx.execute(
-        "INSERT INTO platform.users (tenant_id, id, type, email) \
+        "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
          VALUES ($1, $2::text::uuid, 'user', $3)",
         &[
             &args.tenant,
@@ -404,7 +404,7 @@ async fn cleanup(
     let project_result: anyhow::Result<()> = async {
         let tx = project.transaction().await?;
         tx.execute(
-            "DELETE FROM platform.users WHERE tenant_id = $1 AND id = $2::text::uuid",
+            "DELETE FROM platform.\"user\" WHERE tenant_id = $1 AND id = $2::text::uuid",
             &[&tenant, &principal.as_str()],
         )
         .await?;

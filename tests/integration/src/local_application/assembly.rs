@@ -137,7 +137,7 @@ pub(super) async fn assemble(
         .await?;
     project
         .execute(
-            "INSERT INTO platform.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'service','local@example.invalid')",
+            "INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'service','local@example.invalid')",
             &[&input.tenant, &principal.id().as_str()],
         )
         .await?;

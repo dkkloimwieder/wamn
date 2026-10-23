@@ -24,6 +24,8 @@ use wamn_control::upgrade_schema::{UpgradeSchemaRequest, upgrade_schema_with};
 use wamn_control_provision::schema_migrations::{Migration, MigrationTarget};
 use wamn_gate_harness::environment::apply_project_database;
 
+const PLURAL_USER: &str =
+    include_str!("../../../crates/control/lib/tests/fixtures/platform-user-before-0027.sql");
 const ORG: &str = "us0";
 const PROJECT: &str = "app";
 const ENV: &str = "dev";
@@ -247,9 +249,14 @@ async fn upgrade_schema_applies_each_pending_file_once() {
 
     // A project database installed before 0024: the run reads the record
     // table in the old schema, applies the rename and records it in platform,
-    // then applies 0025 and 0026. The database also loses what 0025 adds and gets back
-    // what 0025 removes.
+    // then applies 0025, 0026 and 0027. The database also loses what 0025 adds and gets
+    // back what 0025 removes, and has the user table names from before 0027.
     let client = connect(&project_url).await;
+    client
+        .0
+        .batch_execute(PLURAL_USER)
+        .await
+        .expect("name the user table as before 0027");
     client
         .0
         .batch_execute(

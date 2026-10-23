@@ -987,8 +987,8 @@ fn record_history_guest() -> String {
     .expect("App takes a tenant scope")
 }
 
-/// Actors the record-history cases bind. No users row names A, B, or C, so a
-/// stamp that lands shows that the function reads no users row.
+/// Actors the record-history cases bind. No user row names A, B, or C, so a
+/// stamp that lands shows that the function reads no user row.
 const ACTOR_A: &str = "00000000-0000-4000-8000-00000000000a";
 const ACTOR_B: &str = "00000000-0000-4000-8000-00000000000b";
 const ACTOR_C: &str = "00000000-0000-4000-8000-00000000000c";
@@ -1260,13 +1260,13 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
             "BEGIN;\n\
              SELECT set_config('app.user_id', '{OPERATOR}', true), \
                     set_config('app.operation', 'admin:seed-operator-fixture', true);\n\
-             INSERT INTO platform.users (tenant_id, id, type, email) \
+             INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
                VALUES ('t1', '{OPERATOR}', 'user', 'operator@example.test');\n\
              COMMIT;\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\
              SELECT set_config('app.user_id', \
-               (SELECT id::text FROM platform.users WHERE email = 'operator@example.test'), true);\n\
+               (SELECT id::text FROM platform.\"user\" WHERE email = 'operator@example.test'), true);\n\
              UPDATE rh_probe.stamped SET note = 'operator', updated_by = '{ACTOR_B}' WHERE id = 1;\n\
              INSERT INTO rh_probe.stamped (id, note, created_by) VALUES (3, 'operator', '{ACTOR_B}');\n\
              DO $$ BEGIN\n\
@@ -2822,7 +2822,7 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
          external_system:unlimited\\000 integration_allow:unlimited\\000 \
          number_sequence:unlimited\\000 permissions:unlimited\\000 \
          project_connection:unlimited\\000 roles:unlimited\\000 setting:unlimited\\000 \
-         user_roles:unlimited\\000 users:unlimited\\000",
+         user:unlimited\\000 user_roles:unlimited\\000",
         "every platform relation must log with the retention unlimited"
     );
     let targets = psql(

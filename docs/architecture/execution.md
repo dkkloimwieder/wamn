@@ -174,7 +174,7 @@ The writes are the functions of [`wamn_platform_identity::org`](../../crates/ide
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
 The control host reads that login from the mounted Secret `wamn-control-administration-<org>`, one file per `<project>--<env>`, at each write (`--control-administration-dir`, `WAMN_CONTROL_ADMINISTRATION_DIR`).
-A grant commits its system rows first, and then writes the `users` row, with `admin` for `org-admin` and `project-admin`.
+A grant commits its system rows first, and then writes the `user` row, with `admin` for `org-admin` and `project-admin`.
 A revoke or a deactivation removes the application rows first, and commits its system rows only when every environment is done.
 If an environment fails, the route answers `application_write_incomplete` with that `environment` and the environments that completed, and the system rows of a revoke stay as they were.
 The four status routes need `org-admin`, and they write `registry.project_envs.status` through the `control` family, which holds `UPDATE` on that column only.
@@ -468,7 +468,7 @@ Repeated applies retain its identity and grants.
 Publish authorizes the operations that the application declares as dependencies.
 Apply assigns a role with those permissions. Repeated applies write no principal or role rows.
 The executor resolves the application principal when it admits the schedule run.
-Its database role reads only `tenant_id`, `id`, `type`, `status`, and `email` from `platform.users`.
+Its database role reads only `tenant_id`, `id`, `type`, `status`, and `email` from `platform."user"`.
 It can insert the principal into a run but cannot change that identity afterward.
 
 The queue reads its current permissions, and the router authorizes each registered consumer command through the existing operation check.
@@ -539,9 +539,9 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 
 The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip ([round-trips](../plan/request-round-trips.md)).
 The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the scheduler NATS.
-The key `<tenant>.<principal>` holds the grants of a principal and whether the tenant has its users row.
+The key `<tenant>.<principal>` holds the grants of a principal and whether the tenant has its user row.
 The key `<tenant>.environment` holds the environment status.
-One read of `platform.users`, `platform.user_roles` and `platform.permissions` answers the permission check and the users-row check of the invocation bind.
+One read of `platform."user"`, `platform.user_roles` and `platform.permissions` answers the permission check and the user-row check of the invocation bind.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 Each host watches the keys of its tenant and keeps each value it sees, so a fact one host reads serves every host of the tenant.
 The control host serves every tenant, so it watches every key.
@@ -557,7 +557,7 @@ While the watch is broken, the host keeps no fact and opens the bucket again.
 Every function that writes one of these facts takes an [`AuthDrops`](../../crates/identity/platform/src/auth_changes.rs) and records the change in it.
 Its caller deletes the keys of the list after the commit.
 [`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and checks the drop it records.
-A change of a users row or a user role deletes the key of the principal.
+A change of a user row or a user role deletes the key of the principal.
 A change of a role, a permission or the environment status deletes every key of the tenant.
 A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
 The writers are the application host, the control host, the identity service and `wamn-ctl`.
@@ -937,7 +937,7 @@ Unsupported input types block submission.
 Unknown output types remain display-only and appear as opaque values.
 
 Record screens show the returned `created_by` and `updated_by` IDs.
-A display name comes from the application's own SQL, which joins `platform.users.display_name` where it needs a name.
+A display name comes from the application's own SQL, which joins `platform."user".display_name` where it needs a name.
 The platform adds no query after the result (`wamn-stxy9.1`).
 The history view keeps its existing behavior.
 

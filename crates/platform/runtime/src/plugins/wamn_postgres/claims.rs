@@ -35,12 +35,12 @@ pub(super) mod transactions;
 /// tenant floor.
 const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform.environment";
 
-/// The users row of one principal, each role it holds and each permission
-/// of that role, in one read. No row means no users row. A role without
+/// The user row of one principal, each role it holds and each permission
+/// of that role, in one read. No row means no user row. A role without
 /// permissions, such as `admin`, yields one row with a null permission, and a
 /// principal without roles yields one row with a null role.
 const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission \
-    FROM platform.users u LEFT JOIN platform.user_roles r \
+    FROM platform.\"user\" u LEFT JOIN platform.user_roles r \
     ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     LEFT JOIN platform.permissions p \
     ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
@@ -49,15 +49,15 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
 /// One row of the bound principal, read under the tenant's own guest login.
 ///
 /// Row existence is the whole question, so the projection is a constant. The
-/// `users_tenant` policy already limits a guest login to its own tenant, and
+/// `user_tenant` policy already limits a guest login to its own tenant, and
 /// the bound `tenant_id` predicate keeps the read on the claimed tenant.
-const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.users \
+const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
     WHERE tenant_id = $1 AND id = $2::text::uuid";
 
 /// Each role that the active user holds, with each permission of that
 /// role.
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
-    FROM platform.users AS users \
+    FROM platform.\"user\" AS users \
     JOIN platform.user_roles AS user_roles \
       ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
     LEFT JOIN platform.permissions AS permissions \
@@ -320,7 +320,7 @@ pub struct SessionClaims {
     pub release: Option<ReleaseIdentity>,
 }
 
-/// The bound principal has no `platform.users` row in the tenant it claims
+/// The bound principal has no `platform."user"` row in the tenant it claims
 /// (`wamn-0h0g.9.19`).
 ///
 /// A credential for such a principal is a provisioning defect: every write it
@@ -340,7 +340,7 @@ pub struct UnprovisionedPrincipal {
 }
 
 impl UnprovisionedPrincipal {
-    /// The tenant whose `platform.users` table was read.
+    /// The tenant whose `platform."user"` table was read.
     #[must_use]
     pub fn tenant(&self) -> &str {
         &self.tenant
@@ -363,7 +363,7 @@ impl std::fmt::Display for UnprovisionedPrincipal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "principal {} has no platform.users row in tenant {} of project {}",
+            "principal {} has no platform.\"user\" row in tenant {} of project {}",
             self.principal_id, self.tenant, self.project
         )
     }
@@ -1398,10 +1398,10 @@ impl WamnPostgres {
     /// claim is refused here and the caller destroys the instance rather than
     /// serving it under a half-written identity.
     ///
-    /// # The executing principal must own a users row (`wamn-0h0g.9.19`)
+    /// # The executing principal must own a user row (`wamn-0h0g.9.19`)
     ///
     /// A bind that names an `app.user_id` refuses when the principal owns no
-    /// `platform.users` row in the tenant's project database. The credential
+    /// `platform."user"` row in the tenant's project database. The credential
     /// of such a principal is a provisioning defect, and every write it makes
     /// records an actor that names no row. The host's
     /// [auth memory](crate::auth_cache) answers first: the route authenticator
@@ -1411,7 +1411,7 @@ impl WamnPostgres {
     /// [`bind_item_session_claims`](Self::bind_item_session_claims), which
     /// does not check again.
     ///
-    /// A users row deleted after the check stays accepted until a change
+    /// A user row deleted after the check stays accepted until a change
     /// message clears the memory or the memory's TTL ends.
     ///
     /// The read runs LAST, after every claim is written and validated, so a
@@ -1442,7 +1442,7 @@ impl WamnPostgres {
     /// does, without its principal read, for the call inside an item whose
     /// transaction a bind of the same claims began (`wamn-uq4r`).
     ///
-    /// The item's bind read the principal's users row moments before, in the
+    /// The item's bind read the principal's user row moments before, in the
     /// same invocation, so a second read answers nothing new and takes a
     /// second guest connection. The caller passes the claims of that bind.
     pub fn bind_item_session_claims(
@@ -1545,14 +1545,14 @@ impl WamnPostgres {
         Ok(())
     }
 
-    /// Read one `platform.users` row and refuse the principal that owns none
+    /// Read one `platform."user"` row and refuse the principal that owns none
     /// (`wamn-0h0g.9.19`).
     ///
     /// The read uses the tenant's own guest login, for two reasons. It is the
     /// only authority class every composition root names, because the platform
     /// classes are unnamed when their generation is absent. And it is the
     /// credential the tenant floor already grants `SELECT` on this table, with
-    /// the `users_tenant` policy limiting it to its own rows, so the check
+    /// the `user_tenant` policy limiting it to its own rows, so the check
     /// needs no new grant and can read no other tenant.
     ///
     /// A read that cannot run refuses the bind with its own error rather than
@@ -1572,7 +1572,7 @@ impl WamnPostgres {
             .checkout_guest(project, tenant)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))
-            .context("check out the tenant connection that reads platform.users")?;
+            .context("check out the tenant connection that reads platform.\"user\"")?;
         let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
             Ok(statement) => statement,
             Err(error) => {
@@ -1586,13 +1586,13 @@ impl WamnPostgres {
                 tracing::info_span!("wamn.claims.principal.query")
             }))
             .await
-            .context("read the executing principal's platform.users row")?;
+            .context("read the executing principal's platform.\"user\" row")?;
         if rows.is_empty() {
             tracing::warn!(
                 tenant,
                 project,
                 principal_id,
-                "wamn:postgres: refusing a bind for a principal with no platform.users row"
+                "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
             );
             return Err(UnprovisionedPrincipal {
                 tenant: tenant.to_owned(),
@@ -1979,7 +1979,7 @@ impl WamnPostgres {
         Ok(held_grants(&grants, None))
     }
 
-    /// The users row, roles and permissions of one principal, from the host's
+    /// The user row, roles and permissions of one principal, from the host's
     /// memory or, on a miss, from one read under the callable-HTTP authority
     /// with no session claims. The read also answers the provisioned-principal
     /// check of the claim bind.

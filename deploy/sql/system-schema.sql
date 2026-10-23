@@ -93,7 +93,7 @@ CREATE SCHEMA identity AUTHORIZATION wamn_system;
 -- row) — the registry is not a versioned per-row document like the catalog.
 --
 -- `platform_domain` is the deployment's platform principal email domain: every
--- tenant's `platform.users` platform row carries `<component>@<domain>`
+-- tenant's `platform."user"` platform row carries `<component>@<domain>`
 -- (wamn-0h0g.9.15). It belongs to the deployment and not to an org, so it sits
 -- on this singleton. It starts NULL because static SQL cannot read deployment
 -- configuration; the bootstrap that applies this file sets it, and
@@ -242,7 +242,7 @@ CREATE TABLE registry.projects (
 -- principal cannot authenticate.
 --
 -- `email` is the deliverable address of a user. `reconcile-run-plane` copies
--- it into the `platform.users` user row of every tenant the user can write
+-- it into the `platform."user"` user row of every tenant the user can write
 -- in (wamn-0h0g.9.18). Only a user carries one: `principals_email_check`
 -- refuses an email on another type and refuses a user without one. `subject`
 -- is email-shaped by its own CHECK, but it is an authentication token, so
@@ -256,7 +256,7 @@ CREATE TABLE registry.projects (
 -- constraint touches no service or platform row.
 --
 -- The refusal belongs here, where the address is entered.
--- `platform.users` is `UNIQUE (tenant_id, email)`, so without this the two
+-- `platform."user"` is `UNIQUE (tenant_id, email)`, so without this the two
 -- users collide inside a tenant instead. That failure stops a whole
 -- `reconcile-run-plane` run, unrelated schema repair included.
 -- ---------------------------------------------------------------------------
@@ -640,7 +640,7 @@ CREATE TABLE registry.project_envs (
 );
 
 -- User project access is an explicit grant to one project-environment
--- (wamn-ctc8.19). Keep the platform-issued principal UUID: platform.users
+-- (wamn-ctc8.19). Keep the platform-issued principal UUID: platform."user"
 -- uses that same UUID for the environment's roles and permissions. Management
 -- project roles do not grant membership, and services use their existing
 -- environment-bound authentication. Deleting an environment removes its

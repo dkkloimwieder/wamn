@@ -45,7 +45,7 @@ const PUT_TIMEOUT: Duration = Duration::from_secs(1);
 /// The roles a principal holds in one tenant, with the permissions of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PrincipalGrants {
-    /// Whether the tenant has an `platform.users` row for the principal.
+    /// Whether the tenant has an `platform."user"` row for the principal.
     pub present: bool,
     /// Whether that row is `active`. An inactive principal holds no role.
     pub active: bool,
@@ -58,7 +58,7 @@ pub struct PrincipalGrants {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum Answer {
     /// The grants of a principal, when the host read them, and whether the
-    /// tenant has its users row.
+    /// tenant has its user row.
     Principal {
         grants: Option<PrincipalGrants>,
         provisioned: bool,
@@ -317,7 +317,7 @@ impl AuthCache {
         }
     }
 
-    /// Keep the grants of a principal. A present users row also answers the
+    /// Keep the grants of a principal. A present user row also answers the
     /// provisioned-principal check of the claim bind.
     pub async fn keep_grants(
         &self,
@@ -342,7 +342,7 @@ impl AuthCache {
         self.put(key, ticket, answer).await;
     }
 
-    /// Whether the tenant has the users row of a principal, or the ticket of
+    /// Whether the tenant has the user row of a principal, or the ticket of
     /// a read of it.
     pub fn provisioned(&self, tenant: &str, principal: &str) -> Result<(), Ticket> {
         let key = principal_key(tenant, principal);

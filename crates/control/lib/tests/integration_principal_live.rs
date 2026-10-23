@@ -162,7 +162,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         )
         .await?;
     }
-    let row = admin.query_one("SELECT count(*), min(id::text) FROM platform.users WHERE tenant_id=$1 AND type='service'", &[&TENANT]).await?;
+    let row = admin.query_one("SELECT count(*), min(id::text) FROM platform.\"user\" WHERE tenant_id=$1 AND type='service'", &[&TENANT]).await?;
     assert_eq!(row.get::<_, i64>(0), 1);
     let principal: String = row.get(1);
     let identity = connect(system.url()).await?;
@@ -220,7 +220,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     );
     let caller = queued_service_caller(&admin, TENANT, &principal).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
-    let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.users UNION ALL SELECT xmin::text FROM platform.roles UNION ALL SELECT xmin::text FROM platform.permissions UNION ALL SELECT xmin::text FROM platform.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.roles UNION ALL SELECT xmin::text FROM platform.permissions UNION ALL SELECT xmin::text FROM platform.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
         system.url(),
         project.url(),
@@ -230,7 +230,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         &AuthChanges::default(),
     )
     .await?;
-    let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.users UNION ALL SELECT xmin::text FROM platform.roles UNION ALL SELECT xmin::text FROM platform.permissions UNION ALL SELECT xmin::text FROM platform.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.roles UNION ALL SELECT xmin::text FROM platform.permissions UNION ALL SELECT xmin::text FROM platform.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     assert_eq!(before, after, "reapplying must write no application rows");
     let mut unscheduled = manifest.clone();
     unscheduled.workflow.schedules.clear();

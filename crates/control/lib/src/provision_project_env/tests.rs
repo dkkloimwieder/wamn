@@ -556,7 +556,7 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
         )
     };
     verify(&exact).expect("the fresh permission reads have their exact grant set");
-    for relation in ["users", "user_roles", "permissions"] {
+    for relation in ["user", "user_roles", "permissions"] {
         let mut missing = exact.clone();
         missing.retain(|acl| acl.schema_name != "platform" || acl.object_name != relation);
         verify(&missing).expect_err("a required fresh permission read is missing");
@@ -613,9 +613,9 @@ fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl 
 fn session_reader_requires_exact_grants() {
     let mut exact = vec![role_acl("schema", "platform", "platform", "USAGE")];
     for column in [
-        "users.tenant_id",
-        "users.id",
-        "users.status",
+        "user.tenant_id",
+        "user.id",
+        "user.status",
         "user_roles.tenant_id",
         "user_roles.user_id",
         "user_roles.role_name",
@@ -637,9 +637,9 @@ fn session_reader_requires_exact_grants() {
         assert!(verify(&missing).is_err());
     }
     for extra in [
-        role_acl("relation", "platform", "users", "SELECT"),
-        role_acl("column", "platform", "users.email", "SELECT"),
-        role_acl("column", "platform", "users.status", "UPDATE"),
+        role_acl("relation", "platform", "user", "SELECT"),
+        role_acl("column", "platform", "user.email", "SELECT"),
+        role_acl("column", "platform", "user.status", "UPDATE"),
         role_acl("relation", "platform", "permissions", "SELECT"),
         role_acl("schema", "catalog", "catalog", "USAGE"),
     ] {
@@ -705,14 +705,14 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
         assert!(verify(&widened, &targets).is_err());
     }
     // A target in a reserved schema refuses, even with its exact grants.
-    let reserved = vec![("platform".to_string(), "users_history".to_string())];
+    let reserved = vec![("platform".to_string(), "user_history".to_string())];
     let mut platform = vec![role_acl("schema", "platform", "platform", "USAGE")];
-    platform.push(role_acl("relation", "platform", "users_history", "DELETE"));
+    platform.push(role_acl("relation", "platform", "user_history", "DELETE"));
     for column in ["row_key", "position", "changed_at"] {
         platform.push(role_acl(
             "column",
             "platform",
-            &format!("users_history.{column}"),
+            &format!("user_history.{column}"),
             "SELECT",
         ));
     }

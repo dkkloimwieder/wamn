@@ -676,7 +676,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     .expect("reconcile the installed package set beside platform-schema authority");
 
     for (relation, privilege) in [
-        ("platform.users", "SELECT"),
+        ("platform.\"user\"", "SELECT"),
         ("platform.write_log", "INSERT"),
         ("catalog.packages", "SELECT"),
     ] {

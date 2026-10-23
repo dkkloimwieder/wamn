@@ -173,7 +173,7 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
         .map(|relation| ("catalog", *relation))
         .chain([
             ("platform", "permissions"),
-            ("platform", "users"),
+            ("platform", "user"),
             ("platform", "user_roles"),
         ])
 }
@@ -552,7 +552,7 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 /// 3). `number_counter` is not one of them: only `platform.bump_counter`
 /// advances it.
 pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
-    "users",
+    "user",
     "roles",
     "user_roles",
     "permissions",
@@ -636,7 +636,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
          END $session_column_acl$; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
          GRANT USAGE ON SCHEMA platform TO {role}; \
-         GRANT SELECT (tenant_id, id, status) ON TABLE platform.users TO {role}; \
+         GRANT SELECT (tenant_id, id, status) ON TABLE platform.\"user\" TO {role}; \
          GRANT SELECT (tenant_id, user_id, role_name) ON TABLE platform.user_roles TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
         role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
@@ -721,7 +721,7 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
-         GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.users TO {role};"
+         GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.\"user\" TO {role};"
     )
     .expect("writing to a String cannot fail");
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
@@ -1241,7 +1241,7 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"permissions\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"users\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE platform.\"user\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user_roles\" TO \"wamn_http_admitter\";",
             "the callable-HTTP admitter reads five catalog relations and three permission relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
@@ -1299,7 +1299,7 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.users \
+             GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.\"user\" \
              TO \"wamn_executor_platform\"; \
              GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
              TO \"wamn_executor_platform\";",

@@ -431,7 +431,7 @@ impl ProductionDevStageRunner {
 
     /// Give the environment's operator service the `admin` role. Applying
     /// the package wrote the role above, and `reconcile-run-plane` wrote the
-    /// service's `users` row when the environment was made.
+    /// service's `user` row when the environment was made.
     async fn grant_operator_admin_role(&self) -> Result<(), ProductionDevStageError> {
         let identity = self.config.activation_identity();
         super::environment::grant_operator_admin_role(

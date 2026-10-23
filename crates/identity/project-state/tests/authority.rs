@@ -112,7 +112,7 @@ fn prelude(url: &str) -> (String, String) {
         r#"
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
-INSERT INTO platform.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','user','u1@t1');
+INSERT INTO platform."user" (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','user','u1@t1');
 INSERT INTO platform.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
 INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
 INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
@@ -177,11 +177,11 @@ fn author_sql_cannot_write_the_relations_that_authorize_it() {
     let (app_generation, mut script) = prelude(&url);
     writeln!(
         script,
-        r"
+        r#"
 DO $$
 DECLARE relation text; operation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['users','roles','user_roles','permissions','environment',
+  FOREACH relation IN ARRAY ARRAY['user','roles','user_roles','permissions','environment',
                                   'external_system','connection','integration_allow',
                                   'project_connection','number_sequence','number_counter',
                                   'setting'] LOOP
@@ -204,7 +204,7 @@ SET LOCAL ROLE {app_generation};
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
     'the tenant authority is the prepared App generation';
-  ASSERT (SELECT count(*) FROM platform.users) = 1,
+  ASSERT (SELECT count(*) FROM platform."user") = 1,
     'the generation-derived tenant is live and users is still readable';
   ASSERT (SELECT count(*) FROM platform.user_roles) = 1,
     'the role linkage 4.2 resolves app.role from is still readable';
@@ -214,11 +214,11 @@ DO $$
 DECLARE probe_sql text;
 BEGIN
   FOREACH probe_sql IN ARRAY ARRAY[
-    'INSERT INTO platform.users (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''user'', ''intruder@t1'')',
-    'INSERT INTO platform.users (tenant_id, id, type, email, display_name) VALUES (''{TENANT}'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
-    'UPDATE platform.users SET status = ''disabled''',
-    'UPDATE platform.users SET display_name = ''wamn:intruder''',
-    'DELETE FROM platform.users',
+    'INSERT INTO platform."user" (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''user'', ''intruder@t1'')',
+    'INSERT INTO platform."user" (tenant_id, id, type, email, display_name) VALUES (''{TENANT}'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
+    'UPDATE platform."user" SET status = ''disabled''',
+    'UPDATE platform."user" SET display_name = ''wamn:intruder''',
+    'DELETE FROM platform."user"',
     'INSERT INTO platform.roles (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
     'UPDATE platform.roles SET description = ''changed''',
     'DELETE FROM platform.roles',
@@ -255,7 +255,7 @@ BEGIN
   END LOOP;
 END $$;
 
-ROLLBACK;"
+ROLLBACK;"#
     )
     .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);
@@ -380,7 +380,7 @@ fn author_sql_reads_and_writes_no_history_table() {
     };
     let direct_writes = [
         entry(
-            "users_history",
+            "user_history",
             None,
             &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
         ),
@@ -431,7 +431,7 @@ fn author_sql_reads_and_writes_no_history_table() {
 DO $$
 DECLARE history text; operation text;
 BEGIN
-  FOREACH history IN ARRAY ARRAY['users_history','roles_history','user_roles_history',
+  FOREACH history IN ARRAY ARRAY['user_history','roles_history','user_roles_history',
                                  'permissions_history','api_keys_history',
                                  'environment_history','external_system_history',
                                  'connection_history','integration_allow_history',
@@ -462,7 +462,7 @@ BEGIN
   ASSERT current_user = '{app_generation}',
     'the tenant authority is the prepared App generation';
   FOREACH probe_sql IN ARRAY ARRAY[
-    'SELECT count(*) FROM platform.users_history',
+    'SELECT count(*) FROM platform.user_history',
     'SELECT count(*) FROM platform.roles_history',
     'SELECT count(*) FROM platform.user_roles_history',
     'SELECT count(*) FROM platform.permissions_history',

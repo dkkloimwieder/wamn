@@ -10,6 +10,7 @@ use wamn_test_infrastructure::locked_database;
 const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/project/0004_user_type.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const PLURAL_USER: &str = include_str!("fixtures/platform-user-before-0027.sql");
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 
 async fn connect(url: &str) -> Client {
@@ -69,8 +70,13 @@ async fn the_migration_changes_the_user_type_as_a_fresh_install_has_it() {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install the application schema");
-    // The schema under its name before project migration 0024, as the
-    // databases that this migration ran on had it.
+    // The user table and the schema under their names before project
+    // migrations 0027 and 0024, as the databases that this migration ran on
+    // had them.
+    client
+        .batch_execute(PLURAL_USER)
+        .await
+        .expect("name the user table as before 0027");
     client
         .batch_execute("ALTER SCHEMA platform RENAME TO app_system")
         .await

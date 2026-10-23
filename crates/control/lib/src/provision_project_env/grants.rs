@@ -502,7 +502,7 @@ pub(super) fn verify_session_role_reader_grants(
         "USAGE".to_string(),
     )]);
     for (relation, columns) in [
-        ("users", ["tenant_id", "id", "status"]),
+        ("user", ["tenant_id", "id", "status"]),
         ("user_roles", ["tenant_id", "user_id", "role_name"]),
     ] {
         for column in columns {
@@ -615,7 +615,7 @@ fn verify_executor_platform_grants(
         expected.insert((
             "column".to_owned(),
             "platform".to_owned(),
-            format!("users.{column}"),
+            format!("user.{column}"),
             "SELECT".to_owned(),
         ));
     }

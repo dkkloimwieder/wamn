@@ -5,7 +5,7 @@
 //! authored. This module writes only `platform.user_roles`. The target is resolved in the
 //! registry the way `env apply` resolves it, because a role grant
 //! names an environment, not a database. The user is named by email and must
-//! already have its tenant `users` row, which `env apply` writes.
+//! already have its tenant `user` row, which `env apply` writes.
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
@@ -32,7 +32,7 @@ pub struct UserRoleRequest {
     pub env: String,
     /// Tenant of the environment.
     pub tenant: String,
-    /// Email of the user or service in the tenant `users` table.
+    /// Email of the user or service in the tenant `user` table.
     pub user: String,
     /// A role that exists in the tenant, such as `admin`.
     pub role: String,
@@ -170,7 +170,7 @@ async fn resolve_user(
 ) -> anyhow::Result<String> {
     let rows = transaction
         .query(
-            "SELECT id::text FROM platform.users \
+            "SELECT id::text FROM platform.\"user\" \
              WHERE tenant_id = $1 AND lower(email) = lower($2) ORDER BY id",
             &[&tenant, &user],
         )
@@ -178,7 +178,7 @@ async fn resolve_user(
         .context("resolve the user email")?;
     match rows.as_slice() {
         [] => anyhow::bail!(
-            "no user with email {user} in tenant {tenant}: the users row comes from \
+            "no user with email {user} in tenant {tenant}: the user row comes from \
              `wamn-ctl env apply`, so run it after the principal exists"
         ),
         [row] => Ok(row.get(0)),

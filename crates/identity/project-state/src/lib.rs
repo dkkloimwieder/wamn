@@ -38,7 +38,7 @@
 //!
 //! # Platform principals
 //!
-//! A platform component writes under a `users` row named `wamn:<component>`.
+//! A platform component writes under a `user` row named `wamn:<component>`.
 //! [`PlatformComponent`] is the closed component list, and
 //! [`PlatformComponent::principal_id`] derives the row id. Provisioning and the
 //! host compute the same id, so no configuration carries it.
@@ -90,7 +90,7 @@ impl UserStatus {
     ];
 
     /// The wire / CHECK-literal form (`active` / `disabled` / `invited`), tied to
-    /// the `users_status_check` literals in `deploy/sql/app-schema.sql` by a drift
+    /// the `user_status_check` literals in `deploy/sql/app-schema.sql` by a drift
     /// guard.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -155,7 +155,7 @@ pub const WAMN_NAMESPACE: uuid::Uuid =
 /// and no version. A tenant or application cannot create a name with this prefix.
 pub const PLATFORM_PRINCIPAL_PREFIX: &str = "wamn:";
 
-/// A platform component that writes under its own `platform.users` row.
+/// A platform component that writes under its own `platform."user"` row.
 ///
 /// The row names the component, never the invocation. The list is closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,7 +204,7 @@ impl PlatformComponent {
         }
     }
 
-    /// The `platform.users` id: the UUIDv5 of [`Self::principal_name`] under
+    /// The `platform."user"` id: the UUIDv5 of [`Self::principal_name`] under
     /// [`WAMN_NAMESPACE`].
     pub fn principal_id(self) -> uuid::Uuid {
         uuid::Uuid::new_v5(&WAMN_NAMESPACE, self.principal_name().as_bytes())
@@ -224,15 +224,15 @@ pub struct Table {
 }
 
 impl Table {
-    /// The schema-qualified name, e.g. `platform.users`.
+    /// The schema-qualified name, e.g. `platform."user"`.
     pub fn qualified(&self) -> String {
-        format!("{SCHEMA_NAME}.{}", self.name)
+        format!("{SCHEMA_NAME}.\"{}\"", self.name)
     }
 }
 
 /// Application accounts. `id` (`uuid`) is the [`USER_ID_CLAIM`] ownership target.
 pub const USERS: Table = Table {
-    name: "users",
+    name: "user",
     columns: &["tenant_id", "id", "type", "email", "display_name", "status"],
 };
 
@@ -478,6 +478,6 @@ mod tests {
 
     #[test]
     fn qualified_prepends_the_schema() {
-        assert_eq!(USERS.qualified(), "platform.users");
+        assert_eq!(USERS.qualified(), "platform.\"user\"");
     }
 }

@@ -241,7 +241,7 @@ impl NativePolicy {
     /// which the record-history triggers record, and the composing
     /// application of the component as `app.application`.
     ///
-    /// The bind also reads the executing principal's `platform.users` row in
+    /// The bind also reads the executing principal's `platform."user"` row in
     /// the tenant and refuses a principal that owns none. That refusal is an
     /// authorization fact, so it reaches the caller as the `permission-denied`
     /// the operation vocabulary already carries, not as a host failure.

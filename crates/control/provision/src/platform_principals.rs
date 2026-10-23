@@ -1,6 +1,6 @@
 //! The platform principal rows that provisioning writes into a tenant database.
 //!
-//! Every platform component that writes in a tenant has an `platform.users`
+//! Every platform component that writes in a tenant has an `platform."user"`
 //! row of type `platform`. The row carries the tenant id, the derived id, the
 //! `wamn:<component>` name, and the email `<component>@<platform-domain>`.
 //! `deploy/sql/app-schema.sql` pins each name and id pair. Static SQL cannot

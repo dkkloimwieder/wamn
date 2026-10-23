@@ -549,7 +549,7 @@ impl From<wamn_session::SessionError> for IdentityError {
 ///
 /// `email` is the user's deliverable address. It is separate from `subject`,
 /// which authenticates and carries no promise of delivery.
-/// `reconcile-run-plane` copies the email into the `platform.users` user
+/// `reconcile-run-plane` copies the email into the `platform."user"` user
 /// row of every tenant this user can write in (`wamn-0h0g.9.18`), so a user
 /// principal always has one.
 pub async fn create_user(

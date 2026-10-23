@@ -22,13 +22,13 @@ use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
 /// One project database serves one tenant. Its platform rows, which
 /// `env apply` writes first, name it.
 const TENANT_SQL: &str =
-    "SELECT DISTINCT tenant_id FROM platform.users WHERE type = 'platform' ORDER BY 1";
+    "SELECT DISTINCT tenant_id FROM platform.\"user\" WHERE type = 'platform' ORDER BY 1";
 
-const USER_ROW_SQL: &str = "INSERT INTO platform.users \
+const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
     (tenant_id, id, type, email, display_name) VALUES ($1, $2::text::uuid, 'user', $3, $4) \
     ON CONFLICT (tenant_id, id) DO NOTHING";
 
-const SERVICE_ROW_SQL: &str = "INSERT INTO platform.users \
+const SERVICE_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
     (tenant_id, id, type, email, display_name) VALUES ($1, $2::text::uuid, 'service', $3, $4)";
 
 const ROLE_SQL: &str = "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, $2) \
@@ -40,7 +40,7 @@ const USER_ROLE_SQL: &str = "INSERT INTO platform.user_roles (tenant_id, user_id
 const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_roles \
     WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3";
 
-const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.users \
+const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.\"user\" \
     WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'";
 
 /// The status row of the environment. No row means active.
@@ -124,7 +124,7 @@ pub async fn write_user(
     Ok(())
 }
 
-/// Write the users row of the service principal `service`.
+/// Write the user row of the service principal `service`.
 pub async fn write_service(
     client: &(impl GenericClient + Sync),
     tenant: &str,
@@ -467,13 +467,13 @@ pub async fn revoke_user_role(
     Ok(removed == 1)
 }
 
-const USER_EXISTS_SQL: &str = "SELECT 1 FROM platform.users \
+const USER_EXISTS_SQL: &str = "SELECT 1 FROM platform.\"user\" \
     WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'";
 
 const USERS_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
-    FROM platform.users u \
+    FROM platform.\"user\" u \
     LEFT JOIN platform.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     WHERE u.tenant_id = $1 AND u.type = 'user' \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";

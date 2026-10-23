@@ -15,7 +15,7 @@ use wamn_test_infrastructure::locked_database;
 const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/project/0025_platform_configuration.sql");
 
-/// The tables of `platform` that `wamn_app` reads. `environment` is the status
+/// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
 /// that the host reads as `wamn_app` on each request
 /// (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`).
 const READ_TABLES: [&str; 12] = [
@@ -29,8 +29,8 @@ const READ_TABLES: [&str; 12] = [
     "project_connection",
     "roles",
     "setting",
+    "\"user\"",
     "user_roles",
-    "users",
 ];
 
 async fn connect(url: &str) -> Client {

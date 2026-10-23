@@ -133,7 +133,7 @@ pub(crate) struct ControlRoutes<'a> {
     /// The runtime reader selected by the host mode.
     pub(crate) status: &'a dyn crate::environment_status::StatusSource,
     pub(crate) org: &'a str,
-    /// Publishes each users row and status change of an environment.
+    /// Publishes each user row and status change of an environment.
     pub(crate) changes: &'a AuthChanges,
 }
 
@@ -915,12 +915,12 @@ const STATUS_COUNTS_TIMEOUT: Duration = Duration::from_secs(2);
 // query_one refuses missing or multiple tenants. EXISTS counts each human
 // user once even when that user holds several roles, and excludes services.
 const APPLICATION_COUNTS_SQL: &str = "SELECT \
-    (SELECT count(*)::int4 FROM platform.users u \
+    (SELECT count(*)::int4 FROM platform.\"user\" u \
      WHERE u.tenant_id = t.tenant_id AND u.type = 'user' AND EXISTS \
        (SELECT 1 FROM platform.user_roles r \
         WHERE r.tenant_id = u.tenant_id AND r.user_id = u.id)), \
     (SELECT count(*)::int4 FROM platform.roles r WHERE r.tenant_id = t.tenant_id) \
-    FROM (SELECT DISTINCT tenant_id FROM platform.users WHERE type = 'platform') t";
+    FROM (SELECT DISTINCT tenant_id FROM platform.\"user\" WHERE type = 'platform') t";
 
 async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls).await?;

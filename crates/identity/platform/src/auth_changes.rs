@@ -17,7 +17,7 @@ use std::time::Duration;
 /// One auth fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AuthChange {
-    /// The users row or the user roles of `principal` in `tenant`.
+    /// The user row or the user roles of `principal` in `tenant`.
     Principal { tenant: String, principal: String },
     /// A role or a permission of `tenant`, which every principal holding the
     /// role reads, or the environment status of `tenant`.

@@ -21,7 +21,7 @@ mod tests {
     const RECORD_HISTORY_APP_GRANTS_SQL: &str =
         include_str!("../../../deploy/sql/record-history-app-grants.sql");
     /// The test principal that the fixture writes as. This SQL-only fixture has
-    /// no `platform` schema, and no stamp column reads a users row.
+    /// no `platform` schema, and no stamp column reads a user row.
     const FIXTURE_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f1);
     /// A second principal, so a stamp shows which write set it.
     const COMMAND_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f2);

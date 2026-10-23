@@ -128,7 +128,7 @@ pub(super) async fn project_database(
         .await?;
     target
         .execute(
-            "INSERT INTO platform.users (tenant_id, id, type, email, display_name) \
+            "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
              VALUES ($1, $2::text::uuid, 'platform', 'provisioning@example.test', $3)",
             &[
                 &tenant,

@@ -362,6 +362,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0026_administration_platform_configuration.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0027_platform_user.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0027_platform_user.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -417,10 +421,10 @@ mod tests {
         }
     }
 
-    /// The project migration that grants the platform configuration tables to
-    /// the administration family carries the latest rendering of the
-    /// administration surface. 0003, 0006, 0008, 0016, 0020 and 0024 hold the
-    /// earlier surfaces, as installed databases recorded them.
+    /// The project migration that renames platform.users to platform."user"
+    /// carries the latest rendering of the administration surface. 0003, 0006,
+    /// 0008, 0016, 0020, 0024 and 0026 hold the earlier surfaces, as installed
+    /// databases recorded them.
     #[test]
     fn the_latest_administration_migration_is_the_rendered_administration_surface() {
         let rendered = format!(
@@ -429,12 +433,8 @@ mod tests {
         );
         let migration = PROJECT_MIGRATIONS
             .iter()
-            .find(|migration| {
-                migration
-                    .relative_path
-                    .ends_with("_administration_platform_configuration.sql")
-            })
-            .expect("the project migration that grants the platform configuration tables exists");
+            .find(|migration| migration.relative_path.ends_with("_platform_user.sql"))
+            .expect("the project migration that renames platform.users exists");
         assert!(
             migration.sql.ends_with(&rendered),
             "{} does not end with the rendered administration surface",

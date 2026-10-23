@@ -126,7 +126,7 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
     ] {
         admin
             .execute(
-                "INSERT INTO platform.users (tenant_id, id, type, email) \
+                "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
                  VALUES ($1, $2::text::uuid, 'user', $3)",
                 &[&TENANT, &principal, &email],
             )

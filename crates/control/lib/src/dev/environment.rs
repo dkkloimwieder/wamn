@@ -690,7 +690,7 @@ pub async fn install_journey_platform_floor(
 
 /// Give the operator service of one environment the `admin` role, as an
 /// operator does with `wamn-ctl grant-role` after the first publish. The
-/// service's `users` row must exist, which `reconcile-run-plane` writes.
+/// service's `user` row must exist, which `reconcile-run-plane` writes.
 pub async fn grant_operator_admin_role(
     project_url: &str,
     org: &str,

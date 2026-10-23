@@ -24,7 +24,7 @@ mod tests {
         assert_eq!(
             database
                 .execute(&["SELECT to_regclass('catalog.packages') IS NOT NULL \
-                       AND to_regclass('platform.users') IS NOT NULL",])
+                       AND to_regclass('platform.\"user\"') IS NOT NULL",])
                 .unwrap()
                 .trim(),
             "t"

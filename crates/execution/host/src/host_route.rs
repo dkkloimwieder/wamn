@@ -57,7 +57,7 @@ pub enum HostRouteHandlers {
         /// The runtime status source selected by the serving mode.
         status: Arc<dyn crate::environment_status::StatusSource>,
         org: String,
-        /// Publishes each users row and status change of an environment.
+        /// Publishes each user row and status change of an environment.
         changes: AuthChanges,
     },
 }

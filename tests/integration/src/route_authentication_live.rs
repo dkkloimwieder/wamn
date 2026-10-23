@@ -91,7 +91,7 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write the operator service's tenant `users` row, as `reconcile-run-plane`
+/// Write the operator service's tenant `user` row, as `reconcile-run-plane`
 /// does, and give it the authored role [`ITEM_READER`] with the `grant-role`
 /// library call.
 async fn grant_service_operator(
@@ -109,12 +109,12 @@ async fn grant_service_operator(
     let email = format!("{subject}@example.invalid");
     project
         .execute(
-            "INSERT INTO platform.users (tenant_id, id, type, email) \
+            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
              VALUES ($1, $2::text::uuid, 'service', $3)",
             &[&TENANT, &principal.id().as_str(), &email],
         )
         .await
-        .context("write the operator service's users row")?;
+        .context("write the operator service's user row")?;
     let request = UserRoleRequest {
         system_database_url: system_url.to_owned(),
         admin_database_url: project_url.to_owned(),
@@ -175,7 +175,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("bind the fixture test principal")?;
     project
         .execute(
-            "INSERT INTO platform.users (tenant_id, id, type, email) \
+            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
              VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid')",
             &[&TENANT, &FIXTURE_PRINCIPAL],
         )
@@ -451,7 +451,7 @@ async fn assert_user_environment_membership(
     ).await?;
     project
         .execute(
-            "INSERT INTO platform.users (tenant_id, id, type, email) \
+            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
          VALUES ($1, $2::text::uuid, 'user', 'member@example.test'), \
                 ($1, $3::text::uuid, 'user', 'other@example.test'), \
                 ('other-tenant', $2::text::uuid, 'user', 'member@example.test')",
@@ -662,7 +662,7 @@ async fn assert_user_environment_membership(
         &[&TENANT, &user.id().as_str()],
     ).await?;
     project.execute(
-        "UPDATE platform.users SET status = 'disabled' WHERE tenant_id = $1 AND id = $2::text::uuid",
+        "UPDATE platform.\"user\" SET status = 'disabled' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &user.id().as_str()],
     ).await?;
     assert_eq!(
@@ -676,7 +676,7 @@ async fn assert_user_environment_membership(
         Err(Refusal::Permission(OPERATION.into()))
     );
     project.execute(
-        "UPDATE platform.users SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
+        "UPDATE platform.\"user\" SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &user.id().as_str()],
     ).await?;
     invoke(
@@ -1152,12 +1152,12 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     ] {
         project
             .execute(
-                "INSERT INTO platform.users (tenant_id, id, type, email) \
+                "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
                  VALUES ($1, gen_random_uuid(), $2, $3)",
                 &[&TENANT, &kind, &email],
             )
             .await
-            .expect("write a users row");
+            .expect("write a user row");
     }
     let request = |user: &str, role: &str| UserRoleRequest {
         system_database_url: admin_url.clone(),
@@ -1175,7 +1175,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
             project
                 .query(
                     "SELECT r.role_name FROM platform.user_roles r \
-                     JOIN platform.users u ON u.tenant_id = r.tenant_id AND u.id = r.user_id \
+                     JOIN platform.\"user\" u ON u.tenant_id = r.tenant_id AND u.id = r.user_id \
                      WHERE r.tenant_id = $1 AND u.email = $2 ORDER BY r.role_name",
                     &[&TENANT, &email],
                 )

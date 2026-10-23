@@ -219,7 +219,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE platform.users SET status='disabled' WHERE id=$1::text::uuid",
+            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
             &[&user.id().as_str()],
         )
         .await
@@ -235,7 +235,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE platform.users SET status='active' WHERE id=$1::text::uuid",
+            "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
             &[&user.id().as_str()],
         )
         .await

@@ -20,7 +20,7 @@ Server authorization is authoritative. The UI may hide unavailable actions, but 
 Every admin write runs in the host. `wamn_app` remains SELECT-only on:
 
 ```text
-platform.users
+platform."user"
 platform.roles
 platform.user_roles
 platform.permissions

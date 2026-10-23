@@ -41,7 +41,7 @@ mod control_fixture;
 use control_fixture::{ORG, connect, environments, install};
 
 /// A fake identity service that requires the operator certificate. `/users`
-/// answers from `users` by email, or refuses an unknown email as identity
+/// answers from `user` by email, or refuses an unknown email as identity
 /// refuses one. `/invitations` accepts every request. Each request path and
 /// body is sent on the returned channel.
 struct FakeIdentity {
@@ -800,7 +800,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
 async fn application_rows(target: &Client, principal: &str) -> Vec<String> {
     target
         .query(
-            "SELECT 'user ' || tenant_id FROM platform.users WHERE id = $1::text::uuid \
+            "SELECT 'user ' || tenant_id FROM platform.\"user\" WHERE id = $1::text::uuid \
              UNION ALL SELECT 'role ' || role_name FROM platform.user_roles \
                WHERE user_id = $1::text::uuid \
              ORDER BY 1",
@@ -1423,7 +1423,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     .await?;
     billing.batch_execute(
         "INSERT INTO platform.roles (tenant_id, name) VALUES ('t-billing', 'first'), ('t-billing', 'second'), ('other', 'ignored');
-         INSERT INTO platform.users (tenant_id, id, type, email) VALUES
+         INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES
            ('t-billing', '00000000-0000-0000-0000-000000000001', 'user', 'one@example.test'),
            ('t-billing', '00000000-0000-0000-0000-000000000002', 'user', 'two@example.test'),
            ('t-billing', '00000000-0000-0000-0000-000000000003', 'service', 'service@example.test'),

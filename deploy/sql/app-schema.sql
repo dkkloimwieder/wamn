@@ -1,6 +1,6 @@
 -- The per-project SYSTEM SCHEMA v1 (wamn-as5, docs/archive/platform-plan.md §2.4). The
 -- application-facing auth/RBAC/config tables that live IN a project database:
--- users, roles (+ the user↔role linkage), permissions, api_keys, and
+-- user, roles (+ the user↔role linkage), permissions, api_keys, and
 -- environment, and the platform configuration tables of
 -- docs/plan/platform-config.md (PLATFORM CONFIGURATION, at the end).
 --
@@ -53,11 +53,11 @@
 -- "which rows"; the GRANT answers "which relations at all", and the two questions
 -- have different answers here:
 --
---   PLATFORM-PROTECTED — users, roles, user_roles, permissions, environment,
+--   PLATFORM-PROTECTED — user, roles, user_roles, permissions, environment,
 --   and the platform configuration tables.
 --   SELECT only. The trust chain consumes these rows as authorization INPUT: the
 --   3.5 RLS builder compiles app.user_id and app.role into the data policies it
---   generates, and 4.2 resolves both claims from users + user_roles. Author SQL
+--   generates, and 4.2 resolves both claims from user + user_roles. Author SQL
 --   holding DML here could write itself the credential its own policies are then
 --   evaluated against, and the compiler would faithfully enforce the forgery. A
 --   tenant's authorization state is written BY the platform, never by the
@@ -81,7 +81,7 @@
 -- TRUNCATE is not mentioned anywhere below because it was never granted to
 -- wamn_app: only the table owner holds it.
 --
--- CLAIM INTEGRATION (3.5 / 4.2): `users.id` is a `uuid` — the ownership target
+-- CLAIM INTEGRATION (3.5 / 4.2): `user.id` is a `uuid` — the ownership target
 -- the 3.5 RLS builder reads as NULLIF(current_setting('app.user_id', true),
 -- '')::uuid, so a data table's owner column referencing a user resolves. Role
 -- NAMES (`roles.name`, text) are what the builder reads as
@@ -173,7 +173,7 @@ END
 $wamn_authority_bootstrap$;
 
 -- ---------------------------------------------------------------------------
--- Users — application accounts. `id` (uuid) is org-issued at birth and has no
+-- User — application accounts. `id` (uuid) is org-issued at birth and has no
 -- database default; it is the app.user_id ownership target (3.5). Identity
 -- only: no credential material lives here (auth is 4.2/8.1).
 -- `status` gates whether the account may authenticate (enforced by 4.2, not this
@@ -183,12 +183,12 @@ $wamn_authority_bootstrap$;
 -- integration), or a platform component. It has no default, so every insert
 -- names its type. A platform row carries its `wamn:<component>` name in
 -- `display_name` and the id that `wamn-project-state` derives from that name.
--- `users_platform_principal_check` pins each (display_name, id) pair and
+-- `user_platform_principal_check` pins each (display_name, id) pair and
 -- refuses a `wamn:` name on any other type. PostgreSQL has no UUIDv5, so a
 -- Rust test compares these literals with the derivation. Provisioning writes
 -- the platform rows and their `<component>@<platform-domain>` email.
 -- ---------------------------------------------------------------------------
-CREATE TABLE platform.users (
+CREATE TABLE platform."user" (
     tenant_id    text NOT NULL CHECK (tenant_id <> ''),
     id           uuid NOT NULL,
     type         text NOT NULL,
@@ -201,11 +201,11 @@ CREATE TABLE platform.users (
     updated_by   uuid NOT NULL,
     PRIMARY KEY (tenant_id, id),
     UNIQUE (tenant_id, email),
-    CONSTRAINT users_status_check
+    CONSTRAINT user_status_check
         CHECK (status IN ('active', 'disabled', 'invited')),
-    CONSTRAINT users_type_check
+    CONSTRAINT user_type_check
         CHECK (type IN ('user', 'service', 'platform')),
-    CONSTRAINT users_platform_principal_check
+    CONSTRAINT user_platform_principal_check
         CHECK (CASE WHEN type = 'platform'
                     THEN COALESCE((display_name, id) IN (
                              ('wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid),
@@ -218,22 +218,22 @@ CREATE TABLE platform.users (
                END)
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON platform.users
+    BEFORE INSERT OR UPDATE ON platform."user"
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-ALTER TABLE platform.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.users FORCE ROW LEVEL SECURITY;
-CREATE POLICY users_tenant ON platform.users
+ALTER TABLE platform."user" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform."user" FORCE ROW LEVEL SECURITY;
+CREATE POLICY user_tenant ON platform."user"
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY users_platform ON platform.users
+CREATE POLICY user_platform ON platform."user"
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX users_tkey
-    ON platform.users ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT ON platform.users TO wamn_app;
+CREATE INDEX user_tkey
+    ON platform."user" ((wamn_authority.tenant_key(tenant_id)));
+GRANT SELECT ON platform."user" TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Roles — named roles. `name` is the app.role value the 3.5 RLS builder compares
@@ -290,7 +290,7 @@ CREATE TABLE platform.user_roles (
     updated_by uuid NOT NULL,
     PRIMARY KEY (tenant_id, user_id, role_name),
     FOREIGN KEY (tenant_id, user_id)
-        REFERENCES platform.users (tenant_id, id) ON DELETE CASCADE,
+        REFERENCES platform."user" (tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, role_name)
         REFERENCES platform.roles (tenant_id, name) ON DELETE CASCADE
 );
@@ -377,7 +377,7 @@ CREATE TABLE platform.api_keys (
     PRIMARY KEY (tenant_id, id),
     UNIQUE (tenant_id, key_hash),
     FOREIGN KEY (tenant_id, user_id)
-        REFERENCES platform.users (tenant_id, id) ON DELETE CASCADE
+        REFERENCES platform."user" (tenant_id, id) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON platform.api_keys
@@ -444,24 +444,24 @@ GRANT SELECT ON platform.environment TO wamn_app;
 -- ---------------------------------------------------------------------------
 DO $history_tables$ BEGIN
   PERFORM wamn_history.create_history_table('platform', relation, true)
-     FROM unnest(ARRAY['users', 'roles', 'user_roles', 'permissions',
+     FROM unnest(ARRAY['user', 'roles', 'user_roles', 'permissions',
                        'api_keys', 'environment']) AS relation;
 END $history_tables$;
 
-ALTER TABLE platform.users_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.users_history FORCE ROW LEVEL SECURITY;
-CREATE POLICY users_history_tenant ON platform.users_history
+ALTER TABLE platform.user_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.user_history FORCE ROW LEVEL SECURITY;
+CREATE POLICY user_history_tenant ON platform.user_history
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY users_history_platform ON platform.users_history
+CREATE POLICY user_history_platform ON platform.user_history
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX users_history_tkey
-    ON platform.users_history ((wamn_authority.tenant_key(tenant_id)));
+CREATE INDEX user_history_tkey
+    ON platform.user_history ((wamn_authority.tenant_key(tenant_id)));
 CREATE TRIGGER wamn_record_history_log
-    AFTER INSERT OR UPDATE OR DELETE ON platform.users
+    AFTER INSERT OR UPDATE OR DELETE ON platform."user"
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 

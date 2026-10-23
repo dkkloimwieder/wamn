@@ -248,7 +248,7 @@ impl Workflows for PostgresWorkflows {
                         })?;
                 transaction
                     .query_opt(
-                        "SELECT id::text FROM platform.users WHERE tenant_id = $1 \
+                        "SELECT id::text FROM platform.\"user\" WHERE tenant_id = $1 \
                      AND type = 'service' AND status = 'active' AND split_part(email, '@', 1) = $2",
                         &[&self.tenant(), &subject],
                     )

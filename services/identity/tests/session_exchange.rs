@@ -390,7 +390,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     seed_user(dev, &alice, TENANT, "receiver").await;
     for status in ["disabled", "invited"] {
         dev.execute(
-            "UPDATE platform.users SET status=$1 WHERE tenant_id=$2 AND id=$3::text::uuid",
+            "UPDATE platform.\"user\" SET status=$1 WHERE tenant_id=$2 AND id=$3::text::uuid",
             &[&status, &TENANT, &alice.id().as_str()],
         )
         .await
@@ -398,7 +398,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         refuse(https, alice_pat.token(), aud).await;
     }
     dev.execute(
-        "DELETE FROM platform.users WHERE tenant_id=$1 AND id=$2::text::uuid",
+        "DELETE FROM platform.\"user\" WHERE tenant_id=$1 AND id=$2::text::uuid",
         &[&TENANT, &alice.id().as_str()],
     )
     .await
@@ -1139,7 +1139,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
 }
 
 async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &str) {
-    client.execute("INSERT INTO platform.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
+    client.execute("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
         .await.expect_redacted("tenant user fixture");
     client
         .execute(
@@ -1306,7 +1306,7 @@ async fn setup(raw: &str) -> Fixture {
             .batch_execute(&format!(
                 "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
                  SET app.operation = 'admin:session-exchange-fixture'; \
-                 INSERT INTO platform.users (tenant_id,id,type,email) \
+                 INSERT INTO platform.\"user\" (tenant_id,id,type,email) \
                  VALUES ('{TENANT}','{FIXTURE_PRINCIPAL}','user','fixture@example.invalid');"
             ))
             .await
@@ -1632,7 +1632,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE platform.users SET status='disabled' WHERE id=$1::text::uuid",
+            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
             &[&alice.id().as_str()],
         )
         .await
@@ -1648,7 +1648,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE platform.users SET status='active' WHERE id=$1::text::uuid",
+            "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
             &[&alice.id().as_str()],
         )
         .await
@@ -1809,7 +1809,7 @@ async fn password_environment_discovery_requires_current_authority() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE platform.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
+            "UPDATE platform.\"user\" SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
             &[&TENANT, &alice.id().as_str()],
         )
         .await
