@@ -125,6 +125,14 @@ fn provider_edits(value: &mut Value, document: &ClusterDocument) -> anyhow::Resu
         .to_string()
         .into();
     }
+    if value["kind"] == "Certificate" && value["metadata"]["name"] == "wamn-edge-tls" {
+        let domain = document
+            .route_hosts
+            .control
+            .split_once('.')
+            .map_or(document.route_hosts.control.as_str(), |(_, domain)| domain);
+        value["spec"]["dnsNames"] = json!([format!("*.{domain}")]);
+    }
     match document.provider {
         Provider::Gcp => {
             if value["kind"] == "ServiceAccount" && value["metadata"]["name"] == "otel-collector" {
@@ -310,6 +318,10 @@ mod tests {
             assert_eq!(
                 object(&edge, "Certificate", "wamn-edge-tls")["spec"]["issuerRef"]["name"],
                 issuer
+            );
+            assert_eq!(
+                object(&edge, "Certificate", "wamn-edge-tls")["spec"]["dnsNames"],
+                json!(["*.example.com"])
             );
             let issuer = object(&edge, "ClusterIssuer", issuer);
             if provider == Provider::Kind {
