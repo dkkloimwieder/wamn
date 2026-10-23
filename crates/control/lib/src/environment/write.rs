@@ -4,8 +4,8 @@
 //! The verb renders the `release` values. When the chart version and the
 //! values, `audit` excluded, equal the newest successful revision's, there is
 //! nothing for Kubernetes to converge on and the Helm call alone is skipped;
-//! readiness still runs. Otherwise it runs `helm upgrade --install` at
-//! [`release_chart::CHART_VERSION`] with `--wait`, the policy's readiness
+//! readiness still runs. Otherwise it runs `helm upgrade --install` at the
+//! chart's own version with `--wait`, the policy's readiness
 //! budget as `--timeout`, `--rollback-on-failure`, `--history-max 50` and the
 //! description `apply by <actor>`, or `rollback by <actor>: <reason>` (§11.2).
 //! A connection-only apply writes no revision,
@@ -63,9 +63,9 @@ pub struct Written {
 ///
 /// # Errors
 ///
-/// When the chart is not the version this verb renders for, the values do
-/// not render, or Helm fails. A Helm failure leaves the previous release
-/// serving: `--rollback-on-failure` restores it.
+/// When the chart has no version, the values do not render, or Helm fails.
+/// A Helm failure leaves the previous release serving:
+/// `--rollback-on-failure` restores it.
 pub async fn write(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -79,13 +79,9 @@ pub async fn write(
     let deadline = Instant::now() + budget;
     let shown: Value = serde_yaml::from_str(&helm_show_chart(&platform.chart).await?)
         .context("parse the chart's Chart.yaml")?;
-    ensure!(
-        shown["version"].as_str() == Some(release_chart::CHART_VERSION),
-        "the chart {} is version {:?}; this verb renders for {}",
-        platform.chart.display(),
-        shown["version"],
-        release_chart::CHART_VERSION
-    );
+    let version = shown["version"]
+        .as_str()
+        .with_context(|| format!("the chart {} has no version", platform.chart.display()))?;
     let roles = release_chart::roles(
         &release.manifest,
         &document.org,
@@ -117,7 +113,7 @@ pub async fn write(
         .revision
         .as_ref()
         .is_some_and(|revision| {
-            revision.chart == format!("release-{}", release_chart::CHART_VERSION)
+            revision.chart == format!("release-{version}")
                 && serde_json::to_value(&rendered).is_ok_and(|rendered| {
                     without_audit(rendered) == without_audit(revision.values.clone())
                 })

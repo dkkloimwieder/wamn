@@ -20,9 +20,12 @@ use tokio::process::Command;
 use wamn_catalog::{AttachmentType, ServingManifest};
 use wamn_engine::release_manifest::release_label;
 
-/// The chart version this module renders for. It equals `version` in
-/// `deploy/platform/release/Chart.yaml`.
-pub const CHART_VERSION: &str = "0.1.98";
+/// The platform version: `version` in the `Chart.yaml` of the release chart
+/// directory `chart`. The chart is its one owner, so a binary does not change
+/// with the version (wamn-6qo7v).
+pub fn chart_version(chart: &Path) -> anyhow::Result<String> {
+    crate::platform::steps::read_platform_version(&chart.join("Chart.yaml"))
+}
 
 /// The Helm release name of an environment: `r-<slug>-<hash>`.
 ///
@@ -475,8 +478,8 @@ pub struct Target {
     pub namespace: String,
 }
 
-/// Install or upgrade one environment's release at [`CHART_VERSION`] and wait
-/// for its host Deployment. `description` is kept with the revision.
+/// Install or upgrade one environment's release at the version of `chart` and
+/// wait for its host Deployment. `description` is kept with the revision.
 pub async fn upgrade(
     target: &Target,
     chart: &Path,
@@ -486,13 +489,14 @@ pub async fn upgrade(
     description: &str,
 ) -> anyhow::Result<()> {
     let timeout = format!("{}s", timeout.as_secs());
+    let version = chart_version(chart)?;
     helm(&[
         "upgrade".as_ref(),
         "--install".as_ref(),
         name.as_ref(),
         chart.as_os_str(),
         "--version".as_ref(),
-        CHART_VERSION.as_ref(),
+        version.as_ref(),
         "--description".as_ref(),
         description.as_ref(),
         "--kubeconfig".as_ref(),
@@ -714,10 +718,12 @@ mod tests {
     }
 
     #[test]
-    fn chart_version_is_the_chart_files() {
-        let chart = include_str!("../../../../deploy/platform/release/Chart.yaml");
-        let chart: Value = serde_yaml::from_str(chart).expect("Chart.yaml parses");
-        assert_eq!(chart["version"].as_str(), Some(CHART_VERSION));
+    fn the_chart_version_and_app_version_are_one() {
+        let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/platform/release");
+        let version = chart_version(&chart).expect("Chart.yaml has a version");
+        let text = std::fs::read_to_string(chart.join("Chart.yaml")).expect("read Chart.yaml");
+        let chart: Value = serde_yaml::from_str(&text).expect("Chart.yaml parses");
+        assert_eq!(chart["appVersion"].as_str(), Some(version.as_str()));
     }
 
     #[test]

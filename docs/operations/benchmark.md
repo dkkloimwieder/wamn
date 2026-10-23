@@ -40,7 +40,7 @@ For a direct comparison, run `tools/bench/local.sh --no-edge --concurrency 16 --
 `--no-edge` bypasses nginx and does not require Helm or the nginx image.
 
 The script loads the 1000-order seed and runs get, update, query, record_receipt, and the mix for 60 seconds each at concurrency 16.
-The default run writes `tests/bench/local-<CHART_VERSION>.json` in the same format as the platform results.
+The default run writes `tests/bench/local-<version>.json` in the same format as the platform results.
 Other run modes keep their summaries in the private run directory.
 The raw results and logs stay in a private directory under `TMPDIR`.
 If `TMPDIR` is unset, the script uses `/var/tmp`.
@@ -145,7 +145,7 @@ Update clients use separate order slices, so no two clients update the same orde
 The finish payload uses a representative row value with its pre-update audit timestamps.
 The runner requires one changed row and one finished claim for every completed update.
 
-The floor result is `tests/bench/local-pg-<CHART_VERSION>.json`, in the same format as the platform results.
+The floor result is `tests/bench/local-pg-<version>.json`, in the same format as the platform results.
 TPS means completed transactions per second.
 The p50 and p99 values come from [pgbench's completed-transaction logs](https://www.postgresql.org/docs/18/pgbench.html), in milliseconds.
 
@@ -162,7 +162,7 @@ It preserves route matching, authentication from memory, component invocation, g
 It calls the host directly, with the deployed collector active, for 60 seconds at concurrency 16.
 The database still participates, and the result reports the time in its related spans as `postgres_mean_ms`.
 
-The application result is `local-app-<CHART_VERSION>.json` in the private run directory.
+The application result is `local-app-<version>.json` in the private run directory.
 It includes throughput, p50, p99, maximum latency, guest digests, and host span parts from the collector's local trace file.
 The deployed host keeps sampled parents and samples 10 percent of new traces. The collector does not sample traces.
 The result reads that percentage from the measured host and records `sampled_trace_count` for requests inside the measured interval.

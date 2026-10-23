@@ -34,7 +34,7 @@ use wamn_catalog::ServingManifest;
 use wamn_control::environment::document::DeclaredRelease;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::release_chart::{
-    ImageSet, Target, image_set, qualification_images, release_name, roles, stamp,
+    ImageSet, Target, chart_version, image_set, qualification_images, release_name, roles, stamp,
 };
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::delivery_cluster::{self, KeptCluster, NAMESPACE, REGISTRY_SECRET};
@@ -499,7 +499,10 @@ async fn check(
 ) -> anyhow::Result<()> {
     let label = wamn_engine::release_manifest::release_label(app.release_digest)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
+    // The chart name and version that `helm list` reports for an environment release.
+    let chart = format!("release-{}", chart_version(&release_chart()?)?);
     let release = Release {
+        chart: &chart,
         cluster: &app.kept.name,
         work: &app.kept.work,
         namespace: NAMESPACE,
@@ -531,7 +534,7 @@ async fn check(
     let environments: Vec<Environment> = checks::helm_releases(&app.kept.name, &app.kept.work)
         .await?
         .into_iter()
-        .filter(|entry| entry["namespace"] == NAMESPACE && entry["chart"] == checks::CHART)
+        .filter(|entry| entry["namespace"] == NAMESPACE && entry["chart"] == chart.as_str())
         .map(|entry| -> anyhow::Result<Environment> {
             let release = entry["name"].as_str().context("a release has a name")?;
             let values: Value = serde_json::from_slice(

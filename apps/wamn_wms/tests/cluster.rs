@@ -547,7 +547,9 @@ async fn run_created(
             },
         )
         .await?;
+        let chart = case_release::release_chart_label()?;
         let environment = Release {
+            chart: &chart,
             cluster,
             work,
             namespace: NAMESPACE,

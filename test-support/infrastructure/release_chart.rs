@@ -16,9 +16,6 @@ use tokio::process::Command;
 
 use crate::workload::HostObservation;
 
-/// The chart name and version that `helm list` reports for an environment release.
-pub const CHART: &str = "release-0.1.98";
-
 /// How long the A1 probe waits for a host it must not get.
 const PROBE_WAIT: Duration = Duration::from_secs(120);
 
@@ -46,6 +43,9 @@ pub struct Release<'a> {
     pub label: &'a str,
     /// The manifest digest, `sha256:<hex>`.
     pub digest: &'a str,
+    /// The chart name and version that `helm list` reports for the release,
+    /// `release-<version>` of the chart that installed it.
+    pub chart: &'a str,
     pub evidence: &'a Path,
 }
 
@@ -107,6 +107,7 @@ pub async fn hosts_ready(
         name,
         label,
         digest,
+        chart,
         evidence,
     } = *release;
     let entry = helm_release(release)
@@ -114,8 +115,8 @@ pub async fn hosts_ready(
         .with_context(|| format!("Helm lists no release {name}"))?;
     save(evidence, "helm-release.json", &entry)?;
     ensure!(
-        entry["namespace"] == namespace && entry["chart"] == CHART && entry["status"] == "deployed",
-        "release {name} is not one deployed {CHART} release in {namespace}"
+        entry["namespace"] == namespace && entry["chart"] == chart && entry["status"] == "deployed",
+        "release {name} is not one deployed {chart} release in {namespace}"
     );
     let deployment = get(release, "deployment", &format!("hostgroup-{name}")).await?;
     save(evidence, "host-deployment.json", &deployment)?;

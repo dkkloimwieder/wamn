@@ -160,15 +160,12 @@ fn platform_ui_source(repository: &Path, chart: &Path) -> anyhow::Result<(PathBu
                 receipt_path.display()
             )
         })?)?;
-    let metadata: serde_yaml::Value =
-        serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
-    let version = metadata["version"]
-        .as_str()
-        .context("the stamped chart has no version")?;
+    let version = crate::release_chart::chart_version(chart)?;
+    let platform =
+        crate::release_chart::chart_version(&repository.join("deploy/platform/release"))?;
     ensure!(
-        version == crate::release_chart::CHART_VERSION,
-        "the stamped chart version {version} differs from platform {}",
-        crate::release_chart::CHART_VERSION
+        version == platform,
+        "the stamped chart version {version} differs from platform {platform}"
     );
     let dist = platform_ui_dist(repository);
     ensure!(
@@ -507,11 +504,10 @@ mod tests {
         std::fs::create_dir_all(&chart).unwrap();
         std::fs::write(dist.join("index.html"), b"platform index").unwrap();
         std::fs::write(dist.join("assets/ui.js"), b"platform script").unwrap();
-        std::fs::write(
-            chart.join("Chart.yaml"),
-            format!("version: {}", crate::release_chart::CHART_VERSION),
-        )
-        .unwrap();
+        std::fs::write(chart.join("Chart.yaml"), "version: 0.1.7").unwrap();
+        let platform = repository.join("deploy/platform/release");
+        std::fs::create_dir_all(&platform).unwrap();
+        std::fs::write(platform.join("Chart.yaml"), "version: 0.1.7").unwrap();
         std::fs::write(
             chart.join(RECEIPT_FILE),
             serde_json::to_vec(&PlatformBuildReceipt {
@@ -522,10 +518,7 @@ mod tests {
         .unwrap();
         let (source, root) = super::platform_ui_source(&repository, &chart).unwrap();
         assert_eq!(source, dist);
-        assert_eq!(
-            root,
-            format!("platform-ui/{}", crate::release_chart::CHART_VERSION)
-        );
+        assert_eq!(root, "platform-ui/0.1.7");
         assert_eq!(super::PLATFORM_UI_BUCKET, "gs://wamn-dev-web");
         let store = InMemory::new();
         super::write_platform_ui(&store, &root, &source, "dkk")

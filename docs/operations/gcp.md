@@ -892,7 +892,7 @@ For a first install, complete sections 4.17 through 4.21 before this step.
 Prepare the bench VM and its binary as described in section 5.8.
 Keep the PostgreSQL forward on local port 15432 open.
 
-The script reads `CHART_VERSION` from `crates/control/lib/src/release_chart.rs` and sources the platform file from section 4.10.
+The script reads the platform version, `version` in `deploy/platform/release/Chart.yaml`, and sources the platform file from section 4.10.
 That file supplies `db_url receiving` and `$G/operator-pat.json`, the operator token file.
 The script uses `CLOUDSDK_CONFIG` and `KUBECONFIG` from this page's opening commands.
 It refuses an existing result for the current version.
@@ -900,7 +900,7 @@ Commit the result from the repository root:
 
 ```bash
 tools/bench/tier.sh
-version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/control/lib/src/release_chart.rs)
+version=$(sed -n 's/^version: //p' deploy/platform/release/Chart.yaml)
 git add "tests/bench/platform-$version.json"
 git commit -m "Record platform $version benchmark"
 ```

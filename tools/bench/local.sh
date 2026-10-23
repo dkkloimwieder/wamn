@@ -56,7 +56,7 @@ if $profile; then
     [[ -x $tool ]] || { echo "Missing executable: $tool" >&2; exit 1; }
   done
 fi
-version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/control/lib/src/release_chart.rs)
+version=$(sed -n 's/^version: //p' deploy/platform/release/Chart.yaml)
 test -n "$version"
 result_name="local-$version.json"
 if $pg_floor; then result_name="local-pg-$version.json"; fi

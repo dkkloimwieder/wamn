@@ -76,6 +76,8 @@ struct Declared {
     components: &'static [&'static str],
     /// Context paths that the target's stages copy whole.
     paths: &'static [&'static str],
+    /// Paths below `paths` that the target's stages remove again.
+    dropped: &'static [&'static str],
     /// The target reads the `apps-target` named context.
     apps_target: bool,
 }
@@ -88,6 +90,7 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             cases: none,
             components: none,
             paths: none,
+            dropped: none,
             apps_target: false,
         },
         "identity" => Declared {
@@ -95,6 +98,7 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             cases: none,
             components: none,
             paths: none,
+            dropped: none,
             apps_target: false,
         },
         "edge-web" => Declared {
@@ -102,6 +106,7 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             cases: none,
             components: none,
             paths: none,
+            dropped: none,
             apps_target: false,
         },
         "gates" => Declared {
@@ -116,6 +121,7 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             components: COMPONENTS,
             // The component builder runs the guests with these flags.
             paths: &["tools/guest-rustflags"],
+            dropped: none,
             apps_target: false,
         },
         "runner" => Declared {
@@ -123,6 +129,9 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             cases: &["wamn-wms-tests", "wamn-receiving-tests"],
             components: COMPONENTS,
             paths: &["apps", "deploy", "tools"],
+            // The `runner-deploy` stage removes the release chart, whose
+            // version is the platform version (wamn-6qo7v).
+            dropped: &["deploy/platform/release"],
             apps_target: true,
         },
         _ => bail!("{target} is not a platform build target"),
@@ -135,8 +144,12 @@ struct Package {
     directory: PathBuf,
     /// Target source files, which may lie outside the package directory.
     sources: Vec<PathBuf>,
-    /// A build script or proc macro can read any file.
+    /// A proc macro, or a build script that does not declare what it reads,
+    /// can read any file.
     opaque: bool,
+    /// The package-relative paths that its build script declares with
+    /// `cargo:rerun-if-changed`.
+    reads: Vec<String>,
     /// Local dependencies, each with whether it is a dev dependency only.
     dependencies: Vec<(String, bool)>,
 }
@@ -164,15 +177,23 @@ pub(super) fn parse_metadata(metadata: &Value) -> anyhow::Result<Graph> {
         let manifest = PathBuf::from(text(&package["manifest_path"]).context("a manifest path")?);
         let mut sources = Vec::new();
         let mut opaque = false;
+        let mut reads = Vec::new();
         for target in package["targets"].as_array().context("package targets")? {
-            sources.push(PathBuf::from(
-                text(&target["src_path"]).context("a target source")?,
-            ));
-            opaque |= target["kind"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|kind| kind == "custom-build" || kind == "proc-macro");
+            let source = PathBuf::from(text(&target["src_path"]).context("a target source")?);
+            let kinds = target["kind"].as_array().into_iter().flatten();
+            for kind in kinds {
+                if kind == "proc-macro" {
+                    opaque = true;
+                } else if kind == "custom-build" {
+                    let script = std::fs::read_to_string(&source)
+                        .with_context(|| format!("read {}", source.display()))?;
+                    match declared_reads(&script) {
+                        Some(declared) => reads.extend(declared),
+                        None => opaque = true,
+                    }
+                }
+            }
+            sources.push(source);
         }
         names.insert(
             text(&package["name"]).context("a package name")?,
@@ -184,6 +205,7 @@ pub(super) fn parse_metadata(metadata: &Value) -> anyhow::Result<Graph> {
                 directory: manifest.parent().context("a manifest directory")?.into(),
                 sources,
                 opaque,
+                reads,
                 dependencies: Vec::new(),
             },
         );
@@ -216,6 +238,23 @@ pub(super) fn parse_metadata(metadata: &Value) -> anyhow::Result<Graph> {
         }
     }
     Ok(Graph { packages, names })
+}
+
+/// The paths that a build script declares with `cargo:rerun-if-changed`, or
+/// `None` when it declares none or builds one at run time. Cargo runs the
+/// script again only when a declared path changes, so the script reads no
+/// other file outside its package.
+fn declared_reads(script: &str) -> Option<Vec<String>> {
+    let mut reads = Vec::new();
+    for (start, directive) in script.match_indices("rerun-if-changed=") {
+        let rest = &script[start + directive.len()..];
+        let path = &rest[..rest.find('"')?];
+        if path.is_empty() || path.contains(['{', '}', '\\']) {
+            return None;
+        }
+        reads.push(path.to_owned());
+    }
+    (!reads.is_empty()).then_some(reads)
 }
 
 /// The packages that building `roots` compiles, with the dev dependencies of
@@ -438,11 +477,7 @@ pub(super) fn input_files(
             .map(Path::to_path_buf)
             .with_context(|| format!("{} lies outside the checkout", path.display()))
     };
-    let mut paths: BTreeSet<PathBuf> = COMMON
-        .iter()
-        .chain(declared.paths)
-        .map(PathBuf::from)
-        .collect();
+    let mut paths: BTreeSet<PathBuf> = COMMON.iter().map(PathBuf::from).collect();
     for graph in [root, apps] {
         for package in graph.packages.values() {
             paths.insert(relative(&package.directory)?.join("Cargo.toml"));
@@ -453,9 +488,15 @@ pub(super) fn input_files(
     for package in packages {
         let directory = relative(&package.directory)?;
         if package.opaque {
-            // A build script or proc macro may read any copied file.
+            // A proc macro or an undeclared build script may read any copied file.
             paths.insert(PathBuf::new());
         }
+        paths.extend(
+            package
+                .reads
+                .iter()
+                .filter_map(|read| resolve(&directory, read)),
+        );
         for source in &package.sources {
             let source = relative(source)?;
             if !source.starts_with(&directory) {
@@ -481,6 +522,20 @@ pub(super) fn input_files(
     let mut files = BTreeMap::new();
     for path in &paths {
         walk(repository, path, &keep, &mut files)?;
+    }
+    let copied_whole = |path: &Path| {
+        if declared
+            .dropped
+            .iter()
+            .any(|dropped| path.starts_with(dropped))
+        {
+            None
+        } else {
+            keep(path)
+        }
+    };
+    for path in declared.paths {
+        walk(repository, Path::new(path), &copied_whole, &mut files)?;
     }
     if declared.apps_target {
         let context = Path::new("apps/target/wamn");
@@ -558,7 +613,7 @@ pub(super) mod tests {
         (
             "wamn-control",
             "crates/control",
-            "const CHART: &str = include_str!(\"../../../deploy/platform/release/Chart.yaml\");",
+            "const VALUES: &str = include_str!(\"../../../deploy/platform/release/values.yaml\");",
             &[("wamn-test-infrastructure", Some("dev"))],
         ),
         ("wamn-cdc-reader", "services/cdc-reader", "", &[]),
@@ -637,7 +692,11 @@ pub(super) mod tests {
             ("apps/Cargo.lock", "version = 4\n"),
             ("apps/target/wamn/wamn_wms/build.json", "{}"),
             ("deploy/sql/run.sql", "create table run ();"),
-            ("deploy/platform/release/Chart.yaml", "version: 0.1.1\n"),
+            (
+                "deploy/platform/release/Chart.yaml",
+                "version: 0.1.1\nappVersion: \"0.1.1\"\n",
+            ),
+            ("deploy/platform/release/values.yaml", "host: {}\n"),
             ("tools/guest-rustflags", "#!/bin/sh\n"),
             ("docs/readme.md", "docs\n"),
             ("target/release/wamn-host", "binary"),
@@ -690,9 +749,9 @@ pub(super) mod tests {
                 .collect::<Vec<_>>()
         };
         let all = ["edge-web", "gates", "host", "identity", "runner"];
-        // A version bump reaches the images whose binaries embed the chart.
+        // The chart values reach the images whose binaries embed them.
         assert_eq!(
-            change("deploy/platform/release/Chart.yaml", "version: 0.1.2\n"),
+            change("deploy/platform/release/values.yaml", "host: {a: 1}\n"),
             ["gates", "runner"]
         );
         assert_eq!(
@@ -740,6 +799,21 @@ pub(super) mod tests {
         std::fs::remove_dir_all(repository).unwrap();
     }
 
+    /// The platform version lives in `Chart.yaml` alone, which no binary
+    /// embeds and the runner drops (wamn-6qo7v).
+    #[test]
+    fn a_version_only_bump_keeps_the_input_hash_of_every_image() {
+        let (repository, root, apps) = fake_checkout("version");
+        let before = hashes(&repository, &root, &apps);
+        std::fs::write(
+            repository.join("deploy/platform/release/Chart.yaml"),
+            "version: 0.1.2\nappVersion: \"0.1.2\"\n",
+        )
+        .unwrap();
+        assert_eq!(hashes(&repository, &root, &apps), before);
+        std::fs::remove_dir_all(repository).unwrap();
+    }
+
     #[test]
     fn the_mode_of_a_file_is_an_input() {
         use std::os::unix::fs::PermissionsExt as _;
@@ -756,11 +830,12 @@ pub(super) mod tests {
         std::fs::remove_dir_all(repository).unwrap();
     }
 
-    /// The bump to 0.1.96 changed the three version files and one telemetry
-    /// check of the qualification cases. Over this checkout's real Cargo
-    /// graph, those files reach the gates and runner inputs only.
+    /// A bump changes `Chart.yaml` alone. Over this checkout's real Cargo
+    /// graph, no image hashes it (wamn-6qo7v). The bump to 0.1.96 also
+    /// changed one telemetry check of the qualification cases, which reaches
+    /// the gates and runner inputs only.
     #[test]
-    fn a_version_bump_of_this_checkout_leaves_host_identity_and_edge_unchanged() {
+    fn a_version_bump_of_this_checkout_leaves_every_image_unchanged() {
         let repository =
             std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")).unwrap();
         let graph = |manifest: &str| {
@@ -785,28 +860,42 @@ pub(super) mod tests {
             parse_metadata(&serde_json::from_slice(&output.stdout).unwrap()).unwrap()
         };
         let (root, apps) = (graph("Cargo.toml"), graph("apps/Cargo.toml"));
-        let bump = [
-            "crates/control/lib/src/release_chart.rs",
-            "deploy/platform/release/Chart.yaml",
-            "test-support/infrastructure/release_chart.rs",
-        ];
-        for target in ["host", "identity", "edge-web"] {
+        let bump = "deploy/platform/release/Chart.yaml";
+        for target in ["host", "identity", "edge-web", "gates", "runner"] {
             let files = input_files(&repository, target, &root, &apps).unwrap();
-            for path in bump
-                .iter()
-                .chain(&["test-support/infrastructure/telemetry.rs"])
-            {
-                assert!(!files.contains_key(*path), "{target} hashes {path}");
-            }
+            assert!(!files.contains_key(bump), "{target} hashes {bump}");
             assert!(files.contains_key("Dockerfile"), "{target}");
         }
+        for target in ["host", "identity", "edge-web"] {
+            let files = input_files(&repository, target, &root, &apps).unwrap();
+            let path = "test-support/infrastructure/telemetry.rs";
+            assert!(!files.contains_key(path), "{target} hashes {path}");
+        }
         let gates = input_files(&repository, "gates", &root, &apps).unwrap();
-        for path in bump {
+        for path in [
+            "test-support/infrastructure/telemetry.rs",
+            "deploy/platform/release/values.yaml",
+        ] {
             assert!(gates.contains_key(path), "gates does not hash {path}");
         }
         let host = input_files(&repository, "host", &root, &apps).unwrap();
         assert!(host.contains_key("deploy/sql/run-state.sql"));
         assert!(host.contains_key("services/host/src/main.rs"));
+    }
+
+    #[test]
+    fn a_build_script_reads_what_it_declares_or_anything() {
+        assert_eq!(
+            declared_reads(
+                r#"println!("cargo:rerun-if-changed=Cargo.toml"); println!("cargo:rerun-if-changed=../x");"#
+            ),
+            Some(vec!["Cargo.toml".to_owned(), "../x".to_owned()])
+        );
+        assert_eq!(declared_reads("fn main() {}"), None);
+        assert_eq!(
+            declared_reads(r#"println!("cargo:rerun-if-changed={path}");"#),
+            None
+        );
     }
 
     #[test]

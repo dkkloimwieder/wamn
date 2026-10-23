@@ -18,7 +18,7 @@ repository=$PWD
 concurrency=${CONCURRENCY:-16}
 read -ra calls <<<"${CALLS:-select-only simple-update get update update-no-triggers}"
 duration=${DURATION:-60}
-version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/control/lib/src/release_chart.rs)
+version=$(sed -n 's/^version: //p' deploy/platform/release/Chart.yaml)
 test -n "$version"
 umask 077
 work=$(mktemp -d "${TMPDIR:-/var/tmp}/gcp-pg.XXXXXXXX")

@@ -735,6 +735,19 @@ pub fn release_chart() -> anyhow::Result<PathBuf> {
         .context("WAMN_RELEASE_CHART names the release chart that build-platform stamped")
 }
 
+/// The chart name and version that `helm list` reports for a release of the
+/// chart that `WAMN_RELEASE_CHART` names: `release-<version>`.
+///
+/// # Errors
+///
+/// When the variable is not set or the chart has no version.
+pub fn release_chart_label() -> anyhow::Result<String> {
+    Ok(format!(
+        "release-{}",
+        release_chart::chart_version(&release_chart()?)?
+    ))
+}
+
 /// The host group body of the release chart: the one group of a rendered host
 /// overlay, less what the chart derives.
 ///

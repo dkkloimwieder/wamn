@@ -376,6 +376,8 @@ struct Deployed {
     name: String,
     /// The `wamn.release` label of the manifest digest.
     label: String,
+    /// `release-<version>` of the chart that installed the release.
+    chart: String,
     /// The host image the release names, pinned by digest.
     host_image: String,
     /// The digest of the host image the nodes hold.
@@ -394,6 +396,7 @@ impl Deployed {
             namespace: NAMESPACE,
             name: &self.name,
             label: &self.label,
+            chart: &self.chart,
             digest: carrier.manifest_digest.as_str(),
             evidence: &resources.evidence,
         }
@@ -453,6 +456,7 @@ async fn install_release(
     Ok(Deployed {
         name,
         label,
+        chart: case_release::release_chart_label()?,
         host_image,
         runtime_digest,
     })

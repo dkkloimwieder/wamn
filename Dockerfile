@@ -259,6 +259,12 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
         && install -m 0755 "$executable" "/cases/$package" || exit 1; \
     done
 
+# The runner's deploy files without the release chart. The cases read the
+# stamped chart that WAMN_RELEASE_CHART names, so the runner does not change
+# with the platform version, the chart's `version` (wamn-6qo7v).
+FROM root-source AS runner-deploy
+RUN rm -r /build/deploy/platform/release
+
 # ---- runner image: the qualification runner FROM ctl -----------------------
 # ctl is unchanged; the runner adds what `qualify-release` runs the cases with
 # (docs/plan/platform-deploy.md §8.2, R15): the case executables, the
@@ -279,7 +285,7 @@ ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152ec
 COPY --from=build-cases /cases /cases
 COPY --from=root-source /build/apps /build/apps
 COPY --from=apps-target . /build/apps/target/wamn
-COPY --from=root-source /build/deploy /build/deploy
+COPY --from=runner-deploy /build/deploy /build/deploy
 COPY tools /build/tools
 
 # ---- edge box artifact: the stripped aarch64 binary alone ------------------

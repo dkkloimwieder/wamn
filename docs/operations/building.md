@@ -186,9 +186,9 @@ It runs `docker buildx imagetools create --prefer-index=false` instead.
 The chart version tag then points at the same manifest, with the same digest.
 The copies run after every build succeeds, so a failed build still pushes nothing.
 
-`wamn-ctl` reads the chart version that it was compiled with.
-The `gates` and `runner` images carry `wamn-ctl`, so a version bump always changes their input hashes.
-A bump that changes no other input copies `host`, `identity`, and `edge-web`.
+`wamn-ctl` reads the chart version at run time from the chart it uses: `build-platform` from the checkout's `deploy/platform/release/Chart.yaml`, `env apply` and the cases from the stamped chart.
+No binary embeds `Chart.yaml`, and the `runner` image drops `deploy/platform/release` in its `runner-deploy` stage.
+So a bump that changes no other input copies every image.
 
 A copied image keeps the base image packages from its first build.
 To build every image again, change the `Dockerfile` or delete the `input-<hash>` tags.
@@ -424,12 +424,9 @@ That stage compiles every native image, so the first image build of a platform b
 They share the Cargo registry and Git caches with every checkout.
 The cache mounts are not in the image. The stage copies each binary out of the target cache to `/native-output`, and the image copies it from there.
 
-A version bump changes `crates/control/lib/src/release_chart.rs`, `test-support/infrastructure/release_chart.rs` and `deploy/platform/release/Chart.yaml`.
-These files are in the `root-source` copy set, so Docker runs the `build-native` command again on every bump.
-The target cache stays. Cargo then rebuilds only the crates whose sources changed and the crates that depend on them.
-The version is a Rust constant in `wamn-control`. It is not in a `Cargo.toml` and it does not change `Cargo.lock`.
-So a bump alone rebuilds `wamn-control`, `wamn-test-infrastructure`, `wamn-ctl` and the crates of `wamn-gates`.
-It does not rebuild `wamn-host` or any dependency.
+To bump the platform version, change `version` and `appVersion` in `deploy/platform/release/Chart.yaml` to the same new value.
+No other file holds the version.
+A bump alone gives every image the same input hash, so `build-platform` builds no image and copies each one to the new version tag.
 
 These changes make Cargo rebuild more:
 

@@ -2,7 +2,7 @@
 # Run from the repository machine after the GCP runbook prerequisites.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/control/lib/src/release_chart.rs)
+version=$(sed -n 's/^version: //p' deploy/platform/release/Chart.yaml)
 test -n "$version"
 output="tests/bench/platform-$version.json"
 if [[ -e "$output" ]]; then

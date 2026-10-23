@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use wamn_execution_contract::canonical_json_bytes;
 
-use crate::release_chart::{CHART_VERSION, ImageSet, QualificationImages, stamp};
+use crate::release_chart::{ImageSet, QualificationImages, stamp};
 
 mod inputs;
 
@@ -137,6 +137,9 @@ fn checkout_key(repository: &Path) -> anyhow::Result<String> {
 pub struct BuildPlatformRequest {
     /// The checkout whose `Dockerfile` and release chart are built.
     pub repository: PathBuf,
+    /// The platform version that tags every image: the version of the
+    /// checkout's release chart (`release_chart::chart_version`).
+    pub version: String,
     /// `<host>[:<port>]` of the registry the images are pushed to. A loopback
     /// registry is reached over plain HTTP.
     pub registry: String,
@@ -233,7 +236,7 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
     stamp_chart(request, pushed, &ui_receipt(&request.repository)?)
 }
 
-/// Stamp the registry's images and role components of [`CHART_VERSION`] into
+/// Stamp the registry's images and role components of `request.version` into
 /// a copy of the release chart at `request.out`. It builds and pushes
 /// nothing; when any of the seven is missing, it refuses and names them.
 pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
@@ -254,7 +257,7 @@ pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBu
     .await
 }
 
-/// Resolve the six tags of [`CHART_VERSION`]: the images through `run`'s
+/// Resolve the six tags of `request.version`: the images through `run`'s
 /// `docker buildx imagetools inspect`, the role components through `pull`,
 /// which returns the manifest digest. Then stamp them.
 async fn stamp_from_registry(
@@ -270,10 +273,11 @@ async fn stamp_from_registry(
     );
     let stage = start_stage("registry-reads");
     let registry = &request.registry;
+    let version = &request.version;
     let mut pinned = Vec::new();
     let mut missing = Vec::new();
     for target in ["host", "runner", "gates", "identity", "edge-web"] {
-        let reference = format!("{registry}/wamn-{target}:{CHART_VERSION}");
+        let reference = format!("{registry}/wamn-{target}:{version}");
         let digest = run(Command::new("docker").args([
             "buildx",
             "imagetools",
@@ -290,7 +294,7 @@ async fn stamp_from_registry(
         }
     }
     for role in ["http", "materializer"] {
-        let reference = format!("{registry}/wamn/{role}:{CHART_VERSION}");
+        let reference = format!("{registry}/wamn/{role}:{version}");
         match pull(&reference).await {
             Ok(digest) if digest.starts_with("sha256:") => {
                 pinned.push(format!("{registry}/wamn/{role}@{digest}"));
@@ -301,7 +305,7 @@ async fn stamp_from_registry(
     }
     ensure!(
         missing.is_empty(),
-        "the registry does not hold {} of the {CHART_VERSION} images: {}",
+        "the registry does not hold {} of the {version} images: {}",
         missing.len(),
         missing.join("; ")
     );
@@ -535,12 +539,13 @@ fn wasm_layer(manifest: &[u8]) -> anyhow::Result<String> {
 async fn reuse_role(
     components: &mut impl Components,
     registry: &str,
+    version: &str,
     role: &str,
     layer: &str,
 ) -> anyhow::Result<Option<String>> {
     let repository = format!("{registry}/wamn/{role}");
     let tags = components.tags(&repository).await?;
-    let Some(previous) = previous_version(&tags, CHART_VERSION) else {
+    let Some(previous) = previous_version(&tags, version) else {
         return Ok(None);
     };
     let (manifest, media_type) = components
@@ -551,11 +556,7 @@ async fn reuse_role(
         return Ok(None);
     }
     components
-        .put_manifest(
-            &format!("{repository}:{CHART_VERSION}"),
-            &manifest,
-            &media_type,
-        )
+        .put_manifest(&format!("{repository}:{version}"), &manifest, &media_type)
         .await?;
     eprintln!("build-platform {role} layer {layer} copy {previous}");
     Ok(Some(format!("{repository}@{}", sha256(&manifest))))
@@ -670,12 +671,13 @@ async fn plan(
 async fn copy_image(
     run: &mut impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
     registry: &str,
+    version: &str,
     target: &str,
     hash: &str,
     digest: &str,
 ) -> anyhow::Result<String> {
     let _stage = start_stage(format!("copy-{target}"));
-    let reference = format!("{registry}/wamn-{target}:{CHART_VERSION}");
+    let reference = format!("{registry}/wamn-{target}:{version}");
     // With one source, --prefer-index=false copies the manifest as it is, so
     // the digest holds.
     run(Command::new("docker").args([
@@ -719,9 +721,10 @@ async fn build_then_push(
     .await?;
     let Plan { hashes, images } = plan(request, &run).await?;
     let registry = &request.registry;
+    let version = &request.version;
     let mut references = Vec::new();
     for target in IMAGES {
-        let reference = format!("{registry}/wamn-{target}:{CHART_VERSION}");
+        let reference = format!("{registry}/wamn-{target}:{version}");
         let hash = &hashes[target];
         if !images.contains_key(target) {
             let _stage = start_stage(format!("image-build-{target}"));
@@ -753,7 +756,7 @@ async fn build_then_push(
     for (target, reference) in &references {
         let hash = &hashes[target];
         if let Some(digest) = images.get(target) {
-            pushed.push(copy_image(&mut run, registry, target, hash, digest).await?);
+            pushed.push(copy_image(&mut run, registry, version, target, hash, digest).await?);
             continue;
         }
         let _stage = start_stage(format!("push-{target}"));
@@ -764,7 +767,7 @@ async fn build_then_push(
         .map_err(|_| anyhow::anyhow!("five platform images were pushed"))?;
     Ok((
         images,
-        push_roles(registry, role_components, components).await?,
+        push_roles(registry, version, role_components, components).await?,
     ))
 }
 
@@ -812,6 +815,7 @@ async fn push_image(
 /// the previous chart version keeps that version's manifest and digest.
 async fn push_roles(
     registry: &str,
+    version: &str,
     role_components: Vec<(&str, Vec<u8>)>,
     components: &mut impl Components,
 ) -> anyhow::Result<(String, String)> {
@@ -819,12 +823,14 @@ async fn push_roles(
     for (role, bytes) in role_components {
         let _stage = start_stage(format!("push-{role}"));
         // A lookup that fails, for any reason, leaves the role to be pushed.
-        if let Ok(Some(pinned)) = reuse_role(components, registry, role, &sha256(&bytes)).await {
+        if let Ok(Some(pinned)) =
+            reuse_role(components, registry, version, role, &sha256(&bytes)).await
+        {
             pushed.push(pinned);
             continue;
         }
         let digest = components
-            .push(&format!("{registry}/wamn/{role}:{CHART_VERSION}"), &bytes)
+            .push(&format!("{registry}/wamn/{role}:{version}"), &bytes)
             .await
             .with_context(|| format!("push the {role} role component"))?;
         ensure!(
@@ -842,16 +848,17 @@ async fn push_roles(
 /// the previous version's manifest when the wasm layer is the same.
 async fn reuse_pushed_roles(
     registry: &str,
+    version: &str,
     components: &mut impl Components,
 ) -> anyhow::Result<()> {
     for (_, role) in ROLES {
         let _stage = start_stage(format!("reuse-{role}"));
         let (manifest, _) = components
-            .manifest(&format!("{registry}/wamn/{role}:{CHART_VERSION}"))
+            .manifest(&format!("{registry}/wamn/{role}:{version}"))
             .await?;
         let layer = wasm_layer(&manifest)?;
         // A failed lookup keeps the manifest that Cloud Build pushed.
-        let _ = reuse_role(components, registry, role, &layer).await;
+        let _ = reuse_role(components, registry, version, role, &layer).await;
     }
     Ok(())
 }
@@ -1166,6 +1173,7 @@ async fn cloud_build(
         copy_image(
             &mut run,
             &request.registry,
+            &request.version,
             target,
             &plan.hashes[target],
             digest,
@@ -1174,6 +1182,7 @@ async fn cloud_build(
     }
     reuse_pushed_roles(
         &request.registry,
+        &request.version,
         &mut OciComponents {
             insecure: loopback(&request.registry),
         },
@@ -1286,6 +1295,7 @@ with open('/cloud-auth/config.json', 'w') as output:
         "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
     }));
     let registry = &request.registry;
+    let version = &request.version;
     for target in IMAGES.into_iter().chain(["roles"]) {
         // An image whose input tag exists is copied after the build.
         if plan.images.contains_key(target) {
@@ -1301,7 +1311,7 @@ with open('/cloud-auth/config.json', 'w') as output:
             steps.push(auth_step.clone());
             args.extend([
                 "--tag".into(),
-                format!("{registry}/wamn-{target}:{CHART_VERSION}"),
+                format!("{registry}/wamn-{target}:{version}"),
                 "--tag".into(),
                 input_tag(registry, target, hash),
                 format!("--label=wamn.dev/source-head={head}"),
@@ -1322,7 +1332,7 @@ with open('/cloud-auth/config.json', 'w') as output:
         steps.push(json!({
             // This release uses the same wash-runtime revision as Cargo.toml.
             "name": "ghcr.io/wasmcloud/wash:2.11.0", "entrypoint": "/usr/local/bin/wash",
-            "args": ["oci", "push", format!("{registry}/wamn/{role}:{CHART_VERSION}"), format!("/workspace/roles/{file}")],
+            "args": ["oci", "push", format!("{registry}/wamn/{role}:{version}"), format!("/workspace/roles/{file}")],
             "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
         }));
     }
@@ -1371,6 +1381,9 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    /// The platform version of the test requests.
+    const VERSION: &str = "0.1.7";
 
     #[test]
     fn build_location_uses_other_builds_and_the_daily_counter() {
@@ -1462,6 +1475,7 @@ mod tests {
         let request = BuildPlatformRequest {
             repository: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
             registry: "us-central1-docker.pkg.dev/test/wamn".into(),
+            version: VERSION.into(),
             out: PathBuf::from("/nonexistent"),
             cluster: None,
             cloud: true,
@@ -1706,6 +1720,7 @@ mod tests {
             out: repository.join("chart"),
             repository,
             registry: "localhost:5000".to_owned(),
+            version: VERSION.into(),
         })
         .await
         .expect_err("a checkout without apps/target/wamn is refused");
@@ -1722,6 +1737,7 @@ mod tests {
             out: repository.join("chart"),
             repository: repository.clone(),
             registry: "must-not-be-contacted.invalid".into(),
+            version: VERSION.into(),
         })
         .await
         .unwrap_err();
@@ -1814,6 +1830,7 @@ mod tests {
                 cloud: false,
                 repository: repository.clone(),
                 registry: "localhost:5000".to_owned(),
+                version: VERSION.into(),
                 out: PathBuf::from("/chart"),
             },
             roles,
@@ -1865,6 +1882,7 @@ mod tests {
                 cloud: false,
                 repository: repository.clone(),
                 registry: "localhost:5000".to_owned(),
+                version: VERSION.into(),
                 out: PathBuf::from("/chart"),
             },
             &async |command: &mut Command| {
@@ -2011,14 +2029,14 @@ mod tests {
         assert_eq!(
             host,
             format!(
-                "localhost:5000/wamn-host:{CHART_VERSION}@sha256:{}",
+                "localhost:5000/wamn-host:{VERSION}@sha256:{}",
                 "c".repeat(64)
             )
         );
         assert_eq!(
             runner,
             format!(
-                "localhost:5000/wamn-runner:{CHART_VERSION}@sha256:{}",
+                "localhost:5000/wamn-runner:{VERSION}@sha256:{}",
                 "a".repeat(64)
             )
         );
@@ -2048,15 +2066,12 @@ mod tests {
         let (_, (http_pinned, materializer_pinned)) = result.expect("the build succeeds");
         assert_eq!(http_pinned, format!("{http}@{previous}"));
         assert_eq!(
-            components.manifests[&format!("{http}:{CHART_VERSION}")],
+            components.manifests[&format!("{http}:{VERSION}")],
             components.manifests[&format!("{http}:0.0.1")]
         );
         assert_ne!(materializer_pinned, format!("{materializer}@{older}"));
-        assert_eq!(
-            components.pushed,
-            [format!("{materializer}:{CHART_VERSION}")]
-        );
-        let manifest = &components.manifests[&format!("{materializer}:{CHART_VERSION}")];
+        assert_eq!(components.pushed, [format!("{materializer}:{VERSION}")]);
+        let manifest = &components.manifests[&format!("{materializer}:{VERSION}")];
         assert_eq!(
             materializer_pinned,
             format!("{materializer}@{}", sha256(manifest))
@@ -2079,21 +2094,21 @@ mod tests {
             .await
             .unwrap();
         components
-            .push(&format!("{http}:{CHART_VERSION}"), b"same")
+            .push(&format!("{http}:{VERSION}"), b"same")
             .await
             .unwrap();
         let pushed = components
-            .push(&format!("{materializer}:{CHART_VERSION}"), b"new")
+            .push(&format!("{materializer}:{VERSION}"), b"new")
             .await
             .unwrap();
-        let before = components.manifests[&format!("{http}:{CHART_VERSION}")].clone();
-        reuse_pushed_roles("localhost:5000", &mut components)
+        let before = components.manifests[&format!("{http}:{VERSION}")].clone();
+        reuse_pushed_roles("localhost:5000", VERSION, &mut components)
             .await
             .unwrap();
-        let after = &components.manifests[&format!("{http}:{CHART_VERSION}")];
+        let after = &components.manifests[&format!("{http}:{VERSION}")];
         assert_ne!(&before, after);
         assert_eq!(after, &components.manifests[&format!("{http}:0.0.1")]);
-        let materializer_now = &components.manifests[&format!("{materializer}:{CHART_VERSION}")];
+        let materializer_now = &components.manifests[&format!("{materializer}:{VERSION}")];
         assert_eq!(sha256(materializer_now), pushed);
     }
 
@@ -2122,6 +2137,7 @@ mod tests {
                 cloud: false,
                 repository: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
                 registry: "localhost:5000".to_owned(),
+                version: VERSION.into(),
                 out: out.to_owned(),
             },
             &PlatformBuildReceipt {
@@ -2167,10 +2183,7 @@ mod tests {
             image["repository"].as_str(),
             Some("localhost:5000/wamn-host")
         );
-        assert_eq!(
-            image["tag"].as_str(),
-            Some(&*format!("{CHART_VERSION}@{digest}"))
-        );
+        assert_eq!(image["tag"].as_str(), Some(&*format!("{VERSION}@{digest}")));
         let platform = &values["platform"];
         assert_eq!(
             platform["roles"]["http"]["image"].as_str(),
@@ -2178,15 +2191,11 @@ mod tests {
         );
         assert_eq!(
             platform["gates"]["image"].as_str(),
-            Some(&*format!(
-                "localhost:5000/wamn-gates:{CHART_VERSION}@{digest}"
-            ))
+            Some(&*format!("localhost:5000/wamn-gates:{VERSION}@{digest}"))
         );
         assert_eq!(
             platform["edge"]["image"].as_str(),
-            Some(&*format!(
-                "localhost:5000/wamn-edge-web:{CHART_VERSION}@{digest}"
-            ))
+            Some(&*format!("localhost:5000/wamn-edge-web:{VERSION}@{digest}"))
         );
         assert_eq!(calls.len(), 5, "{calls:?}");
         assert!(
@@ -2206,7 +2215,7 @@ mod tests {
         assert!(!out.exists());
         let message = error.to_string();
         assert!(
-            message.contains(&format!("localhost:5000/wamn/materializer:{CHART_VERSION}")),
+            message.contains(&format!("localhost:5000/wamn/materializer:{VERSION}")),
             "{message}"
         );
         assert!(!message.contains("wamn-host"), "{message}");

@@ -203,7 +203,7 @@ async fn run(
                 context: kept.context(),
                 namespace: NAMESPACE.to_owned(),
             },
-            chart: repository.join("deploy/platform/release"),
+            chart: wamn_gate_harness::case_release::release_chart()?,
             release_artifact_base: format!("{}/wamn/releases", kept.registry),
             registry_auth_file: document.registry_auth_file.clone(),
             oci_ca_paths: vec![kept.ca.clone()],

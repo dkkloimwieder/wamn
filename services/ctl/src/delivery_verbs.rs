@@ -87,14 +87,18 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
 /// print the stamped chart's directory.
 pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
     use wamn_control::platform_build::{BuildPlatformRequest, build_platform, stamp_only};
+    let repository = std::fs::canonicalize(&args.repository)
+        .with_context(|| format!("find {}", args.repository.display()))?;
     let request = BuildPlatformRequest {
         cluster: args
             .cluster
             .as_deref()
             .map(wamn_control::platform::document::ClusterDocument::compile)
             .transpose()?,
-        repository: std::fs::canonicalize(&args.repository)
-            .with_context(|| format!("find {}", args.repository.display()))?,
+        version: wamn_control::release_chart::chart_version(
+            &repository.join("deploy/platform/release"),
+        )?,
+        repository,
         registry: args.registry,
         out: args.out,
         cloud: args.cloud,
