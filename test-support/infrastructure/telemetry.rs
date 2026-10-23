@@ -265,6 +265,17 @@ fn request_trace(
     let mut invocations = BTreeMap::new();
     let mut effects = Vec::new();
     for (id, span) in &by_id {
+        // The composed-entry route path emits wamn.operation.http without the
+        // host identity, so its PostgreSQL effect carries the identity check
+        // (owner ruling 2026-10-23). It reverts to wamn.component.invoke alone
+        // when the host emits that span there (wamn-2g4rw).
+        if span["name"] == "wamn.operation.http" {
+            invocations.insert(
+                id.clone(),
+                json!({"span_id":id,"duration_ns":duration(span)?,"attributes":attributes(span)}),
+            );
+            continue;
+        }
         if span["name"] != "wamn.component.invoke" {
             continue;
         }
@@ -682,6 +693,25 @@ mod tests {
         assert!(request_trace(&original, ID, "foreign", "fixture", "dev").is_err());
         assert!(request_trace(&original, ID, "fixture-route-auth", "foreign", "dev").is_err());
         assert!(request_trace(&original, ID, "fixture-route-auth", "fixture", "prod").is_err());
+    }
+
+    #[test]
+    fn a_composed_entry_request_checks_identity_on_its_postgres_effect() {
+        let mut composed: Value = serde_json::from_str(TRACE).unwrap();
+        for resource in composed["resourceSpans"].as_array_mut().unwrap() {
+            for scope in resource["scopeSpans"].as_array_mut().unwrap() {
+                for span in scope["spans"].as_array_mut().unwrap() {
+                    if span["name"] == "wamn.component.invoke" {
+                        span["name"] = json!("wamn.operation.http");
+                        span["attributes"] = json!([]);
+                    }
+                }
+            }
+        }
+        let parsed = observed(&composed).unwrap();
+        assert!(!parsed["postgres_effects"].as_array().unwrap().is_empty());
+        assert!(request_trace(&composed, ID, "foreign", "fixture", "dev").is_err());
+        assert!(request_trace(&composed, ID, "fixture-route-auth", "foreign", "dev").is_err());
     }
 
     #[test]
