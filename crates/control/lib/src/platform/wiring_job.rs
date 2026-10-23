@@ -1,12 +1,20 @@
 //! Prepare the database logins and native sidecar of a wired release Job.
 
-use crate::environment::document::EnvironmentDocument;
+use anyhow::Context as _;
 
-use super::install::DATABASE_HOST;
+use crate::environment::document::EnvironmentDocument;
+use crate::{kubectl, release_chart::Target};
+
+use super::install::{DATABASE_HOST, SecretData, secret_text};
 use super::job::{Access, JobContainer, JobRequest, JobSecret, PolicyRule, SecretMount};
 
+/// The Job Secret that carries the host's identity reader login to the gate.
+const IDENTITY_READER: &str = "platform-identity-reader";
+
 // Only database credentials use these files. The main container mints the PAT
-// after preparation, and its process never writes the PAT.
+// after preparation, and its process never writes the PAT. The identity reader
+// is not prepared here: env apply owns its generation a, and preparing it again
+// sets a new password under the running host (wamn-s7vzm).
 const PREPARE: &str = r#"prepare() {
   umask 077
   scratch=$(mktemp -d)
@@ -18,7 +26,7 @@ const PREPARE: &str = r#"prepare() {
     waited=$((waited + 1))
   done
   test -n "$uid" || return 1
-  for family in identity-reader control-author management-admitter; do
+  for family in control-author management-admitter; do
     if [ "$family" = management-admitter ]; then
       export WAMN_TARGET_ADMIN_DATABASE_URL="$WAMN_PG_ADMIN_URL"
     else
@@ -36,6 +44,38 @@ const PREPARE: &str = r#"prepare() {
 }
 prepare >/dev/null 2>/dev/null || { echo 'prepare wiring gate database logins failed' >&2; exit 1; }
 "#;
+
+/// Read the identity reader login that env apply wrote for the environment's host.
+///
+/// # Errors
+///
+/// When the host Secret is absent or has no `url`.
+pub(super) async fn identity_reader(
+    target: &Target,
+    environment: &EnvironmentDocument,
+) -> anyhow::Result<JobSecret> {
+    let name = wamn_control_provision::workload_secret_name(
+        wamn_control_provision::WorkloadRoleFamily::IdentityReader,
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+    let secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "hosts",
+        "secret",
+        &name,
+    )
+    .await?
+    .with_context(|| format!("missing Secret hosts/{name}"))?;
+    Ok(JobSecret {
+        name: IDENTITY_READER.into(),
+        key: "url".into(),
+        value: secret_text(&secret, "url")?,
+        environment: "WAMN_SYSTEM_URL".into(),
+    })
+}
 
 /// Configure one pod with database preparation, a native gate sidecar, and certificate mounts.
 ///
@@ -93,7 +133,6 @@ pub fn configure(
         arguments: vec!["serve".into(), "--bind".into(), "127.0.0.1:18090".into()],
         environment: request.environment.clone(),
         secret_environment: [
-            ("WAMN_SYSTEM_URL", "identity-reader"),
             ("WAMN_CONTROL_AUTHORING_PG_URL", "control-author"),
             ("WAMN_MANAGEMENT_ADMISSION_PG_URL", "management-admitter"),
         ]
@@ -103,7 +142,12 @@ pub fn configure(
                 (format!("{}-{family}", request.name), "url".into()),
             )
         })
-        .into(),
+        .into_iter()
+        .chain([(
+            "WAMN_SYSTEM_URL".into(),
+            (IDENTITY_READER.into(), "url".into()),
+        )])
+        .collect(),
     };
     sidecar.environment.extend([
         ("WAMN_MANAGEMENT_ORG".into(), environment.org.clone()),

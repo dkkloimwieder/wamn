@@ -123,7 +123,7 @@ pub(super) async fn apply(
         releases: Vec::new(),
     };
     for (path, environment, mut request, artifacts, wirings) in prepared {
-        let secrets = packages::credentials(target, &environment).await?;
+        let mut secrets = Vec::from(packages::credentials(target, &environment).await?);
         let database = url::Url::parse(&secrets[1].value)
             .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
         let mut job_target = target.clone();
@@ -131,6 +131,7 @@ pub(super) async fn apply(
         if !wirings.is_empty() {
             job_target.namespace = "identity".into();
             super::wiring_job::configure(&mut request, &environment, &secrets);
+            secrets.push(super::wiring_job::identity_reader(target, &environment).await?);
             inputs["wirings"] = json!(wirings);
         }
         published.changed |= job::run(&job_target, directory, &request, &inputs, &secrets).await?;
