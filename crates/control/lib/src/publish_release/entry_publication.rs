@@ -82,27 +82,43 @@ pub(super) async fn publish(
     let credentials =
         read_registry_push_credentials(&registry.registry_auth_file, base.registry())?;
     wash_runtime::oci::set_extra_ca_certificates(&registry.oci_ca_paths)?;
-    let digest = wash_runtime::oci::push_component(
-        &format!(
-            "{repository}:{}",
-            entry.digest().trim_start_matches("sha256:")
-        ),
-        entry.bytes(),
-        wash_runtime::oci::OciConfig {
-            credentials: credentials.map(|credential| {
-                (
-                    credential.username().to_owned(),
-                    credential.password().to_owned(),
+    let reference = format!(
+        "{repository}:{}",
+        entry.digest().trim_start_matches("sha256:")
+    );
+    let config = || wash_runtime::oci::OciConfig {
+        credentials: credentials.as_ref().map(|credential| {
+            (
+                credential.username().to_owned(),
+                credential.password().to_owned(),
+            )
+        }),
+        insecure: registry.insecure_registry,
+        timeout: Some(Duration::from_secs(30)),
+        ..Default::default()
+    };
+    let digest =
+        match wash_runtime::oci::push_component(&reference, entry.bytes(), config(), None).await {
+            Ok(digest) => digest,
+            // The tag is the entry's content digest, so a present tag already
+            // holds these bytes. Each push writes a new config creation time, so
+            // an immutable tag refuses the repeat. Reuse the present manifest.
+            Err(push) => {
+                let (bytes, digest) = wash_runtime::oci::pull_component(
+                    &reference,
+                    config(),
+                    wash_runtime::oci::OciPullPolicy::Always,
                 )
-            }),
-            insecure: registry.insecure_registry,
-            timeout: Some(Duration::from_secs(30)),
-            ..Default::default()
-        },
-        None,
-    )
-    .await
-    .context("publish composed HTTP entry")?;
+                .await
+                .map_err(|_| push)
+                .context("publish composed HTTP entry")?;
+                ensure!(
+                    bytes == entry.bytes(),
+                    "composed HTTP entry tag {reference} holds other bytes"
+                );
+                digest
+            }
+        };
     // The manifest records only the path relative to the component artifact base.
     let path = format!("{}@{digest}", wamn_catalog::COMPOSED_ENTRY_REPOSITORY);
     ensure!(
