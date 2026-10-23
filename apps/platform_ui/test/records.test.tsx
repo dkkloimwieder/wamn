@@ -174,6 +174,36 @@ describe("Records server pages", () => {
     expect(next().disabled).toBe(true);
   });
 
+  it("drops the old scope rows when the new scope's first load fails", async () => {
+    const waiting: { resolve: (page: ServerPage<string>) => void; reject: (error: Error) => void }[] = [];
+    let page!: ReturnType<typeof createServerPage<string>>;
+    function Harness() {
+      page = createServerPage<string>(() => new Promise((resolve, reject) => waiting.push({ resolve, reject })));
+      return (
+        <Records
+          id="scope"
+          title="Scope"
+          rows={page.rows()}
+          paging={page}
+          refresh={page.refresh}
+          rowKey={(row) => row}
+          columns={[{ id: "id", header: "ID", accessorFn: (row) => row }]}
+        />
+      );
+    }
+    render(() => <Harness />);
+    void page.refresh();
+    waiting.shift()!.resolve({ rows: ["old scope"], nextCursor: null, total: 1 });
+    await screen.findByRole("cell", { name: "old scope" });
+    page.reset();
+    const failed = page.refresh();
+    waiting.shift()!.reject(new Error("scope refused"));
+    await expect(failed).rejects.toThrow("scope refused");
+    flush();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryByRole("cell", { name: "old scope" })).toBeNull();
+  });
+
   it("discards an old scope response after a new traversal starts", async () => {
     const waiting: ((page: ServerPage<string>) => void)[] = [];
     let page!: ReturnType<typeof createServerPage<string>>;

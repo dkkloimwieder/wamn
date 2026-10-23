@@ -25,13 +25,18 @@ export function createServerPage<Row>(load: (input: { limit: number; cursor?: st
     active = false;
     generation++;
   });
-  const reset = () => {
+  const restart = () => {
     generation++;
     setCursors([undefined]);
     setNext(null);
     setTotal(null);
     setError(undefined);
     setPending(false);
+  };
+  /** A new scope shows none of the old scope's rows. */
+  const reset = () => {
+    restart();
+    setRows([]);
   };
   const request = async (history: readonly (string | undefined)[]) => {
     if (!active) return;
@@ -55,7 +60,7 @@ export function createServerPage<Row>(load: (input: { limit: number; cursor?: st
     }
   };
   const refresh = () => {
-    reset();
+    restart();
     return request([undefined]);
   };
   const pagination = (): TablePaginationProps => ({

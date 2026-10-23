@@ -424,6 +424,31 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             {"principal_id": cat.as_str(), "email": "cat@example.test", "display_name": "Cat", "status": "active", "org_admin": false},
         ]}))
     );
+    // A paged read follows next_cursor to the end. Only a complete first page carries a total.
+    let mut paged = Vec::new();
+    let mut input = json!({"limit": 1});
+    loop {
+        let page = call(&delivery, "user/list", boss, input)
+            .await
+            .expect("a page");
+        assert!(page["total"].is_null());
+        assert_eq!(page["users"].as_array().expect("users").len(), 1);
+        paged.push(page["users"][0]["principal_id"].clone());
+        if page["next_cursor"].is_null() {
+            break;
+        }
+        input = json!({"limit": 1, "cursor": page["next_cursor"]});
+    }
+    assert_eq!(
+        paged,
+        [json!(ann.as_str()), json!(boss), json!(cat.as_str())]
+    );
+    assert_eq!(
+        call(&delivery, "user/list", boss, json!({"limit": 3}))
+            .await
+            .expect("one page")["total"],
+        3
+    );
 
     // org-admin materializes over every project and environment, and its
     // revoke leaves the ordinary memberships.

@@ -152,7 +152,8 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
       setState(found.state);
     }
     if (props.table === "environments") {
-      await environmentPage.refresh();
+      // The table shows its own page error.
+      await environmentPage.refresh().catch(() => {});
     } else if (props.table === "members") {
       // The environment lookup needs the complete set, even beyond page one.
       if (props.params.env) {
@@ -163,7 +164,8 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
           return;
         }
       }
-      await memberPage.refresh();
+      // The table shows its own page error.
+      await memberPage.refresh().catch(() => {});
     } else {
       const [envs, people] = await Promise.all([
         environment.list(props.transport, [{ project: name() }]),

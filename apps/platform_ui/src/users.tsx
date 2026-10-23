@@ -179,7 +179,8 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
     setPerson(found);
     if (!props.table) return;
     if (props.table === "projects") {
-      await projectPage.refresh();
+      // The table shows its own page error.
+      await projectPage.refresh().catch(() => {});
       return;
     }
     const listed = value(await project.list(props.transport, [{}])).projects;

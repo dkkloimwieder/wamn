@@ -334,6 +334,40 @@ describe("Projects and Project", () => {
   });
 });
 
+describe("Project page errors", () => {
+  it("shows a failed member page load once", async () => {
+    const transport = createTransport({
+      baseUrl: "/api",
+      fetch: async (url) => {
+        if (String(url).includes("/member/list"))
+          return new Response(
+            JSON.stringify([
+              {
+                error: { code: "permission_denied", detail: { operation: member.MEMBER_LIST_ROUTE.operation } },
+              },
+            ]),
+          );
+        return new Response(JSON.stringify([{ value: { projects: [{ name: "widgets", state: "active" }] } }]));
+      },
+    });
+    render(() => (
+      <Project
+        table="members"
+        transport={transport}
+        holds={admin}
+        params={{ project: "widgets" }}
+        search={{}}
+        open={() => {}}
+        close={() => {}}
+      />
+    ));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Error: permission_denied");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    flush();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+});
+
 describe("Project member", () => {
   it.each(["Revoke membership", "Revoke project admin"])(
     "returns to Members when %s removes the member from the project",

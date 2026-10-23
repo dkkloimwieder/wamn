@@ -729,7 +729,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         .expect("a host-owned caller");
     let projects = [PROJECT, "shop"];
     assert_eq!(
-        deliver(&delivery, &route, Some(caller))
+        deliver(&delivery, &route, Some(caller.clone()))
             .await
             .expect("the host answers"),
         json!({"next_cursor": null, "total": 2, "org_admin": true, "projects": projects
@@ -737,6 +737,27 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
             .map(|project| json!({"project": project, "project_admin": true}))
             .collect::<Vec<_>>()})
     );
+    // Every page, not only the first, carries org_admin.
+    let mut input = json!({"limit": 1});
+    for (index, project) in projects.iter().enumerate() {
+        let DeliveryOutcome::Respond(body) =
+            outcome(&delivery, &route, Some(caller.clone()), input)
+                .await
+                .expect("the host answers")
+        else {
+            panic!("a host route responds");
+        };
+        let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+        let page = &item["value"];
+        assert_eq!(page["org_admin"], true);
+        assert_eq!(
+            page["projects"],
+            json!([{"project": project, "project_admin": true}])
+        );
+        assert!(page["total"].is_null());
+        assert_eq!(page["next_cursor"].is_null(), index + 1 == projects.len());
+        input = json!({"limit": 1, "cursor": page["next_cursor"]});
+    }
     admin
         .execute(
             "DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid",

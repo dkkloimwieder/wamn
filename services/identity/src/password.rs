@@ -151,6 +151,23 @@ fn discovery_page(
     )
 }
 
+/// Where a discovery page's control orgs start and how many it reads after
+/// `applications` application audiences. None means the applications filled it.
+fn control_window(page: &ListPage, applications: usize) -> Option<(Option<&str>, Option<i64>)> {
+    let remaining = page
+        .read_limit()
+        .map(|limit| limit - i64::try_from(applications).expect("a page has at most 101 rows"));
+    if remaining == Some(0) {
+        return None;
+    }
+    let after_org = if page.after_kind() == Some(1) {
+        page.after(1).and_then(control_audience_org)
+    } else {
+        None
+    };
+    Some((after_org, remaining))
+}
+
 /// One audience the login may select. A control audience has no project
 /// and no environment.
 #[derive(Serialize)]
@@ -496,18 +513,9 @@ async fn handle(
                         }
                     }
                 }
-                let remaining = page.read_limit().map(|limit| {
-                    limit - i64::try_from(environments.len()).expect("a page has at most 101 rows")
-                });
-                let after_org = if page.after_kind() == Some(1) {
-                    page.after(1).and_then(control_audience_org)
-                } else {
-                    None
-                };
-                let orgs = if remaining == Some(0) {
-                    Vec::new()
-                } else {
-                    match control_orgs_page(
+                let orgs = match control_window(&page, environments.len()) {
+                    None => Vec::new(),
+                    Some((after_org, remaining)) => match control_orgs_page(
                         &tx,
                         principal.principal().id(),
                         scope.org.as_deref(),
@@ -518,7 +526,7 @@ async fn handle(
                     {
                         Ok(orgs) => orgs,
                         Err(_) => return unavailable(),
-                    }
+                    },
                 };
                 for org in &orgs {
                     let Ok(aud) = control_audience(org) else {
@@ -1146,6 +1154,55 @@ mod tests {
         );
         let other: PrincipalId = "00000000-0000-0000-0000-000000000002".parse().unwrap();
         assert!(discovery_page(&input, &other, &scope).is_err());
+    }
+
+    #[test]
+    fn discovery_steps_from_application_audiences_to_control_orgs_across_a_page_boundary() {
+        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+        let scope = Scope {
+            org: Some("acme".into()),
+            project: None,
+        };
+        let key = |entry: &serde_json::Value| entry.clone();
+        let app = json!([0, "app-a"]);
+        let acme = json!([1, "urn:wamn:control:acme"]);
+        // Page one reads one application, then fills the lookahead with a control org.
+        let first = discovery_page(&json!({"limit":1}), &principal, &scope).unwrap();
+        assert_eq!(control_window(&first, 2), None);
+        assert_eq!(control_window(&first, 1), Some((None, Some(1))));
+        let answer = first.answer("environments", vec![app.clone(), acme.clone()], key);
+        assert_eq!(answer["environments"], json!([app]));
+        // Page two continues after the application and finds no more of them,
+        // so it reads the control orgs from the start.
+        let second = discovery_page(
+            &json!({"limit":1,"cursor":answer["next_cursor"]}),
+            &principal,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(second.after_kind(), Some(0));
+        assert_eq!(second.after(1), Some("app-a"));
+        assert_eq!(control_window(&second, 0), Some((None, Some(2))));
+        let answer = second.answer("environments", vec![acme.clone()], key);
+        assert_eq!(answer["environments"], json!([acme]));
+        assert!(answer["next_cursor"].is_null());
+        assert!(answer["total"].is_null());
+        // A cursor on a control org skips the applications and continues after that org.
+        let controls = first.answer(
+            "environments",
+            vec![acme.clone(), json!([1, "urn:wamn:control:acme2"])],
+            key,
+        );
+        let third = discovery_page(
+            &json!({"limit":1,"cursor":controls["next_cursor"]}),
+            &principal,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(third.after_kind(), Some(1));
+        assert_eq!(control_window(&third, 0), Some((Some("acme"), Some(2))));
+        let all = discovery_page(&json!({}), &principal, &scope).unwrap();
+        assert_eq!(control_window(&all, 5), Some((None, None)));
     }
 
     #[tokio::test]
