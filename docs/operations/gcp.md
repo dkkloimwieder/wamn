@@ -984,6 +984,17 @@ The `edge` target still exports the aarch64 edge-box binary.
 The installer compares rendered objects with live objects and skips an unchanged installation.
 It grants the edge only `get` on the named release ConfigMaps in `hosts`, without Secret access.
 
+The edge reads `gs://wamn-dev-web` as the Google service account `wamn-edge` through Workload Identity on `edge/wamn-edge-web`.
+The service account and its two bindings outlive a teardown, because they are IAM.
+If they are missing, the agent runs these three commands as `wamn-agent@wamn-dev`.
+The agent posts each command and runs it only after the owner approves it, the same approval as a cluster resize (owner ruling 2026-10-23):
+
+```bash
+gcloud iam service-accounts create wamn-edge --project wamn-dev
+gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web --member serviceAccount:wamn-edge@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectViewer
+gcloud iam service-accounts add-iam-policy-binding wamn-edge@wamn-dev.iam.gserviceaccount.com --project wamn-dev --role roles/iam.workloadIdentityUser --member 'serviceAccount:wamn-dev.svc.id.goog[edge/wamn-edge-web]'
+```
+
 Each environment can set `client_package` to the package id whose web client its `route_host` serves.
 A release with one client needs no name.
 With multiple clients and no name, `env apply` refuses and names the host.
