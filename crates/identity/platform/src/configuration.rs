@@ -62,6 +62,12 @@ const NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
     WHERE (number_sequence.application, number_sequence.name, number_sequence.pattern) \
           IS DISTINCT FROM (EXCLUDED.application, EXCLUDED.name, EXCLUDED.pattern)";
 
+/// A package's default pattern, written only when the application has no row
+/// of that name: an edited pattern stays.
+const DEFAULT_NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
+    (tenant_id, application, name, pattern) VALUES ($1, $2, $3, $4) \
+    ON CONFLICT (tenant_id, application, name) DO NOTHING";
+
 const SETTING_SQL: &str = "INSERT INTO platform.setting \
     (tenant_id, scope_type, scope_id, key, value, locked) \
     VALUES ($1, $2, $3, $4, $5::text::jsonb, $6) \
@@ -248,6 +254,40 @@ pub async fn write_configuration(
         .await?;
     }
     Ok(written)
+}
+
+/// One sequence default of a package (`docs/plan/platform-config.md`,
+/// "Declaration in wamn.k"): the application whose operations number from it,
+/// the sequence name and the default pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequenceDefault {
+    pub application: String,
+    pub name: String,
+    pub pattern: String,
+}
+
+/// Create the `platform.number_sequence` row of each default that the
+/// application does not have yet, and return how many rows were created. A
+/// row that exists keeps its pattern.
+///
+/// The caller runs this as [`write_configuration`] runs: on the
+/// `wamn_administration` authority, in a transaction that binds `app.user_id`
+/// and `app.operation`.
+pub async fn create_default_sequences(
+    client: &(impl GenericClient + Sync),
+    tenant: &str,
+    defaults: &[SequenceDefault],
+) -> Result<u64, IdentityError> {
+    let mut created = 0;
+    for row in defaults {
+        created += execute(
+            client,
+            DEFAULT_NUMBER_SEQUENCE_SQL,
+            &[&tenant, &row.application, &row.name, &row.pattern],
+        )
+        .await?;
+    }
+    Ok(created)
 }
 
 async fn execute(

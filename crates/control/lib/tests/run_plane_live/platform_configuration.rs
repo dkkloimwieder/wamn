@@ -203,3 +203,124 @@ async fn platform_configuration_live() {
     let su = connect(&url).await;
     platform_configuration_leg(&su, &url).await;
 }
+
+/// Env apply's sequence step (docs/plan/platform-config.md, "Declaration in
+/// wamn.k"; issue `wamn-83eth.3`): the first apply creates the
+/// `number_sequence` row of a package default under the administration
+/// authority, stamped by `wamn:provisioning`; a second apply after an edit of
+/// the pattern creates nothing and keeps the edited pattern.
+#[tokio::test]
+async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
+    use wamn_control::environment::stage::create_number_sequences;
+    use wamn_platform_identity::configuration::SequenceDefault;
+
+    let url = locked_database::database(wamn_test_postgres::database);
+    let su = connect(&url).await;
+    let database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
+    recreate_database(&su, &database).await;
+    let target_url = database_url(&url, &database);
+    let target = connect(&target_url).await;
+    reset(&target).await;
+    seed_system_env_policy(&su, "durable").await;
+    reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        changes: AuthChanges::default(),
+        system_database_url: url.to_string(),
+        admin_database_url: target_url.clone(),
+        org: CLI_ORG.to_string(),
+        project: CLI_PROJECT.to_string(),
+        tenant: TENANT.to_string(),
+        env: CLI_ENV.to_string(),
+        schema: SCHEMA.to_string(),
+        dry_run: false,
+    })
+    .await
+    .expect("reconcile-run-plane writes the tenant identity rows");
+    // The stable administration role and its surface, as env apply prepares
+    // them for the control host.
+    let (administration_role, administration) =
+        mint_administration_generation(&target, &target_url, &database).await;
+    drop(administration);
+
+    let defaults = [SequenceDefault {
+        application: "wamn_receiving".to_owned(),
+        name: "purchase_order".to_owned(),
+        pattern: "PO-{seq:po,width=6}".to_owned(),
+    }];
+    let rows = async || -> Vec<String> {
+        target
+            .query(
+                "SELECT application || ' ' || name || ' ' || pattern || ' ' || created_by::text \
+                   FROM platform.number_sequence ORDER BY 1",
+                &[],
+            )
+            .await
+            .expect("read the number sequences")
+            .iter()
+            .map(|row| row.get(0))
+            .collect()
+    };
+    let provisioning = wamn_project_state::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    assert_eq!(
+        create_number_sequences(&target_url, TENANT, &defaults)
+            .await
+            .expect("the first apply creates the sequence"),
+        1
+    );
+    assert_eq!(
+        rows().await,
+        [format!(
+            "wamn_receiving purchase_order PO-{{seq:po,width=6}} {provisioning}"
+        )],
+        "the row carries the package default, stamped by wamn:provisioning"
+    );
+
+    target
+        .batch_execute(&format!(
+            "BEGIN; SELECT set_config('app.user_id', '{}', true), \
+               set_config('app.operation', '{}', true); \
+             UPDATE platform.number_sequence SET pattern = 'P-{{seq:po,width=8}}'; COMMIT;",
+            rows::CALLER,
+            rows::OPERATION
+        ))
+        .await
+        .expect("edit the pattern");
+    assert_eq!(
+        create_number_sequences(&target_url, TENANT, &defaults)
+            .await
+            .expect("the second apply runs"),
+        0,
+        "a second apply creates nothing"
+    );
+    assert_eq!(
+        rows().await,
+        [format!(
+            "wamn_receiving purchase_order P-{{seq:po,width=8}} {provisioning}"
+        )],
+        "the edited pattern stays"
+    );
+    let history: Vec<String> = target
+        .query(
+            "SELECT type || ' ' || operation FROM platform.number_sequence_history \
+              ORDER BY position",
+            &[],
+        )
+        .await
+        .expect("read the history")
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        history,
+        [
+            "insert wamn:provisioning".to_owned(),
+            format!("update {}", rows::OPERATION)
+        ],
+        "the create and the edit each log one entry; the second apply logs none"
+    );
+
+    drop_generation_role(&target, &administration_role).await;
+    drop(target);
+    drop_database(&su, &database).await;
+}

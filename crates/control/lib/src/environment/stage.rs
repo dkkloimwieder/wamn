@@ -9,7 +9,9 @@
 //! each staged successor the release names; write the release cache row;
 //! materialize the release's connection requirements from the admitted
 //! descriptors the release manifest carries (contract D, R2 (3)); reconcile
-//! the packages' data access. A failed stage stops here, and
+//! the packages' data access; create the number sequence row of each
+//! package default that the environment does not have yet. A failed stage
+//! stops here, and
 //! nothing was written to Kubernetes. A backfill that stops on a lock is
 //! resumed by applying again.
 
@@ -143,6 +145,16 @@ pub async fn stage(
         &platform.auth_changes().await?,
     )
     .await?;
+    create_number_sequences(
+        project_url,
+        &tenant,
+        &sequence_defaults(
+            manifest,
+            packages.iter().map(|(_, _, _, manifest)| manifest),
+        ),
+    )
+    .await
+    .context("create the number sequences of the release's packages")?;
 
     // 3. The data access of the packages of the release, when each is the
     // installed version. A release on the tested predecessor keeps the
@@ -278,6 +290,77 @@ pub async fn materialize_application_principals(
     transaction.commit().await?;
     changes.publish(drops).await;
     Ok(())
+}
+
+/// The sequence defaults of `packages`, each under the application that
+/// numbers from it: the `app.application` claim of the package's operations,
+/// which is the composing application of its components in `manifest`, or
+/// the package itself when the release serves none of its components.
+pub fn sequence_defaults<'a>(
+    manifest: &wamn_catalog::ServingManifest,
+    packages: impl IntoIterator<Item = &'a PackageManifest>,
+) -> Vec<wamn_platform_identity::configuration::SequenceDefault> {
+    let mut defaults = Vec::new();
+    for package in packages {
+        let id = package.package.id.as_str();
+        let application = manifest
+            .components
+            .iter()
+            .find(|component| component.package_id == id)
+            .map_or(id, |component| manifest.composing_application(component));
+        defaults.extend(package.sequences.iter().map(|(name, declaration)| {
+            wamn_platform_identity::configuration::SequenceDefault {
+                application: application.to_owned(),
+                name: name.clone(),
+                pattern: declaration.pattern.clone(),
+            }
+        }));
+    }
+    defaults
+}
+
+/// Create the `platform.number_sequence` row of each default the database at
+/// `project_url` does not have yet, and return how many were created. A row
+/// that exists keeps its pattern, so an edited pattern survives every apply.
+///
+/// The write narrows the apply login to `wamn_administration`, the authority
+/// of the control host's configuration writes, so the row security of the
+/// table applies; it binds `wamn:provisioning` as the actor and operation.
+///
+/// # Errors
+///
+/// When the database refuses a statement.
+pub async fn create_number_sequences(
+    project_url: &str,
+    tenant: &str,
+    defaults: &[wamn_platform_identity::configuration::SequenceDefault],
+) -> anyhow::Result<u64> {
+    if defaults.is_empty() {
+        return Ok(0);
+    }
+    let mut project = connect(project_url).await?;
+    let transaction = project.transaction().await?;
+    transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_project_state::PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor and operation")?;
+    transaction
+        .batch_execute(&format!(
+            "SET LOCAL ROLE \"{}\"",
+            wamn_control_provision::ADMINISTRATION_ROLE
+        ))
+        .await
+        .context("narrow the apply login to the administration authority")?;
+    let created = wamn_platform_identity::configuration::create_default_sequences(
+        &transaction,
+        tenant,
+        defaults,
+    )
+    .await?;
+    transaction.commit().await?;
+    Ok(created)
 }
 
 /// The `upgrade-schema` run of the stage on the project database at
