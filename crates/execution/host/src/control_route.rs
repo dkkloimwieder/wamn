@@ -159,6 +159,15 @@ struct ProjectScope {
     project: String,
 }
 
+/// The request of `member.list`, beside its paging. The page refuses an
+/// environment that is not text.
+#[derive(Deserialize)]
+struct MemberListScope {
+    project: String,
+    #[serde(default)]
+    environment: Value,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectRequest {
@@ -423,7 +432,7 @@ impl ControlRoutes<'_> {
                 }
             }
             HostHandler::MemberList => {
-                let request: ProjectScope = parse(payload)?;
+                let request: MemberListScope = parse(payload)?;
                 let page = control_page(
                     payload,
                     attachment,
@@ -436,6 +445,7 @@ impl ControlRoutes<'_> {
                     self.control,
                     self.org,
                     &request.project,
+                    request.environment.as_str(),
                     page.after(0),
                     page.after(1),
                     page.read_limit(),
@@ -1146,17 +1156,30 @@ pub(crate) fn control_page(
     let Some(fields) = input.as_object() else {
         return Err(Refusal::Delivery(DeliveryError::InvalidPayload));
     };
+    // Only `member.list` filters by environment, and only its cursor binds it.
+    let filtered = attachment.route.handler == HostHandler::MemberList;
     if fields.keys().any(|key| {
-        !(matches!(key.as_str(), "limit" | "cursor") || key == "project" && project.is_some())
+        !(matches!(key.as_str(), "limit" | "cursor")
+            || key == "project" && project.is_some()
+            || key == "environment" && filtered)
     }) {
         return Err(Refusal::Delivery(DeliveryError::InvalidPayload));
     }
-    Ok(ListPage::new(
-        &input,
-        &attachment.operation,
-        json!({"principal": caller.as_str(), "org": org, "project": project}),
-        order,
-    )?)
+    let mut scope = json!({"principal": caller.as_str(), "org": org, "project": project});
+    if filtered {
+        let environment = match fields.get("environment") {
+            None => Value::Null,
+            Some(Value::String(environment)) => json!(environment),
+            Some(_) => {
+                return Err(Refusal::Declared {
+                    code: "invalid_input",
+                    detail: json!({ "field": "environment" }),
+                });
+            }
+        };
+        scope["environment"] = environment;
+    }
+    Ok(ListPage::new(&input, &attachment.operation, scope, order)?)
 }
 
 /// The request of a route, or the delivery refusal of a payload that is not
@@ -1273,6 +1296,61 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn member_list_cursor_binds_the_environment() {
+        let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+        let attachment = |handler| {
+            wamn_catalog::HostRouteSet::Control
+                .attachments()
+                .find(|(_, attachment)| attachment.route.handler == handler)
+                .unwrap()
+                .1
+        };
+        let members = attachment(HostHandler::MemberList);
+        let page = |payload: &str| {
+            control_page(
+                payload,
+                members,
+                &principal,
+                "acme",
+                Some("widgets"),
+                Order::Principal,
+            )
+        };
+        let key = json!(["a@example.invalid", principal.as_str()]);
+        let cursor = page("{\"limit\":1,\"environment\":\"dev\"}")
+            .unwrap()
+            .answer("members", vec![key.clone(), key], Clone::clone)["next_cursor"]
+            .clone();
+        assert!(page(&json!({"cursor": cursor, "environment": "dev"}).to_string()).is_ok());
+        for request in [
+            json!({"cursor": cursor, "environment": "prod"}),
+            json!({"cursor": cursor}),
+        ] {
+            assert!(matches!(
+                page(&request.to_string()),
+                Err(Refusal::Declared {code: "invalid_input", detail}) if detail == json!({"field": "cursor"})
+            ));
+        }
+        for input in ["{\"environment\":null}", "{\"environment\":1}"] {
+            assert!(matches!(
+                page(input),
+                Err(Refusal::Declared {code: "invalid_input", detail}) if detail == json!({"field": "environment"})
+            ));
+        }
+        assert!(matches!(
+            control_page(
+                "{\"environment\":\"dev\"}",
+                attachment(HostHandler::EnvironmentList),
+                &principal,
+                "acme",
+                Some("widgets"),
+                Order::Environment,
+            ),
+            Err(Refusal::Delivery(DeliveryError::InvalidPayload))
+        ));
     }
 
     #[tokio::test]

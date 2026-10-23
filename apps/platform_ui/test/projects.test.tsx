@@ -120,6 +120,48 @@ describe("Projects and Project", () => {
     ]);
   });
 
+  it("requests the members of the selected environment and filters nothing", async () => {
+    const requests: unknown[] = [];
+    const transport = createTransport({
+      baseUrl: "",
+      fetch: async (url) => {
+        const address = new URL(String(url), "http://fixture");
+        if (address.pathname.endsWith("/environment/list"))
+          return new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }]));
+        if (address.pathname.endsWith("/project/list"))
+          return new Response(JSON.stringify([{ value: { projects: [{ name: "widgets", state: "active" }] } }]));
+        requests.push(Object.fromEntries([...address.searchParams].map(([name, value]) => [name, JSON.parse(value)])));
+        // The browser shows these rows as the server returns them.
+        const members = ["Alex", "Blair"].map((name, index) => ({
+          principal_id: name,
+          email: `${name}@example.invalid`,
+          display_name: name,
+          org_admin: false,
+          project_admin: false,
+          environments: index === 0 ? ["dev", "prod"] : [],
+        }));
+        return new Response(JSON.stringify([{ value: { members, next_cursor: null, total: 2 } }]));
+      },
+    });
+    render(() => (
+      <Project
+        table="members"
+        transport={transport}
+        holds={admin}
+        params={{ project: "widgets", env: "dev" }}
+        search={{}}
+        open={() => {}}
+        close={() => {}}
+      />
+    ));
+    const members = await screen.findByRole("table", { name: "Members" });
+    await within(members).findByRole("link", { name: "Alex" });
+    expect(within(members).getByRole("link", { name: "Blair" })).toBeTruthy();
+    const alex = within(members).getByRole("link", { name: "Alex" }).closest("tr")!;
+    expect(alex.lastElementChild?.textContent).toBe("2");
+    expect(requests).toEqual([{ project: "widgets", environment: "dev", limit: 25 }]);
+  });
+
   it("lists only control.mine projects for a project admin without calling project.list", async () => {
     const session = identity(true, [], undefined, {
       org_admin: false,

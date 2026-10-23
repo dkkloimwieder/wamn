@@ -754,18 +754,21 @@ pub async fn project_envs_page(
 }
 
 /// Every user with a membership or a project role in the project, with the
-/// administrative grants that cover the project.
+/// administrative grants that cover the project. An environment `$8` keeps
+/// only its members and only its name in `environments`.
 const PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, \
     EXISTS (SELECT 1 FROM identity.org_roles o \
         WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $4), \
     EXISTS (SELECT 1 FROM identity.project_roles r \
         WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2 AND r.role = $3), \
     ARRAY(SELECT m.env FROM identity.project_env_memberships m \
-        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2 ORDER BY m.env) \
+        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2 \
+        AND ($8::text IS NULL OR m.env = $8) ORDER BY m.env) \
     FROM identity.principals p \
     WHERE p.type = 'user' AND (EXISTS (SELECT 1 FROM identity.project_env_memberships m \
-        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2) \
-    OR EXISTS (SELECT 1 FROM identity.project_roles r \
+        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2 \
+        AND ($8::text IS NULL OR m.env = $8)) \
+    OR $8::text IS NULL AND EXISTS (SELECT 1 FROM identity.project_roles r \
         WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2)) \
     AND ($5::text IS NULL OR (p.email, p.id) > ($5, $6::text::uuid)) \
     ORDER BY p.email, p.id LIMIT $7";
@@ -793,20 +796,25 @@ pub async fn project_members(
     org: &str,
     project: &str,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
-    project_members_page(client, org, project, None, None, None).await
+    project_members_page(client, org, project, None, None, None, None).await
 }
 
-/// Read a keyset page, or all rows when the limit is absent.
+/// Read a keyset page, or all rows when the limit is absent. An environment
+/// keeps only its members.
 pub async fn project_members_page(
     client: &(impl GenericClient + Sync),
     org: &str,
     project: &str,
+    environment: Option<&str>,
     after: Option<&str>,
     after_id: Option<&str>,
     limit: Option<i64>,
 ) -> Result<Vec<ProjectMember>, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
+    let environment = environment
+        .map(|environment| checked_scope_segment("environment", environment))
+        .transpose()?;
     client
         .query(
             PROJECT_MEMBERS_SQL,
@@ -818,6 +826,7 @@ pub async fn project_members_page(
                 &after,
                 &after_id,
                 &limit,
+                &environment,
             ],
         )
         .await

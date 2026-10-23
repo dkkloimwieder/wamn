@@ -146,10 +146,60 @@ async fn sql_pages_keep_order_scope_and_current_authority() {
         .unwrap(),
         users[2..]
     );
+    // project-admin made every user a member of every environment; b@ leaves `b`.
+    client
+        .execute(
+            "DELETE FROM identity.project_env_memberships \
+             WHERE principal_id = $1::text::uuid AND env = 'b'",
+            &[&principals[2].as_str()],
+        )
+        .await
+        .unwrap();
     let members = org::project_members(&client, "acme", "a").await.unwrap();
     assert_eq!(members.len(), 3);
+    assert_eq!(members[0].environments, ["a", "b", "c"]);
+    // The filter applies before the keyset and the limit, and narrows
+    // `environments` to the one environment.
+    let filtered = org::project_members_page(&client, "acme", "a", Some("b"), None, None, Some(1))
+        .await
+        .unwrap();
     assert_eq!(
-        org::project_members_page(&client, "acme", "a", None, None, Some(2))
+        filtered
+            .iter()
+            .map(|row| (row.email.as_str(), row.environments.clone()))
+            .collect::<Vec<_>>(),
+        [("a@example.test", vec!["b".to_owned()])]
+    );
+    let rest = org::project_members_page(
+        &client,
+        "acme",
+        "a",
+        Some("b"),
+        Some(&filtered[0].email),
+        Some(&filtered[0].principal_id),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rest.iter()
+            .map(|row| (row.email.as_str(), row.environments.clone()))
+            .collect::<Vec<_>>(),
+        [("c@example.test", vec!["b".to_owned()])]
+    );
+    assert!(
+        org::project_members_page(&client, "acme", "a", Some("zzz"), None, None, Some(2))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        org::project_members_page(&client, "acme", "a", Some(""), None, None, Some(2))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        org::project_members_page(&client, "acme", "a", None, None, None, Some(2))
             .await
             .unwrap(),
         members[..2]
@@ -159,6 +209,7 @@ async fn sql_pages_keep_order_scope_and_current_authority() {
             &client,
             "acme",
             "a",
+            None,
             Some(&members[1].email),
             Some(&members[1].principal_id),
             Some(2)
@@ -173,6 +224,7 @@ async fn sql_pages_keep_order_scope_and_current_authority() {
             &client,
             "acme",
             "a",
+            None,
             Some(&members[1].email),
             Some("00000000-0000-0000-0000-000000000000"),
             Some(2)

@@ -114,7 +114,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:environment/status@0.9.0` | Answers the digest, rollout, workload conditions, and live set of one environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the tables it reads, writes, deletes and locks, derived from the release's SQL over the environment's table columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. Writes nothing. |
-| `wamn-control:member/list@0.9.0` | Takes `project`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
+| `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
 | `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
 | `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while `org-admin` or `project-admin` covers the environment. |
 | `wamn-control:project-admin/grant@0.9.0` | Takes `project` and `principal_id` of an active member, and writes `project-admin` and a membership in every environment of the project. |
@@ -153,11 +153,13 @@ Explicit nulls refuse. A request with neither member returns every row.
 Each answer adds nullable `next_cursor` and `total` members. `control.mine` repeats `org_admin` on every page.
 `total` is the full count only when a first page exhausts the set, or a whole-result request reads everything.
 Later pages return null totals, even on the last page. No list runs a count query.
+`member.list` also accepts an optional `environment` member. With it, the answer keeps only the users with a membership in that environment of the project, and each row's `environments` names only that environment.
+The query applies the filter before the keyset and the limit. An unknown environment returns an empty list. An explicit null or a blank name refuses with `invalid_input`, `detail.field` `environment`.
 
 A cursor is an opaque token for the next page. Each query resumes after its last key and reads at most `limit + 1` rows.
 Projects sort by project identifier. Environments sort by environment name within the project.
 Users and members sort by email, then principal UUID. SQL comparisons use the same database collation as the order.
-Cursors encode canonical compact JSON as unpadded base64url and bind the operation, authenticated principal, org, applicable project, and order.
+Cursors encode canonical compact JSON as unpadded base64url and bind the operation, authenticated principal, org, applicable project, the `member.list` environment or its absence, and order.
 Malformed or mismatched cursors return `invalid_input` with `detail.field` set to `cursor`. Bad limits name `limit` in that field.
 Every page repeats authorization. Pages reflect current data, so an email change can move a user between pages.
 The contracts retain version 0.9.0. `environment.status` and `release.profile` retain their whole-result contracts.

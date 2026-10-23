@@ -20,6 +20,14 @@
       "nullable": false,
       "required": false,
       "values": []
+    },
+    {
+      "path": "environment",
+      "type": "text",
+      "nullable": false,
+      "required": false,
+      "values": [],
+      "label": "Environment"
     }
   ]
 }

@@ -122,13 +122,11 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
     const result = value(await environment.list(props.transport, [{ project: name(), ...input }]));
     return { ...result, rows: result.environments };
   });
+  // The server keeps only the members of the selected environment.
+  const memberScope = () => ({ project: name(), ...(props.params.env ? { environment: props.params.env } : {}) });
   const memberPage = createServerPage<member.MemberListResultMembers>(async (input) => {
-    const result = value(await member.list(props.transport, [{ project: name(), ...input }]));
-    return {
-      ...result,
-      total: props.params.env ? null : result.total,
-      rows: result.members.filter((person) => !props.params.env || person.environments.includes(props.params.env)),
-    };
+    const result = value(await member.list(props.transport, [{ ...memberScope(), ...input }]));
+    return { ...result, rows: result.members };
   });
   const [state, setState] = createSignal<"active" | "inactive">();
   const [members, setMembers] = createSignal<readonly member.MemberListResultMembers[]>([]);
@@ -169,7 +167,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
     } else {
       const [envs, people] = await Promise.all([
         environment.list(props.transport, [{ project: name() }]),
-        member.list(props.transport, [{ project: name() }]),
+        member.list(props.transport, [memberScope()]),
       ]);
       if (!active || current !== refreshGeneration) return;
       if ([envs, people].some((result) => result.status === "refused" && result.code === "project_not_found")) {
@@ -181,9 +179,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
         setMissing(true);
         return;
       }
-      setMembers(
-        value(people).members.filter((person) => !props.params.env || person.environments.includes(props.params.env)),
-      );
+      setMembers(value(people).members);
     }
     if (active && current === refreshGeneration) setLoaded(true);
   };
@@ -302,8 +298,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
               {
                 id: "memberships",
                 header: "Memberships",
-                accessorFn: (entry) =>
-                  entry.environments.filter((env) => !props.params.env || env === props.params.env).length,
+                accessorFn: (entry) => entry.environments.length,
               },
             ]}
             formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol", projectAdmin: "boolean-symbol" }}
@@ -353,7 +348,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 refresh={refresh}
                 id="member-environments"
                 title={`Memberships for ${current().email}`}
-                rows={current().environments.filter((env) => !props.params.env || env === props.params.env)}
+                rows={current().environments}
                 rowKey={(env) => env}
                 create={
                   props.holds(member.MEMBER_GRANT_ROUTE.operation)

@@ -681,6 +681,59 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         ]}))
     );
 
+    // An environment filters in the query, before the limit.
+    let page = call(
+        &delivery,
+        "member/list",
+        cat,
+        json!({"project": "billing", "environment": "dev", "limit": 2}),
+    )
+    .await
+    .expect("a filtered page");
+    assert_eq!(
+        page["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| (row["email"].clone(), row["environments"].clone()))
+            .collect::<Vec<_>>(),
+        [
+            (json!("ann@example.test"), json!(["dev"])),
+            (json!("boss@example.test"), json!(["dev"])),
+        ]
+    );
+    assert!(page["next_cursor"].is_string());
+    assert_eq!(
+        call(
+            &delivery,
+            "member/list",
+            cat,
+            json!({"project": "billing", "cursor": page["next_cursor"]}),
+        )
+        .await,
+        Err(refused("invalid_input", &json!({"field": "cursor"})))
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "member/list",
+            cat,
+            json!({"project": "billing", "environment": "prod"}),
+        )
+        .await,
+        Ok(json!({"next_cursor": null, "total": 0, "members": []}))
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "member/list",
+            cat,
+            json!({"project": "billing", "environment": null}),
+        )
+        .await,
+        Err(refused("invalid_input", &json!({"field": "environment"})))
+    );
+
     // A covering grant refuses the revoke below it.
     assert_eq!(
         call(&delivery, "member/revoke", boss, member(cat, "dev")).await,

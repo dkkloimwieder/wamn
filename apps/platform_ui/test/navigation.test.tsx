@@ -34,6 +34,14 @@ function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"])
       environments: ["prod"],
     },
   ];
+  // As the server does, an environment keeps its members and only its name.
+  const environmentMembers = (encoded: string | null) => {
+    if (encoded === null) return members;
+    const environment: string = JSON.parse(encoded);
+    return members
+      .filter((entry) => entry.environments.includes(environment))
+      .map((entry) => ({ ...entry, environments: [environment] }));
+  };
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const route = new URL(String(url), "http://localhost").pathname;
     calls.push(route);
@@ -58,7 +66,7 @@ function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"])
             ],
           }
         : route.endsWith("/member/list")
-          ? { members }
+          ? { members: environmentMembers(new URL(String(url), "http://localhost").searchParams.get("environment")) }
           : route.endsWith("/user/list")
             ? { users: members.map((entry) => ({ ...entry, status: "active" })) }
             : route.endsWith("/environment/status")
