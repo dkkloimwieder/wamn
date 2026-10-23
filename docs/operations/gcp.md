@@ -1019,10 +1019,11 @@ It reads the NEG by its fixed name and declared zone.
 It reads no environment files and renders no host rules, backend bucket, URL map, or certificate.
 The connection target is 1,000 concurrent connections per endpoint.
 
-The order is platform apply, owner OpenTofu apply, then platform apply again.
+The order is platform apply, OpenTofu apply, then platform apply again.
 The first run creates the NEG before the load balancer can use it.
-The owner renders `deploy/gcp/project.k` as in section 4.2 and applies that rendered directory.
-The diagnostic `tofu apply deploy/gcp` names this owner step.
+The agent renders `deploy/gcp/project.k` as in section 4.2 and runs `tofu plan` on that rendered directory as `wamn-agent@wamn-dev`.
+The agent posts the plan, and it runs `tofu apply` of the saved plan only after the owner approves it, the same approval as a cluster resize (owner ruling 2026-10-23).
+The diagnostic `tofu apply deploy/gcp` names this step.
 The next platform apply skips unchanged resources and runs the final HTTPS checks.
 The verb never runs OpenTofu or `gcloud compute`.
 
