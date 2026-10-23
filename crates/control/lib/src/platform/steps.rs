@@ -212,7 +212,10 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             number: "4.12", title: "Identity and session key",
             runs: Runner::Job("identity/platform-identity"),
             inputs: vec![("org", org.clone()), ("environments", environments.into()), ("session target Secrets", "identity/wamn-session-role-reader-<org>--<project>--<env>".into()), ("identity image", format!("{registry}/wamn-identity:{platform_version} (digest from 4.6)")), ("resend_from", document.resend_from.clone()), ("route hosts", routes.clone()), ("identity issuer", "https://identity.identity.svc.cluster.local".into()), ("invite Job", "identity/invite (docs/operations/gcp.md section 5.3)".into()), ("owner_email", document.owner_email.clone()), ("operator certificate", format!("identity/operator-{org}")), ("admin Secret", "identity/wamn-system-admin (owned by invite Job)".into())],
-            owner_inputs: vec![OwnerInput { name: "Secret identity/identity-resend, key api-key (nonempty, no whitespace)".into(), instructions: "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"".into() }, dns.clone()],
+            owner_inputs: vec![match document.provider {
+                Provider::Gcp => OwnerInput { name: "Secret Manager secret identity-resend (nonempty, no whitespace), readable by the agent".into(), instructions: "gcp.md section 1 item 3".into() },
+                Provider::Kind => OwnerInput { name: "Secret identity/identity-resend, key api-key (nonempty, no whitespace)".into(), instructions: "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"".into() },
+            }, dns.clone()],
         },
         InstallStep {
             number: "4.13", title: "Packages",

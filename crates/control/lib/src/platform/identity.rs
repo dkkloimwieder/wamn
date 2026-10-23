@@ -14,6 +14,7 @@ use super::job::{self, JobRequest, JobSecret};
 
 const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 const RESEND_COMMAND: &str = "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"";
+const RESEND_SECRET_MANAGER: &str = "gcloud secrets versions access latest --secret identity-resend --project <project> must print a nonempty key with no whitespace; see gcp.md section 1";
 const CURL_IMAGE: &str =
     "curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777";
 
@@ -47,15 +48,31 @@ struct AuthNats {
     tls_secret: &'static str,
 }
 
+fn valid_key(key: &str) -> bool {
+    !key.is_empty() && !key.chars().any(char::is_whitespace)
+}
+
 fn resend(secret: Option<&SecretData>) -> anyhow::Result<()> {
     let valid = secret
         .and_then(|secret| secret_text(secret, "api-key").ok())
-        .is_some_and(|key| !key.is_empty() && !key.chars().any(char::is_whitespace));
+        .is_some_and(|key| valid_key(&key));
     ensure!(
         valid,
         "owner input: Secret identity/identity-resend needs a nonempty api-key with no whitespace; run the section 1 command:\n{RESEND_COMMAND}"
     );
     Ok(())
+}
+
+/// The cluster Secret that carries a key read from the provider's key store.
+fn resend_secret(key: &str) -> anyhow::Result<Value> {
+    ensure!(valid_key(key), "owner input: {RESEND_SECRET_MANAGER}");
+    Ok(json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": "identity-resend", "namespace": "identity"},
+        "type": "Opaque",
+        "stringData": {"api-key": key},
+    }))
 }
 
 pub(super) async fn apply(
@@ -65,6 +82,17 @@ pub(super) async fn apply(
     environments: &Path,
     directory: &Path,
 ) -> anyhow::Result<bool> {
+    // Where the provider keeps the key, the verb writes the cluster Secret
+    // from it, so a teardown loses nothing the owner made (wamn-ie1j2).
+    if let Some(key) = document.provider.resend_key(document).await? {
+        kubectl::apply(
+            &target.kubeconfig,
+            &target.context,
+            "identity",
+            &resend_secret(&key)?,
+        )
+        .await?;
+    }
     let owner = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -432,6 +460,20 @@ async fn keys(
 mod tests {
     use super::*;
     use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    #[test]
+    fn a_secret_manager_key_refuses_empty_and_whitespace_without_printing_it() {
+        for key in ["", "re_key\n", "re key"] {
+            let error = resend_secret(key).unwrap_err().to_string();
+            assert!(error.contains("owner input"), "{error}");
+            if !key.trim().is_empty() {
+                assert!(!error.contains(key.trim()), "{error}");
+            }
+        }
+        let secret = resend_secret("re_key").unwrap();
+        assert_eq!(secret["metadata"]["name"], "identity-resend");
+        assert_eq!(secret["stringData"]["api-key"], "re_key");
+    }
 
     #[test]
     fn resend_refuses_missing_empty_and_whitespace_without_printing_values() {

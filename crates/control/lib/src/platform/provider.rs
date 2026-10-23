@@ -67,6 +67,45 @@ impl Provider {
     }
 }
 
+/// The Secret Manager secret that holds the Resend key on `gcp` (wamn-ie1j2).
+pub(super) const RESEND_SECRET: &str = "identity-resend";
+
+impl Provider {
+    /// Read the Resend key from the provider's own key store, or `None` where
+    /// the provider has none and the cluster Secret is the owner input.
+    ///
+    /// On `gcp` the key lives in Secret Manager, which outlives a teardown.
+    /// The key never reaches a log: a failure names only gcloud's standard error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if gcloud fails or writes no UTF-8 text.
+    pub async fn resend_key(self, document: &ClusterDocument) -> anyhow::Result<Option<String>> {
+        match self {
+            Self::Gcp => {
+                let output = run(Command::new("gcloud").args(resend_arguments(document))).await?;
+                String::from_utf8(output.stdout)
+                    .map(Some)
+                    .context("decode the Resend key")
+            }
+            Self::Kind => Ok(None),
+        }
+    }
+}
+
+fn resend_arguments(document: &ClusterDocument) -> [&str; 8] {
+    [
+        "secrets",
+        "versions",
+        "access",
+        "latest",
+        "--secret",
+        RESEND_SECRET,
+        "--project",
+        &document.project_id,
+    ]
+}
+
 fn gcp_arguments(document: &ClusterDocument) -> [&str; 8] {
     [
         "container",
@@ -172,8 +211,25 @@ async fn run(command: &mut Command) -> anyhow::Result<Output> {
 mod tests {
     use super::{
         context_name, gcp_arguments, kind_arguments, kind_configuration, kind_list_arguments,
-        registry_hosts,
+        registry_hosts, resend_arguments,
     };
+
+    #[test]
+    fn gcp_reads_the_resend_key_from_secret_manager_in_the_document_project() {
+        assert_eq!(
+            resend_arguments(&document(Provider::Gcp)),
+            [
+                "secrets",
+                "versions",
+                "access",
+                "latest",
+                "--secret",
+                "identity-resend",
+                "--project",
+                "test-project"
+            ]
+        );
+    }
     use crate::platform::document::{Buckets, ClusterDocument, Provider, RouteHosts};
     use std::ffi::OsString;
     use std::path::Path;

@@ -24,10 +24,14 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --dimensions region=us-central1 --preferred-value 200
    ```
 
-3. The Resend key, as the Secret `identity-resend` in namespace `identity`, key `api-key`. The owner makes it after section 4.4 makes the namespace and before section 4.12. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`). Most editors end a file with a line end, so the command removes all whitespace:
+3. Read access for the agent on the Secret Manager secret `identity-resend`, which holds the Resend key. The secret is a project resource, so a teardown keeps it, and step 4.12 writes the cluster Secret from it. The owner makes the secret once and grants the agent read access on that one secret. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`), so the second command removes all whitespace:
 
    ```bash
-   kubectl -n identity create secret generic identity-resend --from-literal=api-key="$(tr -d '[:space:]' < <file>)"
+   gcloud secrets create identity-resend --project wamn-dev --replication-policy automatic
+   tr -d '[:space:]' < <file> | gcloud secrets versions add identity-resend --project wamn-dev --data-file=-
+   gcloud secrets add-iam-policy-binding identity-resend --project wamn-dev \
+     --member serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com \
+     --role roles/secretmanager.secretAccessor
    ```
 
 4. The Workload Identity binding of the host service account. The Kubernetes service account `hosts/wamn-host` acts as the Google service account `wamn-blob`. A teardown keeps this binding, because it is IAM. If the binding is missing, the owner runs:
@@ -305,7 +309,7 @@ The Job mounts a private document copy, database credentials, and the scheduler 
 It uses the runner's pinned KCL compiler and its own Kubernetes account.
 Step 4.10 needs no file because the verb supplies the existing environment variables directly.
 An unchanged completed Job skips when its input digest matches.
-Step 4.12 reads the owner's `identity-resend` Secret and refuses a missing, empty, or whitespace-bearing key with the section 1 command.
+Step 4.12 reads the key from the Secret Manager secret `identity-resend` and writes the Secret `identity/identity-resend`. It refuses a missing, empty, or whitespace-bearing key with the section 1 item.
 It prepares session targets as Jobs, then installs the identity chart with values derived from the document and stamped images.
 Jobs read the active session key, publish and activate a key when none is active, and request the public keys over TLS.
 The public Job results stay with their completion digests so a retry can reuse a published key.
@@ -361,7 +365,7 @@ sed 's/__ENVIRONMENT_NAMESPACE__/hosts/' deploy/platform/host-environment-certs.
 kubectl -n hosts wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
 ```
 
-The owner can now make the Secret `identity-resend` of section 1.
+The namespace `identity` exists now. Step 4.12 writes its Secret `identity-resend` from Secret Manager.
 
 ### 4.4.1 Collector
 
@@ -663,7 +667,7 @@ git diff deploy/gcp/host-group-*.yaml
 
 ### 4.12 Identity and session key
 
-`platform apply` now runs this step after the owner creates the Resend Secret from section 1.
+`platform apply` runs this step. It writes the Resend Secret from the Secret Manager secret of section 1.
 The following commands describe the manual procedure.
 
 Prepare the session target of each environment in namespace `identity`. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) names both Secrets:
@@ -681,7 +685,7 @@ done
 
 The verb prints two PostgreSQL warnings that the `postgres` role did not grant a role membership. The generation still authenticates.
 
-Make sure that the owner's Resend Secret exists, that it has the key `api-key`, and that the key holds no whitespace. The second and third commands print counts, never the key. The second count is the length of `api-key` and must be more than 0, because a missing or empty key also gives a whitespace count of 0. The third count must be 0. If the second count is 0, the owner makes the Secret again as section 1 says:
+Make sure that the Resend Secret exists, that it has the key `api-key`, and that the key holds no whitespace. The second and third commands print counts, never the key. The second count is the length of `api-key` and must be more than 0, because a missing or empty key also gives a whitespace count of 0. The third count must be 0. If the second count is 0, the owner adds a version to the Secret Manager secret as section 1 says:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
@@ -1131,10 +1135,15 @@ Other users receive invitations through the platform UI.
 
 ### 5.4 Rotate the Resend key
 
-The owner makes the new key in Resend and writes it to a new mode 0600 file. The command removes the line end of the file. Replace the Secret and restart identity:
+The owner makes the new key in Resend, writes it to a new mode 0600 file, and adds it as a new version. The first command removes the line end of the file:
 
 ```bash
-kubectl -n identity create secret generic identity-resend --from-literal=api-key="$(tr -d '[:space:]' < <file>)" --dry-run=client -o yaml | kubectl apply -f -
+tr -d '[:space:]' < <file> | gcloud secrets versions add identity-resend --project wamn-dev --data-file=-
+```
+
+The agent then runs `platform apply`, which writes the cluster Secret from the new version in step 4.12, and restarts identity:
+
+```bash
 kubectl -n identity rollout restart deploy/identity
 kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
