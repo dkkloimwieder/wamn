@@ -12,6 +12,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 
 const TOOL: &str = "tools/test-changes";
 
@@ -318,11 +319,17 @@ impl Fixture {
 
     /// The guest build that a change set selecting a guest runs.
     fn guest_builds(&self) -> Vec<Vec<String>> {
+        // The tool keys the build by the first 16 hex digits of the SHA-256
+        // of the checkout's real path.
+        let real_root = fs::canonicalize(&self.root).unwrap();
+        let key = hex::encode(Sha256::digest(real_root.display().to_string().as_bytes()));
         vec![vec![
             "docker".to_owned(),
             "build".to_owned(),
             "--target".to_owned(),
             "component-builder".to_owned(),
+            "--build-arg".to_owned(),
+            format!("WAMN_CHECKOUT_KEY={}", &key[..16]),
             self.root.display().to_string(),
         ]]
     }
