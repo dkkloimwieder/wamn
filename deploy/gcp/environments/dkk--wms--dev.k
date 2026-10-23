@@ -4,7 +4,7 @@ environment.Environment {
     org = "dkk"
     project = "wms"
     env = "dev"
-    release = "sha256:d31830b104ace4a09180b63e7dcfe5152a3a59db093553e5bbf67cda65adeec9"
+    release = "sha256:25398ab981fb7da87a62a17f02ed336d18d1a1335f01723df6efe5b2417b68cf"
     route_host = "wms.wamn.dev"
     policy = "dev"
     connections = {
