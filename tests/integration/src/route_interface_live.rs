@@ -8,7 +8,8 @@
 //! projections are served by a route only: no wiring for them exists in the
 //! release or the catalog, so their answers prove that a route runs no graph
 //! walk. The later sections show the conditional read of a list route, the
-//! streamed load, and each scope filter mode, the search and the band.
+//! page of a query, the ceiling, and each scope filter mode, the search and
+//! the band.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -114,37 +115,6 @@ impl Paths {
             .map(|value| value.to_str().map(ToOwned::to_owned))
             .transpose()?;
         Ok((status, etag, response.text().await?))
-    }
-
-    /// Send a streamed read to a route, and return the status, the headers
-    /// and the reply lines, each parsed as JSON.
-    async fn streamed(
-        &self,
-        path: &str,
-        item: &Value,
-        if_none_match: Option<&str>,
-    ) -> anyhow::Result<(u16, reqwest::header::HeaderMap, Vec<Value>)> {
-        let query = wamn_execution_contract::encode_read_query(
-            item.as_object().context("a read item is an object")?,
-        );
-        let mut request = self
-            .client
-            .get(format!("{}{ROUTE_PREFIX}{path}?{query}", self.endpoint))
-            .header("Host", &self.host)
-            .bearer_auth(&self.bearer);
-        if let Some(tag) = if_none_match {
-            request = request.header("If-None-Match", tag);
-        }
-        let response = request.send().await.with_context(|| path.to_owned())?;
-        let status = response.status().as_u16();
-        let headers = response.headers().clone();
-        let text = response.text().await?;
-        let lines = text
-            .lines()
-            .map(serde_json::from_str)
-            .collect::<Result<Vec<Value>, _>>()
-            .with_context(|| format!("{path} answered {status} with {text}"))?;
-        Ok((status, headers, lines))
     }
 
     /// Send one body through the route only.
@@ -536,95 +506,23 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
             "a write changes the list tag: {status} {changed:?} {etag}"
         );
     }
-    // STREAMED READS (wamn-utci.2). The same query in the stream shape answers
-    // one line for each row and one outcome line last, with the list's weak
-    // ETag, and an unchanged load answers 304. A cap above the ceiling refuses
-    // before the first row with the refusal a page answers.
-    let page = paths.route("/widget/query", &json!([{}])).await?;
-    let page_ids = value(&page)?["item"]
-        .as_array()
-        .context("a page carries its rows")?
-        .iter()
-        .map(|row| row["id"].clone())
-        .collect::<Vec<_>>();
-    anyhow::ensure!(page_ids.len() > 1, "the fixture holds more than one widget");
-    let (status, headers, lines) = paths
-        .streamed(
-            "/widget/query",
-            &json!({"limit": 1000, "shape": "stream"}),
-            None,
-        )
-        .await?;
-    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    // ONE PAGE (wamn-cg5e4). A query answers its page as one JSON body: its
+    // rows, and the cursor when more rows exist. A limit above the declared
+    // maximum refuses before the query runs.
+    let query_path = format!("{ROUTE_PREFIX}/widget/query");
+    let (status, page) = paths.get(&query_path, &json!([{"limit": 1}])).await?;
     anyhow::ensure!(
         status == 200
-            && header("content-type") == Some("application/x-ndjson")
-            && header("cache-control") == Some("private, no-cache")
-            && header("x-accel-buffering") == Some("no"),
-        "a load answers 200 as private, unbuffered lines: {status} {headers:?}"
+            && value(&page)?["item"]
+                .as_array()
+                .is_some_and(|rows| rows.len() == 1)
+            && value(&page)?["next_cursor"].is_string(),
+        "a page of one row carries the cursor of the next: {status} {page}"
     );
-    let load_tag = header("etag")
-        .filter(|tag| tag.starts_with("W/\""))
-        .context("a load carries the weak list ETag")?
-        .to_owned();
-    let (outcome, rows) = lines.split_last().context("a load ends in its outcome")?;
+    let (status, refused_page) = paths.get(&query_path, &json!([{"limit": 101}])).await?;
     anyhow::ensure!(
-        rows.iter()
-            .map(|line| line["row"]["id"].clone())
-            .collect::<Vec<_>>()
-            == page_ids
-            && outcome["outcome"]["value"]["more"] == json!(false),
-        "a load reads the page's rows and says no more exist: {lines:?}"
-    );
-    let (status, _, lines) = paths
-        .streamed(
-            "/widget/query",
-            &json!({"limit": 1, "shape": "stream"}),
-            None,
-        )
-        .await?;
-    anyhow::ensure!(
-        status == 200
-            && lines.len() == 2
-            && lines[0]["row"]["id"] == page_ids[0]
-            && lines[1]["outcome"]["value"]["more"] == json!(true),
-        "a load of one row says more exist: {lines:?}"
-    );
-    let (status, headers, lines) = paths
-        .streamed(
-            "/widget/query",
-            &json!({"limit": 1000, "shape": "stream"}),
-            Some(&load_tag),
-        )
-        .await?;
-    anyhow::ensure!(
-        status == 304 && lines.is_empty() && headers.get("etag").is_some(),
-        "an unchanged load answers 304 with no body: {status} {lines:?}"
-    );
-    let (status, _, lines) = paths
-        .streamed(
-            "/widget/query",
-            &json!({"limit": 100_001, "shape": "stream"}),
-            None,
-        )
-        .await?;
-    anyhow::ensure!(
-        status == 200
-            && lines.len() == 1
-            && lines[0][0]["error"]["code"] == json!("invalid_input")
-            && lines[0][0]["error"]["detail"]["maximum"] == json!("100000"),
-        "a cap above the ceiling refuses before the first row: {status} {lines:?}"
-    );
-    let (status, _, lines) = paths
-        .streamed(
-            "/widget/query",
-            &json!({"limit": 101, "shape": "page"}),
-            None,
-        )
-        .await?;
-    anyhow::ensure!(
-        status == 400 && lines[0]["error"]["data"]["pointer"] == json!("/0/limit"),
-        "the input schema refuses a page above its maximum: {status} {lines:?}"
+        status == 400 && refused_page["error"]["data"]["pointer"] == json!("/0/limit"),
+        "the input schema refuses a page above its maximum: {status} {refused_page}"
     );
 
     // A get answers a strong ETag from the revision of its record. The same
@@ -668,74 +566,12 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     Ok(())
 }
 
-/// Send a streamed read on a raw connection and read its head and first
-/// rows, and nothing more: a client that holds its socket reads no row the
-/// kernel did not already receive.
-async fn open_load(
-    address: &str,
-    paths: &Paths,
-    path: &str,
-) -> anyhow::Result<tokio::net::TcpStream> {
-    let mut socket = tokio::net::TcpStream::connect(address).await?;
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\r\n",
-        paths.host, paths.bearer
-    );
-    tokio::io::AsyncWriteExt::write_all(&mut socket, request.as_bytes()).await?;
-    let mut first = vec![0; 4096];
-    let read = tokio::io::AsyncReadExt::read(&mut socket, &mut first).await?;
-    anyhow::ensure!(
-        first[..read].starts_with(b"HTTP/1.1 200"),
-        "the load answers 200: {}",
-        String::from_utf8_lossy(&first[..read])
-    );
-    Ok(socket)
-}
-
-/// The record-history actor of this test's own writes.
-const ACTOR: &str =
-    "SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true)";
-
-/// More widget makers than the sockets between the host and the client hold:
-/// each row is about 1 KiB, and a load of 100,000 rows about 100 MiB.
-async fn makers(database: &tokio_postgres::Client) -> anyhow::Result<()> {
-    database
-        .batch_execute(&format!(
-            "BEGIN; {ACTOR}; \
-             INSERT INTO inventory.widget_maker (name) \
-             SELECT 'maker ' || n || repeat('x', 1000) FROM generate_series(1, 150000) n; \
-             COMMIT"
-        ))
-        .await
-        .map_err(|error| anyhow::anyhow!("insert the widget makers: {error:?}"))
-}
-
-/// Transactions open on the project database, other than this session's.
-const OPEN_TRANSACTIONS: &str = "SELECT count(*) FROM pg_stat_activity \
-     WHERE datname = current_database() AND pid <> pg_backend_pid() AND xact_start IS NOT NULL";
-
-/// Wait until the number of open transactions satisfies `settled`.
-async fn transactions(
-    database: &tokio_postgres::Client,
-    settled: impl Fn(i64) -> bool,
-) -> anyhow::Result<i64> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        let open: i64 = database.query_one(OPEN_TRANSACTIONS, &[]).await?.get(0);
-        if settled(open) || tokio::time::Instant::now() > deadline {
-            return Ok(open);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-}
-
-/// A streamed load ends its database query when it stops: at its cap, when
-/// the client aborts it, and when its connection drops (wamn-utci.3). While a
-/// client reads no more, the load holds one transaction open on the server,
-/// and each stop ends that transaction.
+/// A read above the platform ceiling of 50,000 rows refuses before the query
+/// runs (wamn-cg5e4). The entry refuses it with the limit refusal, whose
+/// maximum is the ceiling. A query's declared maximum of 100 refuses first.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
-async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<()> {
+async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
@@ -746,189 +582,32 @@ async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
     let (application, paths) = start(system.url(), project.url(), &scratch).await?;
-    let (database, connection) =
-        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
-    makers(&database).await?;
-    let load = json!({"limit": 100_000, "shape": "stream"});
-    let query = wamn_execution_contract::encode_read_query(load.as_object().context("an item")?);
-    let path = format!("{ROUTE_PREFIX}/widget_maker/query?{query}");
+    let load = json!([{"limit": 100_000}]);
 
-    // CAP STOP. A load of ten rows reads eleven, says more exist, and ends.
-    let (status, _, lines) = paths
-        .streamed(
-            "/widget_maker/query",
-            &json!({"limit": 10, "shape": "stream"}),
-            None,
-        )
+    // The projection declares no limit, so the ceiling refuses the load.
+    let list = format!("{ROUTE_PREFIX}/widget_maker/list");
+    let (status, answer) = paths.get(&list, &load).await?;
+    anyhow::ensure!(status == 200, "the refusal answers 200: {status} {answer}");
+    refused(
+        &answer,
+        "invalid_input",
+        &json!({"field": "limit", "minimum": "1", "maximum": "50000", "observed": "100000"}),
+    )?;
+    // A limit at the ceiling passes it, and is not the ceiling refusal.
+    let (status, answer) = paths.get(&list, &json!([{"limit": 50_000}])).await?;
+    anyhow::ensure!(
+        answer[0]["error"]["detail"]["maximum"] != json!("50000"),
+        "a limit at the ceiling is not the ceiling refusal: {status} {answer}"
+    );
+    // The query's declared maximum refuses before the ceiling.
+    let (status, answer) = paths
+        .get(&format!("{ROUTE_PREFIX}/widget_maker/query"), &load)
         .await?;
     anyhow::ensure!(
-        status == 200 && lines.len() == 11 && lines[10]["outcome"]["value"]["more"] == json!(true),
-        "a load of ten rows says more exist: {status} {lines:?}"
-    );
-    let open = transactions(&database, |open| open == 0).await?;
-    anyhow::ensure!(open == 0, "the cap stop ends the query: {open} open");
-
-    // ABORT. The client reads the head and the first rows of a load, then
-    // closes its connection, as a browser does when a page aborts a fetch.
-    let address = paths
-        .endpoint
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
-        .to_owned();
-    let mut socket = open_load(&address, &paths, &path).await?;
-    let open = transactions(&database, |open| open >= 1).await?;
-    anyhow::ensure!(
-        open >= 1,
-        "a load the client does not read holds its transaction"
-    );
-    tokio::io::AsyncWriteExt::shutdown(&mut socket).await?;
-    drop(socket);
-    let open = transactions(&database, |open| open == 0).await?;
-    anyhow::ensure!(open == 0, "an abort ends the query: {open} open");
-
-    // DISCONNECT. The connection resets, as a dropped network does.
-    let socket = open_load(&address, &paths, &path).await?;
-    let open = transactions(&database, |open| open >= 1).await?;
-    anyhow::ensure!(
-        open >= 1,
-        "a load the client does not read holds its transaction"
-    );
-    // A zero linger resets the connection at once, so the drop does not block.
-    #[expect(deprecated, reason = "a zero linger is the reset this case needs")]
-    socket.set_linger(Some(std::time::Duration::ZERO))?;
-    drop(socket);
-    let open = transactions(&database, |open| open == 0).await?;
-    anyhow::ensure!(open == 0, "a disconnect ends the query: {open} open");
-
-    // A client that reads to the end gets every row and the outcome line.
-    let (status, _, lines) = paths.streamed("/widget_maker/query", &load, None).await?;
-    let (outcome, rows) = lines.split_last().context("a load ends in its outcome")?;
-    anyhow::ensure!(
-        status == 200
-            && rows.len() == 100_000
-            && rows.iter().all(|line| line.get("row").is_some())
-            && outcome["outcome"]["value"]["more"] == json!(true),
-        "a full load reads its cap and says more exist: {status}, {} lines, {outcome}",
-        lines.len()
+        status == 400 && answer["error"]["data"]["pointer"] == json!("/0/limit"),
+        "the query's maximum refuses a load of 100,000 rows: {status} {answer}"
     );
 
-    drop(database);
-    connection.await??;
-    application.shutdown().await?;
-    Ok(())
-}
-
-/// A streamed load reads one statement as it runs: the client has rows while
-/// the statement is still open, with bounded host buffering. Every row comes
-/// from the snapshot the statement started with, so a write that commits
-/// during the load does not show in it (wamn-utci.5).
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
-async fn a_streamed_load_reads_one_statement_as_of_its_start() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
-    let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
-    let (database, connection) =
-        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
-    let connection = tokio::spawn(connection);
-    makers(&database).await?;
-    let load = json!({"limit": 100_000, "shape": "stream"});
-    let query = wamn_execution_contract::encode_read_query(load.as_object().context("an item")?);
-
-    // The client reads the first rows while the statement is open.
-    let mut response = paths
-        .client
-        .get(format!(
-            "{}{ROUTE_PREFIX}/widget_maker/query?{query}",
-            paths.endpoint
-        ))
-        .header("Host", &paths.host)
-        .bearer_auth(&paths.bearer)
-        .send()
-        .await?;
-    anyhow::ensure!(response.status() == 200, "the load answers 200");
-    let mut body = response
-        .chunk()
-        .await?
-        .context("the load sends its first rows")?
-        .to_vec();
-    anyhow::ensure!(body.starts_with(b"{\"row\":"), "the first line is a row");
-    let open = transactions(&database, |open| open >= 1).await?;
-    anyhow::ensure!(
-        open >= 1,
-        "the statement is still open while the client holds rows"
-    );
-    let reading: Vec<String> = database
-        .query(
-            "SELECT query FROM pg_stat_activity WHERE datname = current_database() \
-             AND pid <> pg_backend_pid() AND xact_start IS NOT NULL \
-             AND backend_type = 'client backend'",
-            &[],
-        )
-        .await?
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect();
-    anyhow::ensure!(
-        reading
-            .iter()
-            .filter(|sql| sql.starts_with("SELECT") && sql.contains("widget_maker"))
-            .count()
-            == 1,
-        "the load reads one prepared statement: {reading:?}"
-    );
-
-    // A write commits during the load: every maker gets a new name.
-    database
-        .batch_execute(&format!(
-            "BEGIN; {ACTOR}; UPDATE inventory.widget_maker SET name = 'renamed'; COMMIT"
-        ))
-        .await
-        .map_err(|error| anyhow::anyhow!("rename the widget makers: {error:?}"))?;
-
-    // The rest of the load reads the names as they were when it started.
-    while let Some(chunk) = response.chunk().await? {
-        body.extend_from_slice(&chunk);
-    }
-    let lines = std::str::from_utf8(&body)?
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<Vec<Value>, _>>()?;
-    let (outcome, rows) = lines.split_last().context("a load ends in its outcome")?;
-    anyhow::ensure!(
-        rows.len() == 100_000
-            && rows.iter().all(|line| {
-                line["row"]["name"]
-                    .as_str()
-                    .is_some_and(|name| name.starts_with("maker "))
-            })
-            && outcome["outcome"]["value"]["more"] == json!(true),
-        "a load reads one snapshot: {} lines, {outcome}",
-        lines.len()
-    );
-    // A new load reads the committed names.
-    let (_, _, again) = paths
-        .streamed(
-            "/widget_maker/query",
-            &json!({"limit": 10, "shape": "stream"}),
-            None,
-        )
-        .await?;
-    anyhow::ensure!(
-        again[0]["row"]["name"] == json!("renamed"),
-        "a new load reads the write: {again:?}"
-    );
-
-    drop(database);
-    connection.await??;
     application.shutdown().await?;
     Ok(())
 }

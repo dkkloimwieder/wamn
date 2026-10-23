@@ -9,8 +9,8 @@ use wamn_catalog::{
     ComponentEffectProvenance, normalize_component_fact,
 };
 use wash_runtime::engine::Engine;
+use wash_runtime::wasmtime::component::Component;
 use wash_runtime::wasmtime::component::types::ComponentItem;
-use wash_runtime::wasmtime::component::{Component, FutureReader, StreamReader};
 
 mod node_contract {
     wash_runtime::wasmtime::component::bindgen!({
@@ -22,20 +22,6 @@ mod node_contract {
 }
 
 use node_contract::wamn::node::types as node_types;
-
-/// Metadata that a query resolves before writing its first row.
-#[derive(
-    Debug,
-    wash_runtime::wasmtime::component::ComponentType,
-    wash_runtime::wasmtime::component::Lift,
-    wash_runtime::wasmtime::component::Lower,
-)]
-#[component(record)]
-#[component(wasmtime_crate = wash_runtime::wasmtime)]
-pub(crate) struct QueryMetadata {
-    #[component(name = "wal-position")]
-    pub wal_position: Option<String>,
-}
 
 /// The async contract for generic nodes. Application operations also support async.
 pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.1.0";
@@ -140,22 +126,6 @@ pub fn validate_component_admission(
             anyhow::bail!("interface member run is not a component function");
         };
         let adapter = instance.get_export(raw, "run-json");
-        if let Some(ComponentItem::ComponentFunc(adapter)) = adapter.as_ref().map(|item| &item.ty)
-            && adapter
-                .typecheck::<(&node_types::NodeContext, &str, bool), (
-                    Result<
-                        (
-                            FutureReader<QueryMetadata>,
-                            StreamReader<String>,
-                            FutureReader<String>,
-                        ),
-                        node_types::NodeError,
-                    >,
-                )>(&component_type.instance_type())
-                .is_ok()
-        {
-            return validate_streamed_query(adapter, &run);
-        }
         if let Some(adapter) = adapter {
             let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
                 anyhow::bail!("run-json is not a component function");
@@ -351,54 +321,6 @@ pub fn validate_component_admission(
 }
 
 // Nested calls use separate stores. Only owned values can cross that boundary.
-/// A query yields its rows as a stream and one final record (`wamn-utci`).
-/// Its JSON adapter already typechecked as a stream of row JSON and a future
-/// of outcome JSON. The typed entry takes the request record and returns a
-/// stream of rows and a future of the final record, with the same node-error.
-fn validate_streamed_query(
-    adapter: &wash_runtime::wasmtime::component::types::ComponentFunc,
-    run: &wash_runtime::wasmtime::component::types::ComponentFunc,
-) -> anyhow::Result<()> {
-    use wash_runtime::wasmtime::component::Type;
-    anyhow::ensure!(
-        adapter.async_() && run.async_(),
-        "streamed queries must be async"
-    );
-    let params: Vec<_> = run.params().collect();
-    let adapter_params: Vec<_> = adapter.params().collect();
-    anyhow::ensure!(
-        params.len() == 3
-            && params[0].1 == adapter_params[0].1
-            && matches!(params[2].1, Type::Bool)
-            && matches!(params[1].1, Type::Record(_))
-            && owned_operation_value(&params[1].1),
-        "a streamed query must accept node-context, one owned request record, and a WAL request"
-    );
-    let results: Vec<_> = run.results().collect();
-    let adapter_results: Vec<_> = adapter.results().collect();
-    let ([Type::Result(result)], [Type::Result(adapter_result)]) =
-        (results.as_slice(), adapter_results.as_slice())
-    else {
-        anyhow::bail!("a streamed query must return one result");
-    };
-    anyhow::ensure!(
-        result.err() == adapter_result.err(),
-        "a streamed query must retain node-error"
-    );
-    let Some(Type::Tuple(returned)) = result.ok() else {
-        anyhow::bail!("a streamed query must return its rows and its final record");
-    };
-    let returned: Vec<_> = returned.types().collect();
-    anyhow::ensure!(
-        matches!(
-            returned.as_slice(),
-            [Type::Future(_), Type::Stream(_), Type::Future(_)]
-        ),
-        "a streamed query must return early metadata, rows, and its final outcome"
-    );
-    Ok(())
-}
-
 fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
     use wash_runtime::wasmtime::component::Type;
     match ty {

@@ -17,7 +17,7 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, RouteDelivery, Source,
-    SourceRef, StreamedDelivery, resolve_authorized_host_route,
+    SourceRef, resolve_authorized_host_route,
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::PrincipalId;
@@ -333,18 +333,6 @@ impl RouteDelivery for HostRouteDelivery {
                 );
                 report(Err(DeliveryError::ExecutionFailed))
             }
-        }
-    }
-
-    async fn deliver_stream(
-        &self,
-        request: DeliveryRequest,
-        caller: Option<AuthenticatedCaller>,
-    ) -> Result<StreamedDelivery, DeliveryReport> {
-        // A host route reads one document and never streams.
-        match &self.next {
-            Some(next) => next.deliver_stream(request, caller).await,
-            None => Err(report(Err(DeliveryError::InvalidRequest))),
         }
     }
 }

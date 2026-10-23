@@ -22,7 +22,6 @@ mod bindings {
             "export:wasi:http/handler@0.3.0#handle",
             "wamn:flow-http-routing/routing@0.1.0#authenticate",
             "wamn:router-delivery/delivery@0.4.0#deliver",
-            "wamn:router-delivery/delivery@0.4.0#deliver-stream",
         ],
     });
 }
@@ -38,7 +37,7 @@ use super::{
     DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome,
     DeliveryReport, DeliveryRequest, Emission, FailedOutcome, Header, HttpResponse, Mapping,
     MappingSource, PartialCompletion, ProviderError, RequestHead, RouteDefinition, SchemaInvalid,
-    StreamedHead, handle_request,
+    handle_request,
 };
 
 #[path = "entry.rs"]
@@ -59,14 +58,13 @@ impl Guest for Component {
         let response =
             handle_request(&mut backend, &mut body, &head, AdapterLimits::default()).await;
         drop(body);
-        Ok(send_response(response, backend))
+        Ok(send_response(response))
     }
 }
 
 bindings::export!(Component with_types_in bindings);
 
-/// The guest's imports, and the reply lines and route permit of a streamed
-/// read, which outlive `handle_request`.
+/// The routes the guest read for this request.
 #[derive(Default)]
 struct GuestBackend {
     routes: std::collections::HashMap<
@@ -74,13 +72,6 @@ struct GuestBackend {
         bindings::wamn::flow_http_routing::routing::RouteDefinition,
     >,
     base_route: bool,
-    lines: Option<ReplyStream>,
-    permit: Option<bindings::wamn::flow_http_routing::routing::RoutePermit>,
-}
-
-enum ReplyStream {
-    Lines(StreamReader<String>),
-    Bytes(StreamReader<u8>),
 }
 
 impl Backend for GuestBackend {
@@ -170,31 +161,6 @@ impl Backend for GuestBackend {
         delivery_report(
             bindings::wamn::router_delivery::delivery::deliver(wire_request(request)).await,
         )
-    }
-
-    async fn deliver_stream(
-        &mut self,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> Result<StreamedHead, DeliveryReport> {
-        if let Some(route) = self.routes.get(&request.attachment_id)
-            && route.sealed_operation_id.is_some()
-        {
-            let (lines, etag) = entry::deliver_stream(route, request).await?;
-            self.lines = Some(ReplyStream::Bytes(lines));
-            return Ok(StreamedHead { etag });
-        }
-        match bindings::wamn::router_delivery::delivery::deliver_stream(wire_request(request)).await
-        {
-            Ok(reply) => {
-                self.lines = Some(ReplyStream::Lines(reply.lines));
-                Ok(StreamedHead { etag: reply.etag })
-            }
-            Err(report) => Err(delivery_report(report)),
-        }
-    }
-
-    fn keep_route_permit(&mut self, permit: Self::RoutePermit) {
-        self.permit = Some(permit);
     }
 }
 
@@ -462,13 +428,8 @@ fn request_head(request: &Request) -> RequestHead {
     }
 }
 
-fn send_response(response: HttpResponse, mut backend: GuestBackend) -> Response {
+fn send_response(response: HttpResponse) -> Response {
     let headers = Fields::new();
-    if response.streamed
-        && let Some(lines) = backend.lines.take()
-    {
-        return send_stream(&response, headers, lines, backend.permit.take());
-    }
     for (name, value) in response.cache_headers() {
         let _ = headers.set(name, &[value.into_bytes()]);
     }
@@ -484,73 +445,10 @@ fn send_response(response: HttpResponse, mut backend: GuestBackend) -> Response 
     let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
     let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
     let _ = outgoing.set_status_code(response.status);
-    let permit = backend.permit.take();
     // The host consumes the stream after handle returns the response.
     spawn_local(async move {
         let _ = writer.write_all(response.body).await;
         drop(writer);
-        drop(permit);
-        let _ = trailers.write(Ok(None)).await;
-    });
-    outgoing
-}
-
-/// Lines of reply the body writer asks the host for at once.
-const LINES_PER_READ: usize = 256;
-
-/// Answer a streamed read: its head now, then its body as the host sends the
-/// lines, one write per batch, so no line waits for the next. A client that
-/// leaves drops the lines, which ends the host's read and its query.
-fn send_stream(
-    response: &HttpResponse,
-    headers: Fields,
-    lines: ReplyStream,
-    permit: Option<bindings::wamn::flow_http_routing::routing::RoutePermit>,
-) -> Response {
-    for (name, value) in response.cache_headers() {
-        let _ = headers.set(name, &[value.into_bytes()]);
-    }
-    let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
-    // Proxies such as nginx hold a response body back unless told not to.
-    let _ = headers.set("x-accel-buffering", &[b"no".to_vec()]);
-    let mut lines = match lines {
-        ReplyStream::Bytes(reader) => {
-            let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
-            let (outgoing, sent) = Response::new(headers, Some(reader), trailer_reader);
-            let _ = outgoing.set_status_code(response.status);
-            spawn_local(async move {
-                let _ = trailers.write(Ok(None)).await;
-                let _ = sent.await;
-                drop(permit);
-            });
-            return outgoing;
-        }
-        ReplyStream::Lines(lines) => lines,
-    };
-    let (mut writer, reader) = bindings::wit_stream::new::<u8>();
-    let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
-    let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
-    let _ = outgoing.set_status_code(response.status);
-    spawn_local(async move {
-        loop {
-            let (status, batch) = lines.read(Vec::with_capacity(LINES_PER_READ)).await;
-            let mut bytes = Vec::new();
-            for line in batch {
-                bytes.extend_from_slice(line.as_bytes());
-                bytes.push(b'\n');
-            }
-            if !bytes.is_empty() {
-                if !writer.write_all(bytes).await.is_empty() {
-                    break;
-                }
-            }
-            if !matches!(status, StreamResult::Complete(_)) {
-                break;
-            }
-        }
-        drop(lines);
-        drop(writer);
-        drop(permit);
         let _ = trailers.write(Ok(None)).await;
     });
     outgoing

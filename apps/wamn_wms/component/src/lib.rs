@@ -26,9 +26,6 @@ wit_bindgen::generate!({
     ],
     generate_all,
     async: true,
-    // Every query ends in the same `result<query-end, query-error>`, and
-    // wit-bindgen emits one future payload for structurally equal types.
-    merge_structurally_equal_types: true,
 });
 
 struct Component;

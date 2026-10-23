@@ -1,6 +1,5 @@
 //! Host plugin for `wamn:router-delivery@0.4.0`, the one guest-to-host
 //! delivery import that attachment and registration ingress share.
-//! `deliver-stream` answers a query read as its rows arrive.
 //!
 //! The plugin takes the caller handle back from the resource table and hands
 //! the request to the host's [`RouteDelivery`]. Every host serves a delivery
@@ -10,12 +9,9 @@
 
 use std::collections::HashSet;
 use std::fmt;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use anyhow::Context as _;
-use tokio::sync::mpsc;
 use tracing::Instrument as _;
 use wamn_catalog::{
     AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, HostAttachment,
@@ -26,10 +22,7 @@ use wamn_project_state::PlatformComponent;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wasmtime::StoreContextMut;
-use wash_runtime::wasmtime::component::{
-    Accessor, Destination, StreamProducer, StreamReader, StreamResult, VecBuffer,
-};
+use wash_runtime::wasmtime::component::Accessor;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::engine::MAX_HOST_CALL_DURATION;
@@ -65,31 +58,6 @@ pub trait RouteDelivery: Send + Sync + fmt::Debug {
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
     ) -> DeliveryReport;
-
-    /// Serve one query read as a stream of reply lines. `Err` is the report
-    /// of a delivery that ended before its first row. A host that streams no
-    /// query refuses the request.
-    async fn deliver_stream(
-        &self,
-        request: DeliveryRequest,
-        caller: Option<AuthenticatedCaller>,
-    ) -> Result<StreamedDelivery, DeliveryReport> {
-        let _ = (request, caller);
-        Err(DeliveryReport {
-            outcome: Err(DeliveryError::InvalidRequest),
-            deadline_adjustments: Vec::new(),
-            etag: None,
-        })
-    }
-}
-
-/// A streamed read, known before its first row.
-#[derive(Debug)]
-pub struct StreamedDelivery {
-    /// The weak ETag of the list.
-    pub etag: Option<String>,
-    /// Batches of reply lines: each row, then the outcome.
-    pub lines: mpsc::Receiver<Vec<String>>,
 }
 
 /// The one guest-to-host delivery plugin, over the host's [`RouteDelivery`].
@@ -166,78 +134,6 @@ impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
                 || tracing::info_span!(target: "wamn::route", "wamn.route.deliver"),
             ))
             .await)
-    }
-
-    async fn deliver_stream(
-        accessor: &Accessor<T, Self>,
-        mut request: DeliveryRequest,
-    ) -> wash_runtime::wasmtime::Result<Result<delivery::StreamedReply, DeliveryReport>> {
-        let (plugin, caller) = accessor.with(|mut access| {
-            let ctx = access.get();
-            let plugin = plugin_of(&ctx)?;
-            let caller = request
-                .caller
-                .take()
-                .map(|caller| ctx.table.delete(caller))
-                .transpose()?;
-            Ok::<_, wash_runtime::wasmtime::Error>((plugin, caller))
-        })?;
-        match plugin
-            .delivery
-            .deliver_stream(request, caller)
-            .instrument(crate::invocation_trace::sampled_span(
-                || tracing::info_span!(target: "wamn::route", "wamn.route.deliver"),
-            ))
-            .await
-        {
-            Err(report) => Ok(Err(report)),
-            Ok(streamed) => accessor.with(|mut access| {
-                let lines = StreamReader::new(
-                    &mut access,
-                    LineBatches {
-                        lines: streamed.lines,
-                    },
-                )?;
-                Ok(Ok(delivery::StreamedReply {
-                    etag: streamed.etag,
-                    lines,
-                }))
-            }),
-        }
-    }
-}
-
-/// The guest's read end of a streamed reply: each batch of lines, in order.
-/// Dropping it ends the host's read, and the query the read runs.
-struct LineBatches {
-    lines: mpsc::Receiver<Vec<String>>,
-}
-
-impl<D> StreamProducer<D> for LineBatches {
-    type Item = String;
-    type Buffer = VecBuffer<String>;
-
-    fn poll_produce<'a>(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        store: StoreContextMut<'a, D>,
-        mut destination: Destination<'a, Self::Item, Self::Buffer>,
-        finish: bool,
-    ) -> Poll<wash_runtime::wasmtime::Result<StreamResult>> {
-        // A zero-length read asks only whether lines are ready. Answering
-        // without buffering a batch keeps no line the guest may never read.
-        if destination.remaining(store) == Some(0) {
-            return Poll::Ready(Ok(StreamResult::Completed));
-        }
-        match self.get_mut().lines.poll_recv(cx) {
-            Poll::Ready(Some(batch)) => {
-                destination.set_buffer(batch.into());
-                Poll::Ready(Ok(StreamResult::Completed))
-            }
-            Poll::Ready(None) => Poll::Ready(Ok(StreamResult::Dropped)),
-            Poll::Pending if finish => Poll::Ready(Ok(StreamResult::Cancelled)),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
 

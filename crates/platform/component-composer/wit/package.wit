@@ -4,16 +4,13 @@ package wamn:application-dispatch@0.1.0;
 interface dispatch {
   use wamn:node/types@0.1.0.{node-context, emission, node-error};
 
-  /// The composition derives this from the operation export signature.
-  is-query: func(operation: string) -> bool;
-  is-projection: func(operation: string) -> bool;
+  /// The composition derives this from the operation export signature: a
+  /// read exports `read-json`.
+  is-read: func(operation: string) -> bool;
 
   read: async func(operation: string, ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;
 
   run: async func(operation: string, ctx: node-context, input: string) -> result<emission, node-error>;
-  record query-metadata { wal-position: option<string>, }
-
-  query: async func(operation: string, ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<string>, future<string>>, node-error>;
 }
 
 world adapter {

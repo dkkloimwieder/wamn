@@ -430,37 +430,6 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
             matches!(owner, Val::Bool(true)),
             "the owner works in the host transaction: {owner:?}"
         );
-        // The stream must see the uncommitted update on the operation's connection.
-        let lent = transaction.lend().await.unwrap();
-        let connection = super::super::resources::StatementConnectionGuard::new(
-            super::super::resources::take_conn(&lent.state).unwrap(),
-            Arc::clone(&lent.destroyed),
-        );
-        let mut stream = super::super::run_stream::open_transaction_stream(
-            connection,
-            Arc::clone(&lent.state),
-            "snapshot.sql".into(),
-            Arc::new(VerifiedStatement {
-                exact_sql: "SELECT value FROM operation_transaction_roundtrip".into(),
-                binds: Box::new([]),
-                columns: Box::new([StatementField {
-                    value_type: StatementValueType::Int32,
-                    nullable: false,
-                }]),
-                transactional: false,
-            }),
-            Vec::new(),
-        )
-        .await
-        .unwrap();
-        let rows = stream.batches.recv().await.unwrap();
-        assert!(
-            matches!(rows[0][0], super::super::SqlValue::Int32(value)
-            if value == if commit { 3 } else { 4 }),
-            "stream reads the open operation"
-        );
-        assert!(stream.batches.recv().await.is_none());
-        stream.finished.await.unwrap().unwrap();
         assert!(
             postgres
                 .refuse_in_host_transaction(OPERATION_OWNER, "run-stream")

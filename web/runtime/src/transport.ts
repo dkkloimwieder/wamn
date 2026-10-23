@@ -12,7 +12,6 @@ import * as z from "zod/mini";
 import { encodeReadQuery } from "./readQuery.js";
 import { createReadStore, writeTouches, type ReadReply } from "./readCache.js";
 import type {
-  StreamReply,
   ErrorCase,
   FieldMap,
   JsonValue,
@@ -551,55 +550,8 @@ export function createTransport(options: TransportOptions): Transport {
       writeListeners.add(listener);
       return () => writeListeners.delete(listener);
     },
-    async openStream(
-      request: WireRequest,
-      signal?: AbortSignal,
-      etag?: string,
-    ): Promise<StreamReply | Outcome<JsonValue>> {
-      const [item, ...rest] = request.items;
-      if (rest.length > 0 || item === null || typeof item !== "object" || Array.isArray(item)) {
-        return uncertain("a read sends exactly one request item");
-      }
-      const query = encodeReadQuery({
-        ...(item as { readonly [name: string]: JsonValue }),
-        shape: "stream",
-      });
-      const target = `${request.template}?${query}`;
-      // The table holds the rows of its last load, so the load revalidates
-      // them itself with their ETag, and no cache keeps a second copy.
-      const headers: { [name: string]: string } = etag === undefined ? {} : { "if-none-match": etag };
-      const init: RequestInit = { method: "GET", headers, cache: "no-store" };
-      if (signal !== undefined) {
-        init.signal = signal;
-      }
-      credentials(headers, init, true);
-      let response: Response;
-      try {
-        response = await call(`${options.baseUrl}${target}`, init);
-      } catch (error) {
-        return uncertain(`the request did not complete: ${String(error)}`);
-      }
-      if (response.status === 304 && etag !== undefined) {
-        return { notModified: true, etag: response.headers.get("etag") ?? etag };
-      }
-      const type = response.headers.get("content-type") ?? "";
-      if (response.status === 200 && type.startsWith(STREAM_CONTENT_TYPE) && response.body !== null) {
-        return { body: response.body, etag: response.headers.get("etag") };
-      }
-      // A read that ended before its first row answers as a page answers.
-      let body: string;
-      try {
-        body = await response.text();
-      } catch (error) {
-        return uncertain(`the response did not complete: ${String(error)}`);
-      }
-      return classify(request.contract, null, { status: response.status, body });
-    },
   };
 }
-
-/** The content type of a streamed read: one JSON value per line. */
-const STREAM_CONTENT_TYPE = "application/x-ndjson";
 
 /**
  * Calls `listener` after each write on `transport` that touches `reads`, the

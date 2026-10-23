@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 
 use serde_json::{Value, json};
-use wit_bindgen::rt::async_support::{StreamReader, StreamResult, spawn_local};
 
 use crate::entry_response::{refusal, resolved, uncertain, with_request_id};
 
@@ -87,112 +86,6 @@ fn list_etag(route: &RouteDefinition, position: Option<String>) -> Option<String
     ))
 }
 
-pub(super) async fn deliver_stream(
-    route: &RouteDefinition,
-    request: DeliveryRequest<AuthenticatedCaller>,
-) -> Result<(StreamReader<u8>, Option<String>), DeliveryReport> {
-    let report = |outcome, etag| DeliveryReport {
-        outcome,
-        etag,
-        deadline_adjustments: Vec::new(),
-    };
-    if let Some(maximum) = route.stream_ceiling
-        && let Some(refusal) = limit_refusal(&request.payload, maximum)
-    {
-        return Err(report(Ok(DeliveryOutcome::Respond(refusal)), None));
-    }
-    let id = route
-        .sealed_operation_id
-        .as_ref()
-        .expect("base route has an operation");
-    operation::authorize(request.caller.as_ref(), id.clone())
-        .await
-        .map_err(|error| report(Err(boundary(error, id)), None))?;
-    let query = dispatch::query(
-        id.clone(),
-        context(&request, String::new(), route.operation_deadline_ms),
-        request.payload.clone(),
-        wants_list_etag(route),
-    )
-    .await;
-    let (metadata, mut rows, end) = match query {
-        Ok(query) => query,
-        Err(error) => {
-            let _ = operation::finish_read().await;
-            return Err(report(Ok(node_failure(error)), None));
-        }
-    };
-    let etag = list_etag(route, metadata.await.wal_position);
-    if matches_tag(&request, &etag) {
-        drop(rows);
-        drop(end);
-        operation::finish_read()
-            .await
-            .map_err(|error| report(Err(boundary(error, id)), None))?;
-        return Err(report(Ok(DeliveryOutcome::NotModified), etag));
-    }
-    // Wait for the first batch so an empty refused read keeps its HTTP refusal.
-    let (mut status, mut batch) = rows.read(Vec::with_capacity(super::LINES_PER_READ)).await;
-    let mut end = Some(end);
-    let early = if batch.is_empty() && !matches!(status, StreamResult::Complete(_)) {
-        let outcome = finish_read(&end.take().expect("read has an outcome").await).await;
-        if let Some(error) = outcome.get("error") {
-            return Err(report(
-                Ok(DeliveryOutcome::Respond(
-                    json!([{"error": error}]).to_string(),
-                )),
-                None,
-            ));
-        }
-        Some(outcome)
-    } else {
-        None
-    };
-    let (mut writer, lines) = super::bindings::wit_stream::new::<u8>();
-    spawn_local(async move {
-        loop {
-            let mut bytes = Vec::new();
-            for row in batch {
-                bytes.extend_from_slice(format!("{{\"row\":{row}}}\n").as_bytes());
-            }
-            if !writer.write_all(bytes).await.is_empty() {
-                drop(rows);
-                drop(end);
-                let _ = operation::finish_read().await;
-                return;
-            }
-            if !matches!(status, StreamResult::Complete(_)) {
-                break;
-            }
-            (status, batch) = rows.read(Vec::with_capacity(super::LINES_PER_READ)).await;
-        }
-        drop(rows);
-        let outcome = match early {
-            Some(outcome) => outcome,
-            None => finish_read(&end.expect("read has an outcome").await).await,
-        };
-        let mut bytes = json!({"outcome": outcome}).to_string().into_bytes();
-        bytes.push(b'\n');
-        let _ = writer.write_all(bytes).await;
-    });
-    Ok((lines, etag))
-}
-
-async fn finish_read(text: &str) -> Value {
-    let outcome = serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
-    if let Some(value) = outcome.get("value") {
-        if operation::finish_read().await.is_err() {
-            return json!({"uncertain": {}});
-        }
-        json!({"value": {"more": value.get("next_cursor").is_some_and(|cursor| !cursor.is_null())}})
-    } else {
-        let _ = operation::finish_read().await;
-        outcome
-            .get("error")
-            .map_or_else(|| json!({"uncertain": {}}), |error| json!({"error": error}))
-    }
-}
-
 async fn execute(
     route: &RouteDefinition,
     request: &DeliveryRequest<AuthenticatedCaller>,
@@ -208,6 +101,9 @@ async fn execute(
     let mut input: Value =
         serde_json::from_str(&request.payload).map_err(|_| DeliveryError::InvalidPayload)?;
     let Some(key_field) = route.idempotency_rule.as_deref() else {
+        if let Some(refusal) = limit_refusal(&input, CEILING) {
+            return Ok(DeliveryOutcome::Respond(refusal));
+        }
         operation::authorize(caller, operation_id.clone())
             .await
             .map_err(|error| boundary(error, operation_id))?;
@@ -448,32 +344,11 @@ async fn read_call(
             })
         })
     };
-    if dispatch::is_projection(id) {
+    if dispatch::is_read(id) {
         let (emission, position) = dispatch::read(id.to_owned(), context, input, want_wal).await?;
         return decode(&emission.payload).map(|value| (value, position));
     }
-    if !dispatch::is_query(id) {
-        return decode(&dispatch::run(id.to_owned(), context, input).await?.payload)
-            .map(|value| (value, None));
-    }
-    let (metadata, mut rows, end) =
-        dispatch::query(id.to_owned(), context, input, want_wal).await?;
-    let wal_position = metadata.await.wal_position;
-    let mut values = Vec::<Value>::new();
-    loop {
-        let (status, batch) = rows.read(Vec::with_capacity(256)).await;
-        for row in batch {
-            values.push(decode(&row)?);
-        }
-        if !matches!(status, StreamResult::Complete(_)) {
-            break;
-        }
-    }
-    let mut outcome: Value = decode(&end.await)?;
-    if let Some(value) = outcome.get_mut("value").and_then(Value::as_object_mut) {
-        value.insert("item".into(), Value::Array(values));
-    }
-    Ok((json!([outcome]), wal_position))
+    decode(&dispatch::run(id.to_owned(), context, input).await?.payload).map(|value| (value, None))
 }
 
 fn boundary(error: operation::Refusal, id: &str) -> DeliveryError {
@@ -597,8 +472,12 @@ fn remove(value: &mut Value, path: &[&str]) {
     }
 }
 
-pub(super) fn limit_refusal(payload: &str, maximum: u32) -> Option<String> {
-    let payload: Value = serde_json::from_str(payload).ok()?;
+/// The platform ceiling of the rows one read returns, which bounds the memory
+/// of its page (owner ruling of 2026-10-23, `wamn-cg5e4`).
+const CEILING: u32 = 50_000;
+
+/// The refusal of a read whose limit is above `maximum`, or `None`.
+fn limit_refusal(payload: &Value, maximum: u32) -> Option<String> {
     let limit = payload.get(0)?.get("limit")?.as_i64()?;
     (limit > i64::from(maximum)).then(|| {
         json!([{

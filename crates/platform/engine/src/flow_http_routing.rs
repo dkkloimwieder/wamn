@@ -58,9 +58,6 @@ pub const DEFAULT_HTTP_ROUTE_IN_FLIGHT_LIMIT: usize = 64;
 /// Host environment key rendered by the platform chart.
 pub const HTTP_ROUTE_IN_FLIGHT_LIMIT_ENV: &str = "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT";
 
-/// The platform ceiling of a streamed load.
-pub const STREAM_CEILING: u32 = 100_000;
-
 const UNKNOWN_ROUTE_REFUSAL: &str = "http-route-not-in-release";
 const ROUTE_LABEL: &str = "wamn.attachment.id";
 
@@ -968,9 +965,6 @@ fn route_definition(
             }
         }),
         operation_deadline_ms: crate::router_delivery::bounded_node_deadline_ms(None),
-        stream_ceiling: operation
-            .filter(|route| route.type_.is_read())
-            .map(|_| STREAM_CEILING),
         sealed_operation_id: operation.map(|route| route.operation.clone()),
         idempotency_rule: operation
             .filter(|route| logs_intent(route.type_))
@@ -1883,7 +1877,6 @@ mod tests {
                 crate::router_delivery::bounded_node_deadline_ms(None)
             );
             if logs_intent(kind) {
-                assert_eq!(definition.stream_ceiling, None);
                 assert_eq!(
                     definition.idempotency_rule.as_deref(),
                     Some(if kind == OperationType::Command {
@@ -1909,7 +1902,6 @@ mod tests {
                 ));
                 assert!(definition.etag_inputs.is_none());
             } else {
-                assert_eq!(definition.stream_ceiling, Some(100_000));
                 assert!(definition.idempotency_rule.is_none());
                 assert!(definition.request_hash_rule.is_none());
                 let inputs = definition.etag_inputs.as_ref().unwrap();
@@ -1934,7 +1926,6 @@ mod tests {
             .insert(wamn_catalog::HostRouteSet::Application);
         for method in ["GET", "POST"] {
             for definition in route_definitions(&manifest, method) {
-                assert_eq!(definition.stream_ceiling, None);
                 assert!(definition.sealed_operation_id.is_none());
                 assert!(definition.idempotency_rule.is_none());
                 assert!(definition.request_hash_rule.is_none());

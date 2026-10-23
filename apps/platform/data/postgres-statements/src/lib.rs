@@ -391,28 +391,6 @@ impl Transaction {
             .map_err(StatementError::from_wire)
     }
 
-    /// Stream one admitted statement in this transaction.
-    pub async fn run_stream<T>(
-        &mut self,
-        statement: &str,
-        params: Vec<SqlValue>,
-        decode: fn(&mut RowDecoder<'_>) -> Result<T, StatementError>,
-    ) -> Result<RowStream<T>, StatementError> {
-        let (columns, rows, end) = self
-            .inner
-            .run_stream(statement.to_string(), params)
-            .await
-            .map_err(StatementError::from_wire)?;
-        Ok(RowStream {
-            statement: statement.into(),
-            columns,
-            rows,
-            end: Some(end),
-            batch: Vec::new().into_iter(),
-            decode,
-        })
-    }
-
     /// Commit this transaction.
     pub async fn commit(self) -> Result<(), StatementError> {
         self.inner.commit().await.map_err(StatementError::from_wire)

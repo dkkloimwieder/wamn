@@ -127,25 +127,6 @@ export interface Transport {
    * nobody about a write.
    */
   onWrite?(listener: (writes: readonly string[] | null) => void): () => void;
-  /**
-   * Opens a streamed read of one query, the `stream` shape of its canonical
-   * GET URL. A reply of lines returns its body for `readLoadLines` and its
-   * ETag. With `etag`, the read revalidates the load that carried it, and
-   * unchanged data answers `notModified`. A read that ended before its first
-   * row returns its outcome, as `invoke` classifies it. `signal` aborts the
-   * read, which ends the query.
-   */
-  openStream?(request: WireRequest, signal?: AbortSignal, etag?: string): Promise<StreamReply | Outcome<JsonValue>>;
-}
-
-/** A streamed read that started: its lines, or the answer that nothing changed. */
-export type StreamReply =
-  | { readonly body: ReadableStream<Uint8Array>; readonly etag: string | null }
-  | { readonly notModified: true; readonly etag: string };
-
-/** Whether an opened streamed read is a reply rather than an outcome. */
-export function isStreamReply(opened: StreamReply | Outcome<unknown>): opened is StreamReply {
-  return "body" in opened || "notModified" in opened;
 }
 
 /**
@@ -260,25 +241,6 @@ export async function callOperation<T>(
     }),
     binding.result,
   );
-}
-
-/**
- * Opens a streamed read of one query through its binding. The body carries the
- * rows in wire spelling. A read that ended before its first row returns its
- * outcome, with its keys renamed as `callOperation` renames them.
- */
-export async function openStream<T>(
-  transport: Transport,
-  binding: OperationBinding,
-  item: unknown,
-  signal?: AbortSignal,
-  etag?: string,
-): Promise<StreamReply | Outcome<T>> {
-  if (transport.openStream === undefined) {
-    throw new Error("this transport opens no streamed read");
-  }
-  const opened = await transport.openStream({ ...binding.route, items: [toWire(item, binding.request)] }, signal, etag);
-  return isStreamReply(opened) ? opened : reviveOutcome<T>(opened, binding.result);
 }
 
 /**

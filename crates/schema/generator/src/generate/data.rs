@@ -511,9 +511,9 @@ fn emit_query(
              None => (None, None),\n\
              }};\n\
              let rows = sql::query_{field}_{direction_name}(connection, {arguments}{comma} cursor_key, cursor_id, input.limit + 1).await.map_err(|error| query_statement(&error))?;\n\
-             Ok(Page::new(rows, input.limit, query_statement, |row| {{\n\
+             Page::new(rows, input.limit, |row| {{\n\
              {encode}.map_err(|Invalid| Error::internal())\n\
-             }}))\n\
+             }})\n\
              }}",
             comma = if arguments.is_empty() { "" } else { "," },
         )
@@ -548,7 +548,7 @@ fn emit_query(
          ///\n/// The contract's order holds: the sort and the cursor first, then the\n\
          /// statement. The codec checked the limit.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn query(connection: &mut Connection, input: QueryInput) -> Result<Page<{model_type}Row, Error>, Error> {{\n\
+         pub async fn query(connection: &mut Connection, input: QueryInput) -> Result<Page<{model_type}Row>, Error> {{\n\
          let sort = match (input.sort_field.as_deref(), input.sort_direction.as_deref()) {{\n\
          (None, None) => ({default_field:?}, {default_direction}),\n\
          (Some(field), Some(\"ascending\")) => (field, Direction::Ascending),\n\

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use wac_graph::types::{DefinedType, ItemKind, Package, Types, ValueType};
+use wac_graph::types::{ItemKind, Package, Types};
 
 use anyhow::{Context as _, ensure};
 use wit_parser::{
@@ -36,15 +36,8 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
         else {
             continue;
         };
-        let projection = interface.exports.contains_key("read-json");
+        let read = interface.exports.contains_key("read-json");
         let function = &types[*function];
-        let result = function.result.context("operation has no result")?;
-        let query = is_query(&types, result);
-        let result = if query {
-            "tuple<future<query-metadata>, stream<string>, future<string>>"
-        } else {
-            "emission"
-        };
         let (package, interface) = name.split_once('/').context("operation has no interface")?;
         let (interface, version) = interface
             .split_once('@')
@@ -53,20 +46,10 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
         let asynchronous = if function.is_async { "async " } else { "" };
         let parameters = function.params.keys().collect::<Vec<_>>();
         ensure!(
-            parameters.len() == if query { 3 } else { 2 },
+            parameters.len() == 2,
             "operation {name} does not use the node JSON call ABI"
         );
-        let metadata = if query {
-            "record query-metadata { wal-position: option<string>, }"
-        } else {
-            ""
-        };
-        let wal = if query {
-            ", want-wal-position: bool"
-        } else {
-            ""
-        };
-        let read_json = if projection {
+        let read_json = if read {
             "read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;"
         } else {
             ""
@@ -74,8 +57,7 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
         writeln!(source,
             "interface %{interface} {{
                 use wamn:node/types@0.1.0.{{node-context, emission, node-error}};
-                {metadata}
-                {function_name}: {asynchronous}func(%{}: node-context, %{}: string{wal}) -> result<{result}, node-error>;
+                {function_name}: {asynchronous}func(%{}: node-context, %{}: string) -> result<emission, node-error>;
                 {read_json}
             }}", parameters[0], parameters[1])?;
         names.push(name.clone());
@@ -113,14 +95,13 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut sizes = SizeAlign::default();
     sizes.fill(&resolve);
     let mut module = String::from("(module\n");
-    let mut calls = [String::new(), String::new(), String::new()];
+    let mut calls = [String::new(), String::new()];
     let mut data = String::new();
-    let mut queries = String::new();
-    let mut projections = String::new();
+    let mut reads = String::new();
     let mut offset = 16_usize;
     for (index, (name, id)) in operations.iter().enumerate() {
         for (function_index, function) in resolve.interfaces[*id].functions.values().enumerate() {
-            let projection = function.name == "read-json";
+            let read = function.name == "read-json";
             let signature =
                 resolve.wasm_signature(wit_parser::abi::AbiVariant::GuestImport, function);
             ensure!(
@@ -139,24 +120,15 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
                 module,
                 "(import {namespace:?} {import:?} (func $op{index}_{function_index} (param i32 i32)))"
             )?;
-            let result = function.result.context("operation has no result")?;
-            let query = is_wit_query(&resolve, result);
-            let call_index = if projection { 2 } else { usize::from(query) };
+            let call_index = usize::from(read);
             writeln!(calls[call_index],
             "local.get $args i32.load local.get $args i32.load offset=4 i32.const {offset} i32.const {} call $equal
              if local.get $args i32.const 8 i32.add local.get $result call $op{index}_{function_index}
                 call $finish{} i32.const 0 return end",
             name.len(), call_index)?;
-            if query {
+            if read {
                 writeln!(
-                    queries,
-                    "local.get 0 local.get 1 i32.const {offset} i32.const {} call $equal if i32.const 1 return end",
-                    name.len()
-                )?;
-            }
-            if projection {
-                writeln!(
-                    projections,
+                    reads,
                     "local.get 0 local.get 1 i32.const {offset} i32.const {} call $equal if i32.const 1 return end",
                     name.len()
                 )?;
@@ -174,8 +146,8 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
         })
         .context("dispatch interface missing")?;
     let mut exports = String::new();
-    for (name, selectors) in [("is-query", queries), ("is-projection", projections)] {
-        let function = &resolve.interfaces[id].functions[name];
+    {
+        let function = &resolve.interfaces[id].functions["is-read"];
         let export = resolve.wasm_export_name(
             sync,
             WasmExport::Func {
@@ -186,10 +158,10 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
         );
         writeln!(
             exports,
-            "(func (export {export:?}) (param i32 i32) (result i32) {selectors} i32.const 0)"
+            "(func (export {export:?}) (param i32 i32) (result i32) {reads} i32.const 0)"
         )?;
     }
-    for (index, name) in ["run", "query", "read"].iter().enumerate() {
+    for (index, name) in ["run", "read"].iter().enumerate() {
         let function = &resolve.interfaces[id].functions[*name];
         let (namespace, import, signature) =
             function.task_return_import(&resolve, Some(key), callback_abi.mangling());
@@ -245,7 +217,7 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
                 {} unreachable)", calls[index])?;
     }
     // The dispatcher lives for one HTTP Store. Its arena holds arguments and
-    // results until that Store drops, including live stream and future handles.
+    // results until that Store drops.
     let heap = (offset + 7) & !7;
     writeln!(
         module,
@@ -320,9 +292,6 @@ fn lift(
                 return fields(record.fields.iter().map(|field| field.ty).collect());
             }
             TypeDefKind::Tuple(tuple) => return fields(tuple.types.clone()),
-            TypeDefKind::Stream(_) | TypeDefKind::Future(_) => {
-                return Ok(vec![load("i32", "i32.load")]);
-            }
             TypeDefKind::Variant(variant) => {
                 variant.cases.iter().map(|case| case.ty).collect::<Vec<_>>()
             }
@@ -371,32 +340,6 @@ fn lift(
     Ok(output)
 }
 
-fn is_wit_query(resolve: &Resolve, result: wit_parser::Type) -> bool {
-    let wit_parser::Type::Id(id) = result else {
-        return false;
-    };
-    match &resolve.types[id].kind {
-        TypeDefKind::Result(result) => result.ok.is_some_and(|ty| is_wit_query(resolve, ty)),
-        TypeDefKind::Tuple(tuple) => tuple.types.iter().any(|ty| is_wit_query(resolve, *ty)),
-        TypeDefKind::Stream(_) => true,
-        TypeDefKind::Type(ty) => is_wit_query(resolve, *ty),
-        _ => false,
-    }
-}
-
-fn is_query(types: &Types, result: ValueType) -> bool {
-    let ValueType::Defined(id) = result else {
-        return false;
-    };
-    match &types[id] {
-        DefinedType::Result { ok, .. } => ok.is_some_and(|ty| is_query(types, ty)),
-        DefinedType::Tuple(tuple) => tuple.iter().any(|ty| is_query(types, *ty)),
-        DefinedType::Stream(_) => true,
-        DefinedType::Alias(ty) => is_query(types, *ty),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -416,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn generates_dispatch_for_async_json_and_query_exports() {
+    fn generates_dispatch_for_async_json_and_read_exports() {
         let mut resolve = wit_parser::Resolve::default();
         resolve
             .push_str(
@@ -431,9 +374,9 @@ mod tests {
                 run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
             }
             interface query {
-                use wamn:node/types@0.1.0.{node-context, node-error};
-                record query-metadata { wal-position: option<string>, }
-                run-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<string>, future<string>>, node-error>;
+                use wamn:node/types@0.1.0.{node-context, emission, node-error};
+                run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+                read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;
             }
             interface projection {
                 use wamn:node/types@0.1.0.{node-context, emission, node-error};

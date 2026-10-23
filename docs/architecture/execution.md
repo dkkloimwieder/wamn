@@ -217,8 +217,8 @@ Those inputs declare the release digest and either the result's revision field o
 A get without a revision field and a list without relations carry no ETag inputs.
 The guest receives the kind and fields as data, without application-specific names in the route code.
 
-For base reads, `route-definition.stream-ceiling` carries the platform limit of 100,000 rows.
-The entry refuses a streamed request above that limit before it begins the operation.
+The entry holds the platform ceiling of 50,000 rows for one base read (owner ruling of 2026-10-23, `wamn-cg5e4`).
+It refuses a read whose limit is above the ceiling before it authorizes the operation.
 Host routes and wiring attachments carry no entry ceiling.
 `route-definition.read-limits` carries page bounds and required band starts from the released input schema.
 The entry enforces those bounds and keeps the existing HTTP 400 pointer response.
@@ -233,31 +233,15 @@ PostgreSQL callbacks restore that context when they create spans.
 The host records operation delivery counters at begin, commit, and rollback.
 A dropped open operation records an execution failure and releases its authority.
 
-A `query` replies in one of two shapes, and the `shape` parameter of its canonical query string names the shape.
-The value `page` is the default, and the value `stream` asks for a streamed load.
-The router removes `shape` from the request item, so the operation never reads it.
-A page is the outcome list of one item, with the rows under `item` and the cursor under `next_cursor`.
-The entry bounds a page by the declared contract maximum, usually 100.
-A streamed load takes a cap up to the host ceiling of 100,000 rows.
-The entry refuses a larger cap before the query runs.
+A `query` replies with one page: the outcome list of one item, with the rows under `item` and the cursor under `next_cursor`.
+The entry writes the page as one JSON body.
+The entry bounds a page by the declared contract maximum, usually 100, and by the platform ceiling.
 The generated application codec validates the remaining input.
-
-A streamed load answers with `Content-Type: application/x-ndjson`, one JSON value per line.
-Each row is one line `{"row":…}`, and the last line is `{"outcome":…}`.
-The outcome is `{"value":{"more":…}}` when the read ended, `{"error":…}` when the query refused, or `{"uncertain":{}}` when the host cannot say how the read ended.
-`more` is true when rows exist past the cap.
-A body that ends without the outcome line is a failed load.
-The response is `private, no-cache` with the weak list ETag, which the entry computes before the query runs, so an unchanged load answers 304.
-It sends `X-Accel-Buffering: no`, and the router writes one body chunk for each batch of lines, so no proxy holds a line back.
-Nothing on the platform path compresses a reply.
-A read that ends before its first row answers as a page answers: a refusal keeps its status and its body, and a match with `If-None-Match` answers 304.
-A failure after the first row becomes the outcome line.
-Every stage between the database and the socket holds a few batches at most, so a client that stops reading stops the query.
-A load that stops ends its database query, whether it reached its cap, the client aborted it, or the connection dropped.
-A closed connection drops the reply lines, the host then drops the rows and the component's stream, and the host rolls the query's transaction back.
-The test `a_streamed_load_that_stops_ends_its_database_query` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) watches the server's open transactions for each of the three stops.
-The composed entry calls the application query through its private dispatch interface.
-The query reads through `transaction.run-stream`, and the entry writes JSON lines into the HTTP body.
+The memory of a read is bounded by the statement's declared limit and the platform ceiling.
+An export above the ceiling is a later feature (`wamn-4l2up`).
+The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) shows the refusal.
+The composed entry calls the application query through its private dispatch interface, as it calls a projection.
+The query returns its page and the WAL position of a list ETag from one `read-json` call, and it reads through `statements.run`.
 Host routes and wiring attachments retain [`wamn:router-delivery` 0.4.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit).
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.

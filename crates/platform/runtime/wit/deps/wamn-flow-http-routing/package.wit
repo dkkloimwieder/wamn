@@ -101,8 +101,6 @@ interface routing {
     idempotency-rule: option<string>,
     request-hash-rule: option<request-hash-rule>,
     etag-inputs: option<etag-inputs>,
-    /// The platform limit of a streamed read.
-    stream-ceiling: option<u32>,
     /// The shared operation budget, bounded by the host operation limit.
     operation-deadline-ms: u64,
     read-limits: option<read-limits>,

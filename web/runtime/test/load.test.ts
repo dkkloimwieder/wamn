@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import { boundedPage, emptyLoad, finishLoad, loadLimit, replaceRow, startLoad, type LoadPage } from "../src/load.js";
 import { refusalSentence } from "../src/refusal.js";
-import type { Outcome } from "../src/wire.js";
+import { createTransport } from "../src/transport.js";
+import type { Outcome, WireRequest } from "../src/wire.js";
 
 interface Row {
   readonly id: string;
@@ -157,5 +158,49 @@ describe("a row a write left", () => {
     ]);
     expect({ ...replaced, rows: loaded.rows }).toEqual(loaded);
     expect(replaceRow(loaded, { id: "c", code: "z" }, ["id"])).toBe(loaded);
+  });
+});
+
+describe("the read of a query load", () => {
+  const request: WireRequest = {
+    operation: "wamn-wms:pallet/query@2.0.0",
+    method: "GET",
+    template: "/pallet/query",
+    contract: {
+      resultClass: "page",
+      partialSchema: null,
+      errors: [],
+      replay: null,
+      direct: true,
+      type: "query",
+      transaction: "implicit",
+      reads: ["wms.pallet"],
+      writes: null,
+    },
+    items: [{ limit: 100 }],
+  };
+
+  it("reads one page body, and revalidates it with its ETag", async () => {
+    const asked: { url: string; init: RequestInit }[] = [];
+    const body = JSON.stringify([{ value: { item: [{ id: "a" }], next_cursor: null } }]);
+    const transport = createTransport({
+      baseUrl: "https://wms.test",
+      credential: "token",
+      fetch: async (url, init) => {
+        asked.push({ url: String(url), init: init ?? {} });
+        return asked.length === 1
+          ? new Response(body, {
+              status: 200,
+              headers: { "content-type": "application/json", "cache-control": "private, no-cache", etag: 'W/"v1"' },
+            })
+          : new Response(null, { status: 304, headers: { etag: 'W/"v1"' } });
+      },
+    });
+    const first = await transport.invoke(request);
+    const again = await transport.invoke(request);
+    expect(asked[0]?.url).toBe("https://wms.test/pallet/query?limit=100");
+    expect((asked[1]?.init.headers as { "if-none-match"?: string })["if-none-match"]).toBe('W/"v1"');
+    expect(first.status).toBe("completed");
+    expect(again).toEqual(first);
   });
 });

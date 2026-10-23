@@ -70,7 +70,7 @@ pub(super) fn emit_model_component(
     for (action, operation) in &model.operations {
         let name = action.as_str();
         let contract = rust_type_identifier(name);
-        let (state, signature, body) = handler(*action, &contract, operation);
+        let (state, body) = handler(*action, &contract, operation);
         // A change works in the host's operation transaction, so its export
         // takes no state.
         let export_state = if action.changes_records() {
@@ -88,12 +88,11 @@ pub(super) fn emit_model_component(
              use super::contract;\n\
              include!(\"../wit/{model_name}_{name}_codec.rs\");\n\
              }}\n\n\
-             pub(crate) async fn handle({state}, request: contract::{contract}Request{signature}) -> Result<contract::{contract}{end}, contract::{contract}Error> {{\n\
+             pub(crate) async fn handle({state}, request: contract::{contract}Request) -> Result<contract::{contract}Result, contract::{contract}Error> {{\n\
              {body}\
              }}\n\
              codec::export_operation!(crate::Component, contract, crate::wamn::node::types,{export_state} handle, codec);\n\
-             }}\n",
-            end = if *action == CrudAction::Query { "End" } else { "Result" },
+             }}\n"
         )
         .expect("writing to a String cannot fail");
     }
@@ -109,13 +108,12 @@ pub(super) fn emit_model_component(
 
 const REFUSE: &str = ".map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))";
 
-/// The state parameter, the rest of the signature, and the body of one
-/// handler.
+/// The state parameter and the body of one handler.
 fn handler(
     action: CrudAction,
     contract: &str,
     operation: &OperationDeclaration,
-) -> (&'static str, String, String) {
+) -> (&'static str, String) {
     let connection = "connection: &mut Connection";
     let transaction = "transaction: &mut Transaction";
     let revision = || {
@@ -128,7 +126,6 @@ fn handler(
     match action {
         CrudAction::Get => (
             connection,
-            String::new(),
             format!(
                 "model::get(connection, &request.id).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n"
             ),
@@ -142,7 +139,6 @@ fn handler(
                 .join(", ");
             (
                 transaction,
-                String::new(),
                 format!(
                     "model::create(transaction, {arguments}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n"
                 ),
@@ -156,7 +152,6 @@ fn handler(
             }
             (
                 transaction,
-                String::new(),
                 format!(
                     "model::update(transaction, {arguments}).await.map(|row| codec::row!(row, contract::{contract}Result)){REFUSE}\n"
                 ),
@@ -164,7 +159,6 @@ fn handler(
         }
         CrudAction::Delete => (
             transaction,
-            String::new(),
             format!(
                 "model::delete(transaction, &request.id, {}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n",
                 revision()
@@ -198,7 +192,6 @@ fn handler(
             }
             (
                 connection,
-                ", rows: &mut codec::Rows".to_owned(),
                 format!(
                     "let input = model::QueryInput {{\n\
                      {members}\
@@ -206,12 +199,11 @@ fn handler(
                      limit: request.limit.expect(\"the codec fills the default limit\"),\n\
                      }};\n\
                      let refuse = |error: Error| codec::map_error(error.literal(), |key| error.detail(key));\n\
-                     let mut page = model::query(connection, input).await.map_err(refuse)?;\n\
-                     rows.metadata(connection.wal_position().map(str::to_owned)).await;\n\
-                     while let Some(row) = page.next().await.map_err(refuse)? {{\n\
-                     rows.push(codec::row!(row, contract::{contract}Row)).await?;\n\
-                     }}\n\
-                     Ok(contract::{contract}End {{ next_cursor: page.next_cursor() }})\n"
+                     let (rows, next_cursor) = model::query(connection, input).await.map_err(refuse)?.into_parts();\n\
+                     Ok(contract::{contract}Result {{\n\
+                     item: rows.into_iter().map(|row| codec::row!(row, contract::{contract}Row)).collect(),\n\
+                     next_cursor,\n\
+                     }})\n"
                 ),
             )
         }

@@ -11,7 +11,7 @@ use http_route::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality,
     DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome,
     DeliveryReport, DeliveryRequest, Emission, Header, Mapping, MappingSource, ProviderError,
-    RequestHead, RouteDefinition, STREAM_CONTENT_TYPE, SchemaInvalid, StreamedHead, handle_request,
+    RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
 
 const AUTHENTICATED_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -47,9 +47,6 @@ struct FakeBackend {
     permit_available: bool,
     permits: Arc<AtomicUsize>,
     acquired_routes: Vec<String>,
-    /// The deliveries asked to stream, and the permit a stream keeps.
-    streamed: Vec<DeliveryRequest<String>>,
-    kept_permit: Option<TestPermit>,
 }
 
 impl FakeBackend {
@@ -69,8 +66,6 @@ impl FakeBackend {
             permit_available: true,
             permits: Arc::new(AtomicUsize::new(0)),
             acquired_routes: Vec::new(),
-            streamed: Vec::new(),
-            kept_permit: None,
         }
     }
 }
@@ -152,31 +147,6 @@ impl Backend for FakeBackend {
             deadline_adjustments: self.deadline_adjustments.clone(),
             etag: self.etag.clone(),
         }
-    }
-
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "record fixture effects when the asynchronous call is polled"
-    )]
-    async fn deliver_stream(
-        &mut self,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> Result<StreamedHead, DeliveryReport> {
-        self.streamed.push(request);
-        match &self.delivery {
-            Ok(DeliveryOutcome::Respond(_)) => Ok(StreamedHead {
-                etag: self.etag.clone(),
-            }),
-            outcome => Err(DeliveryReport {
-                outcome: outcome.clone(),
-                deadline_adjustments: Vec::new(),
-                etag: self.etag.clone(),
-            }),
-        }
-    }
-
-    fn keep_route_permit(&mut self, permit: Self::RoutePermit) {
-        self.kept_permit = Some(permit);
     }
 }
 
@@ -969,78 +939,42 @@ fn a_read_authenticates_its_body_but_takes_its_item_from_the_canonical_query() {
 }
 
 #[test]
-fn a_read_that_asks_for_the_stream_shape_is_delivered_as_a_stream() {
+fn a_query_read_answers_its_page_as_one_body() {
     let mut read = route();
     read.method = "GET".to_string();
     read.path = "/receipts/query".to_string();
     read.mappings = Vec::new();
     read.cache_control = Some("private, max-age=10, stale-while-revalidate=60".to_string());
-    let item = json!({"limit": 1000, "shape": "stream"});
+    let item = json!({"limit": 10});
     let query = wamn_execution_contract::encode_read_query(item.as_object().unwrap());
     let mut get = head();
     get.method = "get".to_string();
     get.target = format!("/receipts/query?{query}");
 
-    let mut backend = FakeBackend::new(read.clone());
+    let page = r#"[{"value":{"item":[{"id":"a"}],"next_cursor":null}}]"#;
+    let mut backend = FakeBackend::new(read);
+    backend.delivery = Ok(DeliveryOutcome::Respond(page.to_string()));
     backend.etag = Some("W/\"list\"".to_string());
     let output = request(&mut backend, &get, b"");
-    assert!(output.streamed);
     assert_eq!(output.status, 200);
-    assert_eq!(output.content_type, STREAM_CONTENT_TYPE);
-    assert!(output.body.is_empty());
+    assert_eq!(output.content_type, "application/json");
+    assert_eq!(output.body, page.as_bytes());
     assert_eq!(
         output.cache_headers(),
         [
-            ("cache-control", "private, no-cache".to_string()),
+            (
+                "cache-control",
+                "private, max-age=10, stale-while-revalidate=60".to_string()
+            ),
             ("vary", "Authorization, Cookie".to_string()),
             ("etag", "W/\"list\"".to_string()),
         ]
     );
-    assert!(
-        backend.deliveries.is_empty(),
-        "a stream is not a page delivery"
-    );
-    assert_eq!(
-        serde_json::from_str::<Value>(&backend.streamed[0].payload).unwrap(),
-        json!([{"limit": 1000}]),
-        "the shape is a parameter of the read, not a member of its item"
-    );
-    assert!(
-        backend.kept_permit.is_some(),
-        "a stream keeps its route permit"
-    );
-
-    // A read that ends before its first row answers as a page answers.
-    let mut backend = FakeBackend::new(read.clone());
-    backend.delivery = Ok(DeliveryOutcome::NotModified);
-    let output = request(&mut backend, &get, b"");
-    assert!(!output.streamed);
-    assert_eq!(output.status, 304);
-
-    let page = json!({"limit": 10, "shape": "page"});
-    let mut paged = get.clone();
-    paged.target = format!(
-        "/receipts/query?{}",
-        wamn_execution_contract::encode_read_query(page.as_object().unwrap())
-    );
-    let mut backend = FakeBackend::new(read.clone());
-    let output = request(&mut backend, &paged, b"");
-    assert!(!output.streamed);
     assert_eq!(
         serde_json::from_str::<Value>(&backend.deliveries[0].payload).unwrap(),
         json!([{"limit": 10}])
     );
-
-    let other = json!({"shape": "all"});
-    let mut refused = get.clone();
-    refused.target = format!(
-        "/receipts/query?{}",
-        wamn_execution_contract::encode_read_query(other.as_object().unwrap())
-    );
-    let mut backend = FakeBackend::new(read);
-    let output = request(&mut backend, &refused, b"");
-    assert_eq!(output.status, 400);
-    assert_eq!(error_code(&output.body), "invalid-target");
+    assert_eq!(backend.permits.load(Ordering::SeqCst), 0);
 }
 
 #[test]

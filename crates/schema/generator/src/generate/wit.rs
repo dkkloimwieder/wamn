@@ -117,14 +117,9 @@ fn emit_crud_interface(
         return;
     }
     let name = action.as_str();
-    let node_types = if action == CrudAction::Query {
-        "node-context, node-error"
-    } else {
-        "emission, node-context, node-error"
-    };
     writeln!(
         source,
-        "interface {name} {{\n  use wamn:node/types@0.1.0.{{{node_types}}};\n"
+        "interface {name} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n"
     )
     .expect("writing to a String cannot fail");
     // A range filter's value is a record of its own, which the request names.
@@ -195,7 +190,7 @@ fn emit_crud_interface(
     source.push_str("  }\n\n");
     emit_operation_errors(source, name, details, revision_width(table, operation));
     if action == CrudAction::Query {
-        emit_query_stream(source, fields);
+        emit_query_page(source, fields);
         return;
     }
     let key = request_key_field(crud_is_keyed(action));
@@ -211,13 +206,11 @@ fn emit_crud_interface(
         .expect("writing to a String cannot fail");
 }
 
-/// A query yields its rows as a stream, then one final record: the cursor
-/// that continues the read, or the error that ended it (`wamn-utci`). The host
-/// shapes the rows into a page or a streamed load.
-fn emit_query_stream(source: &mut String, fields: &[ContractFieldDeclaration]) {
-    source.push_str(
-        "  record query-metadata { wal-position: option<string>, }\n\n  record query-row {\n",
-    );
+/// A query returns its page as one result: the rows and the cursor that
+/// continues the read, or the error that ended it. `read-json` also returns
+/// the WAL position for a list ETag.
+fn emit_query_page(source: &mut String, fields: &[ContractFieldDeclaration]) {
+    source.push_str("  record query-row {\n");
     for column in fields {
         let mut ty = wit_type(column.ty);
         if column.nullable {
@@ -227,9 +220,10 @@ fn emit_query_stream(source: &mut String, fields: &[ContractFieldDeclaration]) {
             .expect("writing to a String cannot fail");
     }
     source.push_str("  }\n\n");
-    source.push_str("  /// The record after the last row. A cursor means more rows follow.\n  record query-end {\n    next-cursor: option<string>,\n  }\n\n");
-    source.push_str("  run: async func(ctx: node-context, input: query-request, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<query-row>, future<result<query-end, query-error>>>, node-error>;\n");
-    source.push_str("  /// Each row as one JSON object, then the outcome as one JSON value.\n  run-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<future<query-metadata>, stream<string>, future<string>>, node-error>;\n}\n\n");
+    source.push_str("  /// One page. A cursor means more rows follow.\n  record query-result {\n    item: list<query-row>,\n    next-cursor: option<string>,\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
+    source.push_str("  run: async func(ctx: node-context, input: query-request) -> result<query-outcome, node-error>;\n");
+    source.push_str("  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n");
+    source.push_str("  read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;\n}\n\n");
 }
 
 fn emit_writable_fields(source: &mut String, table: &Table, operation: &OperationDeclaration) {
@@ -547,8 +541,7 @@ fn emit_crud_codec(
     source
 }
 
-/// The codec of a streamed query: one request, rows written in batches from a
-/// spawned task, then the final record.
+/// The codec of a query: one request, and its page as one result.
 fn emit_query_codec(
     table: &Table,
     operation: &OperationDeclaration,
@@ -569,10 +562,10 @@ fn emit_query_codec(
     emit_crud_request_assignments(&mut source, CrudAction::Query, table, operation);
     source.push_str("    }).map_err(|_| invalid(\"input\")))\n}\n\n");
     emit_crud_invalid_detail(&mut source, details);
-    source.push_str("fn row_json(row: &contract::QueryRow) -> String {\n    json!({\n");
+    source.push_str("fn row_json(row: &contract::QueryRow) -> Value {\n    json!({\n");
     emit_json_row_fields(&mut source, fields, "row");
-    source.push_str("    }).to_string()\n}\n\n");
-    source.push_str("/// The outcome after the last row, as the JSON a read reply carries.\npub(crate) fn encode_end(end: &Result<contract::QueryEnd, contract::QueryError>) -> String {\n    match end {\n        Ok(end) => json!({ \"value\": { \"next_cursor\": end.next_cursor } }),\n        Err(error) => json!({ \"error\": error_value(error) }),\n    }.to_string()\n}\n\n");
+    source.push_str("    })\n}\n\n");
+    source.push_str("/// The page, or the error, as the outcome list a read reply carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(page) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
     source.push_str("fn error_value(error: &contract::QueryError) -> Value {\n    let (code, detail) = match error {");
     for (literal, detail) in details {
         emit_codec_error_arm(
@@ -593,7 +586,7 @@ fn emit_query_codec(
         &BTreeMap::new(),
     ));
     emit_query_limit(&mut source, operation, details);
-    source.push_str(QUERY_ROWS);
+    source.push_str(QUERY_RUN);
     source.push_str(&emit_row_adapter(
         fields
             .iter()
@@ -611,7 +604,7 @@ fn emit_query_codec(
 }
 
 /// The declared default limit, and a refusal below the declared minimum. The
-/// host holds each shape's maximum: a page's, and a streamed load's ceiling.
+/// entry holds the maximum: the page's, and the platform ceiling.
 fn emit_query_limit(
     source: &mut String,
     operation: &OperationDeclaration,
@@ -642,89 +635,27 @@ fn emit_query_limit(
     source.push_str("    Ok(())\n}\n");
 }
 
-/// The row writer and the handler loop of every streamed query.
-const QUERY_ROWS: &str = r"
-/// Rows one write hands to the reader.
-const BATCH: usize = 500;
-
-enum Writer {
-    Typed(wit_bindgen::rt::async_support::StreamWriter<contract::QueryRow>),
-    Json(wit_bindgen::rt::async_support::StreamWriter<String>),
-}
-
-/// The rows of one read, written to its reader in batches.
-pub(crate) struct Rows {
-    writer: Writer,
-    batch: Vec<contract::QueryRow>,
-    metadata: Option<wit_bindgen::rt::async_support::FutureWriter<contract::QueryMetadata>>,
-}
-
-#[allow(dead_code)]
-impl Rows {
-    pub(crate) fn typed(writer: wit_bindgen::rt::async_support::StreamWriter<contract::QueryRow>, metadata: wit_bindgen::rt::async_support::FutureWriter<contract::QueryMetadata>) -> Self {
-        Self { writer: Writer::Typed(writer), batch: Vec::with_capacity(BATCH), metadata: Some(metadata) }
-    }
-
-    pub(crate) fn json(writer: wit_bindgen::rt::async_support::StreamWriter<String>, metadata: wit_bindgen::rt::async_support::FutureWriter<contract::QueryMetadata>) -> Self {
-        Self { writer: Writer::Json(writer), batch: Vec::with_capacity(BATCH), metadata: Some(metadata) }
-    }
-
-    pub(crate) async fn metadata(&mut self, wal_position: Option<String>) {
-        if let Some(writer) = self.metadata.take() {
-            let _ = writer.write(contract::QueryMetadata { wal_position }).await;
-        }
-    }
-
-    /// Hand one row to the reader. An error means the reader left, so the
-    /// read stops and its outcome reaches no one.
-    pub(crate) async fn push(&mut self, row: contract::QueryRow) -> Result<(), contract::QueryError> {
-        self.batch.push(row);
-        if self.batch.len() == BATCH {
-            self.flush().await
-        } else {
-            Ok(())
-        }
-    }
-
-    async fn flush(&mut self) -> Result<(), contract::QueryError> {
-        let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(BATCH));
-        if batch.is_empty() {
-            return Ok(());
-        }
-        let unwritten = match &mut self.writer {
-            Writer::Typed(writer) => writer.write_all(batch).await.len(),
-            Writer::Json(writer) => writer.write_all(batch.iter().map(row_json).collect()).await.len(),
-        };
-        if unwritten == 0 {
-            Ok(())
-        } else {
-            Err(contract::QueryError::InternalError)
-        }
-    }
-}
-
+/// The handler call of every query.
+const QUERY_RUN: &str = r"
 #[allow(dead_code)]
 pub(crate) async fn run<S, F>(
     request: Result<contract::QueryRequest, contract::InvalidInputDetail>,
     state: &mut S,
-    rows: &mut Rows,
     mut handler: F,
-) -> Result<contract::QueryEnd, contract::QueryError>
+) -> Result<contract::QueryResult, contract::QueryError>
 where
-    F: AsyncFnMut(&mut S, contract::QueryRequest, &mut Rows) -> Result<contract::QueryEnd, contract::QueryError>,
+    F: AsyncFnMut(&mut S, contract::QueryRequest) -> Result<contract::QueryResult, contract::QueryError>,
 {
     let mut request = request.map_err(contract::QueryError::InvalidInput)?;
     normalize(&mut request)
         .and_then(|()| limit(&mut request))
         .map_err(contract::QueryError::InvalidInput)?;
-    let end = handler(state, request, rows).await?;
-    rows.flush().await?;
-    Ok(end)
+    handler(state, request).await
 }
 ";
 
-/// The export of every streamed query. The export returns the stream and the
-/// future at once, and a spawned task writes them.
+/// The export of every query. `read-json` returns the WAL position that the
+/// state read with the page, for a list ETag.
 const QUERY_EXPORT: &str = r#"
 #[allow(unused_macros)]
 macro_rules! export_operation {
@@ -733,7 +664,6 @@ macro_rules! export_operation {
             use $contract as __contract;
             use $node as __node;
             use $codec as __codec;
-            use wit_bindgen::rt::async_support::{FutureReader, StreamReader, spawn_local};
 
             fn invalid(error: __codec::CodecError) -> __node::NodeError {
                 __node::NodeError::InvalidInput(__node::ErrorDetail {
@@ -743,56 +673,39 @@ macro_rules! export_operation {
             }
 
             impl __contract::Guest for $component {
-                #[allow(clippy::unused_async_trait_impl)]
                 async fn run(
                     _context: __node::NodeContext,
                     input: __contract::QueryRequest,
-                    want_wal_position: bool,
-                ) -> Result<
-                    (
-                        FutureReader<__contract::QueryMetadata>,
-                        StreamReader<__contract::QueryRow>,
-                        FutureReader<Result<__contract::QueryEnd, __contract::QueryError>>,
-                    ),
-                    __node::NodeError,
-                > {
-                    let (writer, rows) = crate::wit_stream::new::<__contract::QueryRow>();
-                    let (end, ended) = crate::wit_future::new::<
-                        Result<__contract::QueryEnd, __contract::QueryError>,
-                    >(|| Err(__contract::QueryError::InternalError));
-                    let (metadata, header) = crate::wit_future::new::<__contract::QueryMetadata>(|| __contract::QueryMetadata { wal_position: None });
-                    spawn_local(async move {
-                        let mut state = $state;
-                        state.want_wal_position(want_wal_position);
-                        let mut sink = __codec::Rows::typed(writer, metadata);
-                        let outcome = __codec::run(Ok(input), &mut state, &mut sink, $handler).await;
-                        drop(sink);
-                        let _ = end.write(outcome).await;
-                    });
-                    Ok((header, rows, ended))
+                ) -> Result<__contract::QueryOutcome, __node::NodeError> {
+                    let mut state = $state;
+                    Ok(__contract::QueryOutcome {
+                        outcome: __codec::run(Ok(input), &mut state, $handler).await,
+                    })
                 }
 
-                #[allow(clippy::unused_async_trait_impl)]
                 async fn run_json(
                     _context: __node::NodeContext,
                     input: String,
-                    want_wal_position: bool,
-                ) -> Result<(FutureReader<__contract::QueryMetadata>, StreamReader<String>, FutureReader<String>), __node::NodeError> {
+                ) -> Result<__node::Emission, __node::NodeError> {
                     let request = __codec::decode(&input).map_err(invalid)?;
-                    let (writer, rows) = crate::wit_stream::new::<String>();
-                    let (end, ended) = crate::wit_future::new::<String>(|| {
-                        __codec::encode_end(&Err(__contract::QueryError::InternalError))
-                    });
-                    let (metadata, header) = crate::wit_future::new::<__contract::QueryMetadata>(|| __contract::QueryMetadata { wal_position: None });
-                    spawn_local(async move {
-                        let mut state = $state;
-                        state.want_wal_position(want_wal_position);
-                        let mut sink = __codec::Rows::json(writer, metadata);
-                        let outcome = __codec::run(request, &mut state, &mut sink, $handler).await;
-                        drop(sink);
-                        let _ = end.write(__codec::encode_end(&outcome)).await;
-                    });
-                    Ok((header, rows, ended))
+                    let mut state = $state;
+                    let outcome = __codec::run(request, &mut state, $handler).await;
+                    Ok(__node::Emission { payload: __codec::encode(&outcome), port: None })
+                }
+
+                async fn read_json(
+                    _context: __node::NodeContext,
+                    input: String,
+                    want_wal_position: bool,
+                ) -> Result<(__node::Emission, Option<String>), __node::NodeError> {
+                    let request = __codec::decode(&input).map_err(invalid)?;
+                    let mut state = $state;
+                    state.want_wal_position(want_wal_position);
+                    let outcome = __codec::run(request, &mut state, $handler).await;
+                    Ok((
+                        __node::Emission { payload: __codec::encode(&outcome), port: None },
+                        state.wal_position().map(str::to_owned),
+                    ))
                 }
             }
         };

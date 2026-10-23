@@ -765,7 +765,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                 "operation": "query",
                 "statement_constant": statement_constant,
                 "row": "GadgetRow",
-                "fetch": "stream",
+                "fetch": "all",
                 "binds": [
                     accessor_bind(
                         "stock_id_filter",

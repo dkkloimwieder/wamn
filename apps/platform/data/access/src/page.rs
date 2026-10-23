@@ -1,88 +1,59 @@
-//! One keyset read, handed out one row at a time as the host reads it.
+//! One keyset read: its rows and the cursor that continues it.
 //!
 //! The statement reads one row past the limit, and that row says whether a
-//! next read has rows. The cursor comes from the last row handed out.
-
-use std::fmt;
-
-use wamn_postgres_statements::{RowStream, StatementError};
-
-/// Mints the cursor that starts the next read after one row.
-type CursorFn<Row, E> = Box<dyn Fn(&Row) -> Result<String, E>>;
+//! next read has rows. The cursor comes from the last row of the page.
 
 /// The rows of one read and the cursor that continues it, if anything does.
-///
-/// `E` is the refusal of the package that owns the read.
-pub struct Page<Row, E> {
-    rows: RowStream<Row>,
-    limit: usize,
-    handed: usize,
-    statement: fn(&StatementError) -> E,
-    cursor: CursorFn<Row, E>,
+#[derive(Debug)]
+pub struct Page<Row> {
+    rows: Vec<Row>,
     next_cursor: Option<String>,
 }
 
-impl<Row, E> fmt::Debug for Page<Row, E> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Page")
-            .field("limit", &self.limit)
-            .field("handed", &self.handed)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<Row, E> Page<Row, E> {
-    /// A read of `limit` rows over a statement that reads `limit + 1`.
+impl<Row> Page<Row> {
+    /// A page of `limit` rows from a statement that read up to `limit + 1`.
     ///
-    /// `statement` translates a failed read, and `cursor` mints the cursor
-    /// from the last row.
-    pub fn new(
-        rows: RowStream<Row>,
-        limit: i64,
-        statement: fn(&StatementError) -> E,
-        cursor: impl Fn(&Row) -> Result<String, E> + 'static,
-    ) -> Self {
-        Self {
-            rows,
-            limit: usize::try_from(limit).unwrap_or(0),
-            handed: 0,
-            statement,
-            cursor: Box::new(cursor),
-            next_cursor: None,
-        }
-    }
-
-    /// The next row, or `None` after `limit` rows or the last row.
+    /// `cursor` mints the cursor from the last row of the page.
     ///
     /// # Errors
     ///
-    /// `E` when the statement fails or a row cannot mint a cursor.
-    pub async fn next(&mut self) -> Result<Option<Row>, E> {
-        if self.handed == self.limit {
-            return Ok(None);
-        }
-        let Some(row) = self.read().await? else {
-            self.handed = self.limit;
-            return Ok(None);
-        };
-        self.handed += 1;
+    /// `E` when the last row cannot mint a cursor.
+    pub fn new<E>(
+        mut rows: Vec<Row>,
+        limit: i64,
+        cursor: impl Fn(&Row) -> Result<String, E>,
+    ) -> Result<Self, E> {
+        let limit = usize::try_from(limit).unwrap_or(0);
         // The row past the limit says whether a next read has rows.
-        if self.handed == self.limit && self.read().await?.is_some() {
-            self.next_cursor = Some((self.cursor)(&row)?);
-        }
-        Ok(Some(row))
+        let next_cursor = if rows.len() > limit {
+            rows.truncate(limit);
+            rows.last().map(cursor).transpose()?
+        } else {
+            None
+        };
+        Ok(Self { rows, next_cursor })
     }
 
-    /// The cursor that continues this read, once `next` returned `None`.
-    pub fn next_cursor(&self) -> Option<String> {
-        self.next_cursor.clone()
+    /// The rows of the page, and the cursor that continues the read.
+    pub fn into_parts(self) -> (Vec<Row>, Option<String>) {
+        (self.rows, self.next_cursor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Page;
+
+    fn page(rows: Vec<u8>, limit: i64) -> (Vec<u8>, Option<String>) {
+        Page::new(rows, limit, |row| Ok::<_, ()>(row.to_string()))
+            .unwrap()
+            .into_parts()
     }
 
-    async fn read(&mut self) -> Result<Option<Row>, E> {
-        self.rows
-            .next()
-            .await
-            .map_err(|error| (self.statement)(&error))
+    #[test]
+    fn the_row_past_the_limit_mints_the_cursor_from_the_last_row() {
+        assert_eq!(page(vec![1, 2, 3], 2), (vec![1, 2], Some("2".to_owned())));
+        assert_eq!(page(vec![1, 2], 2), (vec![1, 2], None));
+        assert_eq!(page(Vec::new(), 2), (Vec::new(), None));
     }
 }

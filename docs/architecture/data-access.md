@@ -414,10 +414,6 @@ The next begin on the same Store is allowed, with its own transaction and delive
 Commit without a new open operation returns `not-begun`.
 Member statement handles borrow the same transaction.
 `statements.run`, `statements.run-stream`, and guest transaction creation remain refused inside it.
-`transaction.run-stream` reads on that transaction and uses the statement-declared row limit.
-The caller reads its completion future before another transaction call.
-Dropping an unfinished stream aborts the transaction by closing its connection.
-The host sends no protocol cancellation that can affect a later statement.
 
 The async `wal-position()` call returns `pg_current_wal_lsn()::text` on the open operation's connection.
 It leaves the operation open and returns `not-begun` when no operation is open.
@@ -446,26 +442,18 @@ This rule matches platform identity errors. Primary messages remain verbatim.
 Commands keep network effects outside transactions that hold database locks.
 Post-commit work uses the [event path](capabilities.md#events).
 
-A generated query yields its rows as a stream, then one final record with the keyset cursor that continues the read.
+A generated query returns its page as one result: its rows, and the keyset cursor that continues the read.
 For a cursor, SQL compares the sort field and ID as one row, so a matching index starts at that cursor.
 `wamn build` requires a `(field, id)` index for every allowed sort field, including the default.
 It reads indexes across all package migrations and refuses a missing index with the operation, table, and exact `CREATE INDEX` line.
-The export takes one request and returns a row stream and a future of the final record.
-Its `run-json` entry returns each row as one JSON object and the outcome as one JSON value.
+Its `run-json` entry returns the page as the outcome list of one item, and its `read-json` entry also returns the WAL position.
 The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100.
 The query's codec fills the default and refuses a limit below 1.
-The host declares the maximum of each reply shape, and the entry refuses a larger limit before the query runs.
-The entry gathers rows and the cursor for a page response, and forwards batches for a streamed response.
-The engine gathers rows for a wiring caller that reads one outcome.
-An application query reads through `transaction.run-stream` of `wamn:postgres` 0.4.0.
-The entry opens that transaction before the query.
-The host executes the exact prepared statement once, with the claims of `run`, and buffers up to 500 rows per batch.
-Caller claims and anonymous reads both use the open operation transaction.
-Dropping an unfinished stream closes its session and ends the query.
-The statement reads one snapshot, so a write that commits during a load does not show in it.
-The test `a_streamed_load_reads_one_statement_as_of_its_start` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) holds a load after its first rows and finds its statement open.
-It commits a write and reads the rest of the load without that write.
-The row limit does not apply to a stream, because the statement's declared limit bounds the rows. The connection buffers the result.
+The entry refuses a limit above the declared maximum or the platform ceiling before the query runs.
+An application query reads through `statements.run` of `wamn:postgres` 0.4.0, with the WAL position on the same connection when the entry asks for it.
+The statement reads one row past the limit, and that row says whether a next read has rows.
+The project row limit applies to that read.
+`statements.run-stream` stays in `wamn:postgres` for a workflow node that declares it, and no base read calls it.
 A custom projection declares its result class and typed result fields, and no row or byte limit.
 Its authored SQL decides how many rows it returns.
 A custom projection or command admits the result classes `one`, `optional_one`, and `bounded_list`.

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use http_route::{
     AdapterLimits, Backend, BodyReadError, BodyReader, DeliveryReport, DeliveryRequest, Header,
-    ProviderError, RequestHead, RouteDefinition, SchemaInvalid, StreamedHead, handle_request,
+    ProviderError, RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
 
 use super::*;
@@ -98,17 +98,6 @@ impl Backend for Adapter {
             deadline_adjustments: vec![],
             etag: None,
         }
-    }
-
-    async fn deliver_stream(
-        &mut self,
-        _: DeliveryRequest<AuthenticatedCaller>,
-    ) -> Result<StreamedHead, DeliveryReport> {
-        panic!("POST never streams")
-    }
-
-    fn keep_route_permit(&mut self, (): ()) {
-        panic!("POST never keeps a stream permit")
     }
 }
 

@@ -11,7 +11,6 @@ mod control_route;
 pub mod environment_status;
 mod host_route;
 mod operation;
-mod query_read;
 mod read_cache;
 mod readiness;
 mod route;

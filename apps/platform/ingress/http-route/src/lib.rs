@@ -191,32 +191,7 @@ pub struct HttpResponse {
     /// `no-store` with no ETag. Boxed, because every refusal is an
     /// `HttpResponse` too and most responses carry none.
     pub read: Option<Box<ReadCache>>,
-    /// A streamed read: the backend holds the reply lines, and the body is
-    /// written from them as they arrive.
-    pub streamed: bool,
 }
-
-/// A streamed read, known before its first row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StreamedHead {
-    /// The weak ETag of the list.
-    pub etag: Option<String>,
-}
-
-/// How a read replies (`docs/architecture/execution.md`). The canonical query
-/// string names it in `shape`: a page by default, or a stream of lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Shape {
-    Page,
-    Stream,
-}
-
-/// The Cache-Control of a streamed read. It is private, and a refresh
-/// revalidates with its ETag, so unchanged data answers 304.
-const STREAM_CACHE_CONTROL: &str = "private, no-cache";
-
-/// The content type of a streamed read: one JSON value per line.
-pub const STREAM_CONTENT_TYPE: &str = "application/x-ndjson";
 
 /// The cache facts of one read response.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,15 +335,6 @@ pub trait Backend {
         &mut self,
         request: DeliveryRequest<Self::AuthenticatedCaller>,
     ) -> DeliveryReport;
-    /// Deliver a query read as a stream. `Ok` means the backend holds the
-    /// reply lines. `Err` is the report of a read that ended before its first
-    /// row, which the adapter answers as a page answer.
-    async fn deliver_stream(
-        &mut self,
-        request: DeliveryRequest<Self::AuthenticatedCaller>,
-    ) -> Result<StreamedHead, DeliveryReport>;
-    /// Keep the route permit of a streamed read until its body ends.
-    fn keep_route_permit(&mut self, permit: Self::RoutePermit);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -415,13 +381,10 @@ async fn try_handle(
         .await
         .map_err(|rejection| rejection_response(&rejection))?;
 
-    let mut shape = Shape::Page;
     let body_json = if method == "GET" && matched.definition.mappings.is_empty() {
         // A read carries its one request item in the query string, in the one
         // canonical encoding (docs/architecture/execution.md).
-        let (item, read_shape) = read_query_item(&head.target)?;
-        shape = read_shape;
-        item
+        read_query_item(&head.target)?
     } else if raw_body.is_empty() {
         Value::Null
     } else {
@@ -436,21 +399,8 @@ async fn try_handle(
     )?;
     let payload =
         serde_json::to_string(&mapped).map_err(|_| error_response(400, "mapping-failed"))?;
-    // The input schema bounds `limit` by a page's maximum. A streamed load's
-    // cap goes up to the host's ceiling, which the host checks, so the schema
-    // reads the rest of its item.
-    let schema_payload = match shape {
-        Shape::Page => payload.clone(),
-        Shape::Stream => {
-            let mut item = mapped.clone();
-            if let Some(Value::Object(item)) = item.get_mut(0) {
-                item.remove("limit");
-            }
-            item.to_string()
-        }
-    };
     backend
-        .validate_input(&matched.definition.attachment_id, &schema_payload)
+        .validate_input(&matched.definition.attachment_id, &payload)
         .map_err(|refusal| {
             let data = refusal.pointer.map(|pointer| json!({ "pointer": pointer }));
             detailed_error_response(400, "schema-invalid", None, data)
@@ -467,7 +417,7 @@ async fn try_handle(
         .cache_control
         .filter(|_| header_values(&head.headers, CSRF_HEADER).is_empty());
     let attachment_id = matched.definition.attachment_id;
-    let Some(permit) = backend
+    let Some(_permit) = backend
         .try_acquire_route(&attachment_id)
         .map_err(|_| error_response(503, "route-limit-provider-failed"))?
     else {
@@ -486,26 +436,7 @@ async fn try_handle(
         trace,
         if_none_match,
     };
-    let report = match shape {
-        Shape::Page => backend.deliver(request).await,
-        Shape::Stream => match backend.deliver_stream(request).await {
-            Ok(streamed) => {
-                backend.keep_route_permit(permit);
-                return Ok(HttpResponse {
-                    deadline_adjustments: Vec::new(),
-                    read: Some(Box::new(ReadCache {
-                        cache_control: cache_control.map(|_| STREAM_CACHE_CONTROL.to_owned()),
-                        etag: streamed.etag,
-                    })),
-                    streamed: true,
-                    status: 200,
-                    content_type: STREAM_CONTENT_TYPE,
-                    body: Vec::new(),
-                });
-            }
-            Err(report) => report,
-        },
-    };
+    let report = backend.deliver(request).await;
     let mut response = match report.outcome {
         Ok(outcome) => delivery_response(outcome),
         Err(error) => delivery_error_response(error),
@@ -527,22 +458,15 @@ const CSRF_HEADER: &str = "x-wamn-csrf";
 const READ_TARGET_BYTES: usize = 8 * 1024;
 
 /// The one request item of a read, as the list of one item that the route
-/// input schema describes, and the shape of its reply. `shape` is a parameter
-/// of the canonical query string, not a member of the item.
-fn read_query_item(target: &str) -> Result<(Value, Shape), HttpResponse> {
+/// input schema describes.
+fn read_query_item(target: &str) -> Result<Value, HttpResponse> {
     if target.len() > READ_TARGET_BYTES {
         return Err(error_response(400, "invalid-target"));
     }
     let query = target.split_once('?').map_or("", |(_, query)| query);
-    let mut item = wamn_execution_contract::decode_read_query(query)
+    let item = wamn_execution_contract::decode_read_query(query)
         .map_err(|_| error_response(400, "invalid-target"))?;
-    let shape = match item.remove("shape") {
-        None => Shape::Page,
-        Some(Value::String(shape)) if shape == "page" => Shape::Page,
-        Some(Value::String(shape)) if shape == "stream" => Shape::Stream,
-        Some(_) => return Err(error_response(400, "invalid-target")),
-    };
-    Ok((Value::Array(vec![Value::Object(item)]), shape))
+    Ok(Value::Array(vec![Value::Object(item)]))
 }
 
 fn normalize_method(method: &str) -> Option<String> {
@@ -866,7 +790,6 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
         DeliveryOutcome::Respond(payload) => HttpResponse {
             deadline_adjustments: Vec::new(),
             read: None,
-            streamed: false,
             status: 200,
             content_type: "application/json",
             body: payload.into_bytes(),
@@ -894,7 +817,6 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
         DeliveryOutcome::NotModified => HttpResponse {
             deadline_adjustments: Vec::new(),
             read: None,
-            streamed: false,
             status: 304,
             content_type: "application/json",
             body: Vec::new(),
@@ -929,7 +851,6 @@ fn partial_response(partial: PartialCompletion) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         read: None,
-        streamed: false,
         status: failure.status,
         content_type: "application/json",
         body: serde_json::to_vec(
@@ -959,7 +880,6 @@ fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         read: None,
-        streamed: false,
         status: 403,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({
@@ -998,7 +918,6 @@ fn detailed_error_response(
     HttpResponse {
         deadline_adjustments: Vec::new(),
         read: None,
-        streamed: false,
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&ErrorEnvelope {
@@ -1012,7 +931,6 @@ fn error_response(status: u16, code: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         read: None,
-        streamed: false,
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({"error":{"code":code}})).unwrap_or_default(),
@@ -1023,7 +941,6 @@ fn body_too_large_response(limit: usize) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         read: None,
-        streamed: false,
         status: 413,
         content_type: "text/plain; charset=utf-8",
         body: format!("request body exceeds {limit}-byte limit\n").into_bytes(),

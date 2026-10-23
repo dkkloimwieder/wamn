@@ -2,9 +2,9 @@ package wamn:router-delivery@0.4.0;
 
 /// 0.4.0 is 0.3.0 without `delivery-report.actor-labels`: actor names come
 /// from the application's own SQL (wamn-stxy9.1). 0.3.0 is 0.2.0 with `failure-kind` renamed `failure-type`, and the field
-/// `delivery-failure.kind` renamed `failure-type` (wamn-ld93.1). 0.2.0 added
-/// `deliver-stream`, which answers a query read as the rows arrive (owner
-/// ruling on wamn-utci, 2026-09-26). This is the one version in the tree.
+/// `delivery-failure.kind` renamed `failure-type` (wamn-ld93.1). The base read
+/// path streams no rows (owner ruling on wamn-cg5e4, 2026-10-23), so
+/// `deliver-stream` is gone. This is the one version in the tree.
 
 /// Host-owned delivery into the one production router driver.
 interface delivery {
@@ -136,19 +136,5 @@ interface delivery {
     etag: option<string>,
   }
 
-  /// A streamed read, known before its first row.
-  record streamed-reply {
-    /// The weak ETag of the list, from the model versions before the query ran.
-    etag: option<string>,
-    /// The reply lines: `{"row":…}` for each row, then one `{"outcome":…}`.
-    /// A stream that ends without the outcome line is a failed read.
-    lines: stream<string>,
-  }
-
   deliver: async func(request: delivery-request) -> delivery-report;
-
-  /// Deliver a query read as a stream of lines. A refusal, a not-modified
-  /// answer, or a failure before the first row returns the report that
-  /// `deliver` would return.
-  deliver-stream: async func(request: delivery-request) -> result<streamed-reply, delivery-report>;
 }

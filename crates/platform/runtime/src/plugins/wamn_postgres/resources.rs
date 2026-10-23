@@ -1309,15 +1309,6 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
 }
 
 impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
-    async fn run_stream(
-        accessor: &Accessor<T, Self>,
-        rep: Resource<PgStatementTransaction>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> super::run_stream::StreamCallResult {
-        super::run_stream::transaction_run_stream(accessor, rep, statement_path, binds).await
-    }
-
     async fn run(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
@@ -1757,16 +1748,6 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
 impl<T: 'static + Send>
     bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore<T> for SharedCtx
 {
-    async fn run_stream(
-        accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-        rep: Resource<PgStatementTransaction>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> super::run_stream::StreamCallResult {
-        super::run_stream::transaction_run_stream(accessor, rep, statement_path, binds).await
-    }
-
     async fn run(
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
