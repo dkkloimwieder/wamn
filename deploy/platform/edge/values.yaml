@@ -25,6 +25,9 @@ issuer: ""
 identity: ""
 identityCaConfigMap: ""
 
+# The Rust edge that serves every other path. Empty leaves those paths out.
+web: http://wamn-edge-web.edge.svc.cluster.local
+
 # Google Cloud: annotate the Service for the load balancer's endpoint group.
 neg: false
 

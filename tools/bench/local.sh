@@ -363,6 +363,7 @@ with open(sys.argv[2], "w") as output:
         "tlsSecret": "local",
         "identityCaConfigMap": "local",
         "neg": True,
+        "web": "",
     }, output)
 with socket.socket() as listener:
     listener.bind(("127.0.0.1", 0))

@@ -62,14 +62,16 @@ data:
         location = /healthz {
           return 200;
         }
+{{- with $.Values.web }}
 
         # The Rust edge selects the live release and reads its private bucket.
         location / {
           limit_except GET { deny all; }
-          proxy_pass http://wamn-edge-web.edge.svc.cluster.local;
+          proxy_pass {{ . }};
           proxy_http_version 1.1;
           proxy_set_header Host $host;
         }
+{{- end }}
       }
 {{- end }}
     }
