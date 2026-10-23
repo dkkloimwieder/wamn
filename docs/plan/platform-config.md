@@ -9,7 +9,8 @@ Each section carries the dependency it waits on, so it can be ruled and filed as
 | section | depends on |
 | --- | --- |
 | Mechanism, Tables, Declaration, Numbering, Connections, Roles, Settings, Environment copy | now |
-| no network call inside a transaction; `file.put` before the operation | after A5 |
+| no network call inside a transaction (the host refusal) | after A5 |
+| `file`, `file.*` routes, `file.put` before the operation | now |
 | Connector versions; `connectors` in `environment.k`; `integration.form`; `target_application` digests | after loadable connectors |
 | Local environments; local issuer; projections | after SQLite platform functions |
 
@@ -60,8 +61,8 @@ Control plane only, reached through platform routes and the host:
 - `exposure` is per file: `application` (default; any user with a role on the application, stable `/api/<app>/files/<id>` behind the session), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a cdn change.
 - A cdn is a way to expose files already in a store, not a place to put them: one hostname fronting the store's `public/` prefix, a parameter on the store connection (`cdn_host`). Exposing a file copies the object to `public/<key>` server-side and sets `url`; unexposing deletes the public object and clears it. A store with no `cdn_host` refuses `public`.
 - A local `disk` store has `max_bytes` and `max_age` parameters: a box has a disk, so retention is the admin's explicit choice on that row, and an evicted blob takes its `file` row with it — the one place a row is removed by the platform. The box serves its own files; nothing on it is `public`. Forwarding a file to the cloud is an application decision carried over a `wamn` connection (a new row in a cloud store, same `sha256`); the platform never forwards on its own.
-- `external_system` holds what every connection to one system shares (account id, realm, base host) once; a connection adds only what differs (endpoint, transport, credential). Credentials stay on connections: one system may have a read-only and a write connection. Enablement stays on connections (`project_connection`); enabling a whole system for a project is a route that enables each of its connections, not a second table.
-- Record provenance is the application's: a record that came from outside carries `external_system_id` (FK to the relation) and `external_id` (the record's identity in that system's namespace), never a connection id. Which connection imported it is a fact about the run, not about the record. For a `wamn` connection the external system is the peer environment, one row per peer, created with the connection; it gives `project/environment/application` one home.
+- `external_system` holds what every connection to one system shares (account id, realm, base host) once; a connection adds only what differs (endpoint, transport, credential). A connection with an `external_system_id` has the system's `integration`; a mismatch is a route refusal. `external_system.name` is unique per org and stable while any connection or record references it. Credentials stay on connections: one system may have a read-only and a write connection. Enablement stays on connections (`project_connection`); enabling a whole system for a project is a route that enables each of its connections, not a second table.
+- Record provenance is the application's: a record that came from outside carries `external_system_id` (FK to the relation) and `external_id` (the record's identity in that system's namespace), never a connection id, with `UQ (external_system_id, external_id)` on the model. Which connection imported it is a fact about the run, not about the record. For a `wamn` connection the external system is the peer environment, one row per peer, created with the connection; it gives `project/environment/application` one home.
 
 ## Declaration in wamn.k
 
@@ -115,7 +116,7 @@ environment = {
 - `role = "actor"` on a field: the host fills it from the operation caller. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `connections`: the names a package binds, each with the integration it expects and `mode = read | write`. A file store is one of them. `environment.k` maps each name to a connection name; apply refuses an unbound name, a connection the project has not enabled, an integration that differs from the declared one, or an integration not allowed at the environment.
 - `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` capability. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
-- A `wamn` connection names its target as `project/environment/application`.
+- A `wamn` connection's external system is the peer environment; its `parameters` carry `project/environment/application`. The connection adds transport and exchange only.
 - A sequence declared by a package is also callable from its commands (`sequences::<name>::next`); a sequence with no field and no caller is a build refusal: nothing would use it.
 
 ## Numbering
@@ -408,6 +409,7 @@ Each rule has one check that runs in the platform test set.
 | a connector not allowed at the environment is refused | `integration_allow` lacks `modbus` for the environment; apply of a package binding a modbus connection → refused; allow it → applied |
 | every bound connection has a pinned connector | `environment.k` binds a modbus connection with no `connectors.modbus` line → apply refuses |
 | a connection name is stable while bound | rename while an applied environment binds it → route refuses |
+| a connection matches its external system | connection with `external_system_id` whose `integration` differs from the system's → route refuses; external system rename while a connection or a record references it → route refuses |
 | a port has one owner | two applications on one target bind a serial connection → the second apply refuses |
 | no network call inside a database transaction | a command opens `begin-operation`, then calls `file.put` or any bound connection → host refusal; the same call before `begin-operation` → allowed |
 | a target runs only what was applied to it | a target's check-in reports a bundle with no `target_application` row → flagged, not served |
@@ -454,24 +456,24 @@ Each rule has one check that runs in the platform test set.
 
 ### Rules
 
-Baseline: wamn `main` at `e4f15204c` (2026-10-22). Running epics: platform-install E4 (`wamn-1oywl`), platform UI M3 (`wamn-n8q9m.3`), upgrade 2.11 closing, perf-arch M6/M7, integrations Epic 2 waiting.
+Baseline: `origin/main` at `17f777f81`, then C1 done at `3bb4c488e`. Epic numbering: C1 schema (done), C2 numbering (scoped), C3 connections/bindings/targets, C4 files (now, integrations agent after C3), C5 admin screens (UI after M6), C6 active role (UI after M4), C7 environment copy and seed rows (platform-install after E5), C8 transaction refusal (perf-arch after A5), C9 loadable connectors (integrations after C4), C10 local environments (edge owner). Queues: integrations C2 → C3 → C4 → C9; platform UI M3 → M4 → C6 → M5 → M6 → C5; platform-install E4 → E5 → C7; perf-arch M6/M7 → A5 → C8.
 
 The rules of `platform-deploy.md` "How this plan is worked" apply (worktree lane, ≤3 issues per epic, build+clippy+fmt+unit per issue, fast-forward merge after review, report ≤10 lines at merge). Plus:
 
 - The spec's invariants table is the test set. Each epic lands the checks for the invariants it makes true; a check asserts a fact, never a stored literal.
 - Receiving and WMS change only where the spec makes today's shape non-conforming (`number =`, `role = "actor"`, `relations`, connection bindings). Nothing else in them moves.
-- One agent per lane that touches `crates/control`. Epics C1–C3 run in sequence in the integrations agent; the UI agent and platform-install agent keep their own epics.
+- One agent per lane that touches `crates/control`. Epics C1–C4 run in sequence in the integrations agent; the UI agent and platform-install agent keep their own epics.
 - Platform version bumps as rule 6 says. C1 and C2 are host-plugin changes, so they are image bumps; plan the build with the cloud path.
 
-### What exists today (facts, main `e4f15204c`)
+### What exists today (facts, main `17f777f81`)
 
 | spec item | today | gap |
 | --- | --- | --- |
-| `platform` schema | `app_system` in each project database; `app_system.users` written by the control host on the admin-hierarchy path | rename; grants to one `SELECT` + one `EXECUTE`; new tables |
-| transaction claims | `app.user_id`, `app.role`, `app.operation` set with `set_config` at the host-opened transaction | add `app.application` |
-| connections | `environment.k` `http` connection rows carry values (base URL, auth) — Epic 1 `wamn-jstjf`; `CallableHttp` pool in the host | values move to org `connection` rows; `environment.k` binds names only; `wamn.k` declares `connections` |
+| `platform` schema | `app_system` in each project database; `app_system.users` written by the control host on the admin-hierarchy path | rename; grants to one `SELECT` + one `EXECUTE`; new tables (done in C1) |
+| transaction claims | `app.user_id`, `app.role`, `app.operation` set with `set_config` at the host-opened transaction | add `app.application` (done in C1) |
+| connections | org-scoped connection (`registry.org_connections`, credentials file `orgs`); `wamn_integration` package (`setting`, `log`); one service principal per scheduled or integration application with the declared-dependency role (Epics 4–5, `integrations.md`) | move into `connection`, `external_system`, `credential` and service principals; `environment.k` binds names only; `wamn.k` declares `connections` |
 | roles | per application environment; a request is checked against every role the token carries; M4 (roles grid) not started | active-role claim map and picker after M4 |
-| numbering, settings, `integration_allow`, `project_connection`, principals | none | new |
+| numbering, settings, `integration_allow`, `project_connection` | none | new |
 | transaction window | the host opens the transaction before the export (`execution.md`); `begin-operation`/`commit` as guest imports are the A5 spike | "after A5" items wait |
 
 ### Epics
@@ -480,32 +482,49 @@ Tag = the spec's dependency tag. Owner = which running agent takes it, in its qu
 
 | # | Epic | Tag | Owner | Done when |
 | --- | --- | --- | --- | --- |
-| C1 | **Platform schema.** Rename `app_system` → `platform` (migration, generator, fixtures). Tables: `user` (projection, as today), `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence`, `number_counter`, `setting`; `bump_counter` as `SECURITY DEFINER`. Application role: `SELECT` on the listed tables plus roles, permissions and `environment`, `EXECUTE` on `bump_counter`, the existing `write_log` grants, nothing else. `platform.configurations` is deleted (`setting` replaces it). `app.application` claim. Control-host write path for `platform.*` rows (spec assumption 1 verified in issue 1). | now | integrations agent, next epic (replaces Epic 2's start) | Invariant 1 (grants) and the `app.application` claim check pass on kind; Receiving and WMS apply unchanged on the renamed schema. |
+| C1 | **Platform schema.** Done at `3bb4c488e`. Rename `app_system` → `platform` (migration, generator, fixtures). Tables: `user` (projection, as today), `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence`, `number_counter`, `setting`; `bump_counter` as `SECURITY DEFINER`. Application role: `SELECT` on the listed tables plus roles, permissions and `environment`, `EXECUTE` on `bump_counter`, the existing `write_log` grants, nothing else. `platform.configurations` is deleted (`setting` replaces it). `app.application` claim. Control-host write path for `platform.*` rows (spec assumption 1 verified in issue 3). The integration catalog moved to C3. | now | integrations agent | Done: invariant 1 (grants) and the `app.application` claim check pass on kind; Receiving and WMS apply unchanged on the renamed schema. |
 | C2 | **Numbering.** `wamn.k`: `sequences`, `number = "<sequence>"`, `role = "actor"`, `targets`. Generator: build refusals (write supplies a number field or an actor field; sequence with no field and no caller; `per=`/`reset=` key rules; models on a `local`-only package); the two-statement generated insert; `sequences::<name>::next/peek` bindings. Plugin: the renderer in `wamn:postgres` (`next_number` plugin call, pattern tokens incl. the renderer's date set, `per=` lookup-first, name-order locking). Control route `set_counter` with the dry-render check. Env apply creates `number_sequence` rows from package defaults, never overwrites. Receiving gets one `number =` field and `role = "actor"` on `created_by`/`updated_by` (conformance). | now | integrations agent, after C1 | Numbering invariants (gapless, `reset=`, `per=` under concurrency, rollback, `set_counter` rules, cross-application refusal) pass; Receiving creates a numbered record in the local live test. |
-| C3 | **Connections and bindings.** `wamn.k` `connections` (integration, mode). Org `connection` rows and `project_connection` through control routes; `integration_allow` at org/project/environment. `environment.k` becomes `applications.<app>.connections` name bindings; the Epic 1 `http` connection values move to `connection.parameters` + `credential` in the control plane (migration of wamn-dev's one connection). Env apply refusals: unbound name, not enabled, integration mismatch, not allowed, second `write` on exclusive media. Connection principals: a `user` row `type = service` per connection; inbound calls carry that principal (service-token signing is an issue here if assumption 3 holds, else the long-lived token fallback). `CallableHttp` reads the row, not `environment.k`. Record provenance, when a package wants it, is `external_system_id` + `external_id`, never a connection id (generator work here, none in C1). | now | integrations agent, after C2 | Binding and principal invariants pass; wamn-dev's existing http connection works through a `connection` row with `environment.k` holding no values; an inbound call as a service principal is granted by an ACL row. |
-| C4 | **Admin screens.** Control: connections (create, credential write-only, enable per project, `integration_allow`), sequences (`set_counter`), settings (org/project scope with the environment picker). Application: settings at application/role/user scope, views as settings rows. Settings table semantics (resolution, lock, closed key set, copy with role). | now | platform UI agent, after M6 | Settings invariants pass; an admin creates a connection, enables it, sets a counter and locks a setting from the browser; the server refuses what the UI hides. |
-| C5 | **Active role.** Token claim `application → role` map; the auth check uses the active entry only; role picker in the shell; reissue on switch; a user with one role gets it without a choice. | now (ruled) | platform UI agent, after M4, before C4 if M4 finishes first | Invariant "one active role per application per session" passes; existing M2/M4 flows unchanged for single-role users. |
-| C6 | **Environment copy and seed rows.** `environment copy` carries `number_counter`, `setting`, roles; package seed data upserted at env apply. | now | platform-install agent, after E5 | Copy and seed invariants pass on kind. |
-| C7 | **Transaction window.** Host refuses storage and connection calls while `begin-operation` is open; `file` table, `file.put/get/delete/expose` routes, exposure, cdn, disk store eviction. | after A5 | perf-arch agent (A5 owner) for the refusal; integrations agent for `file` | Network-in-transaction and file invariants pass. |
-| C8 | **Loadable connectors.** Spec assumption 11 spike first (connector class in admission, sockets granted to a connector component and refused to applications, bundle carries connectors). Then `integration.form`, `connectors` pins in `environment.k`, `wamn integration build/publish`, `target_application` digests. | after loadable connectors | integrations agent, after C7 | One wasm connector pinned per environment, bumped by an `environment.k` edit, no platform release. |
-| C9 | **Local environments.** SQLite platform tables in the plugin, model-free packages on `local` targets, outbox, offline sessions, `feed = "operation"` projections. CDC projections last. | after SQLite platform functions | edge owner, after the edge plan's next epic | A box runs `wms.station` offline, numbers a record gaplessly, and the cloud commits its events on reconnect. |
+| C3 | **Connections, bindings and targets.** The integration catalog as `registry.integrations (code, form, exclusive)` in the system database, seeded by migration. `wamn.k` `connections` (integration, mode). Org `connection` and `external_system` rows and `project_connection` through control routes; `integration_allow` at org/project/environment. `environment.k` becomes `applications.<app>.connections` name bindings. Migrates the Epic 4/5 shape on main (`registry.org_connections` with the `oauth1` credential, `wamn_integration` principals and their auto-granted roles) into `connection`, `external_system`, `credential` and service principals. Env apply refusals: unbound name, not enabled, integration mismatch, not allowed, second `write` on exclusive media. Connection principals: a `user` row `type = service` per connection; inbound calls carry that principal (service-token signing is an issue here if assumption 3 holds, else the long-lived token fallback). `CallableHttp` reads the row, not `environment.k`. Record provenance, when a package wants it, is `external_system_id` + `external_id`, never a connection id (generator work here, none in C1). | now | integrations agent, after C2 | Binding and principal invariants pass; the Epic 4/5 connections on main work through `connection` rows with `environment.k` holding no values; an inbound call as a service principal is granted by an ACL row. |
+| C4 | **Files.** `file` table, `file.put/get/delete/expose` routes, exposure, cdn, disk store eviction; `file.put` before the operation. | now | integrations agent, after C3 | File invariants pass. |
+| C5 | **Admin screens.** Control: connections (create, credential write-only, enable per project, `integration_allow`), sequences (`set_counter`), settings (org/project scope with the environment picker). Application: settings at application/role/user scope, views as settings rows. Settings table semantics (resolution, lock, closed key set, copy with role). | now | platform UI agent, after M6 | Settings invariants pass; an admin creates a connection, enables it, sets a counter and locks a setting from the browser; the server refuses what the UI hides. |
+| C6 | **Active role.** Token claim `application → role` map; the auth check uses the active entry only; role picker in the shell; reissue on switch; a user with one role gets it without a choice. | now (ruled) | platform UI agent, after M4, before C5 if M4 finishes first | Invariant "one active role per application per session" passes; existing M2/M4 flows unchanged for single-role users. |
+| C7 | **Environment copy and seed rows.** `environment copy` carries `number_counter`, `setting`, roles; package seed data upserted at env apply. | now | platform-install agent, after E5 | Copy and seed invariants pass on kind. |
+| C8 | **Transaction refusal.** Host refuses storage and connection calls while `begin-operation` is open. | after A5 | perf-arch agent (A5 owner) | The network-in-transaction invariant passes. |
+| C9 | **Loadable connectors.** Spec assumption 11 spike first (connector class in admission, sockets granted to a connector component and refused to applications, bundle carries connectors). Then `integration.form`, `connectors` pins in `environment.k`, `wamn integration build/publish`, `target_application` digests. | after loadable connectors | integrations agent, after C4 | One wasm connector pinned per environment, bumped by an `environment.k` edit, no platform release. |
+| C10 | **Local environments.** SQLite platform tables in the plugin, model-free packages on `local` targets, outbox, offline sessions, `feed = "operation"` projections. CDC projections last. | after SQLite platform functions | edge owner, after the edge plan's next epic | A box runs `wms.station` offline, numbers a record gaplessly, and the cloud commits its events on reconnect. |
 
 Order inside each agent's queue:
 
-- integrations agent: C1 → C2 → C3 → (C7 file) → C8.
-- platform UI agent: M3 → M4 → C5 → M5 → M6 → C4.
-- platform-install agent: E4 → E5 → C6.
-- perf-arch agent: M6/M7 → A5 spike → C7 refusal.
+- integrations agent: C2 → C3 → C4 → C9.
+- platform UI agent: M3 → M4 → C6 → M5 → M6 → C5.
+- platform-install agent: E4 → E5 → C7.
+- perf-arch agent: M6/M7 → A5 → C8.
 
-Nothing in C1–C3 blocks the UI or install epics; C4 needs C1–C3 merged.
+Nothing in C1–C4 blocks the UI or install epics; C5 needs C1–C3 merged.
 
-### Issues for C1 (the only epic filed now)
+### Issues for C2 (the only epic filed now)
 
-1. `platform` schema and grants: rename, migration, the eight tables (`external_system` included), `bump_counter`, grant test (invariant 1), generator and fixtures on the new name. Receiving/WMS unchanged except the schema name they reference.
-2. `app.application` claim at the transaction open; cross-application refusal test shape (no `next_number` yet; the check is on the claim).
-3. Control-host write path for `platform.*`: the admin-hierarchy function carries `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence`, `setting` writes; kind test writes one row of each, `external_system` included, through it. Spec assumption 1 closed by this issue.
+C1 is done: `wamn-aqd0m` merged at `3bb4c488e`, and its epic-close kind run passed.
 
-C2 and C3 are filed when C1 merges, with the spec's invariants split the same way.
+Rulings for C2:
+
+- `next-number(name, record) -> text` is one added function on `wamn:postgres/statements`, with no version bump. The host refuses it outside an open operation transaction. The renderer lives in the plugin. `bump_counter` is the only writer of `number_counter`.
+- The application is the composing application of the `app.application` claim (C1.2 ruling). `next_number` refuses a sequence of another application by the claim, never by SQL text.
+- `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
+- `role = "actor"` fills from `app.user_id`. A payload that supplies it is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
+- `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
+- Build refusals: a write that supplies a `number` or `actor` field; a sequence with no field and no caller; `per=` on a key field; `reset=` or `per=` on a sequence bound to a key field; an `int32` key with anything but a bare `{seq}`; a key named by `per=` or `reset=` that is not a field of every model using the sequence, another counter, or `date:`.
+- `set_counter` is a control route. It writes through `bump_counter`'s lock, lands in the write log with the actor, refuses a set below a live number by the dry render, and never touches a `per=` mapping.
+- Env apply creates `number_sequence` rows from package defaults and never overwrites an existing pattern.
+- Receiving conformance only: one `number =` field, and `role = "actor"` on `created_by` and `updated_by`. WMS and Acme do not change.
+
+Issues:
+
+1. `wamn-p3x9n` first (`wamn build` sees platform interface changes), because C2 changes the plugin interface. `wamn.k` `sequences`, `number`, `role = "actor"`, `targets`; the generator refusals; the two-statement generated insert; the `sequences::<name>::next/peek` bindings. A unit test per refusal on fixtures.
+2. Plugin: `next-number` on the statements interface; the renderer (tokens, `width`/`pad`/`hex`, `field`, the `date` set); `per=` lookup-first with the `''` allocator; `reset=`; name-order locking; cross-application refusal by the claim. Live Postgres tests for the numbering invariants: gapless and consecutive under N concurrent creates on one key, `reset=` per key, `per=` once per key under concurrency, a rollback leaves the number unconsumed, a null key is refused.
+3. The `set_counter` route with the dry-render check and its live tests (advance, reset, below-live refused, `per=` row refused, serializes with a concurrent insert); env apply creates sequences and never overwrites an edit; Receiving conformance; kind case: Receiving creates a numbered record.
+
+Out of C2: settings resolution, the `set_counter` UI, the SQLite renderer, connections, seed rows. C3 is filed after the owner's review of C2.
 
 ### Open before C1 starts
 
