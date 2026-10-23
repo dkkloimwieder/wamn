@@ -435,6 +435,7 @@ fn claim_sql_is_fully_bound_with_no_interpolation() {
         "set_config('app.role', $5, true)",
         "set_config('app.user_id', $6, true)",
         "set_config('app.operation', $7, true)",
+        "set_config('app.application', $8, true)",
     ] {
         assert!(CLAIM_SQL.contains(frag), "CLAIM_SQL missing {frag:?}");
     }
@@ -511,21 +512,35 @@ fn validate_claims_rejects_malformed_identities() {
             Some("inspector"),
             Some(U1),
             Some("platform-fixture:widget/update@1.0.0"),
+            Some("platform_fixture"),
         )
         .is_ok()
     );
-    assert!(validate_claims("fixture", None, None, None, None, None).is_ok());
-    assert!(validate_claims("bad'tenant", None, None, None, None, None).is_err());
-    assert!(validate_claims("fixture", Some("has-hyphen"), None, None, None, None).is_err());
-    assert!(validate_claims("fixture", None, Some("bad;runner"), None, None, None).is_err());
+    assert!(validate_claims("fixture", None, None, None, None, None, None).is_ok());
+    assert!(validate_claims("bad'tenant", None, None, None, None, None, None).is_err());
+    assert!(validate_claims("fixture", Some("has-hyphen"), None, None, None, None, None).is_err());
+    assert!(validate_claims("fixture", None, Some("bad;runner"), None, None, None, None).is_err());
     // `''` is the deny floor, never a claim.
-    assert!(validate_claims("fixture", None, None, Some(""), None, None).is_err());
+    assert!(validate_claims("fixture", None, None, Some(""), None, None, None).is_err());
     // A non-uuid user id would raise 22P02 inside every ownership predicate.
-    assert!(validate_claims("fixture", None, None, None, Some("not-a-uuid"), None).is_err());
-    assert!(validate_claims("fixture", None, None, None, Some(&U1[..35]), None).is_err());
-    assert!(validate_claims("fixture", None, None, None, Some(&format!("{U1}-1")), None).is_err());
+    assert!(validate_claims("fixture", None, None, None, Some("not-a-uuid"), None, None).is_err());
+    assert!(validate_claims("fixture", None, None, None, Some(&U1[..35]), None, None).is_err());
+    assert!(
+        validate_claims(
+            "fixture",
+            None,
+            None,
+            None,
+            Some(&format!("{U1}-1")),
+            None,
+            None
+        )
+        .is_err()
+    );
     // `''` is the unbound operation, never a claim.
-    assert!(validate_claims("fixture", None, None, None, None, Some("")).is_err());
+    assert!(validate_claims("fixture", None, None, None, None, Some(""), None).is_err());
+    // `''` is the unbound application, never a claim.
+    assert!(validate_claims("fixture", None, None, None, None, None, Some("")).is_err());
 }
 
 #[test]
@@ -648,6 +663,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
             .unwrap();
         pg.set_operation(c, "platform-fixture:widget/update@1.0.0")
             .unwrap();
+        pg.set_application(c, "platform_fixture").unwrap();
         pg.set_current_run(
             c,
             Some(Causation {
@@ -682,6 +698,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     assert_eq!(pg.role_for("wl-a-component-0"), None);
     assert_eq!(pg.user_id_for("wl-a-component-0"), None);
     assert_eq!(pg.operation_for("wl-a-component-0"), None);
+    assert_eq!(pg.application_for("wl-a-component-0"), None);
     assert!(pg.current_run_for("wl-a-component-0").is_none());
     assert!(pg.invocation("wl-a-component-0").is_none());
 
@@ -711,6 +728,10 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     assert_eq!(
         pg.operation_for("wl-b-component-0").as_deref(),
         Some("platform-fixture:widget/update@1.0.0")
+    );
+    assert_eq!(
+        pg.application_for("wl-b-component-0").as_deref(),
+        Some("platform_fixture")
     );
     assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
     assert_eq!(
@@ -898,9 +919,10 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     let evil_role = format!("admin'); DROP TABLE public.{marker}; --");
     let evil_user = format!("u'; TRUNCATE public.{marker}; --");
     let evil_operation = format!("o'; DROP TABLE public.{marker}; --");
+    let evil_application = format!("a'; DROP TABLE public.{marker}; --");
     let no_schema: Option<&str> = None;
     client.batch_execute("BEGIN").await.unwrap();
-    let params: [&(dyn ToSql + Sync); 7] = [
+    let params: [&(dyn ToSql + Sync); 8] = [
         &evil_tenant,
         &timeout,
         &no_schema,
@@ -908,6 +930,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         &evil_role,
         &evil_user,
         &evil_operation,
+        &evil_application,
     ];
     client.execute(&stmt, &params).await.unwrap();
 
@@ -941,6 +964,12 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         .unwrap()
         .get(0);
     assert_eq!(got_operation.as_deref(), Some(evil_operation.as_str()));
+    let got_application: Option<String> = client
+        .query_one("SELECT current_setting('app.application', true)", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(got_application.as_deref(), Some(evil_application.as_str()));
     let got_sp: Option<String> = client
         .query_one("SELECT current_setting('search_path', true)", &[])
         .await
@@ -975,7 +1004,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     //     parsed as data, never executed — and the marker still stands.
     client.batch_execute("BEGIN").await.unwrap();
     let evil_schema: Option<&str> = Some("s'; DROP TABLE public.foo; --");
-    let params2: [&(dyn ToSql + Sync); 7] = [
+    let params2: [&(dyn ToSql + Sync); 8] = [
         &evil_tenant,
         &timeout,
         &evil_schema,
@@ -983,6 +1012,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         &evil_role,
         &evil_user,
         &evil_operation,
+        &evil_application,
     ];
     let err = client.execute(&stmt, &params2).await.unwrap_err();
     assert_eq!(
@@ -1027,6 +1057,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     .unwrap();
     let user_id = "11111111-1111-4111-8111-111111111111";
     let operation = "platform-fixture:widget/update@1.0.0";
+    let application = "platform_fixture";
     let (conn, _pp) = pg
         .checkout_guest(DEFAULT_PROJECT, LIVE_TENANT)
         .await
@@ -1041,6 +1072,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
         Some("inspector"),
         Some(user_id),
         Some(operation),
+        Some(application),
         None,
         4321,
     )
@@ -1054,7 +1086,8 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
                  current_setting('app.runner', true), \
                  current_setting('app.role', true), \
                  current_setting('app.user_id', true), \
-                 current_setting('app.operation', true)",
+                 current_setting('app.operation', true), \
+                 current_setting('app.application', true)",
             &[],
         )
         .await
@@ -1066,6 +1099,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     let role: Option<String> = row.get(4);
     let user: Option<String> = row.get(5);
     let bound_operation: Option<String> = row.get(6);
+    let bound_application: Option<String> = row.get(7);
     // THE DELETION, ASSERTED — and NULL is the sharper result. A custom GUC
     // reads back as the EMPTY STRING once it has been set and the SET LOCAL
     // scope ended; it reads NULL only if it was never set in this session at
@@ -1095,6 +1129,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     assert_eq!(role.as_deref(), Some("inspector"));
     assert_eq!(user.as_deref(), Some(user_id));
     assert_eq!(bound_operation.as_deref(), Some(operation));
+    assert_eq!(bound_application.as_deref(), Some(application));
 
     // COMMIT (the one_shot success path): a `set_config(is_local => true)`
     // claim reverts even across a commit — showing it is truly LOCAL, not a
@@ -1318,6 +1353,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
         None,
         Some("inspector"),
         Some(U1),
+        None,
         None,
         None,
         5_000,
@@ -2746,6 +2782,187 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         matches!(&next.rows[0][0], SqlValue::Text(value) if value.is_empty()),
         "the pooled connection carries no stale app.operation: {:?}",
         next.rows
+    );
+    assert_eq!(
+        pg.destroyed.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "every statement reused the one pooled connection"
+    );
+
+    drop(pg);
+    let admin = connect_raw(admin_url).await;
+    admin
+        .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
+        .await
+        .expect("drop the fixture");
+}
+
+/// A statement that reports the `app.application` its session carries.
+fn application_statement() -> VerifiedStatement {
+    VerifiedStatement {
+        exact_sql: "SELECT COALESCE(current_setting('app.application', true), '')".into(),
+        binds: Box::new([]),
+        columns: Box::new([StatementField {
+            value_type: StatementValueType::Text,
+            nullable: true,
+        }]),
+        transactional: true,
+    }
+}
+
+/// An acquisition binds its application, reads it back, and clears it. A
+/// later acquisition with no application does not inherit the previous one.
+/// The claims name no executing principal, so the bind stays offline.
+#[tokio::test]
+async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_it() {
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
+        HashMap::new(),
+        None,
+    )));
+    let scope = "application-instance-0";
+    let claims = SessionClaims {
+        tenant: LIVE_TENANT.to_string(),
+        application: Some("platform_fixture".to_string()),
+        ..SessionClaims::default()
+    };
+    pg.bind_session_claims(scope, &claims)
+        .await
+        .expect("the application binds");
+    assert_eq!(pg.session_claims(scope), Some(claims.clone()));
+
+    pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            application: None,
+            ..claims.clone()
+        },
+    )
+    .await
+    .expect("the next acquisition binds");
+    assert_eq!(pg.application_for(scope), None);
+
+    pg.bind_session_claims(scope, &claims)
+        .await
+        .expect("the application binds again");
+    pg.revoke_session_claims(scope);
+    assert_eq!(pg.application_for(scope), None);
+
+    let refused = pg
+        .bind_session_claims(
+            scope,
+            &SessionClaims {
+                application: Some(String::new()),
+                ..claims
+            },
+        )
+        .await;
+    assert!(refused.is_err(), "the unbound value is not an application");
+}
+
+/// The claim half of the cross-application refusal
+/// (`docs/plan/platform-config.md`, Invariants: `next_number` cannot be aimed
+/// at another application; the claim decides, not the SQL text).
+///
+/// Two applications share the one pooled connection. Each transaction carries
+/// the application its host bound and never the other's: not the previous
+/// transaction's, not a session-level value left on the connection, and not a
+/// value that guest SQL names, which the claim guard refuses.
+#[tokio::test]
+async fn live_a_transaction_carries_only_the_application_its_host_bound() {
+    const TENANT: &str = "application";
+    const APPLICATION_A: &str = "platform_fixture";
+    const APPLICATION_B: &str = "platform_fixture_overlay";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
+    );
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let claims = |application: &str| SessionClaims {
+        tenant: TENANT.to_string(),
+        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        application: Some(application.to_string()),
+        ..SessionClaims::default()
+    };
+    let (scope_a, scope_b) = ("application-instance-a", "application-instance-b");
+    pg.bind_session_claims(scope_a, &claims(APPLICATION_A))
+        .await
+        .expect("application A binds");
+    pg.bind_session_claims(scope_b, &claims(APPLICATION_B))
+        .await
+        .expect("application B binds");
+    let carried = async |scope: &str| {
+        let result = pg
+            .one_shot_statement(scope, "sha256:application", &application_statement(), &[])
+            .await
+            .expect("the transactional statement runs");
+        match &result.rows[0][0] {
+            SqlValue::Text(value) => value.clone(),
+            other => panic!("app.application reads as text: {other:?}"),
+        }
+    };
+
+    assert_eq!(carried(scope_a).await, APPLICATION_A);
+    assert_eq!(carried(scope_b).await, APPLICATION_B);
+    assert_eq!(
+        carried(scope_a).await,
+        APPLICATION_A,
+        "B's transaction on the shared connection does not reach A's"
+    );
+
+    // Leave B's name as a session-level value on the one pooled connection.
+    // The pool recycles without a reset, so only the bound claim clears it.
+    let (connection, _policy) = pg
+        .checkout_guest(DEFAULT_PROJECT, TENANT)
+        .await
+        .expect("check out the pooled connection");
+    connection
+        .batch_execute(&format!(
+            "SELECT set_config('app.application', '{APPLICATION_B}', false)"
+        ))
+        .await
+        .expect("set a session-level application");
+    drop(connection);
+    assert_eq!(
+        carried(scope_a).await,
+        APPLICATION_A,
+        "a session-level value does not override the bound claim"
+    );
+
+    // Guest SQL that names another application is refused before it runs.
+    assert!(
+        reject_claim_mutation(&format!(
+            "SELECT set_config('app.application', '{APPLICATION_B}', true)"
+        ))
+        .is_err(),
+        "the guest SQL surface cannot set app.application"
+    );
+
+    pg.bind_session_claims(
+        scope_a,
+        &SessionClaims {
+            application: None,
+            ..claims(APPLICATION_A)
+        },
+    )
+    .await
+    .expect("an acquisition with no application binds");
+    assert_eq!(
+        carried(scope_a).await,
+        "",
+        "an acquisition with no application carries none"
     );
     assert_eq!(
         pg.destroyed.load(std::sync::atomic::Ordering::Relaxed),

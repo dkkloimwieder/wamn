@@ -347,6 +347,7 @@ pub(super) async fn assemble(
             role: None,
             user_id: None,
             operation: None,
+            application: None,
             release: Some(
                 wamn_runtime::plugins::wamn_postgres::ReleaseIdentity::from_loaded(&release),
             ),

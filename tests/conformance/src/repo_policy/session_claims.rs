@@ -323,8 +323,14 @@ fn relative_path(repository: &Path, path: &Path) -> Result<String, String> {
 }
 
 /// The session claims that a guest session can forge. wamn-0h0g.22 records
-/// `app.role` and `app.user_id`. `app.operation` has the same forgeability.
-const SESSION_FORGEABLE_CLAIMS: [&str; 3] = ["app.role", "app.user_id", "app.operation"];
+/// `app.role` and `app.user_id`. `app.operation` and `app.application` have the
+/// same forgeability.
+const SESSION_FORGEABLE_CLAIMS: [&str; 4] = [
+    "app.role",
+    "app.user_id",
+    "app.operation",
+    "app.application",
+];
 
 /// The claims that the platform trigger functions read to record attribution.
 const PLATFORM_TRIGGER_CLAIMS: [&str; 2] = ["app.user_id", "app.operation"];

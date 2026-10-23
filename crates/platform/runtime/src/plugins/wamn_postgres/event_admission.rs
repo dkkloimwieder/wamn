@@ -69,6 +69,7 @@ impl WamnPostgres {
         let runner = self.runner_for(component_id);
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -90,6 +91,7 @@ impl WamnPostgres {
                 None,
                 user_id.as_deref(),
                 operation.as_deref(),
+                application.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )

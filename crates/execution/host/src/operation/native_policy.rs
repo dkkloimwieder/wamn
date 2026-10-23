@@ -64,6 +64,9 @@ struct ComponentPolicy {
     /// The set of each named `statements` import, one per member.
     members: PreparedStatementMembers,
     runtime_schema: Option<String>,
+    /// The package id of the application that composes this component, which
+    /// every call binds as `app.application`.
+    application: String,
 }
 
 /// The facts of one native call that only this policy reads.
@@ -135,6 +138,11 @@ pub(super) fn new_native_policy(
             statements: prepare_statement_sets(served, &resources.release.manifest().routes),
             members: prepare_statement_members(&instances, served)?,
             runtime_schema: served.runtime_schema.clone(),
+            application: resources
+                .release
+                .manifest()
+                .composing_application(served)
+                .to_owned(),
         };
         facts.insert(name, Arc::new(policy));
     }
@@ -191,7 +199,8 @@ impl NativePolicy {
     ///
     /// Every claims transaction binds its executing principal as
     /// `app.user_id` and the admitted operation token as `app.operation`,
-    /// which the record-history triggers record.
+    /// which the record-history triggers record, and the composing
+    /// application of the component as `app.application`.
     ///
     /// The bind also reads the executing principal's `platform.users` row in
     /// the tenant and refuses a principal that owns none. That refusal is an
@@ -204,7 +213,9 @@ impl NativePolicy {
         facts: &NativeFacts,
         component: &ComponentPolicy,
     ) -> anyhow::Result<()> {
-        let mut claims = facts.acquisition.executing_claims(facts.caller.as_ref());
+        let mut claims = facts
+            .acquisition
+            .executing_claims(facts.caller.as_ref(), &component.application);
         if let Some(schema) = &component.runtime_schema {
             claims.schema = Some(schema.clone());
         }

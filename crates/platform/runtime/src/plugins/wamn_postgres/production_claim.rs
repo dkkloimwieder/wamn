@@ -165,6 +165,7 @@ impl RunStore for WamnPostgres {
         let schema = self.schema_for(component_id);
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -186,6 +187,7 @@ impl RunStore for WamnPostgres {
                 None,
                 user_id.as_deref(),
                 operation.as_deref(),
+                application.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -276,6 +278,7 @@ impl RunStore for WamnPostgres {
         let schema = self.schema_for(component_id);
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -297,6 +300,7 @@ impl RunStore for WamnPostgres {
                 None,
                 user_id.as_deref(),
                 operation.as_deref(),
+                application.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -370,6 +374,7 @@ impl RunStore for WamnPostgres {
         let schema = self.schema_for(component_id);
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -391,6 +396,7 @@ impl RunStore for WamnPostgres {
                 None,
                 user_id.as_deref(),
                 operation.as_deref(),
+                application.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -446,6 +452,7 @@ impl RunStore for WamnPostgres {
         let schema = self.schema_for(component_id);
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -467,6 +474,7 @@ impl RunStore for WamnPostgres {
                 None,
                 user_id.as_deref(),
                 operation.as_deref(),
+                application.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -519,6 +527,7 @@ impl RunStore for WamnPostgres {
         let schema = self.schema_for(component_id);
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -540,6 +549,7 @@ impl RunStore for WamnPostgres {
                 None,
                 user_id.as_deref(),
                 operation.as_deref(),
+                application.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -652,6 +662,7 @@ impl WamnPostgres {
         let schema = self.schema_for(component_id);
         let user_id = self.user_id_for(component_id);
         let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -673,6 +684,7 @@ impl WamnPostgres {
                 None,
                 user_id.as_deref(),
                 operation.as_deref(),
+                application.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )

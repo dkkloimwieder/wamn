@@ -105,6 +105,8 @@ impl QueueService {
                     role: None,
                     user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
                     operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
+                    // The queue serves every application of the release.
+                    application: None,
                     release: Some(ReleaseIdentity::from_loaded(release)),
                 },
             )

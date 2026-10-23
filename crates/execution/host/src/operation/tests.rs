@@ -55,7 +55,7 @@ fn a_custom_read_refuses_a_caller_without_its_grant() {
 }
 
 #[test]
-fn acquisition_binds_its_executing_principal_and_operation() {
+fn acquisition_binds_its_executing_principal_operation_and_application() {
     let causation = Causation {
         run: "registration:delivery:9".to_owned(),
         root: "attachment:delivery:1".to_owned(),
@@ -70,6 +70,7 @@ fn acquisition_binds_its_executing_principal_and_operation() {
             role: Some("operator".to_owned()),
             user_id: Some("user-a".to_owned()),
             operation: None,
+            application: None,
             release: Some(ReleaseIdentity::for_test(
                 wamn_catalog::ManifestDigest::parse(
                     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -118,12 +119,14 @@ fn acquisition_binds_its_executing_principal_and_operation() {
         executor.executing_principal(None),
         Some(PlatformComponent::Executor.principal_id().to_string())
     );
-    // The call binds the token of the operation that it executes.
+    // The call binds the token of the operation that it executes and the
+    // composing application that its policy names.
     assert_eq!(
-        original.executing_claims(None),
+        original.executing_claims(None, "platform_fixture_overlay"),
         SessionClaims {
             user_id: Some(materializer),
             operation: Some("platform-fixture-overlay:widget/record-batch@2.1.0".to_owned()),
+            application: Some("platform_fixture_overlay".to_owned()),
             ..original.claims.clone()
         }
     );

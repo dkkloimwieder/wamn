@@ -59,6 +59,10 @@ pub(super) struct OperationWorkload {
     operations: BTreeMap<String, PreparedStatementSet>,
     grants: BTreeMap<String, Option<String>>,
     schemas: BTreeMap<String, String>,
+    /// The package id of the composing application, bound as
+    /// `app.application` for every operation of the entry, base operations
+    /// included.
+    application: String,
     members: PreparedStatementMembers,
 }
 
@@ -124,9 +128,9 @@ impl WamnPostgres {
         }
         // Publication preserves the application's named SQL imports in the entry.
         // The composed application's descriptor already binds every nested member.
-        let application = components
-            .iter()
-            .max_by_key(|component| component.statement_instances.len())
+        let application = release
+            .manifest()
+            .composing_member()
             .context("entry has no application members")?;
         let mut members = BTreeMap::new();
         if application.statement_instances.is_empty() {
@@ -147,6 +151,7 @@ impl WamnPostgres {
                 );
             }
         }
+        let application = application.package_id.clone();
         let mut workloads = self
             .operation_workloads
             .write()
@@ -164,6 +169,7 @@ impl WamnPostgres {
                 operations,
                 grants,
                 schemas,
+                application,
                 members: Self::prepare_statement_members(members),
             }),
         );
@@ -626,6 +632,7 @@ async fn begin(
             .or_else(|| facts.claims.schema.clone()),
         user_id: caller.map(|caller| caller.principal_id().to_owned()),
         operation: Some(open.operation.clone()),
+        application: Some(facts.application.clone()),
         ..facts.claims.clone()
     };
     if authorize_only {

@@ -192,6 +192,11 @@ pub struct WamnPostgres {
     /// of a write. Absent (the default) binds the empty string. Modified
     /// application SQL can forge it, as it can forge `app.user_id`.
     operations: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → the `app.application` claim: the composing application
+    /// that runs the operation, named by its package id. Numbering keys its sequences on
+    /// it (`docs/plan/platform-config.md`). Absent (the default) binds the
+    /// empty string.
+    applications: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the release digest this pod carries.
     /// Absent (the default) ⇒ the production claim verifies nothing, so every
     /// path that never mounted a release identity is byte-unchanged. When set,
@@ -308,6 +313,9 @@ pub struct SessionClaims {
     /// `app.operation`: the executing operation token, or `wamn:<component>`
     /// for a platform component outside a registered operation.
     pub operation: Option<String>,
+    /// `app.application`: the package id of the composing application that
+    /// runs the operation.
+    pub application: Option<String>,
     /// The release digest the claiming pod carries.
     pub release: Option<ReleaseIdentity>,
 }
@@ -759,6 +767,7 @@ fn validate_claims(
     role: Option<&str>,
     user_id: Option<&str>,
     operation: Option<&str>,
+    application: Option<&str>,
 ) -> Result<(), PgError> {
     if !valid_tenant(tenant) {
         return Err(PgError::QueryError((
@@ -806,6 +815,14 @@ fn validate_claims(
             "invalid executing operation".to_string(),
         )));
     }
+    if let Some(application) = application
+        && !valid_application(application)
+    {
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "invalid executing application".to_string(),
+        )));
+    }
     Ok(())
 }
 
@@ -822,6 +839,13 @@ fn valid_role(role: &str) -> bool {
 /// unbound value, so it is not a claim.
 fn valid_operation(operation: &str) -> bool {
     !operation.is_empty()
+}
+
+/// An `app.application`: a non-empty package id. The value binds as a
+/// parameter, so no charset rule applies. `''` is the unbound value, so it is
+/// not a claim.
+fn valid_application(application: &str) -> bool {
+    !application.is_empty()
 }
 
 /// A caller's `app.user_id`: the canonical `8-4-4-4-12` hex uuid a `users.id`
@@ -927,6 +951,7 @@ impl WamnPostgres {
             roles: std::sync::RwLock::new(HashMap::new()),
             users: std::sync::RwLock::new(HashMap::new()),
             operations: std::sync::RwLock::new(HashMap::new()),
+            applications: std::sync::RwLock::new(HashMap::new()),
             release_identities: std::sync::RwLock::new(HashMap::new()),
             current_run: std::sync::RwLock::new(HashMap::new()),
             invocations: std::sync::RwLock::new(HashMap::new()),
@@ -1210,6 +1235,30 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Register the `app.application` claim for a component id. When set,
+    /// every transaction the plugin opens for that component binds
+    /// `app.application`, the composing application that runs the operation.
+    /// Host-injected identity like the tenant.
+    pub fn set_application(&self, component_id: &str, application: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_application(application),
+            "invalid executing application {application:?}: a non-empty package id is required"
+        );
+        self.applications
+            .write()
+            .expect("applications lock poisoned")
+            .insert(component_id.to_string(), application.to_string());
+        Ok(())
+    }
+
+    pub(super) fn application_for(&self, component_id: &str) -> Option<String> {
+        self.applications
+            .read()
+            .expect("applications lock poisoned")
+            .get(component_id)
+            .cloned()
+    }
+
     /// Register the release this pod carries for a component id. The production
     /// claim verifies its digest against the admission pin of every run it
     /// leases. The bench harness and live tests call this directly; the host
@@ -1467,6 +1516,15 @@ impl WamnPostgres {
                     .remove(component_id),
             ),
         }
+        match claims.application.as_deref() {
+            Some(application) => self.set_application(component_id, application)?,
+            None => drop(
+                self.applications
+                    .write()
+                    .expect("applications lock poisoned")
+                    .remove(component_id),
+            ),
+        }
         match claims.release.as_ref() {
             Some(release) => self.set_release_identity(component_id, release.clone())?,
             None => drop(
@@ -1572,6 +1630,7 @@ impl WamnPostgres {
             role: self.role_for(component_id),
             user_id: self.user_id_for(component_id),
             operation: self.operation_for(component_id),
+            application: self.application_for(component_id),
             release: self.release_identity_for(component_id),
         })
     }
@@ -1614,6 +1673,10 @@ impl WamnPostgres {
             .write()
             .expect("operations lock poisoned")
             .remove(component_id);
+        self.applications
+            .write()
+            .expect("applications lock poisoned")
+            .remove(component_id);
         self.release_identities
             .write()
             .expect("release identities lock poisoned")
@@ -1627,7 +1690,7 @@ impl WamnPostgres {
     /// Reap EVERY per-component-id claim, workload-authority, and verified
     /// statement registry this plugin keeps for a workload
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
-    /// the caller's role / user id, the executing operation, the carried
+    /// the caller's role / user id, the executing operation and application, the carried
     /// release identity, the causation run context, and the bound invocation —
     /// all set at workload bind (or via the runner or driver channel) and keyed
     /// by component id.
@@ -1672,6 +1735,10 @@ impl WamnPostgres {
         self.operations
             .write()
             .expect("operations lock poisoned")
+            .retain(|c, _| retain(c));
+        self.applications
+            .write()
+            .expect("applications lock poisoned")
             .retain(|c, _| retain(c));
         self.release_identities
             .write()
@@ -1750,6 +1817,7 @@ impl WamnPostgres {
                 false,
                 tenant,
                 schema.as_deref(),
+                None,
                 None,
                 None,
                 None,
@@ -2045,6 +2113,7 @@ impl WamnPostgres {
                 None,
                 Some(principal_id.as_str()),
                 Some(operation),
+                None,
                 None,
                 policy.statement_timeout_ms,
             )

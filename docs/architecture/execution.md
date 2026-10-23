@@ -418,6 +418,14 @@ A host queue claim, reap, renew, or complete transaction binds the `wamn:executo
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
+The same transaction binds the composing application that runs the operation as `app.application`.
+One application is one composed workload, so the value is the package id of the composed entry's composing member.
+A base operation reached through the composed entry binds the composing application, not the base package.
+A component outside the composed entry binds its own package id.
+A host queue transaction, a host route transaction, and a platform read bind no application.
+An absent application binds an empty value, so a pooled connection keeps no earlier application.
+[Numbering](../plan/platform-config.md#numbering) keys its sequences on this claim.
+
 A platform claims transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.
 
@@ -425,7 +433,7 @@ For that path, each pooled connection remembers its last schema and runner.
 If these values match, the read executes only its application statement.
 If either value changes, the host pipelines the session configuration before the read.
 An absent schema restores the server default, and an absent runner clears the prior runner.
-This reuse stores no principal, role, or operation claim. Those claims stay local to each transaction.
+This reuse stores no principal, role, operation, or application claim. Those claims stay local to each transaction.
 
 The [claims owner](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
 That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.

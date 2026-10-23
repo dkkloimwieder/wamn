@@ -465,6 +465,7 @@ async fn begin_transaction(
     let role = plugin.role_for(component_id);
     let user_id = plugin.user_id_for(component_id);
     let operation = plugin.operation_for(component_id);
+    let application = plugin.application_for(component_id);
     let run = plugin.current_run_for(component_id);
     let (connection, pp, authority) = plugin
         .checkout_workload(component_id, project, &tenant)
@@ -481,6 +482,7 @@ async fn begin_transaction(
             role.as_deref(),
             user_id.as_deref(),
             operation.as_deref(),
+            application.as_deref(),
             run.as_ref(),
             pp.statement_timeout_ms,
         )
@@ -531,6 +533,7 @@ pub(super) async fn prepare_statement_transaction(
     let role = plugin.role_for(component_id);
     let user_id = plugin.user_id_for(component_id);
     let operation = plugin.operation_for(component_id);
+    let application = plugin.application_for(component_id);
 
     let (connection, policy, authority) = plugin
         .checkout_workload(component_id, project, &tenant)
@@ -547,6 +550,7 @@ pub(super) async fn prepare_statement_transaction(
             role.as_deref(),
             user_id.as_deref(),
             operation.as_deref(),
+            application.as_deref(),
             None,
             policy.statement_timeout_ms,
         )

@@ -722,6 +722,18 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             claims,
         )
         .unwrap();
+    // Every operation of the entry binds the composing application, here the
+    // entry's one member, as `app.application`.
+    assert_eq!(
+        postgres
+            .operation_workloads
+            .read()
+            .unwrap()
+            .get(WORKLOAD)
+            .unwrap()
+            .application,
+        "base"
+    );
     assert!(
         postgres
             .bind_entry_instance(WORKLOAD, "member", "member")

@@ -393,6 +393,7 @@ impl WamnPostgres {
                 None,
                 None,
                 None,
+                None,
                 policy.statement_timeout_ms,
             )
             .await
@@ -497,6 +498,7 @@ impl WamnPostgres {
                 None,
                 None,
                 None,
+                None,
                 policy.statement_timeout_ms,
             )
             .await
@@ -585,6 +587,7 @@ impl WamnPostgres {
                 AuthorityClass::ExecutorPlatform,
                 false,
                 tenant_id,
+                None,
                 None,
                 None,
                 None,
@@ -699,6 +702,7 @@ impl WamnPostgres {
                 AuthorityClass::ExecutorPlatform,
                 false,
                 tenant_id,
+                None,
                 None,
                 None,
                 None,

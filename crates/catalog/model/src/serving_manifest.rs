@@ -1167,6 +1167,48 @@ impl ServingManifest {
             .or_else(|| self.workflow.attachments.get(id).map(AttachmentRef::Wiring))
     }
 
+    /// The members of the composed entry, in member order. Empty without an
+    /// entry.
+    pub fn entry_members(&self) -> Vec<&ServingComponent> {
+        let Some(entry) = &self.composed_entry else {
+            return Vec::new();
+        };
+        entry
+            .members
+            .iter()
+            .filter_map(|member| {
+                self.components.iter().find(|component| {
+                    component.package_id == member.package_id
+                        && component.descriptor.component == member.component
+                        && component.descriptor.component_digest == member.digest
+                })
+            })
+            .collect()
+    }
+
+    /// The member of the composed entry that composes the others. Its
+    /// descriptor binds every nested member through a named SQL import, so it
+    /// is the member with the most statement instances.
+    pub fn composing_member(&self) -> Option<&ServingComponent> {
+        self.entry_members()
+            .into_iter()
+            .max_by_key(|component| component.statement_instances.len())
+    }
+
+    /// The package id of the application that runs `component`: the
+    /// composing member's package when `component` is a member of the composed
+    /// entry, and `component`'s own package otherwise. One application is one
+    /// composed workload, so a base operation reached through the entry runs
+    /// as the composing application.
+    pub fn composing_application<'a>(&'a self, component: &'a ServingComponent) -> &'a str {
+        if self.entry_members().contains(&component)
+            && let Some(composing) = self.composing_member()
+        {
+            return &composing.package_id;
+        }
+        &component.package_id
+    }
+
     /// The route that calls `operation` of `component` in package `package_id`.
     pub fn route(
         &self,
@@ -1901,6 +1943,64 @@ mod tests {
         manifest.composed_entry.as_mut().unwrap().route_digest =
             format!("sha256:{}", "a".repeat(64));
         assert_ne!(manifest.digest(), reference_digest);
+    }
+
+    fn component_of(manifest: &ServingManifest, package_id: &str) -> ServingComponent {
+        manifest
+            .components
+            .iter()
+            .find(|component| component.package_id == package_id)
+            .expect("the fixture names the package")
+            .clone()
+    }
+
+    #[test]
+    fn a_base_operation_reached_through_the_composed_entry_runs_as_the_composing_application() {
+        let mut manifest = manifest();
+        // Without an entry, each component is its own application.
+        assert_eq!(
+            manifest.composing_application(&component_of(&manifest, "base")),
+            "base"
+        );
+        // The overlay composes base: it binds base's statements through a
+        // named import.
+        let mut overlay = component_of(&manifest, "overlay");
+        overlay.statement_instances = BTreeMap::from([("sql-0".to_owned(), BTreeMap::new())]);
+        manifest.components = manifest
+            .components
+            .into_iter()
+            .filter(|component| component.package_id != "overlay")
+            .chain([overlay])
+            .collect();
+        manifest.composed_entry = Some(entry_for(&manifest));
+        assert_eq!(
+            manifest
+                .composing_member()
+                .map(|component| component.package_id.as_str()),
+            Some("overlay")
+        );
+        for package_id in ["base", "overlay"] {
+            assert_eq!(
+                manifest.composing_application(&component_of(&manifest, package_id)),
+                "overlay",
+                "{package_id} runs as the composing application"
+            );
+        }
+        // A component outside the entry stays its own application.
+        manifest
+            .composed_entry
+            .as_mut()
+            .unwrap()
+            .members
+            .retain(|member| member.package_id == "base");
+        assert_eq!(
+            manifest.composing_application(&component_of(&manifest, "overlay")),
+            "overlay"
+        );
+        assert_eq!(
+            manifest.composing_application(&component_of(&manifest, "base")),
+            "base"
+        );
     }
 
     #[test]

@@ -305,6 +305,7 @@ pub(super) async fn open_stream(
                     role.as_deref(),
                     plugin.user_id_for(component_id).as_deref(),
                     plugin.operation_for(component_id).as_deref(),
+                    plugin.application_for(component_id).as_deref(),
                     plugin.current_run_for(component_id).as_ref(),
                     policy.statement_timeout_ms,
                 )
