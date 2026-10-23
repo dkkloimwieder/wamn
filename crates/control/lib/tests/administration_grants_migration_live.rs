@@ -1,16 +1,20 @@
-//! Live test of `project/0024_platform_schema.sql` (wamn-a40n.2,
-//! wamn-a40n.9, wamn-zua8.2, wamn-snz0.6, wamn-aemxz.1, wamn-aqd0m.1): on a
-//! project database installed before the schema rename, the latest migration
-//! of the administration surface renames the schema to platform and gives
-//! `wamn_administration` the exact surface that provisioning grants. The test
-//! holds the process lock of its server, because the file creates a
-//! cluster-wide role.
+//! Live test of `project/0024_platform_schema.sql` and
+//! `project/0026_administration_platform_configuration.sql` (wamn-a40n.2,
+//! wamn-a40n.9, wamn-zua8.2, wamn-snz0.6, wamn-aemxz.1, wamn-aqd0m.1,
+//! wamn-aqd0m.3): on a project database installed before the schema rename,
+//! 0024 renames the schema to platform, and 0026, the latest migration of the
+//! administration surface, gives `wamn_administration` the exact surface that
+//! provisioning grants. The test holds the process lock of its server,
+//! because the files create a cluster-wide role.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
 
-const MIGRATION: &str =
+const RENAME: &str =
     include_str!("../../../../deploy/sql/migrations/project/0024_platform_schema.sql");
+const MIGRATION: &str = include_str!(
+    "../../../../deploy/sql/migrations/project/0026_administration_platform_configuration.sql"
+);
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 
 async fn connect(url: &str) -> Client {
@@ -85,6 +89,10 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .expect("name the schema as before 0024");
 
     client
+        .batch_execute(&format!("BEGIN; {RENAME} COMMIT;"))
+        .await
+        .expect("apply the schema rename");
+    client
         .batch_execute(&format!("BEGIN; {MIGRATION} COMMIT;"))
         .await
         .expect("apply the migration");
@@ -100,12 +108,25 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         "table platform.permissions DELETE",
         "table platform.user_roles INSERT",
         "table platform.users UPDATE",
+        "table platform.external_system INSERT",
+        "table platform.connection UPDATE",
+        "table platform.project_connection DELETE",
+        "table platform.integration_allow INSERT",
+        "table platform.number_sequence SELECT",
+        "table platform.setting UPDATE",
+        "column platform.setting_history.after INSERT",
     ] {
         assert!(
             migrated.iter().any(|entry| entry == expected),
             "the migration grants {expected}: {migrated:#?}"
         );
     }
+    assert!(
+        !migrated
+            .iter()
+            .any(|entry| entry.contains("platform.number_counter")),
+        "the migration grants nothing on number_counter: {migrated:#?}"
+    );
 
     client
         .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))

@@ -546,10 +546,24 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 }
 
 /// The application authorization relations the administration family reads
-/// and writes (docs/plan/platform-ui.md §2.1), and the environment status that
-/// the status routes mirror (§5.4).
-pub const ADMINISTRATION_RELATIONS: [&str; 5] =
-    ["users", "roles", "user_roles", "permissions", "environment"];
+/// and writes (docs/plan/platform-ui.md §2.1), the environment status that
+/// the status routes mirror (§5.4), and the platform configuration tables
+/// that the control host writes (docs/plan/platform-config.md, Issues for C1,
+/// 3). `number_counter` is not one of them: only `platform.bump_counter`
+/// advances it.
+pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
+    "users",
+    "roles",
+    "user_roles",
+    "permissions",
+    "environment",
+    "external_system",
+    "connection",
+    "project_connection",
+    "integration_allow",
+    "number_sequence",
+    "setting",
+];
 
 /// Converge the stable administration role to its exact surface
 /// (`wamn-a40n.2`).

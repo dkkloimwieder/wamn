@@ -66,6 +66,12 @@
 //! - **retired effect-disposition cutover**: empty parent/child tables are
 //!   locked and removed child-first; populated history refuses atomically with
 //!   the exact archive-or-reprovision diagnostic.
+//! - **platform configuration** (wamn-aqd0m.3), its own entry: after the
+//!   tenant identity rows, an administration generation login writes one row
+//!   of each platform configuration table, as the control host does, and
+//!   each write appends its history entry. A guest generation reads each row
+//!   back, a second write writes none, a changed setting writes one row, and
+//!   a write of no rows removes none.
 //! - **fail_type CHECK drift** (wamn-fqg.16): a schema whose `runs.fail_type`
 //!   CHECK predates cjv.4's `'runaway-budget'` literal REJECTS a runaway
 //!   `mark_failed` UPDATE. The verb drops the observed CHECK and re-adds the
@@ -78,6 +84,8 @@ mod catalog;
 mod effect_tables;
 #[path = "run_plane_live/partition.rs"]
 mod partition;
+#[path = "run_plane_live/platform_configuration.rs"]
+mod platform_configuration;
 #[path = "run_plane_live/run_history.rs"]
 mod run_history;
 #[path = "run_plane_live/target_identity.rs"]

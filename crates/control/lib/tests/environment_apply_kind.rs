@@ -64,6 +64,20 @@
 //! 16. After every check, the operator release has its revision and its
 //!     Deployment's resourceVersion of before the first apply.
 //!
+//! Check of `wamn-aqd0m.3` (docs/plan/platform-config.md, Issues for C1, 3),
+//! after check 1:
+//! 17. The dev environment's `wamn_administration` login, which env apply
+//!     prepares for the control host, writes one row of each of
+//!     `platform.external_system`, `connection`, `project_connection`,
+//!     `integration_allow`, `number_sequence` and `setting` into the dev
+//!     database in one transaction that binds a caller and an operation, as
+//!     the control host writes the application rows. Each write appends one
+//!     history entry, and generation a of the environment's `wamn_app` login
+//!     reads each row back. Fixture needs: the dev database that check 1
+//!     creates on the CNPG cluster and the administration Secret that check 1
+//!     applies, reached through the suite's port forward; no registry and no
+//!     image beyond the suite's.
+//!
 //! A6 (kind half) needs a staged package upgrade; this fixture has none, and
 //! the report says so.
 //!
@@ -128,6 +142,9 @@ use wamn_control::publish_release::{
     PublishedRelease, compose_application, push_manifest_bytes, record_composed_entry,
 };
 use wamn_control::release_chart::{ImageSet, Target, image_set, release_name, stamp};
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+};
 use wamn_control_registry::{Template, Triple};
 use wamn_engine::release_manifest::release_label;
 
@@ -137,6 +154,8 @@ mod http_connection;
 mod integration;
 #[path = "support/netsuite.rs"]
 mod netsuite;
+#[path = "support/platform_configuration.rs"]
+mod platform_configuration;
 #[path = "support/platform_images.rs"]
 mod platform_images;
 #[path = "support/session_issuer.rs"]
@@ -1079,6 +1098,83 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         &format!("SELECT ... FROM registry.project_envs; helm -n {NAMESPACE} history {name}"),
         json!({"row": row, "revisions": first}),
         row.is_some() && first == 1,
+    );
+
+    // 17. The environment's administration login writes the platform
+    // configuration rows, as the control host does, and the environment's
+    // wamn_app generation reads them.
+    let suffix = row
+        .as_ref()
+        .and_then(|row| row["instance_suffix"].as_str())
+        .context("the dev row")?;
+    let database = wamn_control_provision::project_env_database_name(ORG, PROJECT, "dev", suffix);
+    let dev_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
+    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
+    let secret = wamn_control_provision::workload_secret_name(
+        WorkloadRoleFamily::Administration,
+        ORG,
+        PROJECT,
+        "dev",
+    );
+    let login = run
+        .run(
+            "kubectl",
+            &[
+                "-n",
+                NAMESPACE,
+                "get",
+                "secret",
+                &secret,
+                "-o",
+                "jsonpath={.data.url}",
+            ],
+        )
+        .await?;
+    let login = url::Url::parse(&String::from_utf8(base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        login.trim(),
+    )?)?)?;
+    let administration_url = format!(
+        "postgresql://{}:{}@127.0.0.1:{port}/{database}",
+        login.username(),
+        login
+            .password()
+            .context("the administration login has a password")?,
+    );
+    let (mut administration, administration_connection) =
+        tokio_postgres::connect(&administration_url, tokio_postgres::NoTls).await?;
+    let administration_task = tokio::spawn(administration_connection);
+    let configuration = platform_configuration::configuration(PROJECT);
+    let written = platform_configuration::write(&mut administration, &configuration).await;
+    drop(administration);
+    administration_task.abort();
+    let written = written?;
+    let app = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: &tenant,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )?;
+    let (dev_project, dev_task) = connect(&dev_url).await?;
+    let history = platform_configuration::history(dev_project.as_ref()).await?;
+    dev_project
+        .batch_execute(&format!("SET ROLE \"{app}\""))
+        .await?;
+    let read = platform_configuration::read_back(dev_project.as_ref()).await?;
+    dev_task.abort();
+    let expected = platform_configuration::expected(&tenant, PROJECT);
+    run.pass(
+        "the administration login writes the platform configuration rows",
+        &format!(
+            "kubectl get secret {secret}; one row of each table as {}, binding app.user_id and \
+             app.operation; SELECT FROM platform.<table>_history; SET ROLE {app}; \
+             SELECT to_jsonb(t) FROM platform.<table> AS t",
+            login.username()
+        ),
+        json!({"written": written, "history": history, "read": read, "expected": expected}),
+        written == 6 && history.len() == 6 && read == expected,
     );
 
     // 14. A1: the heartbeat carries the host group and the release.

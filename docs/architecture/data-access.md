@@ -732,6 +732,11 @@ It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
 
+The control host writes the platform configuration rows of one environment on the path of its application rows, through the [platform configuration writer](../../crates/identity/platform/src/configuration.rs).
+The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the route's sealed operation id, so the row security of each table applies and each row write appends its history entry.
+The writer keeps a row that already holds the given values, and it removes no row.
+No route calls the writer yet. The connection and settings routes of C3 and C4 add the callers.
+
 Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
 These relations are `users`, `roles`, `user_roles`, `permissions`, `api_keys`, and `environment`, and the platform configuration tables `external_system`, `connection`, `integration_allow`, `project_connection`, `number_sequence`, `number_counter`, and `setting` ([platform configuration](../plan/platform-config.md)).
 `environment` holds at most one row, the status of the environment that the host reads. No row means active.
@@ -744,11 +749,12 @@ A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `users`, `roles`, `user_roles`, `permissions`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_keys`, on a history table, or on `schema_migrations`.
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It takes the caller's tenant from the caller's role name, with the parse of `wamn_authority.current_tenant_key()`, and refuses a sequence of another tenant with `insufficient_privilege`.
 Project migration `0025_platform_configuration.sql` adds the platform configuration tables to an installed database, removes `configurations` and its history table, and revokes the `api_keys` read.
-The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles`, `permissions` and `environment`.
-It holds `INSERT` on the entry columns of their five history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
+The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles`, `permissions` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
+It holds no grant on `number_counter`: only `platform.bump_counter` advances it.
+It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 Project migration `0007` creates `environment` in an installed database, and `0008` gives the family its write.
-Project migration `0020` renders the current surface, and `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
+Project migration `0026` renders the current surface, and `0024`, `0020`, `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.

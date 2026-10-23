@@ -247,7 +247,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
 
     // A project database installed before 0024: the run reads the record
     // table in the old schema, applies the rename and records it in platform,
-    // then applies 0025. The database also loses what 0025 adds and gets back
+    // then applies 0025 and 0026. The database also loses what 0025 adds and gets back
     // what 0025 removes.
     let client = connect(&project_url).await;
     client

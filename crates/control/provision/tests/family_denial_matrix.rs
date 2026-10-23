@@ -92,11 +92,18 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 25] = [
+const MATRIX_RELATIONS: [&str; 32] = [
     "platform.environment",
     "platform.permissions",
     "platform.user_roles",
     "platform.users",
+    "platform.connection",
+    "platform.external_system",
+    "platform.integration_allow",
+    "platform.number_counter",
+    "platform.number_sequence",
+    "platform.project_connection",
+    "platform.setting",
     "catalog.connection_bindings",
     "catalog.connection_generations",
     "catalog.connection_instances",
@@ -180,8 +187,15 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.wiring_tombstones|SELECT|table",
             "catalog.wirings|SELECT|table",
             "catalog.workflow_schedules|SELECT|table",
+            "platform.connection|SELECT|table",
             "platform.environment|SELECT|table",
+            "platform.external_system|SELECT|table",
+            "platform.integration_allow|SELECT|table",
+            "platform.number_counter|SELECT|table",
+            "platform.number_sequence|SELECT|table",
             "platform.permissions|SELECT|table",
+            "platform.project_connection|SELECT|table",
+            "platform.setting|SELECT|table",
             "platform.user_roles|SELECT|table",
             "platform.users|SELECT|table",
             "wamn_run.effect_attempt_dispatches|SELECT|table",
@@ -280,20 +294,46 @@ const MATRIX: [FamilyReach; 10] = [
     // `wamn-a40n.2`: the host-run administration routes read and write the
     // application authorization relations, and the status routes write the
     // environment status (`wamn-zua8.2`), and `release.profile` reads an
-    // installed release (`wamn-aemxz.1`). `platform.roles`, the history
-    // tables and `wamn_history.row_image` are outside the matrix universe.
+    // installed release (`wamn-aemxz.1`), and the control host writes the
+    // platform configuration tables but `number_counter` (`wamn-aqd0m.3`).
+    // `platform.roles`, the history tables and `wamn_history.row_image` are
+    // outside the matrix universe.
     FamilyReach {
         family: WorkloadRoleFamily::Administration,
         relations: &[
             "catalog.releases|SELECT|table",
+            "platform.connection|DELETE|table",
+            "platform.connection|INSERT|table",
+            "platform.connection|SELECT|table",
+            "platform.connection|UPDATE|table",
             "platform.environment|DELETE|table",
             "platform.environment|INSERT|table",
             "platform.environment|SELECT|table",
             "platform.environment|UPDATE|table",
+            "platform.external_system|DELETE|table",
+            "platform.external_system|INSERT|table",
+            "platform.external_system|SELECT|table",
+            "platform.external_system|UPDATE|table",
+            "platform.integration_allow|DELETE|table",
+            "platform.integration_allow|INSERT|table",
+            "platform.integration_allow|SELECT|table",
+            "platform.integration_allow|UPDATE|table",
+            "platform.number_sequence|DELETE|table",
+            "platform.number_sequence|INSERT|table",
+            "platform.number_sequence|SELECT|table",
+            "platform.number_sequence|UPDATE|table",
             "platform.permissions|DELETE|table",
             "platform.permissions|INSERT|table",
             "platform.permissions|SELECT|table",
             "platform.permissions|UPDATE|table",
+            "platform.project_connection|DELETE|table",
+            "platform.project_connection|INSERT|table",
+            "platform.project_connection|SELECT|table",
+            "platform.project_connection|UPDATE|table",
+            "platform.setting|DELETE|table",
+            "platform.setting|INSERT|table",
+            "platform.setting|SELECT|table",
+            "platform.setting|UPDATE|table",
             "platform.user_roles|DELETE|table",
             "platform.user_roles|INSERT|table",
             "platform.user_roles|SELECT|table",
