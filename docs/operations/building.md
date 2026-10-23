@@ -177,7 +177,10 @@ build-platform <image> input-<hash> copy
 
 Each built image gets a second tag, `input-<hash>`, and the label `wamn.dev/input-hash=<hash>`.
 Before it builds, the command looks for the `input-<hash>` tag of each image in the destination registry.
-If the tag is absent, or the lookup fails, the command builds the image as before.
+The five lookups run at the same time.
+If the tag is not found, the command builds the image as before.
+If the lookup fails for another reason, such as a network timeout, the command tries it once more.
+If the second lookup also fails, the command prints `build-platform <image> input-<hash> lookup failed: <error>` and builds the image.
 If the tag exists, the command does not build the image.
 It runs `docker buildx imagetools create --prefer-index=false` instead.
 The chart version tag then points at the same manifest, with the same digest.

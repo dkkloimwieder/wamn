@@ -576,11 +576,47 @@ fn input_tag(registry: &str, target: &str, hash: &str) -> String {
     format!("{registry}/wamn-{target}:input-{hash}")
 }
 
-/// Hash the inputs of every image, then look up the input tags. A tag that
-/// does not resolve, for any reason, leaves its image to be built.
+/// Look up the manifest digest of the input tag of `target`. A tag that is
+/// not found gives `None`. Any other error is retried once; if the retry
+/// fails too, the error is printed and the result is `None`.
+async fn lookup(
+    run: &impl AsyncFn(&mut Command) -> anyhow::Result<String>,
+    registry: &str,
+    target: &str,
+    hash: &str,
+) -> Option<String> {
+    let reference = input_tag(registry, target, hash);
+    let mut retried = false;
+    loop {
+        let digest = run(Command::new("docker").args([
+            "buildx",
+            "imagetools",
+            "inspect",
+            "--format",
+            "{{json .Manifest}}",
+            &reference,
+        ]))
+        .await
+        .and_then(|json| manifest_digest(&json));
+        match digest {
+            Ok(digest) => return Some(digest),
+            Err(error) if format!("{error:#}").contains(&format!("{reference}: not found")) => {
+                return None;
+            }
+            Err(error) if retried => {
+                eprintln!("build-platform {target} input-{hash} lookup failed: {error:#}");
+                return None;
+            }
+            Err(_) => retried = true,
+        }
+    }
+}
+
+/// Hash the inputs of every image, then look up the input tags together. An
+/// image whose tag is not found, or whose lookup fails twice, is built.
 async fn plan(
     request: &BuildPlatformRequest,
-    run: &mut impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
+    run: &impl AsyncFn(&mut Command) -> anyhow::Result<String>,
 ) -> anyhow::Result<Plan> {
     let mut hashes = BTreeMap::new();
     {
@@ -610,20 +646,11 @@ async fn plan(
     }
     let _stage = start_stage("input-lookups");
     let registry = &request.registry;
+    let lookups = IMAGES.map(|target| lookup(run, registry, target, &hashes[target]));
+    let digests = futures_util::future::join_all(lookups).await;
     let mut images = BTreeMap::new();
-    for target in IMAGES {
-        let reference = input_tag(registry, target, &hashes[target]);
-        let digest = run(Command::new("docker").args([
-            "buildx",
-            "imagetools",
-            "inspect",
-            "--format",
-            "{{json .Manifest}}",
-            &reference,
-        ]))
-        .await
-        .and_then(|json| manifest_digest(&json));
-        if let Ok(digest) = digest {
+    for (target, digest) in IMAGES.into_iter().zip(digests) {
+        if let Some(digest) = digest {
             images.insert(target, digest);
         }
     }
@@ -672,7 +699,7 @@ async fn copy_image(
 async fn build_then_push(
     request: &BuildPlatformRequest,
     roles: &Path,
-    mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
+    mut run: impl AsyncFn(&mut Command) -> anyhow::Result<String>,
     components: &mut impl Components,
 ) -> anyhow::Result<([String; 5], (String, String))> {
     {
@@ -690,7 +717,7 @@ async fn build_then_push(
         "HEAD",
     ]))
     .await?;
-    let Plan { hashes, images } = plan(request, &mut run).await?;
+    let Plan { hashes, images } = plan(request, &run).await?;
     let registry = &request.registry;
     let mut references = Vec::new();
     for target in IMAGES {
@@ -1103,7 +1130,7 @@ async fn cloud_build(
         .await?;
     }
     let mut run = output;
-    let plan = plan(request, &mut run).await?;
+    let plan = plan(request, &run).await?;
     let stores = CounterStores {
         gcloud: "gcloud".into(),
         configuration: agent_configuration()?,
@@ -1780,7 +1807,7 @@ mod tests {
         components: &mut FakeComponents,
     ) -> (anyhow::Result<Pinned>, Vec<String>) {
         let (repository, root, apps) = checkout;
-        let mut calls = Vec::new();
+        let calls = std::cell::RefCell::new(Vec::new());
         let result = build_then_push(
             &BuildPlatformRequest {
                 cluster: None,
@@ -1797,7 +1824,7 @@ mod tests {
                     .map(|part| part.to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join(" ");
-                calls.push(call.clone());
+                calls.borrow_mut().push(call.clone());
                 if call.starts_with("cargo metadata") {
                     let apps_workspace = call.ends_with("apps/Cargo.toml");
                     return Ok((if apps_workspace { apps } else { root }).clone());
@@ -1822,7 +1849,75 @@ mod tests {
             components,
         )
         .await;
-        (result, calls)
+        (result, calls.into_inner())
+    }
+
+    /// Run `plan` on a fresh fake checkout named `name`. The inspect calls
+    /// of the host get `host` in turn: `NOT_FOUND`, `TIMEOUT`, or the manifest
+    /// JSON. Every other inspect is not found. Return the plan and the number
+    /// of host inspect calls.
+    async fn plan_with(name: &str, host: &[&str]) -> (Plan, usize) {
+        let (repository, root, apps) = inputs::tests::fake_checkout(name);
+        let inspects = std::cell::Cell::new(0);
+        let result = plan(
+            &BuildPlatformRequest {
+                cluster: None,
+                cloud: false,
+                repository: repository.clone(),
+                registry: "localhost:5000".to_owned(),
+                out: PathBuf::from("/chart"),
+            },
+            &async |command: &mut Command| {
+                let std = command.as_std();
+                let call = std::iter::once(std.get_program())
+                    .chain(std.get_args())
+                    .map(|part| part.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if call.starts_with("cargo metadata") {
+                    let apps_workspace = call.ends_with("apps/Cargo.toml");
+                    return Ok((if apps_workspace { &apps } else { &root }).clone());
+                }
+                let reference = call.rsplit(' ').next().unwrap();
+                ensure!(
+                    reference.starts_with("localhost:5000/wamn-host:"),
+                    "ERROR: {reference}: not found"
+                );
+                let answer = host[inspects.get()];
+                inspects.set(inspects.get() + 1);
+                ensure!(answer != NOT_FOUND, "ERROR: {reference}: not found");
+                ensure!(answer != TIMEOUT, "ERROR: {TIMEOUT}");
+                Ok(answer.to_owned())
+            },
+        )
+        .await;
+        let _ = std::fs::remove_dir_all(&repository);
+        (result.expect("the plan succeeds"), inspects.get())
+    }
+
+    const NOT_FOUND: &str = "not found";
+    const TIMEOUT: &str = "net/http: TLS handshake timeout";
+
+    #[tokio::test]
+    async fn a_host_input_tag_that_is_not_found_is_built_without_a_retry() {
+        let (plan, inspects) = plan_with("lookup-not-found", &[NOT_FOUND]).await;
+        assert_eq!(inspects, 1);
+        assert!(!plan.images.contains_key("host"));
+    }
+
+    #[tokio::test]
+    async fn a_host_lookup_that_fails_once_is_retried_and_copied() {
+        let json = format!(r#"{{"digest":"sha256:{}","size":1}}"#, "c".repeat(64));
+        let (plan, inspects) = plan_with("lookup-retry", &[TIMEOUT, &json]).await;
+        assert_eq!(inspects, 2);
+        assert_eq!(plan.images["host"], format!("sha256:{}", "c".repeat(64)));
+    }
+
+    #[tokio::test]
+    async fn a_host_lookup_that_fails_twice_is_built() {
+        let (plan, inspects) = plan_with("lookup-fails", &[TIMEOUT, TIMEOUT]).await;
+        assert_eq!(inspects, 2);
+        assert!(!plan.images.contains_key("host"));
     }
 
     /// Run `build_then_push` on a fresh fake checkout with an empty registry;
