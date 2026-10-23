@@ -24,9 +24,10 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --dimensions region=us-central1 --preferred-value 200
    ```
 
-3. Read access for the agent on the Secret Manager secret `identity-resend`, which holds the Resend key. The secret is a project resource, so a teardown keeps it, and step 4.12 writes the cluster Secret from it. The owner makes the secret once and grants the agent read access on that one secret. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`), so the second command removes all whitespace:
+3. Read access for the agent on the Secret Manager secret `identity-resend`, which holds the Resend key. The secret and the Secret Manager API are project resources, so a teardown keeps them, and step 4.12 writes the cluster Secret from the secret. The owner enables the API, makes the secret once and grants the agent read access on that one secret. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`), so the third command removes all whitespace:
 
    ```bash
+   gcloud services enable secretmanager.googleapis.com --project wamn-dev
    gcloud secrets create identity-resend --project wamn-dev --replication-policy automatic
    tr -d '[:space:]' < <file> | gcloud secrets versions add identity-resend --project wamn-dev --data-file=-
    gcloud secrets add-iam-policy-binding identity-resend --project wamn-dev \
