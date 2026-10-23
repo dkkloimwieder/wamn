@@ -6053,6 +6053,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-number-pattern"
+version = "0.1.0"
+
+[[package]]
 name = "wamn-package-artifact"
 version = "0.1.0"
 dependencies = [
@@ -6336,6 +6340,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-fixture-package",
+ "wamn-number-pattern",
  "wamn-record-history",
  "wamn-schema-introspection",
  "wamn-test-postgres",

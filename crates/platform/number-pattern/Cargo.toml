@@ -1,0 +1,9 @@
+[package]
+name = "wamn-number-pattern"
+description = "The one parser of document-number patterns, shared by the generator and the wamn:postgres renderer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

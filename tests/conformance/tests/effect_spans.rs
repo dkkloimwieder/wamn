@@ -91,6 +91,10 @@ enum Surface {
 const DESTRUCTOR: Surface =
     Surface::Local("resource destructor: the host reclaims what the guest let go");
 const LOCAL_STATE: Surface = Surface::Local("reads or updates only host-local transaction state");
+/// `next-number` refuses in the host until its renderer lands (C2.2), which
+/// makes it an effect.
+const NEXT_NUMBER: Surface =
+    Surface::Local("refuses in the host: the renderer is not implemented yet");
 const STATEMENT_RUN_STREAM: Surface = Surface::DelegatedEffect {
     file: "crates/platform/runtime/src/plugins/wamn_postgres/run_stream.rs",
     function: "run_stream",
@@ -186,6 +190,7 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
             ("run_stream", STATEMENT_RUN_STREAM),
             ("begin", Surface::Effect),
             ("operation_transaction", LOCAL_STATE),
+            ("next_number", NEXT_NUMBER),
         ],
     ),
     (
@@ -217,6 +222,7 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
             ("run_stream", STATEMENT_RUN_STREAM),
             ("begin", Surface::Effect),
             ("operation_transaction", LOCAL_STATE),
+            ("next_number", NEXT_NUMBER),
         ],
     ),
     (

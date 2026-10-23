@@ -23,6 +23,7 @@ wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-record-history = { workspace = true }
+wamn-number-pattern = { workspace = true }
 
 [dev-dependencies]
 wamn-fixture-package = { workspace = true }

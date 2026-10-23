@@ -125,6 +125,7 @@ fn field_name(field: &str) -> String {
 /// Emit `generated/data/<model>.rs`.
 pub(super) fn emit_model_data(
     files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
@@ -190,7 +191,21 @@ pub(super) fn emit_model_data(
             CrudAction::Get => emit_get(&mut source, model_name, &model_type),
             CrudAction::Query => emit_query(&mut source, model_name, &model_type, table, operation),
             CrudAction::Create => {
-                emit_create(&mut source, model_name, &model_type, table, operation, api);
+                let number = model.number_field().map(|(field, sequence)| {
+                    let pattern = &manifest.sequences[sequence].pattern;
+                    let pattern = wamn_number_pattern::parse(pattern)
+                        .expect("validation parsed every sequence pattern");
+                    (field, sequence, pattern)
+                });
+                emit_create(
+                    &mut source,
+                    model_name,
+                    &model_type,
+                    table,
+                    operation,
+                    api,
+                    number.as_ref(),
+                );
             }
             CrudAction::Update => {
                 emit_update(&mut source, model_name, &model_type, table, operation);
@@ -238,6 +253,7 @@ fn emit_create(
     table: &Table,
     operation: &OperationDeclaration,
     api: &WamnApi,
+    number: Option<&(&str, &str, wamn_number_pattern::Pattern)>,
 ) {
     let accessor = api
         .accessors
@@ -262,13 +278,36 @@ fn emit_create(
         let name = field_name(field);
         emit_value(&mut body, &name, field, bind, &name);
     }
-    let arguments = operation
+    let mut arguments = operation
         .writable_fields
         .iter()
         .map(|field| field_name(field))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<Vec<_>>();
     let refuse = statement_error(CrudAction::Create, &constraints(CrudAction::Create));
+    // The first of two statements: the host renders the number from exactly
+    // the fields the pattern names, and the insert writes the text.
+    if let Some((field, sequence, pattern)) = number {
+        let record = pattern
+            .fields()
+            .into_iter()
+            .map(|name| {
+                let column = column(table, name).expect("validation resolved the pattern field");
+                format!(
+                    "({name:?}, {})",
+                    record_text(column.column_type(), &field_name(name), column.nullable())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let target = field_name(field);
+        writeln!(
+            body,
+            "let {target} = wamn_postgres_statements::next_number({sequence:?}, &[{record}]).await.map_err({refuse})?;"
+        )
+        .expect("writing to a String cannot fail");
+        arguments.push(target);
+    }
+    let arguments = arguments.join(", ");
     writeln!(
         source,
         "/// `{model_name}.create`: create one row in the transaction the host began\n\
@@ -281,6 +320,26 @@ fn emit_create(
          }}\n"
     )
     .expect("writing to a String cannot fail");
+}
+
+/// The record value `next-number` takes for one parsed statement value, the
+/// text of its one spelling, or `None` for a null.
+fn record_text(ty: ColumnType, value: &str, nullable: bool) -> String {
+    let text = |value: &str| match ty {
+        ColumnType::Text => format!("{value}.clone()"),
+        ColumnType::Uuid | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Json => {
+            format!("{value}.0.clone()")
+        }
+        ColumnType::Boolean | ColumnType::Int32 | ColumnType::Int64 | ColumnType::Float64 => {
+            format!("{value}.to_string()")
+        }
+        ColumnType::Bytes => unreachable!("validation refuses a bytes field in a pattern"),
+    };
+    if nullable {
+        format!("{value}.as_ref().map(|value| {})", text("value"))
+    } else {
+        format!("Some({})", text(value))
+    }
 }
 
 /// Bind one optional request value, `source`, as `target`: a required bind
@@ -578,7 +637,12 @@ pub(super) fn emit_package_data(
         .iter()
         .filter(|(_, model)| !model.operations.is_empty())
         .collect::<Vec<_>>();
-    if models.is_empty() {
+    let callable = manifest
+        .sequences
+        .iter()
+        .filter(|(_, sequence)| sequence.callable)
+        .collect::<Vec<_>>();
+    if models.is_empty() && callable.is_empty() {
         return Ok(());
     }
     // The refusal is the closed vocabulary, so every package spells it the
@@ -617,7 +681,67 @@ pub(super) fn emit_package_data(
         )
         .expect("writing to a String cannot fail");
     }
+    if !callable.is_empty() {
+        source.push_str(
+            "\n/// The package's callable sequences.\npub mod sequences {\n    include!(\"sequences.rs\");\n}\n",
+        );
+        insert_bytes(
+            files,
+            "generated/data/sequences.rs",
+            emit_sequences(&callable).into_bytes(),
+        )?;
+    }
     insert_bytes(files, "generated/data/mod.rs", source.into_bytes())
+}
+
+/// `generated/data/sequences.rs`: `sequences::<name>::next(<Name>Key)` for
+/// each callable sequence. The key carries exactly the fields the pattern
+/// names, as the text of their one spelling.
+fn emit_sequences(callable: &[(&String, &crate::manifest::SequenceDeclaration)]) -> String {
+    let mut source = String::from(HEADER);
+    source.push_str("// The callable sequences of the package.\n");
+    for (name, sequence) in callable {
+        let pattern = wamn_number_pattern::parse(&sequence.pattern)
+            .expect("validation parsed every sequence pattern");
+        let fields = pattern
+            .fields()
+            .into_iter()
+            .map(field_name)
+            .collect::<Vec<_>>();
+        let key = format!("{}Key", rust_type_identifier(name));
+        let members = fields.iter().fold(String::new(), |mut members, field| {
+            writeln!(members, "    pub {field}: String,").expect("writing to a String cannot fail");
+            members
+        });
+        let record = pattern
+            .fields()
+            .into_iter()
+            .zip(&fields)
+            .map(|(name, field)| format!("({name:?}, Some({field}))"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            source,
+            "\n/// The `{name}` sequence, pattern `{}` by default.\n\
+             pub mod {} {{\n\
+             /// The fields the pattern names.\n\
+             #[derive(Clone, Debug, Default, Eq, PartialEq)]\n\
+             pub struct {key} {{\n{members}}}\n\n\
+             /// The next number, which advances the counter in the operation\n\
+             /// transaction: consumed on commit, never on rollback.\n\
+             ///\n/// # Errors\n///\n/// The host's refusal.\n\
+             pub async fn next(key: {key}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
+             let {key} {{ {} }} = key;\n\
+             wamn_postgres_statements::next_number({name:?}, &[{record}]).await\n\
+             }}\n\
+             }}",
+            sequence.pattern.escape_debug(),
+            field_name(name),
+            fields.join(", "),
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source
 }
 
 fn key_name(key: OperationErrorDetailKey) -> &'static str {

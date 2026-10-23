@@ -42,13 +42,7 @@ pub(super) fn emit_model(
     let mut operation_sql = BTreeMap::<String, Vec<String>>::new();
     for (action, operation) in &model.operations {
         let paths = emit_operation_sql(
-            files,
-            sql_corpus,
-            model_name,
-            table,
-            *action,
-            operation,
-            model.delete_mode,
+            files, sql_corpus, model_name, table, *action, operation, model,
         )?;
         operation_sql.insert(action.as_str().to_owned(), paths);
     }
@@ -71,7 +65,7 @@ pub(super) fn emit_model(
         )?;
     }
     emit_model_wit(files, catalog, manifest, model_name, model, table)?;
-    super::data::emit_model_data(files, model_name, model, table, &wamn_api)?;
+    super::data::emit_model_data(files, manifest, model_name, model, table, &wamn_api)?;
     super::component::emit_model_component(files, manifest, model_name, model)?;
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
     emit_projection(
@@ -577,8 +571,9 @@ fn emit_operation_sql(
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
-    delete_mode: Option<DeleteMode>,
+    model: &ModelDeclaration,
 ) -> Result<Vec<String>, GenerateError> {
+    let delete_mode = model.delete_mode;
     let tombstoned = delete_mode == Some(DeleteMode::Tombstone);
     if action == CrudAction::Query {
         if let Some(authored) = &operation.authored_sql {
@@ -610,7 +605,7 @@ fn emit_operation_sql(
     }
 
     let sql = match action {
-        CrudAction::Create => sql::create(table, operation),
+        CrudAction::Create => sql::create(table, model, operation),
         CrudAction::Get => sql::get(table, tombstoned),
         CrudAction::Update => sql::update(table, operation, tombstoned),
         CrudAction::Delete => sql::delete(

@@ -416,6 +416,56 @@ pub async fn operation_transaction() -> Result<Transaction, StatementError> {
         .map_err(StatementError::from_wire)
 }
 
+/// The next number of sequence `name`, rendered by the host from `record`:
+/// exactly the fields its pattern names, each as the text of its value or
+/// `None` for a null. The counter advances in the operation transaction, so
+/// a rollback leaves the number unconsumed.
+pub async fn next_number(
+    name: &str,
+    record: &[(&str, Option<String>)],
+) -> Result<String, StatementError> {
+    host::next_number(name.to_string(), record_json(record))
+        .await
+        .map_err(StatementError::from_wire)
+}
+
+/// The record as one JSON object document of strings and nulls.
+fn record_json(record: &[(&str, Option<String>)]) -> String {
+    let mut json = String::from("{");
+    for (index, (field, value)) in record.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        push_json_string(&mut json, field);
+        json.push(':');
+        match value {
+            Some(value) => push_json_string(&mut json, value),
+            None => json.push_str("null"),
+        }
+    }
+    json.push('}');
+    json
+}
+
+fn push_json_string(json: &mut String, text: &str) {
+    use fmt::Write as _;
+    json.push('"');
+    for character in text.chars() {
+        match character {
+            '"' => json.push_str("\\\""),
+            '\\' => json.push_str("\\\\"),
+            '\n' => json.push_str("\\n"),
+            '\r' => json.push_str("\\r"),
+            '\t' => json.push_str("\\t"),
+            control if control < ' ' => {
+                write!(json, "\\u{:04x}", u32::from(control)).expect("writing to a String");
+            }
+            other => json.push(other),
+        }
+    }
+    json.push('"');
+}
+
 /// Run one callback in exactly one transaction, with no automatic retry.
 pub async fn run_transaction<T, E, F>(connection: &mut Connection, callback: F) -> Result<T, E>
 where
@@ -650,6 +700,18 @@ fn decode_row<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_record_is_one_json_object_of_strings_and_nulls() {
+        assert_eq!(record_json(&[]), "{}");
+        assert_eq!(
+            record_json(&[
+                ("facility", Some("D\"A\\Y\n\u{1}".to_owned())),
+                ("batch_id", None),
+            ]),
+            r#"{"facility":"D\"A\\Y\n\u0001","batch_id":null}"#
+        );
+    }
 
     #[test]
     fn query_errors_keep_the_sqlstate_and_database_message() {

@@ -33,6 +33,10 @@ type HistoryColumn = "created_at" | "created_by" | "updated_at" | "updated_by"
 type EventOp = "insert" | "update" | "delete"
 # A field's revision: true on a result row version, or the input field whose row version it guards.
 type Revision = bool | str
+# A target type a package runs on.
+type Target = "cloud" | "local"
+# A column role a model states.
+type FieldRole = "actor"
 
 schema PackageIdentity:
     id: str
@@ -302,6 +306,12 @@ schema TextOfField:
     visible?: bool
     description?: str
 
+schema ModelField:
+    """What fills one column: number names the sequence the generated insert
+    numbers it from, and role = "actor" fills it from the operation caller."""
+    number?: str
+    role?: FieldRole
+
 schema Model[name: str, schema_name: str]:
     """A model. Model("widget", "fixture") names the model and the package's schema.
     Merge the operations with the union operator, operations: {get: {...}}: the
@@ -319,6 +329,7 @@ schema Model[name: str, schema_name: str]:
     enum_fields?: {str:[str]}
     min_lengths?: {str:int}
     field_text?: {str:TextOfField}
+    fields?: {str:ModelField}
     audit_log?: AuditLog
     delete_mode?: "hard" | "tombstone"
     operations: Operations
@@ -338,6 +349,12 @@ schema Model[name: str, schema_name: str]:
         not server_owned_fields or all field in server_owned_fields {
             field not in ["created_at", "created_by", "updated_at", "updated_by"]
         }, "${name} states a stamp column as server-owned; the generator reads each stamp from the table, so remove it"
+
+schema Sequence:
+    """A number sequence and its default pattern. callable = True when the
+    package's commands call it through sequences::<name>::next."""
+    pattern: str
+    callable?: bool
 
 schema InternalRelation:
     $schema: str
@@ -367,6 +384,9 @@ schema Package:
     client_package?: ClientPackage
     base_dependencies?: {str:BaseDependency}
     required_platform_policy_contract: PolicyContract
+    # The target types the package runs on; cloud when unset.
+    targets?: [Target]
+    sequences?: {str:Sequence}
     models: {str:Model}
     internal_relations?: {str:InternalRelation}
     custom_operations?: {str:CustomOperation}

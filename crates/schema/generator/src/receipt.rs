@@ -30,6 +30,17 @@ pub(crate) const SQLX_VERSION: &str = "0.9.0";
 const EXCLUDED_DIRECTORIES: &[&str] = &["target", "node_modules", "generated"];
 /// The lock file of the enclosing Cargo workspace, relative to the package root.
 const WORKSPACE_LOCK: &str = "../Cargo.lock";
+/// The platform trees that a package's components link, relative to the
+/// application workspace: the guest crates its generated code calls and the
+/// platform WIT its bindings read. A change in any of them changes the inputs
+/// of every package, so `wamn build` rebuilds a component that was built
+/// against an older interface.
+const PLATFORM_INPUTS: &[&str] = &[
+    "platform/data",
+    "platform/execution/contract",
+    "platform/execution/jsonata",
+    "../crates/platform/runtime/wit",
+];
 
 /// One package build: `build.json`, schema `wamn.build/v1`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,17 +176,24 @@ pub fn input_digest(package_root: &Path) -> Result<String> {
 
 /// The build inputs of the package at `package_root`: every file of the package
 /// directory except build output and installed dependencies, the lock file of
-/// the enclosing Cargo workspace when there is one, and the generator identity.
+/// the enclosing Cargo workspace when there is one, every file of each
+/// [`PLATFORM_INPUTS`] tree that exists, and the generator identity.
 pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
     let mut files = BTreeMap::new();
-    for relative in input_files(package_root)? {
-        let key = relative
-            .to_str()
-            .with_context(|| format!("input path is not UTF-8: {}", relative.display()))?
-            .to_owned();
-        let path = package_root.join(&relative);
-        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        files.insert(key, sha256(&bytes));
+    insert_tree(&mut files, package_root, Path::new(""))?;
+    // A platform file is keyed by its path relative to the package root, so
+    // its key cannot collide with a file of the package.
+    let workspace = crate::output::package_workspace(package_root);
+    let to_workspace = if package_root.parent() == Some(workspace.as_path()) {
+        Path::new("..")
+    } else {
+        Path::new("../..")
+    };
+    for tree in PLATFORM_INPUTS {
+        let root = workspace.join(tree);
+        if root.is_dir() {
+            insert_tree(&mut files, &root, &to_workspace.join(tree))?;
+        }
     }
     let lock = package_root.join(WORKSPACE_LOCK);
     if lock.is_file() {
@@ -187,6 +205,22 @@ pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
         "generator": generator(),
     })));
     Ok(ReceiptInputs { digest, files })
+}
+
+/// Insert the digest of every input file below `root`, keyed by `prefix`
+/// joined with the file's path relative to `root`.
+fn insert_tree(files: &mut BTreeMap<String, String>, root: &Path, prefix: &Path) -> Result<()> {
+    for relative in input_files(root)? {
+        let key = prefix.join(&relative);
+        let key = key
+            .to_str()
+            .with_context(|| format!("input path is not UTF-8: {}", key.display()))?
+            .to_owned();
+        let path = root.join(&relative);
+        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        files.insert(key, sha256(&bytes));
+    }
+    Ok(())
 }
 
 /// The input files below `package_root`, sorted, as paths relative to it.
@@ -283,6 +317,56 @@ mod tests {
         assert_eq!(input_digest(&package).unwrap(), inputs.digest);
         fs::write(package.join("wamn.k"), "changed").unwrap();
         assert_ne!(input_digest(&package).unwrap(), inputs.digest);
+    }
+
+    #[test]
+    fn a_platform_interface_change_makes_every_package_stale() {
+        let scratch = scratch("platform");
+        let apps = scratch.0.join("apps");
+        let wit = scratch
+            .0
+            .join("crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit");
+        let sdk = apps.join("platform/data/postgres-statements/src/lib.rs");
+        for (path, bytes) in [
+            (apps.join("receiving/wamn.k"), "a"),
+            (apps.join("platform/nested/wamn.k"), "b"),
+            (wit.clone(), "interface statements {}"),
+            (sdk.clone(), "pub fn run() {}"),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        let top = apps.join("receiving");
+        let nested = apps.join("platform/nested");
+
+        let top_inputs = inputs(&top).expect("read the inputs");
+        assert!(
+            top_inputs.files.contains_key(
+                "../../crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit"
+            ),
+            "{:?}",
+            top_inputs.files.keys()
+        );
+        assert!(
+            top_inputs
+                .files
+                .contains_key("../platform/data/postgres-statements/src/lib.rs")
+        );
+        assert!(
+            inputs(&nested)
+                .unwrap()
+                .files
+                .contains_key("../../platform/data/postgres-statements/src/lib.rs")
+        );
+
+        let before = [input_digest(&top).unwrap(), input_digest(&nested).unwrap()];
+        fs::write(&wit, "interface statements { next-number: func(); }").unwrap();
+        let after_wit = [input_digest(&top).unwrap(), input_digest(&nested).unwrap()];
+        assert_ne!(before[0], after_wit[0]);
+        assert_ne!(before[1], after_wit[1]);
+        fs::write(&sdk, "pub fn next_number() {}").unwrap();
+        assert_ne!(input_digest(&top).unwrap(), after_wit[0]);
+        assert_ne!(input_digest(&nested).unwrap(), after_wit[1]);
     }
 
     #[test]

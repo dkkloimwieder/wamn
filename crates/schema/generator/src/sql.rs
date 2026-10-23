@@ -1,6 +1,6 @@
 use wamn_schema_introspection::ir::{Column, ColumnType, Table};
 
-use crate::manifest::{DeleteMode, FilterMatch};
+use crate::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
 use crate::{CursorDirection, OperationDeclaration};
 
 // SQL outcomes are shared with the generated result contracts.
@@ -42,15 +42,21 @@ pub(crate) fn get(table: &Table, tombstoned: bool) -> String {
 ///
 /// The write log keys the retry, so the insert binds no identity: a retry that
 /// finds a stored result never reaches it (`docs/plan/write-log.md` 4.3).
-pub(crate) fn create(table: &Table, operation: &OperationDeclaration) -> String {
-    if operation.writable_fields.is_empty() {
-        return format!(
-            "INSERT INTO {} DEFAULT VALUES\nRETURNING\n    {};\n",
-            table.name(),
-            returning_columns(table)
-        );
-    }
-    let binds = operation
+///
+/// A numbered field binds last, as the text `next-number` returned, and the
+/// SQL casts it to the column. An actor field reads the `app.user_id` claim,
+/// never a parameter.
+pub(crate) fn create(
+    table: &Table,
+    model: &ModelDeclaration,
+    operation: &OperationDeclaration,
+) -> String {
+    let mut columns = operation
+        .writable_fields
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut values = operation
         .writable_fields
         .iter()
         .enumerate()
@@ -58,12 +64,34 @@ pub(crate) fn create(table: &Table, operation: &OperationDeclaration) -> String 
             let ty = column_type(table, field);
             format!("${}::{}", index + 1, postgres_type(ty))
         })
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<Vec<_>>();
+    if let Some((field, _)) = model.number_field() {
+        let bind = format!("${}::text", values.len() + 1);
+        values.push(match column_type(table, field) {
+            ColumnType::Text => bind,
+            ty => format!("{bind}::{}", postgres_type(ty)),
+        });
+        columns.push(field);
+    }
+    for field in model.actor_fields() {
+        values.push(format!(
+            "current_setting('app.user_id')::{}",
+            postgres_type(column_type(table, field))
+        ));
+        columns.push(field);
+    }
+    if columns.is_empty() {
+        return format!(
+            "INSERT INTO {} DEFAULT VALUES\nRETURNING\n    {};\n",
+            table.name(),
+            returning_columns(table)
+        );
+    }
     format!(
-        "INSERT INTO {} ({})\nVALUES ({binds})\nRETURNING\n    {};\n",
+        "INSERT INTO {} ({})\nVALUES ({})\nRETURNING\n    {};\n",
         table.name(),
-        operation.writable_fields.join(", "),
+        columns.join(", "),
+        values.join(", "),
         returning_columns(table)
     )
 }

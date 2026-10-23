@@ -330,6 +330,15 @@ pub(super) fn wamn_api(
                             false,
                         )
                     })
+                    // The numbered field binds the text `next-number` returned.
+                    .chain(model.number_field().map(|(field, _)| {
+                        accessor_bind(
+                            &rust_identifier(field)
+                                .expect("model field names were validated for Rust"),
+                            ColumnType::Text,
+                            false,
+                        )
+                    }))
                     .collect(),
             }),
             CrudAction::Update => {

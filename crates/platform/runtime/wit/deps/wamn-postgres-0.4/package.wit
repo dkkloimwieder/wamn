@@ -197,6 +197,16 @@ interface statements {
   /// Dropping the handle leaves the transaction open. An operation without a
   /// host transaction gets `postgres(permission-denied)`.
   operation-transaction: async func() -> result<transaction, statement-error>;
+
+  /// Render the next number of sequence `name` of the composing application,
+  /// and advance its counters in the operation transaction.
+  ///
+  /// `record` is a JSON object document that carries exactly the fields the
+  /// sequence's pattern names, each as the text of its value or null. The
+  /// application is the `app.application` claim, never an argument. Outside
+  /// an open operation transaction the host refuses. Added to 0.4.0 in place,
+  /// with no version bump (docs/plan/platform-config.md, "Issues for C2").
+  next-number: async func(name: string, %record: string) -> result<string, statement-error>;
 }
 
 /// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).

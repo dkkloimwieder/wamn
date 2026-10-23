@@ -99,6 +99,7 @@ pub(super) fn validate(
     for (model_name, model) in &manifest.models {
         validate_model(input.catalog, manifest, model_name, model)?;
     }
+    super::numbering::validate_numbering(input.catalog, manifest)?;
     for (relation_name, relation) in &manifest.internal_relations {
         if !input
             .catalog

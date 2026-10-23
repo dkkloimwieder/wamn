@@ -755,6 +755,15 @@ pub(crate) fn generated_relation_access(
         CrudAction::Get | CrudAction::Query => {}
         CrudAction::Create => {
             access.insert_fields.clone_from(&operation.writable_fields);
+            // The generated insert also writes the numbered and actor fields.
+            access.insert_fields.extend(
+                model
+                    .number_field()
+                    .map(|(field, _)| field)
+                    .into_iter()
+                    .chain(model.actor_fields())
+                    .map(str::to_owned),
+            );
         }
         CrudAction::Update => {
             access.update_fields.clone_from(&operation.writable_fields);

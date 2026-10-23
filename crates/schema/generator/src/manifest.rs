@@ -28,6 +28,15 @@ pub struct PackageManifest {
     #[serde(default)]
     pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
     pub required_platform_policy_contract: PolicyContractRequirement,
+    /// The target types the package may run on. Empty reads as `cloud` only,
+    /// and a package with models runs on `cloud` only
+    /// (`docs/plan/platform-config.md`, "Declaration in wamn.k").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<Target>,
+    /// The number sequences the package fills or calls, by name, each with
+    /// its default pattern.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sequences: BTreeMap<String, SequenceDeclaration>,
     pub models: BTreeMap<String, ModelDeclaration>,
     #[serde(default)]
     pub internal_relations: BTreeMap<String, InternalRelationDeclaration>,
@@ -2568,6 +2577,10 @@ pub struct ModelDeclaration {
     /// through a map, the way `enum_fields` does, and the text follows.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub field_text: BTreeMap<String, FieldText>,
+    /// What fills a column other than the caller, keyed by column name, as
+    /// `field_text` addresses its columns.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, ModelFieldDeclaration>,
     /// Record-history declaration. A relation-owning model requires it, and
     /// an overlay model inherits the declaration of the relation owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2577,6 +2590,71 @@ pub struct ModelDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_mode: Option<DeleteMode>,
     pub operations: BTreeMap<CrudAction, OperationDeclaration>,
+}
+
+/// A target type a package runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Target {
+    /// The cloud cluster.
+    Cloud,
+    /// A local box.
+    Local,
+}
+
+/// One number sequence of a package.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SequenceDeclaration {
+    /// The default pattern. Env apply writes it once; an edited row keeps its
+    /// own.
+    pub pattern: String,
+    /// Whether the package's commands call the sequence, through the
+    /// generated `sequences::<name>::next`. Only a callable sequence gets the
+    /// binding.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub callable: bool,
+}
+
+/// What fills one column of a model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelFieldDeclaration {
+    /// The sequence whose next number the generated insert writes here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<String>,
+    /// The column's role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<FieldRole>,
+}
+
+/// A column role a model states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldRole {
+    /// The operation caller: generated SQL fills it from the `app.user_id`
+    /// claim.
+    Actor,
+}
+
+impl ModelDeclaration {
+    /// The column a sequence numbers, and the sequence, if the model has one.
+    pub fn number_field(&self) -> Option<(&str, &str)> {
+        self.fields.iter().find_map(|(field, declaration)| {
+            declaration
+                .number
+                .as_deref()
+                .map(|sequence| (field.as_str(), sequence))
+        })
+    }
+
+    /// The columns the caller fills, in column-name order.
+    pub fn actor_fields(&self) -> impl Iterator<Item = &str> {
+        self.fields
+            .iter()
+            .filter(|(_, declaration)| declaration.role == Some(FieldRole::Actor))
+            .map(|(field, _)| field.as_str())
+    }
 }
 
 /// Closed delete mode of a model that declares the `delete` action.

@@ -1,6 +1,7 @@
 mod component;
 mod contracts;
 mod data;
+mod numbering;
 mod publication;
 mod routes;
 mod rust;
