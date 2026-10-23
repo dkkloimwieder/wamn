@@ -40,9 +40,9 @@ const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform
 /// permissions, such as `admin`, yields one row with a null permission, and a
 /// principal without roles yields one row with a null role.
 const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission \
-    FROM platform.\"user\" u LEFT JOIN platform.user_roles r \
+    FROM platform.\"user\" u LEFT JOIN platform.user_role r \
     ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
-    LEFT JOIN platform.permissions p \
+    LEFT JOIN platform.permission p \
     ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
     WHERE u.tenant_id = $1 AND u.id = $2::text::uuid";
 
@@ -58,9 +58,9 @@ const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
 /// role.
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
     FROM platform.\"user\" AS users \
-    JOIN platform.user_roles AS user_roles \
+    JOIN platform.user_role AS user_roles \
       ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
-    LEFT JOIN platform.permissions AS permissions \
+    LEFT JOIN platform.permission AS permissions \
       ON permissions.tenant_id = user_roles.tenant_id \
       AND permissions.role_name = user_roles.role_name \
     WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active'";

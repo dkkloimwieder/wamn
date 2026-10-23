@@ -32,7 +32,7 @@
 //!
 //! [`USER_ID_CLAIM`] (`app.user_id`) resolves to a `users.id` (`uuid`) — the
 //! ownership target the 3.5 RLS builder reads. [`ROLE_CLAIM`] (`app.role`)
-//! resolves to a `roles.name` (text) — the role-gate target. [`TENANT_CLAIM`]
+//! resolves to a `role.name` (text) — the role-gate target. [`TENANT_CLAIM`]
 //! (`app.tenant`) is the RLS floor every table keys on. The claims are injected
 //! by the plugin from a resolved session (4.2); this schema is the substrate.
 //!
@@ -238,7 +238,7 @@ pub const USERS: Table = Table {
 
 /// Named roles. `name` is the [`ROLE_CLAIM`] gate target.
 pub const ROLES: Table = Table {
-    name: "roles",
+    name: "role",
     columns: &["tenant_id", "name"],
 };
 
@@ -249,19 +249,19 @@ pub const ADMIN_ROLE: &str = "admin";
 
 /// The user↔role linkage (many-to-many).
 pub const USER_ROLES: Table = Table {
-    name: "user_roles",
+    name: "user_role",
     columns: &["tenant_id", "user_id", "role_name"],
 };
 
 /// Role → permission grants (read by 4.3 AuthZ).
 pub const PERMISSIONS: Table = Table {
-    name: "permissions",
+    name: "permission",
     columns: &["tenant_id", "role_name", "permission"],
 };
 
 /// The api-key substrate. `key_hash` is a one-way digest, never the raw key.
 pub const API_KEYS: Table = Table {
-    name: "api_keys",
+    name: "api_key",
     columns: &["tenant_id", "user_id", "key_hash", "prefix"],
 };
 

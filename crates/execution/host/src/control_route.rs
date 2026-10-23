@@ -37,7 +37,7 @@
 //! tables from `pg_catalog`, on the environment's administration login, and
 //! answers the release's effect profile, with the operations each role of the
 //! environment holds (`admin` holds every operation of the release), from its
-//! `platform.roles` and `platform.permissions`. It writes nothing.
+//! `platform.role` and `platform.permission`. It writes nothing.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -917,9 +917,9 @@ const STATUS_COUNTS_TIMEOUT: Duration = Duration::from_secs(2);
 const APPLICATION_COUNTS_SQL: &str = "SELECT \
     (SELECT count(*)::int4 FROM platform.\"user\" u \
      WHERE u.tenant_id = t.tenant_id AND u.type = 'user' AND EXISTS \
-       (SELECT 1 FROM platform.user_roles r \
+       (SELECT 1 FROM platform.user_role r \
         WHERE r.tenant_id = u.tenant_id AND r.user_id = u.id)), \
-    (SELECT count(*)::int4 FROM platform.roles r WHERE r.tenant_id = t.tenant_id) \
+    (SELECT count(*)::int4 FROM platform.role r WHERE r.tenant_id = t.tenant_id) \
     FROM (SELECT DISTINCT tenant_id FROM platform.\"user\" WHERE type = 'platform') t";
 
 async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {

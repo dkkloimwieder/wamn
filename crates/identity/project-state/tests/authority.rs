@@ -5,12 +5,12 @@
 //! principal, on this relation, denied — rather than as a paper narrowing.
 //!
 //! One test per adjudicated class (docs/plan/platform-config.md, invariant 1):
-//! - `users` / `roles` / `user_roles` / `permissions` are the rows the trust
+//! - `users` / `role` / `user_role` / `permission` are the rows the trust
 //!   chain reads as authorization INPUT, `environment` is the status the host
 //!   admits a request by, and the platform configuration tables are the rows
 //!   the platform writes for the application. An App generation may inherit
 //!   their stable `wamn_app` reads and nothing more, so a tenant or an
-//!   application cannot create a platform row or a `wamn:` name. `api_keys`
+//!   application cannot create a platform row or a `wamn:` name. `api_key`
 //!   takes no grant at all;
 //! - `number_counter` advances only through `platform.bump_counter`, which
 //!   takes the caller's tenant from its role name — the control proving the
@@ -113,10 +113,10 @@ fn prelude(url: &str) -> (String, String) {
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
 INSERT INTO platform."user" (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','user','u1@t1');
-INSERT INTO platform.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
-INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
-INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
-INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
+INSERT INTO platform.role (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
+INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
+INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
+INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
 INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES ('{TENANT}','org','acme','display.theme','"dark"'::jsonb);
 INSERT INTO platform.number_sequence (tenant_id, id, application, name, pattern) VALUES
   ('{TENANT}','{SEQUENCE}','receiving','purchase_order','P-{{seq:po,width=8}}'),
@@ -159,9 +159,9 @@ fn run(url: &str, script: &str) {
 /// The relations the trust chain resolves `app.user_id` / `app.role` from, the
 /// environment status, and the platform configuration tables are readable
 /// through `wamn_app` and writable by nobody through it: author SQL that could
-/// insert its own `user_roles` row would be minting the input its own
+/// insert its own `user_role` row would be minting the input its own
 /// generated policies are then evaluated against, and author SQL that could
-/// write `number_counter` would break gapless numbering. `api_keys` is not even
+/// write `number_counter` would break gapless numbering. `api_key` is not even
 /// readable.
 ///
 /// Each denied statement is RLS-LEGAL for the probe tenant — same generation,
@@ -181,7 +181,7 @@ fn author_sql_cannot_write_the_relations_that_authorize_it() {
 DO $$
 DECLARE relation text; operation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['user','roles','user_roles','permissions','environment',
+  FOREACH relation IN ARRAY ARRAY['user','role','user_role','permission','environment',
                                   'external_system','connection','integration_allow',
                                   'project_connection','number_sequence','number_counter',
                                   'setting'] LOOP
@@ -193,8 +193,8 @@ BEGIN
     END LOOP;
   END LOOP;
   FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
-    ASSERT NOT has_table_privilege('wamn_app'::name, 'platform.api_keys'::text, operation),
-      format('wamn_app holds %s on api_keys, which no runtime code reads', operation);
+    ASSERT NOT has_table_privilege('wamn_app'::name, 'platform.api_key'::text, operation),
+      format('wamn_app holds %s on api_key, which no runtime code reads', operation);
   END LOOP;
 END $$;
 
@@ -206,7 +206,7 @@ DO $$ BEGIN
     'the tenant authority is the prepared App generation';
   ASSERT (SELECT count(*) FROM platform."user") = 1,
     'the generation-derived tenant is live and users is still readable';
-  ASSERT (SELECT count(*) FROM platform.user_roles) = 1,
+  ASSERT (SELECT count(*) FROM platform.user_role) = 1,
     'the role linkage 4.2 resolves app.role from is still readable';
 END $$;
 
@@ -219,19 +219,19 @@ BEGIN
     'UPDATE platform."user" SET status = ''disabled''',
     'UPDATE platform."user" SET display_name = ''wamn:intruder''',
     'DELETE FROM platform."user"',
-    'INSERT INTO platform.roles (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
-    'UPDATE platform.roles SET description = ''changed''',
-    'DELETE FROM platform.roles',
-    'INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES (''{TENANT}'', ''{U1}'', ''auditor'')',
-    'UPDATE platform.user_roles SET role_name = ''admin''',
-    'DELETE FROM platform.user_roles',
-    'INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES (''{TENANT}'', ''auditor'', ''platform-fixture:widget/list'')',
-    'UPDATE platform.permissions SET permission = ''platform-fixture:widget/list''',
-    'DELETE FROM platform.permissions',
-    'INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
-    'UPDATE platform.api_keys SET revoked_at = now()',
-    'DELETE FROM platform.api_keys',
-    'SELECT count(*) FROM platform.api_keys',
+    'INSERT INTO platform.role (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
+    'UPDATE platform.role SET description = ''changed''',
+    'DELETE FROM platform.role',
+    'INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES (''{TENANT}'', ''{U1}'', ''auditor'')',
+    'UPDATE platform.user_role SET role_name = ''admin''',
+    'DELETE FROM platform.user_role',
+    'INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES (''{TENANT}'', ''auditor'', ''platform-fixture:widget/list'')',
+    'UPDATE platform.permission SET permission = ''platform-fixture:widget/list''',
+    'DELETE FROM platform.permission',
+    'INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
+    'UPDATE platform.api_key SET revoked_at = now()',
+    'DELETE FROM platform.api_key',
+    'SELECT count(*) FROM platform.api_key',
     'INSERT INTO platform.number_counter (tenant_id, sequence_id, counter, key_value, value) VALUES (''{TENANT}'', ''{SEQUENCE}'', ''po'', '''', 100)',
     'UPDATE platform.number_counter SET value = 1',
     'DELETE FROM platform.number_counter',
@@ -385,24 +385,24 @@ fn author_sql_reads_and_writes_no_history_table() {
             &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
         ),
         entry(
-            "roles_history",
+            "role_history",
             None,
             &format!(r#"{{"name": "admin", "tenant_id": "{TENANT}"}}"#),
         ),
         entry(
-            "user_roles_history",
+            "user_role_history",
             None,
             &format!(r#"{{"user_id": "{U1}", "role_name": "admin", "tenant_id": "{TENANT}"}}"#),
         ),
         entry(
-            "permissions_history",
+            "permission_history",
             None,
             &format!(
                 r#"{{"role_name": "auditor", "tenant_id": "{TENANT}", "permission": "platform-fixture:widget/get"}}"#
             ),
         ),
         entry(
-            "api_keys_history",
+            "api_key_history",
             None,
             &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
         ),
@@ -431,8 +431,8 @@ fn author_sql_reads_and_writes_no_history_table() {
 DO $$
 DECLARE history text; operation text;
 BEGIN
-  FOREACH history IN ARRAY ARRAY['user_history','roles_history','user_roles_history',
-                                 'permissions_history','api_keys_history',
+  FOREACH history IN ARRAY ARRAY['user_history','role_history','user_role_history',
+                                 'permission_history','api_key_history',
                                  'environment_history','external_system_history',
                                  'connection_history','integration_allow_history',
                                  'project_connection_history','number_sequence_history',
@@ -463,10 +463,10 @@ BEGIN
     'the tenant authority is the prepared App generation';
   FOREACH probe_sql IN ARRAY ARRAY[
     'SELECT count(*) FROM platform.user_history',
-    'SELECT count(*) FROM platform.roles_history',
-    'SELECT count(*) FROM platform.user_roles_history',
-    'SELECT count(*) FROM platform.permissions_history',
-    'SELECT count(*) FROM platform.api_keys_history',
+    'SELECT count(*) FROM platform.role_history',
+    'SELECT count(*) FROM platform.user_role_history',
+    'SELECT count(*) FROM platform.permission_history',
+    'SELECT count(*) FROM platform.api_key_history',
     'SELECT count(*) FROM platform.environment_history',
     'SELECT count(*) FROM platform.external_system_history',
     'SELECT count(*) FROM platform.connection_history',

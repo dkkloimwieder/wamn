@@ -143,13 +143,13 @@ pub(super) async fn assemble(
         .await?;
     project
         .execute(
-            "INSERT INTO platform.roles (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            "INSERT INTO platform.role (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
             &[&input.tenant, &input.caller_role],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)",
+            "INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)",
             &[&input.tenant, &principal.id().as_str(), &input.caller_role],
         )
         .await?;

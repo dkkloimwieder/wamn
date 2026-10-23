@@ -738,7 +738,7 @@ The writer keeps a row that already holds the given values, and it removes no ro
 No route calls the writer yet. The connection and settings routes of C3 and C4 add the callers.
 
 Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
-These relations are `user`, `roles`, `user_roles`, `permissions`, `api_keys`, and `environment`, and the platform configuration tables `external_system`, `connection`, `integration_allow`, `project_connection`, `number_sequence`, `number_counter`, and `setting` ([platform configuration](../plan/platform-config.md)).
+These relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `environment`, and the platform configuration tables `external_system`, `connection`, `integration_allow`, `project_connection`, `number_sequence`, `number_counter`, and `setting` ([platform configuration](../plan/platform-config.md)).
 `environment` holds at most one row, the status of the environment that the host reads. No row means active.
 An integration is connector code, and `integration` columns hold its catalog code. A connection is a configured instance of an integration. An external system is the persistent identity that a group of connections reach.
 Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
@@ -746,20 +746,20 @@ Each relation except `number_counter` also has a `wamn_record_history_log` trigg
 The file creates each history table with the tenant flag, so the table has a `tenant_id` column.
 Each history table has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
-`wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `roles`, `user_roles`, `permissions`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_keys`, on a history table, or on `schema_migrations`.
+`wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key`, on a history table, or on `schema_migrations`.
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It takes the caller's tenant from the caller's role name, with the parse of `wamn_authority.current_tenant_key()`, and refuses a sequence of another tenant with `insufficient_privilege`.
 Project migration `0025_platform_configuration.sql` adds the platform configuration tables to an installed database, removes `configurations` and its history table, and revokes the `api_keys` read.
-The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `user`, `roles`, `user_roles`, `permissions` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
+The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `user`, `role`, `user_role`, `permission` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter` advances it.
 It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 Project migration `0007` creates `environment` in an installed database, and `0008` gives the family its write.
-Project migration `0026` renders the current surface, and `0024`, `0020`, `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
+Project migration `0028` renders the current surface, and `0027`, `0026`, `0024`, `0020`, `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
-The log copies full rows, including `api_keys.key_hash`.
+The log copies full rows, including `api_key.key_hash`.
 A column that is secret at rest does not belong in a stamped relation.
 An applier installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
 

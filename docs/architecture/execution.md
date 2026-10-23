@@ -541,7 +541,7 @@ The host answers the auth facts of a repeated caller from its memory, so they co
 The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the scheduler NATS.
 The key `<tenant>.<principal>` holds the grants of a principal and whether the tenant has its user row.
 The key `<tenant>.environment` holds the environment status.
-One read of `platform."user"`, `platform.user_roles` and `platform.permissions` answers the permission check and the user-row check of the invocation bind.
+One read of `platform."user"`, `platform.user_role` and `platform.permission` answers the permission check and the user-row check of the invocation bind.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 Each host watches the keys of its tenant and keeps each value it sees, so a fact one host reads serves every host of the tenant.
 The control host serves every tenant, so it watches every key.

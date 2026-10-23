@@ -503,7 +503,7 @@ pub(super) fn verify_session_role_reader_grants(
     )]);
     for (relation, columns) in [
         ("user", ["tenant_id", "id", "status"]),
-        ("user_roles", ["tenant_id", "user_id", "role_name"]),
+        ("user_role", ["tenant_id", "user_id", "role_name"]),
     ] {
         for column in columns {
             expected.insert((

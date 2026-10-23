@@ -40,8 +40,8 @@ pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_securit
 pub fn operation_grant_floor_check_sql() -> String {
     format!(
         "DO $operation_grant_floor$ BEGIN \
-           IF pg_catalog.to_regclass('platform.roles') IS NULL \
-              OR pg_catalog.to_regclass('platform.permissions') IS NULL THEN \
+           IF pg_catalog.to_regclass('platform.role') IS NULL \
+              OR pg_catalog.to_regclass('platform.permission') IS NULL THEN \
              RAISE EXCEPTION USING ERRCODE = '55000', \
                MESSAGE = '{PLATFORM_FLOOR_MISSING}'; \
            END IF; \
@@ -152,7 +152,7 @@ pub fn operation_grant_tokens(
 /// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
 /// [`operation_grant_floor_check_sql`], then executes this statement. It
 /// changes one row or none.
-pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.roles (tenant_id, name) \
+pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.role (tenant_id, name) \
      VALUES ($1, 'admin') ON CONFLICT (tenant_id, name) DO NOTHING";
 
 #[cfg(test)]

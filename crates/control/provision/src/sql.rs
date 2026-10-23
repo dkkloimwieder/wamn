@@ -172,9 +172,9 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
         .iter()
         .map(|relation| ("catalog", *relation))
         .chain([
-            ("platform", "permissions"),
+            ("platform", "permission"),
             ("platform", "user"),
-            ("platform", "user_roles"),
+            ("platform", "user_role"),
         ])
 }
 
@@ -498,7 +498,7 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three platform relations of
 /// [`http_admitter_relations`].
 /// User permission reads join the active application user to its role grants;
-/// service permission reads continue to read `platform.permissions` alone.
+/// service permission reads continue to read `platform.permission` alone.
 /// A read route's ETag reads the WAL position without a table grant.
 /// `USAGE` on those two schemas plus
 /// eight `SELECT`s is the family's authority.
@@ -553,9 +553,9 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 /// advances it.
 pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "user",
-    "roles",
-    "user_roles",
-    "permissions",
+    "role",
+    "user_role",
+    "permission",
     "environment",
     "external_system",
     "connection",
@@ -637,7 +637,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
          GRANT USAGE ON SCHEMA platform TO {role}; \
          GRANT SELECT (tenant_id, id, status) ON TABLE platform.\"user\" TO {role}; \
-         GRANT SELECT (tenant_id, user_id, role_name) ON TABLE platform.user_roles TO {role};",
+         GRANT SELECT (tenant_id, user_id, role_name) ON TABLE platform.user_role TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
         role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
     )
@@ -1240,9 +1240,9 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"permissions\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE platform.\"permission\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"user_roles\" TO \"wamn_http_admitter\";",
+             GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\";",
             "the callable-HTTP admitter reads five catalog relations and three permission relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.

@@ -2818,11 +2818,11 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
     );
     assert_eq!(
         logs,
-        "api_keys:unlimited\\000 connection:unlimited\\000 environment:unlimited\\000 \
+        "api_key:unlimited\\000 connection:unlimited\\000 environment:unlimited\\000 \
          external_system:unlimited\\000 integration_allow:unlimited\\000 \
-         number_sequence:unlimited\\000 permissions:unlimited\\000 \
-         project_connection:unlimited\\000 roles:unlimited\\000 setting:unlimited\\000 \
-         user:unlimited\\000 user_roles:unlimited\\000",
+         number_sequence:unlimited\\000 permission:unlimited\\000 \
+         project_connection:unlimited\\000 role:unlimited\\000 setting:unlimited\\000 \
+         user:unlimited\\000 user_role:unlimited\\000",
         "every platform relation must log with the retention unlimited"
     );
     let targets = psql(

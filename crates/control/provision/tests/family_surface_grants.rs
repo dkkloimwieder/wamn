@@ -250,7 +250,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         "widen the materializer role out of band",
         &format!(
             "GRANT SELECT ON TABLE catalog.package_migrations TO {stable}; \
-             GRANT SELECT ON TABLE platform.permissions TO {stable}; \
+             GRANT SELECT ON TABLE platform.permission TO {stable}; \
              GRANT USAGE ON SCHEMA wamn_run TO {stable}; \
              GRANT SELECT ON TABLE wamn_run.runs TO {stable};"
         ),
@@ -768,8 +768,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         .iter()
         .map(|relation| format!("relation|catalog|{relation}|SELECT"))
         .collect();
-    expected.push("relation|platform|permissions|SELECT".to_owned());
-    expected.push("relation|platform|user_roles|SELECT".to_owned());
+    expected.push("relation|platform|permission|SELECT".to_owned());
+    expected.push("relation|platform|user_role|SELECT".to_owned());
     expected.push("relation|platform|user|SELECT".to_owned());
     expected.push("schema|platform|platform|USAGE".to_owned());
     expected.push("schema|catalog|catalog|USAGE".to_owned());
@@ -789,7 +789,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             "GRANT USAGE ON SCHEMA wamn_run TO {stable};\n\
              GRANT SELECT ON TABLE wamn_run.runs TO {stable};\n\
              GRANT UPDATE (status) ON TABLE wamn_run.runs TO {stable};\n\
-             GRANT SELECT ON TABLE platform.roles TO {stable};\n"
+             GRANT SELECT ON TABLE platform.role TO {stable};\n"
         ),
     );
     run_admin(&admin, "re-converge after the widening", &surface);
@@ -808,13 +808,13 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              'the prepared generation must be able to authenticate'; \
            ASSERT has_schema_privilege(r, 'catalog', 'USAGE'), 'no catalog USAGE'; \
            ASSERT has_schema_privilege(r, 'platform', 'USAGE'), 'no platform USAGE'; \
-           ASSERT has_table_privilege(r, 'platform.permissions', 'SELECT'), \
+           ASSERT has_table_privilege(r, 'platform.permission', 'SELECT'), \
              'cannot read the exact operation grants'; \
-           ASSERT NOT has_table_privilege(r, 'platform.permissions', 'INSERT') \
-             AND NOT has_table_privilege(r, 'platform.permissions', 'UPDATE') \
-             AND NOT has_table_privilege(r, 'platform.permissions', 'DELETE'), \
+           ASSERT NOT has_table_privilege(r, 'platform.permission', 'INSERT') \
+             AND NOT has_table_privilege(r, 'platform.permission', 'UPDATE') \
+             AND NOT has_table_privilege(r, 'platform.permission', 'DELETE'), \
              'the callable-HTTP admitter writes operation grants'; \
-           ASSERT NOT has_table_privilege(r, 'platform.roles', 'SELECT'), \
+           ASSERT NOT has_table_privilege(r, 'platform.role', 'SELECT'), \
              'the callable-HTTP admitter reads adjacent role state'; \
            ASSERT NOT has_schema_privilege(r, 'wamn_run', 'USAGE'), \
              'the admitter authorizes an effect; it never touches the run plane'; \
@@ -833,7 +833,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         )
         .expect("writing to a String cannot fail");
     }
-    for relation in ["user", "user_roles"] {
+    for relation in ["user", "user_role"] {
         writeln!(
             probes,
             "  ASSERT has_table_privilege(r, 'platform.{relation}', 'SELECT'), \
@@ -920,13 +920,13 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                      'active', 'valid', '{digest}');\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
-             INSERT INTO platform.roles (tenant_id, name) \
+             INSERT INTO platform.role (tenant_id, name) \
              VALUES ('tenant-a', 'widget-reader');\n\
              INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'user', 'caller@example.test');\n\
-             INSERT INTO platform.user_roles (tenant_id, user_id, role_name) \
+             INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'widget-reader');\n\
-             INSERT INTO platform.permissions (tenant_id, role_name, permission) \
+             INSERT INTO platform.permission (tenant_id, role_name, permission) \
              VALUES ('tenant-a', 'widget-reader', 'wamn-widgets:widget/get');\n\
              COMMIT;\n"
         ),
@@ -959,7 +959,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     assert_eq!(
         query(
             &as_login,
-            "SELECT count(*) FROM platform.permissions \
+            "SELECT count(*) FROM platform.permission \
               WHERE role_name = 'widget-reader' \
                 AND permission = 'wamn-widgets:widget/get'"
         ),
@@ -970,8 +970,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         query(
             &as_login,
             "SELECT p.permission FROM platform.\"user\" u \
-             JOIN platform.user_roles ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id \
-             JOIN platform.permissions p ON p.tenant_id = ur.tenant_id AND p.role_name = ur.role_name \
+             JOIN platform.user_role ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id \
+             JOIN platform.permission p ON p.tenant_id = ur.tenant_id AND p.role_name = ur.role_name \
              WHERE u.tenant_id = 'tenant-a' AND u.id = '00000000-0000-4000-8000-000000000001' \
                AND u.status = 'active'"
         ),

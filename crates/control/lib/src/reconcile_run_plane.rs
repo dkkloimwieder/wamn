@@ -682,7 +682,7 @@ async fn converge_tenant_identity(
     let present_admins: BTreeSet<String> = if app_schema_present {
         client
             .query(
-                "SELECT user_id::text FROM platform.user_roles \
+                "SELECT user_id::text FROM platform.user_role \
                   WHERE tenant_id = $1 AND role_name = $2",
                 &[&tenant_id, &wamn_project_state::ADMIN_ROLE],
             )

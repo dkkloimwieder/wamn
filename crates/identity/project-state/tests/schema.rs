@@ -47,15 +47,15 @@ fn record_history_app_grants_sql() -> String {
 /// The privileges `wamn_app` holds on each table. The R11 adjudication is per
 /// relation, not one blanket grant, so the log test checks it per relation too:
 ///
-/// - `users` / `roles` / `user_roles` / `permissions` / `environment` and the
+/// - `users` / `role` / `user_role` / `permission` / `environment` and the
 ///   platform configuration tables are SELECT-only (docs/plan/platform-config.md,
 ///   invariant 1). The trust chain reads these rows as authorization INPUT — the
 ///   3.5 builder compiles `app.user_id` (a `users.id`) and `app.role` (a
-///   `roles.name`, reached through `user_roles`) into the data policies it
+///   `role.name`, reached through `user_role`) into the data policies it
 ///   generates, and 4.2 resolves those claims from exactly these tables. Author
 ///   SQL holding DML here could write itself the credential its own policies are
 ///   then evaluated against.
-/// - `api_keys` has no grant: no runtime code reads it.
+/// - `api_key` has no grant: no runtime code reads it.
 /// - The `<table>_history` tables have no grant. The log trigger fires as the
 ///   writer, and `wamn_app` writes no table that has a history table.
 ///
@@ -66,15 +66,15 @@ const WRITE_LOG: &str = "write_log";
 
 fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
-        "user" | "roles" | "user_roles" | "permissions" | "environment" | "external_system"
+        "user" | "role" | "user_role" | "permission" | "environment" | "external_system"
         | "connection" | "integration_allow" | "project_connection" | "number_sequence"
         | "number_counter" | "setting" => "SELECT",
-        "api_keys"
+        "api_key"
         | "user_history"
-        | "roles_history"
-        | "user_roles_history"
-        | "permissions_history"
-        | "api_keys_history"
+        | "role_history"
+        | "user_role_history"
+        | "permission_history"
+        | "api_key_history"
         | "environment_history"
         | "external_system_history"
         | "connection_history"
@@ -174,10 +174,10 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          SET app.operation = 'admin:seed-isolation-fixture';\n\
          INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES \
            ('t1','{U1}','user','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','user','u3@t2');\n\
-         INSERT INTO platform.roles (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
-         INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
-         INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
-         INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
+         INSERT INTO platform.role (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
+         INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
+         INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
+         INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
          INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES ('t1','user','{U1}','display.theme','\"dark\"'::jsonb);"
     )
     .expect("writing to a String cannot fail");
@@ -191,9 +191,9 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          DO $$ BEGIN\n\
            ASSERT current_user='{tenant_1_app}', 'tenant authority is the prepared tenant-1 generation';\n\
            ASSERT (SELECT count(*) FROM platform.\"user\")=2, 't1 sees its 2 users, not t2''s';\n\
-           ASSERT (SELECT count(*) FROM platform.roles)=2, 't1 sees its roles';\n\
-           ASSERT (SELECT count(*) FROM platform.user_roles)=1, 't1 sees its grant';\n\
-           ASSERT (SELECT count(*) FROM platform.permissions)=1, 't1 sees its permission';\n\
+           ASSERT (SELECT count(*) FROM platform.role)=2, 't1 sees its roles';\n\
+           ASSERT (SELECT count(*) FROM platform.user_role)=1, 't1 sees its grant';\n\
+           ASSERT (SELECT count(*) FROM platform.permission)=1, 't1 sees its permission';\n\
            ASSERT (SELECT count(*) FROM platform.setting)=1, 't1 sees its setting';\n\
          END $$;\n\
          COMMIT;"
@@ -288,13 +288,13 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     }
     // Every base table refuses a ''-tenant row, not only users (a45).
     for (table, insert) in [
-        ("roles", "(tenant_id, name) VALUES ('', 'empty')".to_owned()),
+        ("role", "(tenant_id, name) VALUES ('', 'empty')".to_owned()),
         (
-            "user_roles",
+            "user_role",
             format!("(tenant_id, user_id, role_name) VALUES ('', '{U2}', 'admin')"),
         ),
         (
-            "permissions",
+            "permission",
             "(tenant_id, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
                 .to_owned(),
         ),
@@ -324,7 +324,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
                 .to_owned(),
         ),
         (
-            "api_keys",
+            "api_key",
             format!(
                 "(tenant_id, user_id, name, key_hash, prefix) VALUES ('', '{U2}', 'ci', 'hash-2', 'wk_b')"
             ),
@@ -353,7 +353,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // grant that the user cascade leaves.
     writeln!(
         script,
-        "INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U2}','admin');"
+        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('t1','{U2}','admin');"
     )
     .expect("writing to a String cannot fail");
     // FK cascade: deleting U1 prunes its role grant and api key.
@@ -361,18 +361,18 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         script,
         "DELETE FROM platform.\"user\" WHERE tenant_id='t1' AND id='{U1}';\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM platform.user_roles WHERE user_id='{U1}')=0, 'user_roles cascade';\n\
-           ASSERT (SELECT count(*) FROM platform.api_keys WHERE user_id='{U1}')=0, 'api_keys cascade';\n\
+           ASSERT (SELECT count(*) FROM platform.user_role WHERE user_id='{U1}')=0, 'user_role cascade';\n\
+           ASSERT (SELECT count(*) FROM platform.api_key WHERE user_id='{U1}')=0, 'api_key cascade';\n\
          END $$;"
     )
     .expect("writing to a String cannot fail");
     // FK cascade: deleting the clerk role prunes its permission, and deleting
     // the admin role prunes its remaining grant.
     script.push_str(
-        "DELETE FROM platform.roles WHERE tenant_id='t1' AND name IN ('admin', 'clerk');\n\
+        "DELETE FROM platform.role WHERE tenant_id='t1' AND name IN ('admin', 'clerk');\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM platform.permissions WHERE role_name='clerk')=0, 'permissions cascade';\n\
-           ASSERT (SELECT count(*) FROM platform.user_roles WHERE role_name='admin')=0, 'user_roles cascade from roles';\n\
+           ASSERT (SELECT count(*) FROM platform.permission WHERE role_name='clerk')=0, 'permission cascade';\n\
+           ASSERT (SELECT count(*) FROM platform.user_role WHERE role_name='admin')=0, 'user_role cascade from role';\n\
          END $$;\n",
     );
 
@@ -702,9 +702,9 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
 /// each `platform` relation in three transactions. Each change writes one
 /// entry with the tenant of its row, the bound operation, and the bound actor.
 /// An update that changes a key column writes a delete and an insert entry.
-/// The user delete cascades to `user_roles` and `api_keys`, and those delete
+/// The user delete cascades to `user_role` and `api_key`, and those delete
 /// entries carry the actor and the operation of the deleting transaction. The
-/// `api_keys` images carry `key_hash` (ruling 41). The server ACLs show the
+/// `api_key` images carry `key_hash` (ruling 41). The server ACLs show the
 /// `wamn_app` grant of every relation (ruling 76).
 #[test]
 fn platform_relations_log_every_row_change_on_postgres() {
@@ -754,36 +754,36 @@ fn platform_relations_log_every_row_change_on_postgres() {
          INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES \
            ('t1', '{U1}', 'user', 'u1@t1'), ('t2', '{U2}', 'user', 'u2@t2'), \
            ('t1', '{U3}', 'service', 'u3@t1');\n\
-         INSERT INTO platform.roles (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
-         INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES \
+         INSERT INTO platform.role (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
+         INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES \
            ('t1', '{U1}', 'admin'), ('t1', '{U3}', 'admin');\n\
-         INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES \
+         INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
            ('t1', 'auditor', 'platform-fixture:widget/get');\n\
          INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES \
            ('t1', 'org', 'acme', 'display.theme', '\"dark\"');\n\
-         INSERT INTO platform.api_keys (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
+         INSERT INTO platform.api_key (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
            ('t1', '{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('t1', '{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL app.user_id = '{U2}';\n\
          SET LOCAL app.operation = '{CHANGE}';\n\
          UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{U2}';\n\
-         UPDATE platform.roles SET description = 'administrators' WHERE name = 'admin';\n\
-         UPDATE platform.user_roles SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
-         UPDATE platform.permissions SET permission = 'platform-fixture:widget/list';\n\
+         UPDATE platform.role SET description = 'administrators' WHERE name = 'admin';\n\
+         UPDATE platform.user_role SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
+         UPDATE platform.permission SET permission = 'platform-fixture:widget/list';\n\
          UPDATE platform.setting SET value = '\"light\"';\n\
-         UPDATE platform.api_keys SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
+         UPDATE platform.api_key SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL app.user_id = '{U3}';\n\
          SET LOCAL app.operation = '{REMOVE}';\n\
-         DELETE FROM platform.user_roles WHERE user_id = '{U3}';\n\
-         DELETE FROM platform.api_keys WHERE id = '{K2}';\n\
-         DELETE FROM platform.permissions;\n\
+         DELETE FROM platform.user_role WHERE user_id = '{U3}';\n\
+         DELETE FROM platform.api_key WHERE id = '{K2}';\n\
+         DELETE FROM platform.permission;\n\
          DELETE FROM platform.setting;\n\
          DELETE FROM platform.\"user\" WHERE id = '{U1}';\n\
          DELETE FROM platform.\"user\" WHERE id = '{U2}';\n\
-         DELETE FROM platform.roles WHERE name = 'admin';\n\
+         DELETE FROM platform.role WHERE name = 'admin';\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
@@ -832,19 +832,19 @@ fn platform_relations_log_every_row_change_on_postgres() {
         .collect::<Vec<_>>();
     // The expected entries name the fixture ids U1, U2, U3, K1, and K2.
     expected.extend(
-        r#"entry|api_keys|t1|insert|admin:seed-history-fixture|U1|{"id": "K1", "tenant_id": "t1"}|{}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
-entry|api_keys|t1|insert|admin:seed-history-fixture|U1|{"id": "K2", "tenant_id": "t1"}|{}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
-entry|api_keys|t1|update|admin:change-history-fixture|U2|{"id": "K1", "tenant_id": "t1"}|{"revoked_at": null}|{"revoked_at": "2026-09-14T00:00:00.000000Z"}
-entry|api_keys|t1|delete|admin:remove-history-fixture|U3|{"id": "K2", "tenant_id": "t1"}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}|{}
-entry|api_keys|t1|delete|admin:remove-history-fixture|U3|{"id": "K1", "tenant_id": "t1"}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": "2026-09-14T00:00:00.000000Z", "last_used_at": null}|{}
-entry|permissions|t1|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}
-entry|permissions|t1|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}
-entry|permissions|t1|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}
-entry|permissions|t1|delete|admin:remove-history-fixture|U3|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}
-entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id": "t1"}|{}|{"name": "admin", "tenant_id": "t1", "description": null}
-entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "tenant_id": "t1", "description": null}
-entry|roles|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}
-entry|roles|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "tenant_id": "t1", "description": "administrators"}|{}
+        r#"entry|api_key|t1|insert|admin:seed-history-fixture|U1|{"id": "K1", "tenant_id": "t1"}|{}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
+entry|api_key|t1|insert|admin:seed-history-fixture|U1|{"id": "K2", "tenant_id": "t1"}|{}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
+entry|api_key|t1|update|admin:change-history-fixture|U2|{"id": "K1", "tenant_id": "t1"}|{"revoked_at": null}|{"revoked_at": "2026-09-14T00:00:00.000000Z"}
+entry|api_key|t1|delete|admin:remove-history-fixture|U3|{"id": "K2", "tenant_id": "t1"}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}|{}
+entry|api_key|t1|delete|admin:remove-history-fixture|U3|{"id": "K1", "tenant_id": "t1"}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": "2026-09-14T00:00:00.000000Z", "last_used_at": null}|{}
+entry|permission|t1|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}
+entry|permission|t1|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}
+entry|permission|t1|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}
+entry|permission|t1|delete|admin:remove-history-fixture|U3|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}
+entry|role|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id": "t1"}|{}|{"name": "admin", "tenant_id": "t1", "description": null}
+entry|role|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "tenant_id": "t1", "description": null}
+entry|role|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}
+entry|role|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "tenant_id": "t1", "description": "administrators"}|{}
 entry|setting|t1|insert|admin:seed-history-fixture|U1|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{}|{"key": "display.theme", "value": "dark", "locked": false, "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}
 entry|setting|t1|update|admin:change-history-fixture|U2|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{"value": "dark"}|{"value": "light"}
 entry|setting|t1|delete|admin:remove-history-fixture|U3|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{"key": "display.theme", "value": "light", "locked": false, "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{}
@@ -854,12 +854,12 @@ entry|user|t1|insert|admin:seed-history-fixture|U1|{"id": "U3", "tenant_id": "t1
 entry|user|t2|update|admin:change-history-fixture|U2|{"id": "U2", "tenant_id": "t2"}|{"status": "active"}|{"status": "disabled"}
 entry|user|t1|delete|admin:remove-history-fixture|U3|{"id": "U1", "tenant_id": "t1"}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}|{}
 entry|user|t2|delete|admin:remove-history-fixture|U3|{"id": "U2", "tenant_id": "t2"}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "disabled", "tenant_id": "t2", "display_name": null}|{}
-entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}
-entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}
-entry|user_roles|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}
-entry|user_roles|t1|insert|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}
-entry|user_roles|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}
-entry|user_roles|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}"#
+entry|user_role|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}
+entry|user_role|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}
+entry|user_role|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}
+entry|user_role|t1|insert|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}
+entry|user_role|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}
+entry|user_role|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}"#
             .lines()
             .map(str::to_owned),
     );

@@ -118,7 +118,7 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
         for role in ["purchase-reader", "purchase-writer"] {
             admin
                 .execute(
-                    "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, $2)",
+                    "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2)",
                     &[&tenant, &role],
                 )
                 .await?;
@@ -132,7 +132,7 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
     ] {
         admin
             .execute(
-                "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
+                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
              VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''))",
                 &[&tenant, &role, &permission],
             )
@@ -144,10 +144,10 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
     ] {
         admin.execute("INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'user', $3)",
             &[&TENANT, &principal, &email]).await?;
-        admin.execute("INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-reader')",
+        admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-reader')",
             &[&TENANT, &principal]).await?;
     }
-    admin.execute("INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-writer')",
+    admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-writer')",
         &[&TENANT, &first]).await?;
     Ok(())
 }
@@ -283,7 +283,7 @@ fn assert_permission_reads(
     let (query, calls) = changes[0];
     assert!(query.starts_with("SELECT u.status = "), "{query}");
     assert!(
-        query.contains("FROM platform.\"user\" u LEFT JOIN platform.user_roles r")
+        query.contains("FROM platform.\"user\" u LEFT JOIN platform.user_role r")
             && query.contains("u.tenant_id = $1 AND u.id = $2::text::uuid"),
         "{query}"
     );
@@ -329,7 +329,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
         .query_one(
             "SELECT session_user::text, current_user::text, rolsuper, rolbypassrls, \
          pg_has_role(current_user, 'wamn_http_admitter', 'USAGE'), \
-         has_table_privilege(current_user, 'platform.permissions', 'UPDATE') \
+         has_table_privilege(current_user, 'platform.permission', 'UPDATE') \
          FROM pg_roles WHERE rolname = current_user",
             &[],
         )
@@ -491,7 +491,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     let before = statements(&admin, &generation).await?;
     admin
         .execute(
-            "DELETE FROM platform.permissions \
+            "DELETE FROM platform.permission \
              WHERE tenant_id = $1 AND permission = regexp_replace($2, '@[^@]*$', '')",
             &[&TENANT, &WRITE],
         )
@@ -508,14 +508,14 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     );
     admin
         .execute(
-            "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
+            "INSERT INTO platform.permission (tenant_id, role_name, permission) \
          VALUES ($1, 'purchase-writer', regexp_replace($2, '@[^@]*$', ''))",
             &[&TENANT, &WRITE],
         )
         .await?;
     admin
         .execute(
-            "DELETE FROM platform.user_roles WHERE tenant_id = $1",
+            "DELETE FROM platform.user_role WHERE tenant_id = $1",
             &[&TENANT],
         )
         .await?;
@@ -661,7 +661,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     let before = statements(&admin, &generation).await?;
     reader.auth_cache().clear();
     admin
-        .batch_execute("BEGIN; LOCK TABLE platform.permissions IN ACCESS EXCLUSIVE MODE")
+        .batch_execute("BEGIN; LOCK TABLE platform.permission IN ACCESS EXCLUSIVE MODE")
         .await?;
     let authorization = format!("Bearer {}", signed(&header(), &first));
     let (result, released) = tokio::join!(
@@ -675,7 +675,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
                     let waiting: bool = admin
                         .query_one(
                             "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE usename = $1 \
-                         AND wait_event_type = 'Lock' AND query LIKE '%platform.permissions%')",
+                         AND wait_event_type = 'Lock' AND query LIKE '%platform.permission%')",
                             &[&generation],
                         )
                         .await?
@@ -706,7 +706,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     let fetches = server.count();
     reader.auth_cache().clear();
     admin
-        .batch_execute("BEGIN; LOCK TABLE platform.permissions IN ACCESS EXCLUSIVE MODE")
+        .batch_execute("BEGIN; LOCK TABLE platform.permission IN ACCESS EXCLUSIVE MODE")
         .await?;
     let (result, released) = tokio::join!(
         route.authenticate_authorization_for_test(ATTACHMENT, Some(&authorization)),
@@ -719,7 +719,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
                     let waiting: bool = admin
                         .query_one(
                             "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE usename = $1 \
-                         AND wait_event_type = 'Lock' AND query LIKE '%platform.permissions%')",
+                         AND wait_event_type = 'Lock' AND query LIKE '%platform.permission%')",
                             &[&generation],
                         )
                         .await?

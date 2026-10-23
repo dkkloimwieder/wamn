@@ -242,9 +242,9 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
             .execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)", &[&actor])
             .await
             .unwrap();
-        project.execute("INSERT INTO platform.roles (tenant_id,name) VALUES ($1,'admin') ON CONFLICT DO NOTHING",
+        project.execute("INSERT INTO platform.role (tenant_id,name) VALUES ($1,'admin') ON CONFLICT DO NOTHING",
             &[&wamn_control::dev::environment::TENANT]).await.unwrap();
-        project.execute("INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin')",
+        project.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin')",
             &[&wamn_control::dev::environment::TENANT, &user]).await.unwrap();
         task.abort();
     }

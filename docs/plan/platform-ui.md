@@ -21,9 +21,9 @@ Every admin write runs in the host. `wamn_app` remains SELECT-only on:
 
 ```text
 platform."user"
-platform.roles
-platform.user_roles
-platform.permissions
+platform.role
+platform.user_role
+platform.permission
 ```
 
 No guest component writes an authorization relation. No guest component receives a `wamn_system` connection.
@@ -102,7 +102,7 @@ The fixed application-administration operations are **not grantable** to authore
 For a user session:
 
 - permission-row changes take effect on the next request;
-- role revocation takes effect on the next request because current `user_roles` still intersects the signed role names;
+- role revocation takes effect on the next request because current `user_role` still intersects the signed role names;
 - role grant takes effect at renewal or new sign-in because the new role name is not in the existing token.
 
 For a PAT caller, current roles are read per request, so grant and revoke both take effect on the next request.
@@ -153,7 +153,7 @@ identity.project_roles: project-admin
         ↓
 identity.project_env_memberships
         ↓
-platform.user_roles: admin
+platform.user_role: admin
 ```
 
 for every existing project and environment in the org.
@@ -165,7 +165,7 @@ identity.project_roles: project-admin
         ↓
 identity.project_env_memberships
         ↓
-platform.user_roles: admin
+platform.user_role: admin
 ```
 
 for every existing environment of that project.

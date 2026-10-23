@@ -22,7 +22,7 @@ const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 async fn rows(client: &Client) -> BTreeSet<String> {
     client
         .query(
-            "SELECT permission FROM platform.permissions \
+            "SELECT permission FROM platform.permission \
              WHERE tenant_id = 't1' AND role_name = 'clerk'",
             &[],
         )

@@ -39,7 +39,7 @@ Every table below lives in `platform` in the project environment's database. Cre
 | application, per env | `number_sequence` | id, application, name, pattern | created at env apply from the package default; pattern edited via platform routes | yes |
 | application, per env | `number_counter` | sequence\_id, counter, key\_value, value; PK (sequence\_id, counter, key\_value) | `next_number` inside the operation transaction; `set_counter` route | yes; written only through `bump_counter` and `assign_counter` |
 | application, per env | `setting` | scope\_type, scope\_id, key, value (jsonb), locked | platform routes, per environment | no (UI reads via routes) |
-| application, per env | role and permission rows | as today | as today | yes |
+| application, per env | `role`, `user_role`, `permission` | as today | as today | yes |
 
 Control plane only, reached through platform routes and the host:
 
@@ -391,7 +391,7 @@ Each rule has one check that runs in the platform test set.
 
 | invariant | check |
 | --- | --- |
-| application role: `SELECT` on the listed tables (plus roles, permissions and `environment`), `EXECUTE` on `bump_counter` and `assign_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table or `schema_migrations` grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
+| application role: `SELECT` on the listed tables (plus `role`, `user_role`, `permission` and `environment`), `EXECUTE` on `bump_counter` and `assign_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table or `schema_migrations` grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
 | no manifest model names a `platform.*` table | build refusal; fixture with such a model is refused |
 | no write statement, command claim or history trigger targets a declared relation | build refusal; fixture with an `UPDATE platform.user` is refused |
 | a host-filled `number` field is filled only by the plugin's `next_number` | build refusal on a write that supplies it; the generated insert type has no such field |

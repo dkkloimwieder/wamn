@@ -503,7 +503,7 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     assert_eq!(
         observer
             .query_one(
-                "SELECT string_agg(name, ',' ORDER BY name) FROM platform.roles \
+                "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
                   WHERE tenant_id = $1",
                 &[&RACE_TENANT],
             )
@@ -516,7 +516,7 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     assert_eq!(
         observer
             .query_one(
-                "SELECT count(*) FROM platform.permissions WHERE tenant_id = $1",
+                "SELECT count(*) FROM platform.permission WHERE tenant_id = $1",
                 &[&RACE_TENANT],
             )
             .await
@@ -549,10 +549,10 @@ async fn write_identity(client: &Client) -> Vec<String> {
                  FROM inventory.wamn_cdc_exclusions \
                UNION ALL \
                SELECT 'role:' || name || ':' || xmin::text \
-                 FROM platform.roles WHERE tenant_id = $1 \
+                 FROM platform.role WHERE tenant_id = $1 \
                UNION ALL \
                SELECT 'permission:' || permission || ':' || xmin::text \
-                 FROM platform.permissions WHERE tenant_id = $1 \
+                 FROM platform.permission WHERE tenant_id = $1 \
                UNION ALL \
                SELECT 'registration:' || registration_id || ':' || xmin::text \
                  FROM catalog.event_registrations WHERE tenant_id = $1 \
@@ -760,9 +760,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                     set_config('app.operation', 'admin:seed-grant-residue-fixture', true); \
              INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
                  VALUES ('{TENANT}', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
-             INSERT INTO platform.roles (tenant_id, name) \
+             INSERT INTO platform.role (tenant_id, name) \
                  VALUES ('{TENANT}', 'clerk'); \
-             INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES \
+             INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
                  ('{TENANT}', 'clerk', 'wamn-inventory:obsolete/operation'), \
                  ('{TENANT}', 'clerk', 'client-overlay:rack/get'); \
              COMMIT;"
@@ -813,7 +813,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query_one(
-                "SELECT string_agg(name, ',' ORDER BY name) FROM platform.roles \
+                "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
                   WHERE tenant_id = $1",
                 &[&TENANT],
             )
@@ -825,7 +825,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query(
-                "SELECT role_name || ' ' || permission FROM platform.permissions \
+                "SELECT role_name || ' ' || permission FROM platform.permission \
                   WHERE tenant_id = $1 ORDER BY 1",
                 &[&TENANT],
             )
@@ -1581,7 +1581,7 @@ async fn record_history_triggers_follow_the_declaration() {
         .query_one(
             "SELECT count(*), count(*) FILTER (WHERE created_by = $2::text::uuid \
                                                 AND updated_by = $2::text::uuid) \
-               FROM platform.roles WHERE tenant_id = $1 AND name = 'admin'",
+               FROM platform.role WHERE tenant_id = $1 AND name = 'admin'",
             &[
                 &TENANT,
                 &PlatformComponent::ApplyPackage.principal_id().to_string(),

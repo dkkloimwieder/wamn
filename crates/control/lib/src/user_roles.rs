@@ -2,7 +2,7 @@
 //! of an environment, or take it away.
 //!
 //! `apply-package` writes the built-in role `admin`, and every other role is
-//! authored. This module writes only `platform.user_roles`. The target is resolved in the
+//! authored. This module writes only `platform.user_role`. The target is resolved in the
 //! registry the way `env apply` resolves it, because a role grant
 //! names an environment, not a database. The user is named by email and must
 //! already have its tenant `user` row, which `env apply` writes.
@@ -43,7 +43,7 @@ pub struct UserRoleRequest {
 pub struct UserRoleOutcome {
     /// The id of the resolved user.
     pub user_id: String,
-    /// Whether a `user_roles` row was written or removed.
+    /// Whether a `user_role` row was written or removed.
     pub changed: bool,
 }
 

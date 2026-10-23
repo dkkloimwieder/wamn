@@ -1,6 +1,6 @@
 -- The per-project SYSTEM SCHEMA v1 (wamn-as5, docs/archive/platform-plan.md §2.4). The
 -- application-facing auth/RBAC/config tables that live IN a project database:
--- user, roles (+ the user↔role linkage), permissions, api_keys, and
+-- user, role (+ the user↔role linkage, user_role), permission, api_key, and
 -- environment, and the platform configuration tables of
 -- docs/plan/platform-config.md (PLATFORM CONFIGURATION, at the end).
 --
@@ -53,11 +53,11 @@
 -- "which rows"; the GRANT answers "which relations at all", and the two questions
 -- have different answers here:
 --
---   PLATFORM-PROTECTED — user, roles, user_roles, permissions, environment,
+--   PLATFORM-PROTECTED — user, role, user_role, permission, environment,
 --   and the platform configuration tables.
 --   SELECT only. The trust chain consumes these rows as authorization INPUT: the
 --   3.5 RLS builder compiles app.user_id and app.role into the data policies it
---   generates, and 4.2 resolves both claims from user + user_roles. Author SQL
+--   generates, and 4.2 resolves both claims from user + user_role. Author SQL
 --   holding DML here could write itself the credential its own policies are then
 --   evaluated against, and the compiler would faithfully enforce the forgery. A
 --   tenant's authorization state is written BY the platform, never by the
@@ -68,7 +68,7 @@
 --   number_counter only through platform.bump_counter, the one routine it may
 --   EXECUTE in this schema.
 --
---   NO GRANT — api_keys. No runtime code reads it, so wamn_app holds nothing
+--   NO GRANT — api_key. No runtime code reads it, so wamn_app holds nothing
 --   on it.
 --
 --   WRITE LOG — write_log. INSERT, SELECT, UPDATE (result) and DELETE only.
@@ -84,11 +84,11 @@
 -- CLAIM INTEGRATION (3.5 / 4.2): `user.id` is a `uuid` — the ownership target
 -- the 3.5 RLS builder reads as NULLIF(current_setting('app.user_id', true),
 -- '')::uuid, so a data table's owner column referencing a user resolves. Role
--- NAMES (`roles.name`, text) are what the builder reads as
+-- NAMES (`role.name`, text) are what the builder reads as
 -- COALESCE(current_setting('app.role', true), '') IN (...). The claims
 -- themselves are INJECTED by the plugin from a resolved user/session (4.2) —
 -- this schema is the SUBSTRATE, not the auth logic: NO password hashing / JWT /
--- session management here. `api_keys.key_hash` is a one-way digest column (the
+-- session management here. `api_key.key_hash` is a one-way digest column (the
 -- raw key is shown once at creation, never stored; hashing is 4.2's job).
 
 CREATE SCHEMA platform AUTHORIZATION CURRENT_USER;
@@ -241,11 +241,11 @@ GRANT SELECT ON platform."user" TO wamn_app;
 -- load-bearing identity (the composite PK). `admin` is the one built-in role:
 -- apply-package writes it, and it holds every operation the serving release
 -- serves with no permission rows. Every other role is authored. A user or
--- service holds a role through `wamn-ctl grant-role`. `roles_name_check` is the
+-- service holds a role through `wamn-ctl grant-role`. `role_name_check` is the
 -- role slug of identity (`wamn_session::token::is_role_slug`), so no stored
 -- role name is one that a session refuses.
 -- ---------------------------------------------------------------------------
-CREATE TABLE platform.roles (
+CREATE TABLE platform.role (
     tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     name        text NOT NULL,
     description text,
@@ -254,33 +254,33 @@ CREATE TABLE platform.roles (
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
     PRIMARY KEY (tenant_id, name),
-    CONSTRAINT roles_name_check
+    CONSTRAINT role_name_check
         CHECK (name ~ '^[a-z0-9][a-z0-9-]*$' AND octet_length(name) <= 64)
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON platform.roles
+    BEFORE INSERT OR UPDATE ON platform.role
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-ALTER TABLE platform.roles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.roles FORCE ROW LEVEL SECURITY;
-CREATE POLICY roles_tenant ON platform.roles
+ALTER TABLE platform.role ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.role FORCE ROW LEVEL SECURITY;
+CREATE POLICY role_tenant ON platform.role
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY roles_platform ON platform.roles
+CREATE POLICY role_platform ON platform.role
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX roles_tkey
-    ON platform.roles ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT ON platform.roles TO wamn_app;
+CREATE INDEX role_tkey
+    ON platform.role ((wamn_authority.tenant_key(tenant_id)));
+GRANT SELECT ON platform.role TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- User↔role linkage (many-to-many). 4.2 reads this to compute a user's role for
 -- the app.role claim it injects. Both sides FK ON DELETE CASCADE within the
 -- tenant, so removing a user or a role prunes the grant.
 -- ---------------------------------------------------------------------------
-CREATE TABLE platform.user_roles (
+CREATE TABLE platform.user_role (
     tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     user_id    uuid NOT NULL,
     role_name  text NOT NULL,
@@ -292,25 +292,25 @@ CREATE TABLE platform.user_roles (
     FOREIGN KEY (tenant_id, user_id)
         REFERENCES platform."user" (tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, role_name)
-        REFERENCES platform.roles (tenant_id, name) ON DELETE CASCADE
+        REFERENCES platform.role (tenant_id, name) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON platform.user_roles
+    BEFORE INSERT OR UPDATE ON platform.user_role
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-ALTER TABLE platform.user_roles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.user_roles FORCE ROW LEVEL SECURITY;
-CREATE POLICY user_roles_tenant ON platform.user_roles
+ALTER TABLE platform.user_role ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.user_role FORCE ROW LEVEL SECURITY;
+CREATE POLICY user_role_tenant ON platform.user_role
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY user_roles_platform ON platform.user_roles
+CREATE POLICY user_role_platform ON platform.user_role
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX user_roles_tkey
-    ON platform.user_roles ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT ON platform.user_roles TO wamn_app;
+CREATE INDEX user_role_tkey
+    ON platform.user_role ((wamn_authority.tenant_key(tenant_id)));
+GRANT SELECT ON platform.user_role TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Permissions — the operations an authored role holds
@@ -318,9 +318,9 @@ GRANT SELECT ON platform.user_roles TO wamn_app;
 -- operation reference `<package>:<interface>/<operation>`, with no package
 -- version. A caller holds exactly the rows of its roles; nothing derives
 -- into them. A row that the serving release does not serve grants nothing.
--- `admin` has no rows. FK to roles ON DELETE CASCADE within the tenant.
+-- `admin` has no rows. FK to role ON DELETE CASCADE within the tenant.
 -- ---------------------------------------------------------------------------
-CREATE TABLE platform.permissions (
+CREATE TABLE platform.permission (
     tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     role_name   text NOT NULL,
     permission  text NOT NULL,
@@ -330,28 +330,28 @@ CREATE TABLE platform.permissions (
     updated_by  uuid NOT NULL,
     PRIMARY KEY (tenant_id, role_name, permission),
     FOREIGN KEY (tenant_id, role_name)
-        REFERENCES platform.roles (tenant_id, name) ON DELETE CASCADE,
-    CONSTRAINT permissions_admin_check CHECK (role_name <> 'admin'),
-    CONSTRAINT permissions_reference_check
+        REFERENCES platform.role (tenant_id, name) ON DELETE CASCADE,
+    CONSTRAINT permission_admin_check CHECK (role_name <> 'admin'),
+    CONSTRAINT permission_reference_check
         CHECK (permission ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$')
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON platform.permissions
+    BEFORE INSERT OR UPDATE ON platform.permission
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-ALTER TABLE platform.permissions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.permissions FORCE ROW LEVEL SECURITY;
-CREATE POLICY permissions_tenant ON platform.permissions
+ALTER TABLE platform.permission ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.permission FORCE ROW LEVEL SECURITY;
+CREATE POLICY permission_tenant ON platform.permission
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY permissions_platform ON platform.permissions
+CREATE POLICY permission_platform ON platform.permission
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX permissions_tkey
-    ON platform.permissions ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT ON platform.permissions TO wamn_app;
+CREATE INDEX permission_tkey
+    ON platform.permission ((wamn_authority.tenant_key(tenant_id)));
+GRANT SELECT ON platform.permission TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- API keys — the api-key substrate. `key_hash` is a one-way digest (the raw key
@@ -360,7 +360,7 @@ GRANT SELECT ON platform.permissions TO wamn_app;
 -- A key authenticates AS a user (FK ON DELETE CASCADE). `revoked_at` /
 -- `expires_at` gate validity (enforced by 4.2). key_hash is unique per tenant.
 -- ---------------------------------------------------------------------------
-CREATE TABLE platform.api_keys (
+CREATE TABLE platform.api_key (
     tenant_id    text NOT NULL CHECK (tenant_id <> ''),
     id           uuid NOT NULL DEFAULT gen_random_uuid(),
     user_id      uuid NOT NULL,
@@ -380,21 +380,21 @@ CREATE TABLE platform.api_keys (
         REFERENCES platform."user" (tenant_id, id) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON platform.api_keys
+    BEFORE INSERT OR UPDATE ON platform.api_key
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-ALTER TABLE platform.api_keys ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.api_keys FORCE ROW LEVEL SECURITY;
-CREATE POLICY api_keys_tenant ON platform.api_keys
+ALTER TABLE platform.api_key ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.api_key FORCE ROW LEVEL SECURITY;
+CREATE POLICY api_key_tenant ON platform.api_key
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY api_keys_platform ON platform.api_keys
+CREATE POLICY api_key_platform ON platform.api_key
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX api_keys_tkey
-    ON platform.api_keys ((wamn_authority.tenant_key(tenant_id)));
+CREATE INDEX api_key_tkey
+    ON platform.api_key ((wamn_authority.tenant_key(tenant_id)));
 
 -- ---------------------------------------------------------------------------
 -- Environment — the status of this environment, mirrored from
@@ -444,8 +444,8 @@ GRANT SELECT ON platform.environment TO wamn_app;
 -- ---------------------------------------------------------------------------
 DO $history_tables$ BEGIN
   PERFORM wamn_history.create_history_table('platform', relation, true)
-     FROM unnest(ARRAY['user', 'roles', 'user_roles', 'permissions',
-                       'api_keys', 'environment']) AS relation;
+     FROM unnest(ARRAY['user', 'role', 'user_role', 'permission',
+                       'api_key', 'environment']) AS relation;
 END $history_tables$;
 
 ALTER TABLE platform.user_history ENABLE ROW LEVEL SECURITY;
@@ -465,71 +465,71 @@ CREATE TRIGGER wamn_record_history_log
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 
-ALTER TABLE platform.roles_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.roles_history FORCE ROW LEVEL SECURITY;
-CREATE POLICY roles_history_tenant ON platform.roles_history
+ALTER TABLE platform.role_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.role_history FORCE ROW LEVEL SECURITY;
+CREATE POLICY role_history_tenant ON platform.role_history
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY roles_history_platform ON platform.roles_history
+CREATE POLICY role_history_platform ON platform.role_history
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX roles_history_tkey
-    ON platform.roles_history ((wamn_authority.tenant_key(tenant_id)));
+CREATE INDEX role_history_tkey
+    ON platform.role_history ((wamn_authority.tenant_key(tenant_id)));
 CREATE TRIGGER wamn_record_history_log
-    AFTER INSERT OR UPDATE OR DELETE ON platform.roles
+    AFTER INSERT OR UPDATE OR DELETE ON platform.role
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 
-ALTER TABLE platform.user_roles_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.user_roles_history FORCE ROW LEVEL SECURITY;
-CREATE POLICY user_roles_history_tenant ON platform.user_roles_history
+ALTER TABLE platform.user_role_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.user_role_history FORCE ROW LEVEL SECURITY;
+CREATE POLICY user_role_history_tenant ON platform.user_role_history
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY user_roles_history_platform ON platform.user_roles_history
+CREATE POLICY user_role_history_platform ON platform.user_role_history
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX user_roles_history_tkey
-    ON platform.user_roles_history ((wamn_authority.tenant_key(tenant_id)));
+CREATE INDEX user_role_history_tkey
+    ON platform.user_role_history ((wamn_authority.tenant_key(tenant_id)));
 CREATE TRIGGER wamn_record_history_log
-    AFTER INSERT OR UPDATE OR DELETE ON platform.user_roles
+    AFTER INSERT OR UPDATE OR DELETE ON platform.user_role
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 
-ALTER TABLE platform.permissions_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.permissions_history FORCE ROW LEVEL SECURITY;
-CREATE POLICY permissions_history_tenant ON platform.permissions_history
+ALTER TABLE platform.permission_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.permission_history FORCE ROW LEVEL SECURITY;
+CREATE POLICY permission_history_tenant ON platform.permission_history
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY permissions_history_platform ON platform.permissions_history
+CREATE POLICY permission_history_platform ON platform.permission_history
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX permissions_history_tkey
-    ON platform.permissions_history ((wamn_authority.tenant_key(tenant_id)));
+CREATE INDEX permission_history_tkey
+    ON platform.permission_history ((wamn_authority.tenant_key(tenant_id)));
 CREATE TRIGGER wamn_record_history_log
-    AFTER INSERT OR UPDATE OR DELETE ON platform.permissions
+    AFTER INSERT OR UPDATE OR DELETE ON platform.permission
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 
-ALTER TABLE platform.api_keys_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.api_keys_history FORCE ROW LEVEL SECURITY;
-CREATE POLICY api_keys_history_tenant ON platform.api_keys_history
+ALTER TABLE platform.api_key_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.api_key_history FORCE ROW LEVEL SECURITY;
+CREATE POLICY api_key_history_tenant ON platform.api_key_history
     TO wamn_app
     USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
     WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY api_keys_history_platform ON platform.api_keys_history
+CREATE POLICY api_key_history_platform ON platform.api_key_history
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
-CREATE INDEX api_keys_history_tkey
-    ON platform.api_keys_history ((wamn_authority.tenant_key(tenant_id)));
+CREATE INDEX api_key_history_tkey
+    ON platform.api_key_history ((wamn_authority.tenant_key(tenant_id)));
 CREATE TRIGGER wamn_record_history_log
-    AFTER INSERT OR UPDATE OR DELETE ON platform.api_keys
+    AFTER INSERT OR UPDATE OR DELETE ON platform.api_key
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 

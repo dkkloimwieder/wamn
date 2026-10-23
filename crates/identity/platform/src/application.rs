@@ -31,13 +31,13 @@ const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
 const SERVICE_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
     (tenant_id, id, type, email, display_name) VALUES ($1, $2::text::uuid, 'service', $3, $4)";
 
-const ROLE_SQL: &str = "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, $2) \
+const ROLE_SQL: &str = "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2) \
     ON CONFLICT (tenant_id, name) DO NOTHING";
 
-const USER_ROLE_SQL: &str = "INSERT INTO platform.user_roles (tenant_id, user_id, role_name) \
+const USER_ROLE_SQL: &str = "INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
     VALUES ($1, $2::text::uuid, $3) ON CONFLICT DO NOTHING";
 
-const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_roles \
+const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
     WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3";
 
 const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.\"user\" \
@@ -305,15 +305,15 @@ pub struct PermissionGrantOutcome {
     pub rows_added: u64,
 }
 
-const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM platform.roles WHERE tenant_id = $1 AND name = $2";
+const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM platform.role WHERE tenant_id = $1 AND name = $2";
 
-const DROP_ROLE_SQL: &str = "DELETE FROM platform.roles WHERE tenant_id = $1 AND name = $2";
+const DROP_ROLE_SQL: &str = "DELETE FROM platform.role WHERE tenant_id = $1 AND name = $2";
 
-const PERMISSION_SQL: &str = "INSERT INTO platform.permissions \
+const PERMISSION_SQL: &str = "INSERT INTO platform.permission \
     (tenant_id, role_name, permission) VALUES ($1, $2, $3) \
     ON CONFLICT DO NOTHING";
 
-const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permissions \
+const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
     WHERE tenant_id = $1 AND role_name = $2 AND permission = $3";
 
 // The writes below run in a transaction that the caller prepared: it holds
@@ -386,7 +386,7 @@ pub async fn require_role(
 }
 
 /// Grant `reference` to the authored `role`: store it as a row. The grant
-/// stores any reference that `permissions_reference_check` accepts, whether a
+/// stores any reference that `permission_reference_check` accepts, whether a
 /// release serves it or not.
 pub async fn grant_permission(
     client: &(impl GenericClient + Sync),
@@ -474,13 +474,13 @@ const USERS_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
     FROM platform.\"user\" u \
-    LEFT JOIN platform.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+    LEFT JOIN platform.user_role r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     WHERE u.tenant_id = $1 AND u.type = 'user' \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
 
-const ROLES_SQL: &str = "SELECT name FROM platform.roles WHERE tenant_id = $1 ORDER BY name";
+const ROLES_SQL: &str = "SELECT name FROM platform.role WHERE tenant_id = $1 ORDER BY name";
 
-const PERMISSIONS_SQL: &str = "SELECT permission FROM platform.permissions \
+const PERMISSIONS_SQL: &str = "SELECT permission FROM platform.permission \
     WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission";
 
 /// One application user with the roles it holds.

@@ -29,7 +29,7 @@ const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_
     WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
     AND status = 'active')";
 const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM platform.\"user\" u \
-    JOIN platform.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+    JOIN platform.user_role r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     WHERE u.tenant_id = $1 AND u.id = $2::text::uuid AND u.status = 'active' \
     ORDER BY r.role_name";
 

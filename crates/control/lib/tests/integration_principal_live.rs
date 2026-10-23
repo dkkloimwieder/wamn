@@ -185,7 +185,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     );
     assert_eq!(
         admin
-            .query_one("SELECT count(*) FROM platform.user_roles", &[])
+            .query_one("SELECT count(*) FROM platform.user_role", &[])
             .await?
             .get::<_, i64>(0),
         1
@@ -220,7 +220,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     );
     let caller = queued_service_caller(&admin, TENANT, &principal).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
-    let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.roles UNION ALL SELECT xmin::text FROM platform.permissions UNION ALL SELECT xmin::text FROM platform.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
         system.url(),
         project.url(),
@@ -230,7 +230,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         &AuthChanges::default(),
     )
     .await?;
-    let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.roles UNION ALL SELECT xmin::text FROM platform.permissions UNION ALL SELECT xmin::text FROM platform.user_roles ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     assert_eq!(before, after, "reapplying must write no application rows");
     let mut unscheduled = manifest.clone();
     unscheduled.workflow.schedules.clear();
@@ -311,7 +311,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     assert_eq!(
         admin
             .query_one(
-                "SELECT count(*) FROM platform.permissions WHERE role_name='application-scheduled'",
+                "SELECT count(*) FROM platform.permission WHERE role_name='application-scheduled'",
                 &[]
             )
             .await?

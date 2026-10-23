@@ -5,8 +5,8 @@ The `workflow` commands call the workflow contract in `wamn-workflow`, and they 
 The host's queue worker uses its existing database roles to claim and execute the run.
 
 First, provision the service identity and reconcile its tenant user row.
-Assign its application roles in `platform.user_roles` through the project administrator.
-Those roles grant operations through `platform.permissions`.
+Assign its application roles in `platform.user_role` through the project administrator.
+Those roles grant operations through `platform.permission`.
 The service row must have type `service` and status `active`.
 
 Reconcile the run schema before admission.

@@ -556,7 +556,7 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
         )
     };
     verify(&exact).expect("the fresh permission reads have their exact grant set");
-    for relation in ["user", "user_roles", "permissions"] {
+    for relation in ["user", "user_role", "permission"] {
         let mut missing = exact.clone();
         missing.retain(|acl| acl.schema_name != "platform" || acl.object_name != relation);
         verify(&missing).expect_err("a required fresh permission read is missing");
@@ -616,9 +616,9 @@ fn session_reader_requires_exact_grants() {
         "user.tenant_id",
         "user.id",
         "user.status",
-        "user_roles.tenant_id",
-        "user_roles.user_id",
-        "user_roles.role_name",
+        "user_role.tenant_id",
+        "user_role.user_id",
+        "user_role.role_name",
     ] {
         exact.push(role_acl("column", "platform", column, "SELECT"));
     }
@@ -640,7 +640,7 @@ fn session_reader_requires_exact_grants() {
         role_acl("relation", "platform", "user", "SELECT"),
         role_acl("column", "platform", "user.email", "SELECT"),
         role_acl("column", "platform", "user.status", "UPDATE"),
-        role_acl("relation", "platform", "permissions", "SELECT"),
+        role_acl("relation", "platform", "permission", "SELECT"),
         role_acl("schema", "catalog", "catalog", "USAGE"),
     ] {
         let mut widened = exact.clone();

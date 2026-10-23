@@ -82,13 +82,13 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         // role admin for an authored role with one row: Acme's entry.
         client
             .execute(
-                "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, 'receipt-clerk')",
+                "INSERT INTO platform.role (tenant_id, name) VALUES ($1, 'receipt-clerk')",
                 &[&tenant],
             )
             .await?;
         client
             .execute(
-                "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
+                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
                  VALUES ($1, 'receipt-clerk', 'client-acme-receiving:acme/record-receipt')",
                 &[&tenant],
             )
@@ -96,7 +96,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         ensure!(
             client
                 .execute(
-                    "UPDATE platform.user_roles SET role_name = 'receipt-clerk' \
+                    "UPDATE platform.user_role SET role_name = 'receipt-clerk' \
                      WHERE tenant_id = $1 AND role_name = 'admin'",
                     &[&tenant],
                 )

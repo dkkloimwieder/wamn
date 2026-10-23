@@ -1,11 +1,13 @@
 //! Live test of `project/0024_platform_schema.sql`,
-//! `project/0026_administration_platform_configuration.sql` and
-//! `project/0027_platform_user.sql` (wamn-a40n.2, wamn-a40n.9, wamn-zua8.2,
-//! wamn-snz0.6, wamn-aemxz.1, wamn-aqd0m.1, wamn-aqd0m.3): on a project
-//! database installed before the schema rename, 0024 renames the schema to
-//! platform, 0026 grants the platform configuration tables, and 0027 renames
-//! platform.users to platform."user" and gives `wamn_administration` the
-//! exact surface that provisioning grants. The test holds the process lock of
+//! `project/0026_administration_platform_configuration.sql`,
+//! `project/0027_platform_user.sql` and
+//! `project/0028_platform_singular_tables.sql` (wamn-a40n.2, wamn-a40n.9,
+//! wamn-zua8.2, wamn-snz0.6, wamn-aemxz.1, wamn-aqd0m.1, wamn-aqd0m.3): on a
+//! project database installed before the schema rename, 0024 renames the
+//! schema to platform, 0026 grants the platform configuration tables, 0027
+//! renames platform.users to platform."user", and 0028 renames the plural
+//! role, user_role, permission and api_key tables and gives
+//! `wamn_administration` the exact surface that provisioning grants. The test holds the process lock of
 //! its server, because the files create a cluster-wide role.
 
 use tokio_postgres::{Client, NoTls};
@@ -18,8 +20,11 @@ const MIGRATION: &str = include_str!(
 );
 const USER_RENAME: &str =
     include_str!("../../../../deploy/sql/migrations/project/0027_platform_user.sql");
+const SINGULAR_TABLES: &str =
+    include_str!("../../../../deploy/sql/migrations/project/0028_platform_singular_tables.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const PLURAL_USER: &str = include_str!("fixtures/platform-user-before-0027.sql");
+const PLURAL_TABLES: &str = include_str!("fixtures/platform-singular-tables-before-0028.sql");
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -92,6 +97,10 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .await
         .expect("name the user table as before 0027");
     client
+        .batch_execute(PLURAL_TABLES)
+        .await
+        .expect("name the role, user_role, permission and api_key tables as before 0028");
+    client
         .batch_execute("ALTER SCHEMA platform RENAME TO app_system") // rename-app-system: keep
         .await
         .expect("name the schema as before 0024");
@@ -108,17 +117,21 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .batch_execute(&format!("BEGIN; {USER_RENAME} COMMIT;"))
         .await
         .expect("apply the user table rename");
+    client
+        .batch_execute(&format!("BEGIN; {SINGULAR_TABLES} COMMIT;"))
+        .await
+        .expect("apply the plural table renames");
     let migrated = surface(&client).await;
     for expected in [
-        "column platform.roles_history.operation INSERT",
+        "column platform.role_history.operation INSERT",
         "routine wamn_authority.tenant_key(text) EXECUTE",
         "routine wamn_history.row_image(record) EXECUTE",
         "schema platform USAGE",
         "schema catalog USAGE",
         "table platform.environment UPDATE",
         "table catalog.releases SELECT",
-        "table platform.permissions DELETE",
-        "table platform.user_roles INSERT",
+        "table platform.permission DELETE",
+        "table platform.user_role INSERT",
         "table platform.\"user\" UPDATE",
         "table platform.external_system INSERT",
         "table platform.connection UPDATE",

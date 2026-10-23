@@ -6,14 +6,18 @@
 //! `schema_migrations`, and no `credential`, `target` or `target_application`
 //! table exists. The test reads the privileges from the server catalogs, on a
 //! fresh install and on a database that `project/0025_platform_configuration.sql`
-//! upgrades. It holds the process lock of its server, because the schema files
-//! create cluster-wide roles.
+//! and `project/0028_platform_singular_tables.sql` upgrade. It holds the
+//! process lock of its server, because the schema files create cluster-wide
+//! roles.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
 
 const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/project/0025_platform_configuration.sql");
+const SINGULAR_TABLES: &str =
+    include_str!("../../../../deploy/sql/migrations/project/0028_platform_singular_tables.sql");
+const PLURAL_TABLES: &str = include_str!("fixtures/platform-singular-tables-before-0028.sql");
 
 /// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
 /// that the host reads as `wamn_app` on each request
@@ -25,12 +29,12 @@ const READ_TABLES: [&str; 12] = [
     "integration_allow",
     "number_counter",
     "number_sequence",
-    "permissions",
+    "permission",
     "project_connection",
-    "roles",
+    "role",
     "setting",
     "\"user\"",
-    "user_roles",
+    "user_role",
 ];
 
 async fn connect(url: &str) -> Client {
@@ -152,11 +156,18 @@ async fn a_fresh_install_grants_the_application_role_invariant_one() {
 async fn the_migration_grants_the_application_role_invariant_one() {
     let url = locked_database::database(wamn_test_postgres::database);
     let client = fresh_install(&url).await;
-    // The database as 0024 left it: no platform configuration tables, the
-    // configurations table with its history and grants, and the api_keys read.
+    // The database as 0024 left it: the plural table names, no platform
+    // configuration tables, the configurations table with its history and
+    // grants, and the api_keys read. 0028 renders the administration surface,
+    // which names the run plane schema.
+    client
+        .batch_execute(PLURAL_TABLES)
+        .await
+        .expect("name the role, user_role, permission and api_key tables as before 0028");
     client
         .batch_execute(
-            "DROP FUNCTION platform.bump_counter(uuid, text, text); \
+            "CREATE SCHEMA wamn_run; \
+             DROP FUNCTION platform.bump_counter(uuid, text, text); \
              DROP TABLE platform.setting_history, platform.number_sequence_history, \
                platform.project_connection_history, platform.integration_allow_history, \
                platform.connection_history, platform.external_system_history; \
@@ -192,6 +203,10 @@ async fn the_migration_grants_the_application_role_invariant_one() {
         .batch_execute(&format!("BEGIN; {MIGRATION} COMMIT;"))
         .await
         .expect("apply the migration");
+    client
+        .batch_execute(&format!("BEGIN; {SINGULAR_TABLES} COMMIT;"))
+        .await
+        .expect("apply the plural table renames");
     assert_eq!(surface(&client).await, invariant_one());
     assert_eq!(control_plane_tables(&client).await, 0);
 }

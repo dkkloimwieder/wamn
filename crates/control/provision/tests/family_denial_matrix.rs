@@ -94,8 +94,8 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// is what the pairwise arms below name.
 const MATRIX_RELATIONS: [&str; 32] = [
     "platform.environment",
-    "platform.permissions",
-    "platform.user_roles",
+    "platform.permission",
+    "platform.user_role",
     "platform.\"user\"",
     "platform.connection",
     "platform.external_system",
@@ -194,10 +194,10 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.integration_allow|SELECT|table",
             "platform.number_counter|SELECT|table",
             "platform.number_sequence|SELECT|table",
-            "platform.permissions|SELECT|table",
+            "platform.permission|SELECT|table",
             "platform.project_connection|SELECT|table",
             "platform.setting|SELECT|table",
-            "platform.user_roles|SELECT|table",
+            "platform.user_role|SELECT|table",
             "wamn_run.effect_attempt_dispatches|SELECT|table",
             "wamn_run.effect_attempt_outcomes|SELECT|table",
             "wamn_run.effect_attempts|SELECT|table",
@@ -254,8 +254,8 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.connection_requirements|SELECT|table",
             "catalog.releases|SELECT|table",
             "platform.\"user\"|SELECT|table",
-            "platform.permissions|SELECT|table",
-            "platform.user_roles|SELECT|table",
+            "platform.permission|SELECT|table",
+            "platform.user_role|SELECT|table",
         ],
         routines: &[],
     },
@@ -263,7 +263,7 @@ const MATRIX: [FamilyReach; 10] = [
         family: WorkloadRoleFamily::SessionRoleReader,
         relations: &[
             "platform.\"user\"|SELECT|column",
-            "platform.user_roles|SELECT|column",
+            "platform.user_role|SELECT|column",
         ],
         routines: &[],
     },
@@ -296,7 +296,7 @@ const MATRIX: [FamilyReach; 10] = [
     // environment status (`wamn-zua8.2`), and `release.profile` reads an
     // installed release (`wamn-aemxz.1`), and the control host writes the
     // platform configuration tables but `number_counter` (`wamn-aqd0m.3`).
-    // `platform.roles`, the history tables and `wamn_history.row_image` are
+    // `platform.role`, the history tables and `wamn_history.row_image` are
     // outside the matrix universe.
     FamilyReach {
         family: WorkloadRoleFamily::Administration,
@@ -326,10 +326,10 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.number_sequence|INSERT|table",
             "platform.number_sequence|SELECT|table",
             "platform.number_sequence|UPDATE|table",
-            "platform.permissions|DELETE|table",
-            "platform.permissions|INSERT|table",
-            "platform.permissions|SELECT|table",
-            "platform.permissions|UPDATE|table",
+            "platform.permission|DELETE|table",
+            "platform.permission|INSERT|table",
+            "platform.permission|SELECT|table",
+            "platform.permission|UPDATE|table",
             "platform.project_connection|DELETE|table",
             "platform.project_connection|INSERT|table",
             "platform.project_connection|SELECT|table",
@@ -338,10 +338,10 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.setting|INSERT|table",
             "platform.setting|SELECT|table",
             "platform.setting|UPDATE|table",
-            "platform.user_roles|DELETE|table",
-            "platform.user_roles|INSERT|table",
-            "platform.user_roles|SELECT|table",
-            "platform.user_roles|UPDATE|table",
+            "platform.user_role|DELETE|table",
+            "platform.user_role|INSERT|table",
+            "platform.user_role|SELECT|table",
+            "platform.user_role|UPDATE|table",
         ],
         routines: &["wamn_authority.tenant_key(text)"],
     },

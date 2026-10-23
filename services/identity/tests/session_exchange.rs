@@ -380,7 +380,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     .await;
 
     dev.execute(
-        "DELETE FROM platform.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid",
+        "DELETE FROM platform.user_role WHERE tenant_id=$1 AND user_id=$2::text::uuid",
         &[&TENANT, &alice.id().as_str()],
     )
     .await
@@ -850,7 +850,7 @@ async fn failed_role_queries_discard_reader(
     let before = only_reader_pid(dev, target).await;
     let prod_before = only_reader_pid(dev, &fixture.targets[1]).await;
     let other_before = only_reader_pid(dev, &fixture.targets[2]).await;
-    dev.batch_execute("BEGIN; LOCK TABLE platform.user_roles IN ACCESS EXCLUSIVE MODE")
+    dev.batch_execute("BEGIN; LOCK TABLE platform.user_role IN ACCESS EXCLUSIVE MODE")
         .await
         .expect_redacted("hold actual role read");
     let pending = request(https, pat, target.audience());
@@ -879,7 +879,7 @@ async fn failed_role_queries_discard_reader(
     );
 
     dev.batch_execute(&format!(
-        "REVOKE SELECT (role_name) ON platform.user_roles FROM {}",
+        "REVOKE SELECT (role_name) ON platform.user_role FROM {}",
         quote_ident(WorkloadRoleFamily::SessionRoleReader.acl_role())
     ))
     .await
@@ -1143,12 +1143,12 @@ async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &
         .await.expect_redacted("tenant user fixture");
     client
         .execute(
-            "INSERT INTO platform.roles (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            "INSERT INTO platform.role (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
             &[&tenant, &role],
         )
         .await
         .expect_redacted("tenant role fixture");
-    client.execute("INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3) ON CONFLICT DO NOTHING", &[&tenant, &principal.id().as_str(), &role])
+    client.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3) ON CONFLICT DO NOTHING", &[&tenant, &principal.id().as_str(), &role])
         .await.expect_redacted("exact tenant/principal role fixture");
 }
 
@@ -1800,7 +1800,7 @@ async fn password_environment_discovery_requires_current_authority() {
     fixture.environments[1]
         .client
         .execute(
-            "DELETE FROM platform.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid",
+            "DELETE FROM platform.user_role WHERE tenant_id=$1 AND user_id=$2::text::uuid",
             &[&TENANT, &alice.id().as_str()],
         )
         .await

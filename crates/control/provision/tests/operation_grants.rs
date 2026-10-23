@@ -136,8 +136,8 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
          set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
          INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES \
            ('t1', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
-         INSERT INTO platform.roles (tenant_id, name) VALUES ('t1', 'clerk'); \
-         INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES \
+         INSERT INTO platform.role (tenant_id, name) VALUES ('t1', 'clerk'); \
+         INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
            ('t1', 'clerk', 'platform-fixture:widget/create'), \
            ('t1', 'clerk', 'platform-fixture:widget/get'); COMMIT;"
         ),
@@ -148,43 +148,43 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     assert_eq!(
         query(
             &url,
-            "SELECT string_agg(name, ',' ORDER BY name) FROM platform.roles WHERE tenant_id = 't1'"
+            "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role WHERE tenant_id = 't1'"
         ),
         "admin,clerk",
         "apply-package did not leave admin beside the authored role"
     );
     assert_eq!(
-        query(&url, "SELECT count(*) FROM platform.permissions"),
+        query(&url, "SELECT count(*) FROM platform.permission"),
         "2",
         "the admin write changed an authored permission row"
     );
 
     let admin_row = refusal(
         &url,
-        "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
+        "INSERT INTO platform.permission (tenant_id, role_name, permission) \
          VALUES ('t1', 'admin', 'platform-fixture:widget/get')",
     )
     .expect("admin took a permission row");
-    assert!(admin_row.contains("permissions_admin_check"), "{admin_row}");
+    assert!(admin_row.contains("permission_admin_check"), "{admin_row}");
     let sealed = refusal(
         &url,
-        "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
+        "INSERT INTO platform.permission (tenant_id, role_name, permission) \
          VALUES ('t1', 'clerk', 'platform-fixture:widget/list@2.1.0')",
     )
     .expect("a sealed operation id was stored as a reference");
-    assert!(sealed.contains("permissions_reference_check"), "{sealed}");
+    assert!(sealed.contains("permission_reference_check"), "{sealed}");
     for name in ["Clerk", "-clerk", "clerk role", &"a".repeat(65)] {
         let refused = refusal(
             &url,
-            &format!("INSERT INTO platform.roles (tenant_id, name) VALUES ('t1', '{name}')"),
+            &format!("INSERT INTO platform.role (tenant_id, name) VALUES ('t1', '{name}')"),
         )
         .unwrap_or_else(|| panic!("role name {name:?} was stored"));
-        assert!(refused.contains("roles_name_check"), "{refused}");
+        assert!(refused.contains("role_name_check"), "{refused}");
     }
 
     if let Some(error) = refusal(
         &url,
-        "DELETE FROM platform.permissions WHERE tenant_id = 't1' AND role_name = 'clerk' \
+        "DELETE FROM platform.permission WHERE tenant_id = 't1' AND role_name = 'clerk' \
          AND permission = 'platform-fixture:widget/create'",
     ) {
         panic!("revoke widget/create: {error}");
@@ -192,7 +192,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     assert_eq!(
         query(
             &url,
-            "SELECT string_agg(permission, ',') FROM platform.permissions"
+            "SELECT string_agg(permission, ',') FROM platform.permission"
         ),
         "platform-fixture:widget/get",
         "the revoke kept its row or removed another row"
