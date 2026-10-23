@@ -17,7 +17,7 @@ pub enum Order {
     Environment,
     /// Email ascending, then principal UUID ascending.
     Principal,
-    /// Application (0), then control (1), each by audience ascending.
+    /// Control (0), then application (1), each by audience ascending.
     Audience,
 }
 
@@ -63,7 +63,7 @@ fn valid_key(order: Order, key: &Value) -> bool {
         (Order::Audience, [kind, audience]) => {
             matches!(kind.as_u64(), Some(0 | 1))
                 && text(audience)
-                && (kind.as_u64() != Some(1)
+                && (kind.as_u64() != Some(0)
                     || audience
                         .as_str()
                         .and_then(crate::control::control_audience_org)

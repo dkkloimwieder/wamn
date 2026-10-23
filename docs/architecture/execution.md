@@ -743,10 +743,10 @@ That transaction consumes outstanding email secrets and revokes renewal families
 
 `POST /password/environments` accepts `email`, `password`, optional `org` and `project` filters, and optional `limit` and `cursor` members.
 It uses the control lists' paging rules above: limits 1 through 100, default 100, and whole results when both paging members are absent.
-After password authentication, it returns authorized application audiences, then authorized control audiences, each ordered by audience.
+After password authentication, it returns authorized control audiences, then authorized application audiences, each ordered by audience.
 Its response retains `environments` and adds nullable `next_cursor` and `total` members with the same meaning as the control lists.
 A control entry carries only `aud` and `org`. The project filter does not exclude control entries.
-The cursor key contains the kind (application 0, control 1) and audience.
+The cursor key contains the kind (control 0, application 1) and audience.
 Its scope binds the authenticated principal and the exact optional org and project filters.
 Invalid limits or cursors return HTTP 400 with `{"error":"password request refused"}`.
 
