@@ -170,7 +170,15 @@ The disks of the volumes of `wamn-pg-1` and `data-evt-nats-0` stay after the del
 gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central1-a --quiet
 ```
 
-The network endpoint group `wamn-edge` stays while a backend service names it. Before cluster replacement, the owner must detach and remove the old group. Platform apply refuses a missing new NEG status.
+The network endpoint group `wamn-edge` stays after the delete, because the backend service `wamn-edge-platform` names it. Platform apply refuses a missing new NEG status. The agent detaches and deletes the old group as `wamn-agent` with the approval of the teardown:
+
+```bash
+gcloud compute backend-services remove-backend wamn-edge-platform --global \
+  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a --project wamn-dev
+gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
+```
+
+If the backend service names no group, `remove-backend` refuses, and the agent runs only the delete.
 
 The work directory of section 4.1 holds the files of the deleted cluster. These are the event NATS users, the gate logins, the release digests, the stamped chart and the platform file. Section 4 makes them again, and it refuses a directory that exists. Stop the port-forwards of the old cluster and remove the work directory:
 
@@ -193,7 +201,7 @@ eval "$(tools/lane-start "$PWD")"
 
 ### 4.2 Cluster
 
-The owner runs this procedure. Use the owner's own credentials for OpenTofu. The state bucket of section 1 and the project resources of section 2 must exist first.
+The agent runs this procedure as `wamn-agent@wamn-dev` with the agent's `CLOUDSDK_CONFIG` (P12 of [platform-install.md](../plan/platform-install.md)). The agent posts the saved plan, and it applies that plan only after the owner approves it. The state bucket of section 1 and the project resources of section 2 must exist first.
 
 [deploy/gcp/project.k](../../deploy/gcp/project.k) declares the cluster and the pools `main`, `pg` and `bench`. The pool `main` holds one Spot node. A taint restricts which pods can use a node. The pool `pg` holds one node for PostgreSQL alone. Its taint keeps every other pod off, and the `Cluster` selects it (section 4.5).
 
@@ -216,7 +224,7 @@ Install OpenTofu from the checkout with `tools/install-tofu`. The installer prin
 TOFU=$(tools/install-tofu)
 ```
 
-With the owner's credentials, initialize OpenTofu in the rendered directory:
+With the agent's credentials, initialize OpenTofu in the rendered directory:
 
 ```bash
 (
@@ -225,23 +233,33 @@ With the owner's credentials, initialize OpenTofu in the rendered directory:
 )
 ```
 
-Review the plan for the existing cluster and pools:
+Save the plan for the cluster and pools, and post its text to the owner:
 
 ```bash
 (
   cd "$W/project"
-  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool.main \
-    -target=google_container_node_pool.pg -target=google_container_node_pool.bench
+  "$TOFU" plan -out=cluster.plan -target=google_container_cluster.cluster \
+    -target=google_container_node_pool.main -target=google_container_node_pool.pg \
+    -target=google_container_node_pool.bench
+  "$TOFU" show -no-color cluster.plan > plan.txt
 )
 ```
 
-Apply the plan:
+If the plan refuses with "Error acquiring the state lock", read the lock. A lock is stale when its `Who` names no running `tofu` process and its `Created` time is older than the last state write. Post the lock ID and `Who` to the owner. After the owner approves, release the stale lock:
 
 ```bash
 (
   cd "$W/project"
-  "$TOFU" apply -target=google_container_cluster.cluster -target=google_container_node_pool.main \
-    -target=google_container_node_pool.pg -target=google_container_node_pool.bench
+  "$TOFU" force-unlock -force <lock ID>
+)
+```
+
+After the owner approves the plan, apply the saved plan:
+
+```bash
+(
+  cd "$W/project"
+  "$TOFU" apply cluster.plan
 )
 ```
 
