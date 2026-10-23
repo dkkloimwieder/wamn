@@ -14,7 +14,9 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, platform_principals_sql, sql,
     workload_generation_role,
 };
-use wamn_project_state::{PlatformComponent, SCHEMA_NAME, TABLES, UserStatus, UserType};
+use wamn_project_state::{
+    HISTORY_EXEMPT, PlatformComponent, SCHEMA_NAME, TABLES, UserStatus, UserType,
+};
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
@@ -45,19 +47,17 @@ fn record_history_app_grants_sql() -> String {
 /// The privileges `wamn_app` holds on each table. The R11 adjudication is per
 /// relation, not one blanket grant, so the log test checks it per relation too:
 ///
-/// - `users` / `roles` / `user_roles` / `permissions` / `api_keys` are
-///   SELECT-only. The trust chain reads these rows as authorization INPUT — the
+/// - `users` / `roles` / `user_roles` / `permissions` / `environment` and the
+///   platform configuration tables are SELECT-only (docs/plan/platform-config.md,
+///   invariant 1). The trust chain reads these rows as authorization INPUT — the
 ///   3.5 builder compiles `app.user_id` (a `users.id`) and `app.role` (a
 ///   `roles.name`, reached through `user_roles`) into the data policies it
 ///   generates, and 4.2 resolves those claims from exactly these tables. Author
 ///   SQL holding DML here could write itself the credential its own policies are
 ///   then evaluated against.
-/// - `configurations` is tenant business state — nothing in the trust chain reads
-///   it — so it deliberately keeps full DML.
-/// - The six `<table>_history` tables have no read. The log trigger fires as the
-///   writer, and `wamn_app` writes `configurations` only, so `wamn_app` holds
-///   `INSERT` on the entry columns of `configurations_history` and no other
-///   privilege. The grant leaves out `position`.
+/// - `api_keys` has no grant: no runtime code reads it.
+/// - The `<table>_history` tables have no grant. The log trigger fires as the
+///   writer, and `wamn_app` writes no table that has a history table.
 ///
 /// A table the model gains later has no adjudicated class, so this panics rather
 /// than silently defaulting it into one.
@@ -66,18 +66,22 @@ const WRITE_LOG: &str = "write_log";
 
 fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
-        "users" | "roles" | "user_roles" | "permissions" | "api_keys" | "environment" => "SELECT",
-        "configurations" => "SELECT, INSERT, UPDATE, DELETE",
-        "users_history"
+        "users" | "roles" | "user_roles" | "permissions" | "environment" | "external_system"
+        | "connection" | "integration_allow" | "project_connection" | "number_sequence"
+        | "number_counter" | "setting" => "SELECT",
+        "api_keys"
+        | "users_history"
         | "roles_history"
         | "user_roles_history"
         | "permissions_history"
         | "api_keys_history"
-        | "environment_history" => "",
-        "configurations_history" => {
-            "INSERT (tenant_id, row_key, type, operation, changed_by, changed_at, \
-             transaction_id, before, after)"
-        }
+        | "environment_history"
+        | "external_system_history"
+        | "connection_history"
+        | "integration_allow_history"
+        | "project_connection_history"
+        | "number_sequence_history"
+        | "setting_history" => "",
         // The write log: a claim, its read, its result, and the delete of a
         // refused two-step claim, and nothing else.
         "write_log" => "SELECT, INSERT, DELETE, UPDATE (result)",
@@ -174,7 +178,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
          INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
          INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
-         INSERT INTO platform.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);"
+         INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES ('t1','user','{U1}','display.theme','\"dark\"'::jsonb);"
     )
     .expect("writing to a String cannot fail");
 
@@ -190,8 +194,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
            ASSERT (SELECT count(*) FROM platform.roles)=2, 't1 sees its roles';\n\
            ASSERT (SELECT count(*) FROM platform.user_roles)=1, 't1 sees its grant';\n\
            ASSERT (SELECT count(*) FROM platform.permissions)=1, 't1 sees its permission';\n\
-           ASSERT (SELECT count(*) FROM platform.api_keys)=1, 't1 sees its api key';\n\
-           ASSERT (SELECT count(*) FROM platform.configurations)=1, 't1 sees its config';\n\
+           ASSERT (SELECT count(*) FROM platform.setting)=1, 't1 sees its setting';\n\
          END $$;\n\
          COMMIT;"
     )
@@ -252,6 +255,12 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // serves the policy on the table and on its history table.
     for table in TABLES {
         let qualified = table.qualified();
+        // number_counter has no history table (HISTORY_EXEMPT).
+        let indexed = if HISTORY_EXEMPT.contains(&table.name) {
+            format!("('{qualified}')")
+        } else {
+            format!("('{qualified}'), ('{qualified}_history')")
+        };
         let columns = table
             .columns
             .iter()
@@ -266,7 +275,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
                ASSERT (SELECT count(*) FROM pg_catalog.pg_attribute \
                        WHERE attrelid = '{qualified}'::regclass AND attnum > 0 AND NOT attisdropped \
                          AND attname IN ({columns})) = {count}, '{qualified} must carry every model column';\n\
-               ASSERT (SELECT count(*) FROM (VALUES ('{qualified}'), ('{qualified}_history')) AS relation(qualified_name) \
+               ASSERT (SELECT count(*) FROM (VALUES {indexed}) AS relation(qualified_name) \
                        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_index AS i \
                          WHERE i.indrelid = relation.qualified_name::regclass \
                            AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%wamn_authority.tenant_key(tenant_id)%')) = 0, \
@@ -289,8 +298,29 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
                 .to_owned(),
         ),
         (
-            "configurations",
-            "(tenant_id, config_key, config_value) VALUES ('', 'theme', '1'::jsonb)".to_owned(),
+            "external_system",
+            "(tenant_id, integration, name) VALUES ('', 'netsuite', 'erp')".to_owned(),
+        ),
+        (
+            "connection",
+            "(tenant_id, integration, name, transport, exchange) \
+             VALUES ('', 'netsuite', 'erp-read', 'http', 'request')"
+                .to_owned(),
+        ),
+        (
+            "integration_allow",
+            "(tenant_id, scope_type, scope_id, integration) VALUES ('', 'org', 'acme', 'netsuite')"
+                .to_owned(),
+        ),
+        (
+            "number_sequence",
+            "(tenant_id, application, name, pattern) VALUES ('', 'receiving', 'po', 'P-{seq:po}')"
+                .to_owned(),
+        ),
+        (
+            "setting",
+            "(tenant_id, scope_type, scope_id, key, value) VALUES ('', 'org', 'acme', 'locale', '1'::jsonb)"
+                .to_owned(),
         ),
         (
             "api_keys",
@@ -608,31 +638,36 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
     expected.push(format!(
         "column|{WRITE_LOG}|created_at|timestamp with time zone|true"
     ));
+    // number_counter has no history table and no log trigger (HISTORY_EXEMPT).
     let mut relations = names
         .iter()
         .flat_map(|name| {
-            [
-                format!("relation|{name}"),
-                format!("relation|{name}_history"),
-            ]
+            let history =
+                (!HISTORY_EXEMPT.contains(name)).then(|| format!("relation|{name}_history"));
+            [Some(format!("relation|{name}")), history]
         })
+        .flatten()
         .chain([format!("relation|{WRITE_LOG}")])
         .collect::<Vec<_>>();
     relations.sort_unstable();
     expected.extend(relations);
     expected.extend(names.iter().flat_map(|name| {
         [
-            format!(
-                "trigger|CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-                 ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
-                 wamn_history.log_row_change('unlimited')"
-            ),
-            format!(
+            (!HISTORY_EXEMPT.contains(name)).then(|| {
+                format!(
+                    "trigger|CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
+                     ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
+                     wamn_history.log_row_change('unlimited')"
+                )
+            }),
+            Some(format!(
                 "trigger|CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
                  ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
                  wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
-            ),
+            )),
         ]
+        .into_iter()
+        .flatten()
     }));
     // The provisioning SQL first binds its actor and operation, and psql prints that result.
     let provisioning = PlatformComponent::Provisioning.principal_id();
@@ -717,8 +752,8 @@ fn platform_relations_log_every_row_change_on_postgres() {
            ('t1', '{U1}', 'admin'), ('t1', '{U3}', 'admin');\n\
          INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES \
            ('t1', 'auditor', 'platform-fixture:widget/get');\n\
-         INSERT INTO platform.configurations (tenant_id, config_key, config_value) VALUES \
-           ('t1', 'theme', '\"dark\"');\n\
+         INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES \
+           ('t1', 'org', 'acme', 'display.theme', '\"dark\"');\n\
          INSERT INTO platform.api_keys (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
            ('t1', '{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('t1', '{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
          COMMIT;\n\
@@ -729,7 +764,7 @@ fn platform_relations_log_every_row_change_on_postgres() {
          UPDATE platform.roles SET description = 'administrators' WHERE name = 'admin';\n\
          UPDATE platform.user_roles SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
          UPDATE platform.permissions SET permission = 'platform-fixture:widget/list';\n\
-         UPDATE platform.configurations SET config_value = '\"light\"';\n\
+         UPDATE platform.setting SET value = '\"light\"';\n\
          UPDATE platform.api_keys SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
          COMMIT;\n\
          BEGIN;\n\
@@ -738,7 +773,7 @@ fn platform_relations_log_every_row_change_on_postgres() {
          DELETE FROM platform.user_roles WHERE user_id = '{U3}';\n\
          DELETE FROM platform.api_keys WHERE id = '{K2}';\n\
          DELETE FROM platform.permissions;\n\
-         DELETE FROM platform.configurations;\n\
+         DELETE FROM platform.setting;\n\
          DELETE FROM platform.users WHERE id = '{U1}';\n\
          DELETE FROM platform.users WHERE id = '{U2}';\n\
          DELETE FROM platform.roles WHERE name = 'admin';\n\
@@ -749,6 +784,7 @@ fn platform_relations_log_every_row_change_on_postgres() {
     // the stamp columns, whose times differ in each run.
     let entries = TABLES
         .iter()
+        .filter(|table| !HISTORY_EXEMPT.contains(&table.name))
         .map(|table| {
             format!(
                 "SELECT '{name}' AS relation, position, tenant_id, type, operation, \
@@ -775,7 +811,12 @@ fn platform_relations_log_every_row_change_on_postgres() {
     let output = run(&url, &script);
     let mut relations = TABLES
         .iter()
-        .flat_map(|table| [table.name.to_owned(), format!("{}_history", table.name)])
+        .flat_map(|table| {
+            let history =
+                (!HISTORY_EXEMPT.contains(&table.name)).then(|| format!("{}_history", table.name));
+            [Some(table.name.to_owned()), history]
+        })
+        .flatten()
         .chain([WRITE_LOG.to_owned()])
         .collect::<Vec<_>>();
     relations.sort_unstable();
@@ -790,9 +831,6 @@ entry|api_keys|t1|insert|admin:seed-history-fixture|U1|{"id": "K2", "tenant_id":
 entry|api_keys|t1|update|admin:change-history-fixture|U2|{"id": "K1", "tenant_id": "t1"}|{"revoked_at": null}|{"revoked_at": "2026-09-14T00:00:00.000000Z"}
 entry|api_keys|t1|delete|admin:remove-history-fixture|U3|{"id": "K2", "tenant_id": "t1"}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}|{}
 entry|api_keys|t1|delete|admin:remove-history-fixture|U3|{"id": "K1", "tenant_id": "t1"}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": "2026-09-14T00:00:00.000000Z", "last_used_at": null}|{}
-entry|configurations|t1|insert|admin:seed-history-fixture|U1|{"tenant_id": "t1", "config_key": "theme"}|{}|{"tenant_id": "t1", "config_key": "theme", "config_value": "dark"}
-entry|configurations|t1|update|admin:change-history-fixture|U2|{"tenant_id": "t1", "config_key": "theme"}|{"config_value": "dark"}|{"config_value": "light"}
-entry|configurations|t1|delete|admin:remove-history-fixture|U3|{"tenant_id": "t1", "config_key": "theme"}|{"tenant_id": "t1", "config_key": "theme", "config_value": "light"}|{}
 entry|permissions|t1|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}
 entry|permissions|t1|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}
 entry|permissions|t1|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}
@@ -801,6 +839,9 @@ entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id
 entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "tenant_id": "t1", "description": null}
 entry|roles|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}
 entry|roles|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "tenant_id": "t1", "description": "administrators"}|{}
+entry|setting|t1|insert|admin:seed-history-fixture|U1|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{}|{"key": "display.theme", "value": "dark", "locked": false, "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}
+entry|setting|t1|update|admin:change-history-fixture|U2|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{"value": "dark"}|{"value": "light"}
+entry|setting|t1|delete|admin:remove-history-fixture|U3|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{"key": "display.theme", "value": "light", "locked": false, "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{}
 entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}
 entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}
 entry|user_roles|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}

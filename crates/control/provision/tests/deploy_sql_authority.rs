@@ -1,7 +1,7 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
-//! the current package-era relation set contains 38 governed relations, all off
+//! the current package-era relation set contains 49 governed relations, all off
 //! the settable `app.tenant` claim and onto
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
@@ -373,8 +373,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "38",
-        "the sweep must cover exactly the 38 governed relations"
+        governed, "49",
+        "the sweep must cover exactly the 49 governed relations"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
@@ -2818,9 +2818,11 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
     );
     assert_eq!(
         logs,
-        "api_keys:unlimited\\000 configurations:unlimited\\000 environment:unlimited\\000 \
-         permissions:unlimited\\000 \
-         roles:unlimited\\000 user_roles:unlimited\\000 users:unlimited\\000",
+        "api_keys:unlimited\\000 connection:unlimited\\000 environment:unlimited\\000 \
+         external_system:unlimited\\000 integration_allow:unlimited\\000 \
+         number_sequence:unlimited\\000 permissions:unlimited\\000 \
+         project_connection:unlimited\\000 roles:unlimited\\000 setting:unlimited\\000 \
+         user_roles:unlimited\\000 users:unlimited\\000",
         "every platform relation must log with the retention unlimited"
     );
     let targets = psql(

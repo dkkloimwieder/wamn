@@ -745,14 +745,17 @@ Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps i
 The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
 
 Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
-These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, `api_keys`, and `environment`.
+These relations are `users`, `roles`, `user_roles`, `permissions`, `api_keys`, and `environment`, and the platform configuration tables `external_system`, `connection`, `integration_allow`, `project_connection`, `number_sequence`, `number_counter`, and `setting` ([platform configuration](../plan/platform-config.md)).
 `environment` holds at most one row, the status of the environment that the host reads. No row means active.
-Each relation also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
+An integration is connector code, and `integration` columns hold its catalog code. A connection is a configured instance of an integration. An external system is the persistent identity that a group of connections reach.
+Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
+`number_counter` has no history table, because one entry per counter advance would double the writes of every create. The write log is its audit.
 The file creates each history table with the tenant flag, so the table has a `tenant_id` column.
 Each history table has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
-`wamn_app` holds `INSERT` on the entry columns of `configurations_history`, because a guest writes only `configurations`.
-`wamn_app` holds no other privilege on a history table, so a guest reads no `platform` history and cannot set `position`.
+`wamn_app` holds `USAGE` on `platform`, `SELECT` on `users`, `roles`, `user_roles`, `permissions`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_keys`, on a history table, or on `schema_migrations`.
+`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It takes the caller's tenant from the caller's role name, with the parse of `wamn_authority.current_tenant_key()`, and refuses a sequence of another tenant with `insufficient_privilege`.
+Project migration `0025_platform_configuration.sql` adds the platform configuration tables to an installed database, removes `configurations` and its history table, and revokes the `api_keys` read.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles`, `permissions` and `environment`.
 It holds `INSERT` on the entry columns of their five history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
@@ -872,7 +875,6 @@ The host's [auth memory](execution.md#auth-memory) answers the check, and a miss
 A removed row stays accepted until a change message clears the memory or 60 seconds pass.
 There is still no foreign key on a stamp column.
 Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution and `app.operation`.
-Within its tenant, a guest can insert a `configurations_history` entry directly, because it holds `INSERT` on the entry columns.
 Record history gives no tamper resistance against modified application code or administrative SQL.
 
 A very large `"P<n>D"` day count stops the retention verb at that relation, and the verb prunes no later relation of that database.

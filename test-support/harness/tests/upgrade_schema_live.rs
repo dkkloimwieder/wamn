@@ -246,13 +246,28 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     );
 
     // A project database installed before 0024: the run reads the record
-    // table in the old schema, applies the rename and records it in platform.
+    // table in the old schema, applies the rename and records it in platform,
+    // then applies 0025. The database also loses what 0025 adds and gets back
+    // what 0025 removes.
     let client = connect(&project_url).await;
     client
         .0
         .batch_execute(
-            "DELETE FROM platform.schema_migrations \
-              WHERE relative_path = 'migrations/project/0024_platform_schema.sql'; \
+            "DELETE FROM platform.schema_migrations WHERE ordinal >= 24; \
+             DROP FUNCTION platform.bump_counter(uuid, text, text); \
+             DROP TABLE platform.setting_history, platform.number_sequence_history, \
+               platform.project_connection_history, platform.integration_allow_history, \
+               platform.connection_history, platform.external_system_history; \
+             DROP TABLE platform.setting, platform.number_counter, platform.number_sequence, \
+               platform.project_connection, platform.integration_allow, platform.connection, \
+               platform.external_system; \
+             CREATE TABLE platform.configurations ( \
+               tenant_id text NOT NULL, config_key text NOT NULL, config_value jsonb NOT NULL, \
+               created_at timestamptz NOT NULL, created_by uuid NOT NULL, \
+               updated_at timestamptz NOT NULL, updated_by uuid NOT NULL, \
+               PRIMARY KEY (tenant_id, config_key)); \
+             SELECT wamn_history.create_history_table('platform', 'configurations', true); \
+             GRANT SELECT ON platform.api_keys TO wamn_app; \
              ALTER SCHEMA platform RENAME TO app_system;", // rename-app-system: keep
         )
         .await

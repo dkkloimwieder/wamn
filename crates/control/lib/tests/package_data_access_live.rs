@@ -677,7 +677,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
 
     for (relation, privilege) in [
         ("platform.users", "SELECT"),
-        ("platform.configurations", "UPDATE"),
+        ("platform.write_log", "INSERT"),
         ("catalog.packages", "SELECT"),
     ] {
         assert!(

@@ -15,8 +15,11 @@
 //! # What it is — and is not
 //!
 //! The tables are the AUTH/RBAC half of plan item 2.4: [`USERS`], [`ROLES`] (+
-//! the user↔role linkage [`USER_ROLES`]), [`PERMISSIONS`], [`CONFIGURATIONS`],
-//! [`API_KEYS`]. The "platform metadata" half of 2.4 (entities /
+//! the user↔role linkage [`USER_ROLES`]), [`PERMISSIONS`], [`API_KEYS`], and
+//! the platform configuration tables of `docs/plan/platform-config.md`:
+//! [`EXTERNAL_SYSTEM`], [`CONNECTION`], [`INTEGRATION_ALLOW`],
+//! [`PROJECT_CONNECTION`], [`NUMBER_SEQUENCE`], [`NUMBER_COUNTER`] and
+//! [`SETTING`]. The "platform metadata" half of 2.4 (entities /
 //! fields / relations / flows) is ALREADY shipped — the catalog model in
 //! `deploy/sql/catalog-schema.sql` (3.1) — and is referenced, not redefined here.
 //!
@@ -256,12 +259,6 @@ pub const PERMISSIONS: Table = Table {
     columns: &["tenant_id", "role_name", "permission"],
 };
 
-/// Per-project application settings (opaque jsonb value).
-pub const CONFIGURATIONS: Table = Table {
-    name: "configurations",
-    columns: &["tenant_id", "config_key", "config_value"],
-};
-
 /// The api-key substrate. `key_hash` is a one-way digest, never the raw key.
 pub const API_KEYS: Table = Table {
     name: "api_keys",
@@ -275,18 +272,99 @@ pub const ENVIRONMENT: Table = Table {
     columns: &["tenant_id", "status"],
 };
 
+/// The persistent identity that a group of connections reach. `integration`
+/// is the catalog code of the connector code.
+pub const EXTERNAL_SYSTEM: Table = Table {
+    name: "external_system",
+    columns: &[
+        "tenant_id",
+        "id",
+        "integration",
+        "name",
+        "parameters",
+        "status",
+    ],
+};
+
+/// A configured instance of an integration, bound by `name`.
+pub const CONNECTION: Table = Table {
+    name: "connection",
+    columns: &[
+        "tenant_id",
+        "id",
+        "integration",
+        "external_system_id",
+        "name",
+        "transport",
+        "exchange",
+        "parameters",
+        "status",
+    ],
+};
+
+/// The integrations allowed at an org, project or environment scope.
+pub const INTEGRATION_ALLOW: Table = Table {
+    name: "integration_allow",
+    columns: &["tenant_id", "scope_type", "scope_id", "integration"],
+};
+
+/// The connections a project has enabled.
+pub const PROJECT_CONNECTION: Table = Table {
+    name: "project_connection",
+    columns: &["tenant_id", "project_id", "connection_id"],
+};
+
+/// One document number sequence of one application.
+pub const NUMBER_SEQUENCE: Table = Table {
+    name: "number_sequence",
+    columns: &["tenant_id", "id", "application", "name", "pattern"],
+};
+
+/// One counter of a sequence per key value. The application advances it only
+/// through `platform.bump_counter`. It is the one table without a history
+/// table ([`HISTORY_EXEMPT`]).
+pub const NUMBER_COUNTER: Table = Table {
+    name: "number_counter",
+    columns: &["tenant_id", "sequence_id", "counter", "key_value", "value"],
+};
+
+/// Display and view settings per scope.
+pub const SETTING: Table = Table {
+    name: "setting",
+    columns: &[
+        "tenant_id",
+        "scope_type",
+        "scope_id",
+        "key",
+        "value",
+        "locked",
+    ],
+};
+
 /// Every table in the system schema, in dependency order (a superset FK order:
 /// users and roles before the linkage / permissions / api_keys that reference
-/// them).
+/// them, and each configuration table after the tables it references).
 pub const TABLES: &[Table] = &[
     USERS,
     ROLES,
     USER_ROLES,
     PERMISSIONS,
-    CONFIGURATIONS,
     API_KEYS,
     ENVIRONMENT,
+    EXTERNAL_SYSTEM,
+    CONNECTION,
+    INTEGRATION_ALLOW,
+    PROJECT_CONNECTION,
+    NUMBER_SEQUENCE,
+    NUMBER_COUNTER,
+    SETTING,
 ];
+
+/// The tables of [`TABLES`] that have no history table and no log trigger.
+/// `number_counter` is the one: a history entry per bump would double the
+/// writes of every create, and the write log is the audit (owner ruling,
+/// wamn-aqd0m.1).
+pub const HISTORY_EXEMPT: &[&str] = &["number_counter"];
 
 /// Test databases with the tenant+platform floor.
 #[cfg(any(test, feature = "test-util"))]
@@ -319,9 +397,10 @@ mod tests {
 
     #[test]
     fn table_manifest_is_complete_and_unique() {
-        // Five auth/RBAC concepts, with the user↔role linkage split out as its
-        // own table, and the environment status make seven tables.
-        assert_eq!(TABLES.len(), 7);
+        // Four auth/RBAC concepts, with the user↔role linkage split out as
+        // its own table, the environment status, and the seven platform
+        // configuration tables make thirteen tables.
+        assert_eq!(TABLES.len(), 13);
         let mut names: Vec<&str> = TABLES.iter().map(|t| t.name).collect();
         names.sort_unstable();
         names.dedup();

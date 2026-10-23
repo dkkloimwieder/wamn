@@ -4,17 +4,20 @@
 //! actually enforces them: every revoke lands with its positive assertion — this
 //! principal, on this relation, denied — rather than as a paper narrowing.
 //!
-//! One test per adjudicated class:
-//! - `users` / `roles` / `user_roles` / `permissions` / `api_keys` are the rows
-//!   the trust chain reads as authorization INPUT, and `environment` is the
-//!   status the host admits a request by, so an App generation may
-//!   inherit their stable `wamn_app` reads and nothing more, so a tenant or an
-//!   application cannot create a platform row or a `wamn:` name;
-//! - `configurations` stays fully writable — the class the platform has no
-//!   jurisdiction over, and the control proving the other test fails for the
-//!   revoked privilege rather than for an over-broad narrowing;
-//! - the seven history tables take no read and no direct write from an App
-//!   generation, except the entries that its `configurations` writes append.
+//! One test per adjudicated class (docs/plan/platform-config.md, invariant 1):
+//! - `users` / `roles` / `user_roles` / `permissions` are the rows the trust
+//!   chain reads as authorization INPUT, `environment` is the status the host
+//!   admits a request by, and the platform configuration tables are the rows
+//!   the platform writes for the application. An App generation may inherit
+//!   their stable `wamn_app` reads and nothing more, so a tenant or an
+//!   application cannot create a platform row or a `wamn:` name. `api_keys`
+//!   takes no grant at all;
+//! - `number_counter` advances only through `platform.bump_counter`, which
+//!   takes the caller's tenant from its role name — the control proving the
+//!   other test fails for the revoked privilege rather than for an over-broad
+//!   narrowing;
+//! - the history tables take no read and no direct write from an App
+//!   generation.
 //!
 //! Each test runs as the superuser of a test database on the test PostgreSQL
 //! server (the harness prepares one tenant-scoped App generation) and holds the
@@ -34,6 +37,12 @@ const TENANT: &str = "t1";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
 /// An unused user id for the refused inserts.
 const U2: &str = "22222222-2222-2222-2222-222222222222";
+/// A number sequence of [`TENANT`].
+const SEQUENCE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+/// Another tenant, whose rows the probe generation must not reach.
+const OTHER_TENANT: &str = "t2";
+/// A number sequence of [`OTHER_TENANT`].
+const OTHER_SEQUENCE: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 /// The pinned `wamn:provisioning` id, the row a tenant must not create.
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
@@ -108,7 +117,10 @@ INSERT INTO platform.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENA
 INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
 INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
 INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
-INSERT INTO platform.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);"#
+INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES ('{TENANT}','org','acme','display.theme','"dark"'::jsonb);
+INSERT INTO platform.number_sequence (tenant_id, id, application, name, pattern) VALUES
+  ('{TENANT}','{SEQUENCE}','receiving','purchase_order','P-{{seq:po,width=8}}'),
+  ('{OTHER_TENANT}','{OTHER_SEQUENCE}','receiving','purchase_order','P-{{seq:po,width=8}}');"#
     )
     .expect("writing to a String cannot fail");
     (app_generation, script)
@@ -144,15 +156,18 @@ fn run(url: &str, script: &str) {
     );
 }
 
-/// The five relations the trust chain resolves `app.user_id` / `app.role` from
-/// are readable through `wamn_app` and writable by nobody through it: author SQL that
-/// could insert its own `user_roles` row would be minting the input its own
-/// generated policies are then evaluated against.
+/// The relations the trust chain resolves `app.user_id` / `app.role` from, the
+/// environment status, and the platform configuration tables are readable
+/// through `wamn_app` and writable by nobody through it: author SQL that could
+/// insert its own `user_roles` row would be minting the input its own
+/// generated policies are then evaluated against, and author SQL that could
+/// write `number_counter` would break gapless numbering. `api_keys` is not even
+/// readable.
 ///
 /// Each denied statement is RLS-LEGAL for the probe tenant — same generation,
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
 /// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the tenant floor
-/// does admit such a row under the App generation is what the configurations test shows.
+/// does admit such a row under the App generation is what the counter test shows.
 #[test]
 fn author_sql_cannot_write_the_relations_that_authorize_it() {
     let _serialized = wamn_test_postgres::lock();
@@ -166,14 +181,20 @@ fn author_sql_cannot_write_the_relations_that_authorize_it() {
 DO $$
 DECLARE relation text; operation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['users','roles','user_roles','permissions','api_keys',
-                                  'environment'] LOOP
+  FOREACH relation IN ARRAY ARRAY['users','roles','user_roles','permissions','environment',
+                                  'external_system','connection','integration_allow',
+                                  'project_connection','number_sequence','number_counter',
+                                  'setting'] LOOP
     ASSERT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, 'SELECT'::text),
       format('%s must stay readable — the platform revokes writes, not reads', relation);
     FOREACH operation IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
       ASSERT NOT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, operation),
         format('wamn_app holds %s on %s — author SQL can mint its own authorization', operation, relation);
     END LOOP;
+  END LOOP;
+  FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
+    ASSERT NOT has_table_privilege('wamn_app'::name, 'platform.api_keys'::text, operation),
+      format('wamn_app holds %s on api_keys, which no runtime code reads', operation);
   END LOOP;
 END $$;
 
@@ -210,6 +231,18 @@ BEGIN
     'INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
     'UPDATE platform.api_keys SET revoked_at = now()',
     'DELETE FROM platform.api_keys',
+    'SELECT count(*) FROM platform.api_keys',
+    'INSERT INTO platform.number_counter (tenant_id, sequence_id, counter, key_value, value) VALUES (''{TENANT}'', ''{SEQUENCE}'', ''po'', '''', 100)',
+    'UPDATE platform.number_counter SET value = 1',
+    'DELETE FROM platform.number_counter',
+    'INSERT INTO platform.number_sequence (tenant_id, application, name, pattern) VALUES (''{TENANT}'', ''receiving'', ''forged'', ''F-{{seq:f}}'')',
+    'UPDATE platform.number_sequence SET pattern = ''F-{{seq:f}}''',
+    'INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES (''{TENANT}'', ''org'', ''acme'', ''locale'', ''true'')',
+    'UPDATE platform.setting SET locked = true',
+    'INSERT INTO platform.external_system (tenant_id, integration, name) VALUES (''{TENANT}'', ''netsuite'', ''forged'')',
+    'INSERT INTO platform.connection (tenant_id, integration, name, transport, exchange) VALUES (''{TENANT}'', ''netsuite'', ''forged'', ''http'', ''request'')',
+    'INSERT INTO platform.integration_allow (tenant_id, scope_type, scope_id, integration) VALUES (''{TENANT}'', ''org'', ''acme'', ''modbus'')',
+    'DELETE FROM platform.project_connection',
     'INSERT INTO platform.environment (tenant_id, status) VALUES (''{TENANT}'', ''active'')',
     'UPDATE platform.environment SET status = ''active''',
     'DELETE FROM platform.environment'
@@ -229,14 +262,15 @@ ROLLBACK;"
     run(&url, &script);
 }
 
-/// `configurations` is tenant business state: nothing in the trust chain reads
-/// it, so the platform has no standing to narrow it. This is the over-revocation
-/// tripwire — if a future sweep applies the class-1 treatment schema-wide, this
-/// is the test that fails. Each write of the App generation appends one entry
-/// to `configurations_history` through the log trigger, with the tenant, the
-/// bound operation, and the bound actor.
+/// `number_counter` advances only through `platform.bump_counter`
+/// (docs/plan/platform-config.md, Numbering). The App generation holds
+/// EXECUTE on it and no write on the table. The function runs as its owner,
+/// keeps the caller's role setting, and takes the caller's tenant from that
+/// role name: it returns 1 for a new counter row and then counts up, starts
+/// each key at 1, and refuses a sequence of another tenant and a caller that
+/// is no App generation. `number_counter` has no history table.
 #[test]
-fn a_project_still_owns_its_own_configuration() {
+fn the_application_advances_a_counter_only_through_bump_counter() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -244,15 +278,24 @@ fn a_project_still_owns_its_own_configuration() {
     let (app_generation, mut script) = prelude(&url);
     writeln!(
         script,
-        r#"
-DO $$
-DECLARE operation text;
-BEGIN
-  FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE'] LOOP
-    ASSERT has_table_privilege('wamn_app'::name, 'platform.configurations'::text, operation),
-      format('configurations is tenant business state — %s must stay granted', operation);
-  END LOOP;
+        r"
+DO $$ BEGIN
+  ASSERT has_function_privilege('wamn_app'::name,
+                                'platform.bump_counter(uuid, text, text)'::text, 'EXECUTE'),
+    'wamn_app must execute bump_counter';
+  ASSERT (SELECT prosecdef FROM pg_catalog.pg_proc
+           WHERE oid = 'platform.bump_counter(uuid, text, text)'::regprocedure),
+    'bump_counter must be SECURITY DEFINER';
+  ASSERT to_regclass('platform.number_counter_history') IS NULL,
+    'number_counter has no history table';
 END $$;
+
+-- A probe definer function, owned like bump_counter, that reports the role
+-- setting it sees.
+CREATE FUNCTION platform.role_probe() RETURNS text
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog
+AS $probe$ SELECT current_user::text || '|' || current_setting('role') $probe$;
+GRANT EXECUTE ON FUNCTION platform.role_probe() TO wamn_app;
 
 BEGIN;
 SET LOCAL ROLE {app_generation};
@@ -260,31 +303,45 @@ SET LOCAL ROLE {app_generation};
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
     'the tenant authority is the prepared App generation';
-  INSERT INTO platform.configurations (tenant_id, config_key, config_value)
-    VALUES ('{TENANT}', 'probe', 'true'::jsonb);
-  ASSERT (SELECT count(*) FROM platform.configurations WHERE config_key = 'probe') = 1,
-    'a project may add its own configuration';
-  UPDATE platform.configurations SET config_value = 'false'::jsonb WHERE config_key = 'probe';
-  ASSERT (SELECT config_value FROM platform.configurations WHERE config_key = 'probe') = 'false'::jsonb,
-    'a project may rewrite its own configuration';
-  DELETE FROM platform.configurations WHERE config_key = 'probe';
-  ASSERT (SELECT count(*) FROM platform.configurations WHERE config_key = 'probe') = 0,
-    'a project may remove its own configuration';
+  ASSERT platform.role_probe() = session_user::text || '|{app_generation}',
+    'a definer function runs as its owner and keeps the caller''s role setting';
+  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 1, 'a new counter renders 1';
+  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 2, 'the next call renders 2';
+  ASSERT platform.bump_counter('{SEQUENCE}', 'line', 'batch-a') = 1, 'a new key renders 1';
+  ASSERT platform.bump_counter('{SEQUENCE}', 'line', 'batch-b') = 1, 'each key starts at 1';
+  ASSERT platform.bump_counter('{SEQUENCE}', 'line', 'batch-a') = 2, 'a key counts on its own';
+  ASSERT (SELECT value FROM platform.number_counter
+           WHERE counter = 'po' AND key_value = '') = 3,
+    'the row holds the next value, readable by the application';
+  ASSERT (SELECT count(*) FROM platform.number_counter) = 3,
+    'the generation sees its tenant''s counter rows';
+  ASSERT (SELECT count(*) FROM platform.number_sequence) = 1,
+    'the generation sees only its tenant''s sequence';
+END $$;
+
+DO $$ BEGIN
+  BEGIN
+    PERFORM platform.bump_counter('{OTHER_SEQUENCE}', 'po', '');
+    RAISE EXCEPTION 'bump_counter advanced a sequence of another tenant';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 END $$;
 
 RESET ROLE;
 DO $$ BEGIN
-  ASSERT (SELECT array_agg(type || '|' || tenant_id || '|' || operation || '|' || changed_by
-                           ORDER BY position)
-            FROM platform.configurations_history
-           WHERE row_key = '{{"tenant_id": "{TENANT}", "config_key": "probe"}}'::jsonb)
-         = ARRAY['insert|{TENANT}|admin:seed-authority-fixture|{U1}',
-                 'update|{TENANT}|admin:seed-authority-fixture|{U1}',
-                 'delete|{TENANT}|admin:seed-authority-fixture|{U1}'],
-    'each configurations write of the App generation appends one entry';
+  ASSERT (SELECT count(*) FROM platform.number_counter WHERE tenant_id = '{OTHER_TENANT}') = 0,
+    'the refused call wrote no counter of the other tenant';
+  ASSERT (SELECT created_by FROM platform.number_counter
+           WHERE counter = 'po' AND key_value = '') = '{U1}',
+    'the counter row stamps the bound actor';
+  BEGIN
+    PERFORM platform.bump_counter('{SEQUENCE}', 'po', '');
+    RAISE EXCEPTION 'bump_counter advanced a counter for a caller that is no App generation';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 END $$;
 
-ROLLBACK;"#
+ROLLBACK;"
     )
     .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);
@@ -292,17 +349,13 @@ ROLLBACK;"#
 }
 
 /// The history tables of `platform` (epic ruling 76). An App generation
-/// reads no history table and writes none directly, except
-/// `configurations_history`, whose entry columns it inserts when the log
-/// trigger fires on its own `configurations` write. The grant leaves out
-/// `position`, so the generation cannot choose a position with
-/// `OVERRIDING SYSTEM VALUE`.
+/// reads no history table and writes none, not even an entry column, so it
+/// cannot choose a `position` with `OVERRIDING SYSTEM VALUE` either.
 ///
 /// Each denied insert is RLS-legal for the probe tenant, so `42501` here is
-/// the missing privilege and not a `WITH CHECK` rejection. The configurations
-/// test shows that the same generation appends an entry through the trigger.
+/// the missing privilege and not a `WITH CHECK` rejection.
 #[test]
-fn author_sql_appends_history_only_through_the_configurations_trigger() {
+fn author_sql_reads_and_writes_no_history_table() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -359,9 +412,16 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
             &format!(r#"{{"tenant_id": "{TENANT}"}}"#),
         ),
         entry(
-            "configurations_history",
+            "setting_history",
             Some(-5),
-            &format!(r#"{{"tenant_id": "{TENANT}", "config_key": "theme"}}"#),
+            &format!(
+                r#"{{"key": "display.theme", "scope_id": "acme", "tenant_id": "{TENANT}", "scope_type": "org"}}"#
+            ),
+        ),
+        entry(
+            "number_sequence_history",
+            None,
+            &format!(r#"{{"id": "{SEQUENCE}", "tenant_id": "{TENANT}"}}"#),
         ),
     ]
     .join(",\n    ");
@@ -372,8 +432,11 @@ DO $$
 DECLARE history text; operation text;
 BEGIN
   FOREACH history IN ARRAY ARRAY['users_history','roles_history','user_roles_history',
-                                 'permissions_history','configurations_history',
-                                 'api_keys_history','environment_history'] LOOP
+                                 'permissions_history','api_keys_history',
+                                 'environment_history','external_system_history',
+                                 'connection_history','integration_allow_history',
+                                 'project_connection_history','number_sequence_history',
+                                 'setting_history'] LOOP
     FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
       ASSERT NOT has_table_privilege('wamn_app'::name, ('platform.'||history)::text, operation),
         format('wamn_app holds table %s on %s', operation, history);
@@ -382,13 +445,12 @@ BEGIN
       ASSERT NOT has_any_column_privilege('wamn_app'::name, ('platform.'||history)::text, operation),
         format('wamn_app holds column %s on %s', operation, history);
     END LOOP;
-    ASSERT has_any_column_privilege('wamn_app'::name, ('platform.'||history)::text, 'INSERT')
-           = (history = 'configurations_history'),
-      format('wamn_app column INSERT on %s does not match its R11 class', history);
+    ASSERT NOT has_any_column_privilege('wamn_app'::name, ('platform.'||history)::text, 'INSERT'),
+      format('wamn_app holds column INSERT on %s', history);
   END LOOP;
-  ASSERT NOT has_column_privilege('wamn_app'::name, 'platform.configurations_history'::text,
+  ASSERT NOT has_column_privilege('wamn_app'::name, 'platform.setting_history'::text,
                                   'position'::text, 'INSERT'::text),
-    'wamn_app can choose the position of a configurations entry';
+    'wamn_app can choose the position of a setting entry';
 END $$;
 
 BEGIN;
@@ -404,12 +466,17 @@ BEGIN
     'SELECT count(*) FROM platform.roles_history',
     'SELECT count(*) FROM platform.user_roles_history',
     'SELECT count(*) FROM platform.permissions_history',
-    'SELECT count(*) FROM platform.configurations_history',
     'SELECT count(*) FROM platform.api_keys_history',
     'SELECT count(*) FROM platform.environment_history',
+    'SELECT count(*) FROM platform.external_system_history',
+    'SELECT count(*) FROM platform.connection_history',
+    'SELECT count(*) FROM platform.integration_allow_history',
+    'SELECT count(*) FROM platform.project_connection_history',
+    'SELECT count(*) FROM platform.number_sequence_history',
+    'SELECT count(*) FROM platform.setting_history',
     {direct_writes},
-    'UPDATE platform.configurations_history SET operation = ''admin:forge-history''',
-    'DELETE FROM platform.configurations_history'
+    'UPDATE platform.setting_history SET operation = ''admin:forge-history''',
+    'DELETE FROM platform.setting_history'
   ] LOOP
     BEGIN
       EXECUTE probe_sql;

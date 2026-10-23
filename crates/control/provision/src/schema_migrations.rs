@@ -350,6 +350,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0024_platform_schema.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0024_platform_schema.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0025_platform_configuration.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0025_platform_configuration.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]
@@ -422,6 +428,34 @@ mod tests {
         assert!(
             migration.sql.ends_with(&rendered),
             "{} does not end with the rendered administration surface",
+            migration.relative_path
+        );
+    }
+
+    /// The project migration that adds the platform configuration tables
+    /// ends with the PLATFORM CONFIGURATION section of `app-schema.sql`, byte
+    /// for byte, so a fresh install and an upgraded database hold the same
+    /// tables, function and grants.
+    #[test]
+    fn the_platform_configuration_migration_is_the_app_schema_section() {
+        let app_schema = include_str!("../../../../deploy/sql/app-schema.sql");
+        let marker = "-- ---------------------------------------------------------------------------\n\
+                      -- PLATFORM CONFIGURATION (";
+        let start = app_schema
+            .find(marker)
+            .expect("app-schema.sql has the platform configuration section");
+        let section = &app_schema[start..];
+        let migration = PROJECT_MIGRATIONS
+            .iter()
+            .find(|migration| {
+                migration
+                    .relative_path
+                    .ends_with("_platform_configuration.sql")
+            })
+            .expect("the platform configuration migration exists");
+        assert!(
+            migration.sql.ends_with(section),
+            "{} does not end with the platform configuration section of app-schema.sql",
             migration.relative_path
         );
     }
