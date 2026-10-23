@@ -30,6 +30,9 @@ pub const SCHEDULER_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const HOST_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bound for each native workload request and response.
 pub const WORKLOAD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+/// Bound for flow-http to reach RUNNING after the host starts. The host compiles
+/// the composed entry before it runs, which takes longer under load.
+pub const FLOW_HTTP_START_TIMEOUT: Duration = Duration::from_secs(120);
 /// Bound for graceful host shutdown before the kill-and-reap fallback.
 ///
 /// The local release host has seven plugins and the chart drain delay: native cleanup
@@ -1233,85 +1236,88 @@ where
 
     let mut host_id = None;
     let mut http_port = None;
-    let activation =
-        async {
-            let selected = wait_for_host(&mut backend, request.identity).await?;
-            host_id = Some(selected.id);
-            http_port = Some(selected.http_port);
-            let selected = host_id
-                .as_deref()
-                .expect("selected host identity is assigned before workload start");
-            let deadline = Instant::now() + HOST_HEARTBEAT_TIMEOUT;
-            loop {
-                let response: v2::WorkloadStatusResponse = request_json(
-                    &mut backend,
-                    &rpc_subject(selected, "workload.status"),
-                    &v2::WorkloadStatusRequest {
-                        workload_id: FLOW_HTTP_WORKLOAD_ID.to_owned(),
-                    },
-                    "status-local-workload",
-                )
-                .await?;
-                if response.workload_status.as_ref().is_some_and(|status| {
-                    status.workload_state == v2::WorkloadState::Running as i32
-                }) {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    require_running(
-                        "status-local-workload",
-                        response.workload_status,
-                        FLOW_HTTP_WORKLOAD_ID,
-                    )?;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-
-            // The host starts the materializer after flow-http runs, so its
-            // wait has a deadline of its own.
-            let deadline = Instant::now() + HOST_HEARTBEAT_TIMEOUT;
-            loop {
-                let response: v2::WorkloadStatusResponse = request_json(
-                    &mut backend,
-                    &rpc_subject(selected, "workload.status"),
-                    &v2::WorkloadStatusRequest {
-                        workload_id: MATERIALIZER_WORKLOAD_ID.to_owned(),
-                    },
-                    "status-local-materializer",
-                )
-                .await?;
-                if response.workload_status.as_ref().is_some_and(|status| {
-                    status.workload_state == v2::WorkloadState::Running as i32
-                }) {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    require_running(
-                        "status-local-materializer",
-                        response.workload_status,
-                        MATERIALIZER_WORKLOAD_ID,
-                    )?;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-
-            let status_response: v2::WorkloadStatusResponse = request_json(
+    let activation = async {
+        let selected = wait_for_host(&mut backend, request.identity).await?;
+        host_id = Some(selected.id);
+        http_port = Some(selected.http_port);
+        let selected = host_id
+            .as_deref()
+            .expect("selected host identity is assigned before workload start");
+        let deadline = Instant::now() + FLOW_HTTP_START_TIMEOUT;
+        loop {
+            let response: v2::WorkloadStatusResponse = request_json(
                 &mut backend,
                 &rpc_subject(selected, "workload.status"),
                 &v2::WorkloadStatusRequest {
                     workload_id: FLOW_HTTP_WORKLOAD_ID.to_owned(),
                 },
-                "status-workload",
+                "status-local-workload",
             )
             .await?;
-            require_running(
-                "status-workload",
-                status_response.workload_status,
-                FLOW_HTTP_WORKLOAD_ID,
-            )?;
-            Ok(())
+            if response
+                .workload_status
+                .as_ref()
+                .is_some_and(|status| status.workload_state == v2::WorkloadState::Running as i32)
+            {
+                break;
+            }
+            if !workload_pending(response.workload_status.as_ref()) || Instant::now() >= deadline {
+                require_running(
+                    "status-local-workload",
+                    response.workload_status,
+                    FLOW_HTTP_WORKLOAD_ID,
+                )?;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        .await;
+
+        // The host starts the materializer after flow-http runs, so its
+        // wait has a deadline of its own.
+        let deadline = Instant::now() + HOST_HEARTBEAT_TIMEOUT;
+        loop {
+            let response: v2::WorkloadStatusResponse = request_json(
+                &mut backend,
+                &rpc_subject(selected, "workload.status"),
+                &v2::WorkloadStatusRequest {
+                    workload_id: MATERIALIZER_WORKLOAD_ID.to_owned(),
+                },
+                "status-local-materializer",
+            )
+            .await?;
+            if response
+                .workload_status
+                .as_ref()
+                .is_some_and(|status| status.workload_state == v2::WorkloadState::Running as i32)
+            {
+                break;
+            }
+            if !workload_pending(response.workload_status.as_ref()) || Instant::now() >= deadline {
+                require_running(
+                    "status-local-materializer",
+                    response.workload_status,
+                    MATERIALIZER_WORKLOAD_ID,
+                )?;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let status_response: v2::WorkloadStatusResponse = request_json(
+            &mut backend,
+            &rpc_subject(selected, "workload.status"),
+            &v2::WorkloadStatusRequest {
+                workload_id: FLOW_HTTP_WORKLOAD_ID.to_owned(),
+            },
+            "status-workload",
+        )
+        .await?;
+        require_running(
+            "status-workload",
+            status_response.workload_status,
+            FLOW_HTTP_WORKLOAD_ID,
+        )?;
+        Ok(())
+    }
+    .await;
 
     if let Err(error) = activation {
         if let Err(cleanup) = shutdown_backend(
@@ -1458,6 +1464,21 @@ where
             detail,
             source,
         )
+    })
+}
+
+/// Whether a polled workload may still reach RUNNING. The host reports
+/// NOT_FOUND until its own preload finishes and it starts the workload; any
+/// other state but STARTING is final.
+fn workload_pending(status: Option<&v2::WorkloadStatus>) -> bool {
+    status.is_none_or(|status| {
+        [
+            v2::WorkloadState::Unspecified,
+            v2::WorkloadState::Starting,
+            v2::WorkloadState::NotFound,
+        ]
+        .into_iter()
+        .any(|state| status.workload_state == state as i32)
     })
 }
 
@@ -2826,6 +2847,56 @@ mod tests {
             error.to_string().contains("invalid port 0"),
             "{error} must name the refused port"
         );
+    }
+
+    #[tokio::test]
+    async fn a_failed_flow_http_start_refuses_before_the_deadline() {
+        // NOT_FOUND and STARTING may still reach RUNNING, so the poll waits;
+        // ERROR is final, so the poll refuses at once.
+        let config = config();
+        let identity = identity();
+        let release = release();
+        let request = DevActivationRequest {
+            config: &config,
+            release: &release,
+            identity: &identity,
+            host_binary: Path::new("/opt/wamn/bin/wamn-host"),
+            wasmtime_cache_dir: Path::new("/tmp/wamn-dev-cache"),
+        };
+        let backend = FakeBackend::new(
+            Arc::new(Shared::default()),
+            [heartbeat(
+                "selected-host-id",
+                &identity.host_name,
+                &identity.environment,
+                &identity.host_group,
+            )],
+            [
+                response(&v2::WorkloadStatusResponse {
+                    workload_status: Some(status(v2::WorkloadState::NotFound)),
+                }),
+                response(&v2::WorkloadStatusResponse {
+                    workload_status: Some(status(v2::WorkloadState::Starting)),
+                }),
+                response(&v2::WorkloadStatusResponse {
+                    workload_status: Some(status(v2::WorkloadState::Error)),
+                }),
+                response(&v2::WorkloadStopResponse {
+                    workload_status: Some(status(v2::WorkloadState::Stopping)),
+                }),
+            ],
+            [None],
+        );
+
+        let started = Instant::now();
+        let Err(error) = activate_backend(request, backend).await else {
+            panic!("a workload in ERROR must refuse")
+        };
+
+        assert_eq!(error.error_type(), DevActivationErrorType::WorkloadRefused);
+        assert_eq!(error.step(), "status-local-workload");
+        assert!(error.detail().contains("WORKLOAD_STATE_ERROR"), "{error}");
+        assert!(started.elapsed() < FLOW_HTTP_START_TIMEOUT / 4);
     }
 
     #[tokio::test]
