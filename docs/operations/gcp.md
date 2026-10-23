@@ -221,7 +221,7 @@ target/debug/wamn-ctl project render deploy/gcp/project.k \
   --state-bucket wamn-dev-tofu-state --state-prefix project "$W/project"
 ```
 
-The renderer writes `main.tf.json`. Its import blocks adopt the existing cluster and pools into OpenTofu state on the first apply.
+The renderer writes `main.tf.json`. It writes no import block, because an import of a missing cluster or pool refuses the plan.
 
 Install OpenTofu from the checkout with `tools/install-tofu`. The installer prints the path to its binary:
 

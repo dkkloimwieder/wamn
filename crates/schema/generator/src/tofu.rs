@@ -4,15 +4,16 @@ use anyhow::{Context as _, bail};
 use serde::Deserialize;
 use serde_json::{Map, json};
 
-// This version supports the GKE fields and import IDs used below.
+// This version supports the GKE fields used below.
 // https://github.com/hashicorp/terraform-provider-google/tree/v7.1.0/website/docs/r
 const GOOGLE_PROVIDER_VERSION: &str = "7.1.0";
 
 /// Render validated project JSON as the bytes of `main.tf.json`.
 ///
 /// The caller owns project validation and the existing GCS state bucket.
-/// Imports adopt the declared cluster and pools. Lifecycle guards refuse
-/// replacement of those resources. This function performs no I/O.
+/// It writes no import block, because an import of a missing cluster or pool
+/// refuses the plan. Lifecycle guards refuse replacement of the cluster and
+/// pools. This function performs no I/O.
 ///
 /// # Errors
 ///
@@ -24,10 +25,6 @@ pub fn render_project_tofu(
 ) -> anyhow::Result<Vec<u8>> {
     let project: ProjectInput =
         serde_json::from_slice(project_json).context("decode project JSON")?;
-    let cluster_id = format!(
-        "projects/{}/locations/{}/clusters/{}",
-        project.project_id, project.zone, project.cluster_name
-    );
     let (region, _) = project
         .zone
         .rsplit_once('-')
@@ -56,7 +53,6 @@ pub fn render_project_tofu(
         "deletion_protection": true,
         "lifecycle": {"prevent_destroy": true, "ignore_changes": ["initial_node_count", "remove_default_node_pool"]},
     });
-    let mut imports = vec![json!({"to": "google_container_cluster.cluster", "id": cluster_id})];
     let mut pools = Map::new();
     for pool in project.node_pools {
         let mut labels = Map::new();
@@ -104,10 +100,6 @@ pub fn render_project_tofu(
         if pool.spot {
             resource["upgrade_settings"] = json!({"max_surge": 0, "max_unavailable": 1});
         }
-        imports.push(json!({
-            "to": format!("google_container_node_pool.{}", pool.name),
-            "id": format!("{}/{}/{}/{}", project.project_id, project.zone, project.cluster_name, pool.name),
-        }));
         pools.insert(pool.name, resource);
     }
     let document = json!({
@@ -155,7 +147,6 @@ pub fn render_project_tofu(
                 "project": project.project_id,
             }},
         },
-        "import": imports,
     });
     let mut bytes = serde_json::to_vec_pretty(&document).context("encode OpenTofu JSON")?;
     bytes.push(b'\n');
@@ -269,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_project_renders_cluster_pools_backend_and_imports() {
+    fn committed_project_renders_cluster_pools_and_backend_without_imports() {
         let source = project();
         let declared: Value = serde_json::from_slice(&source).unwrap();
         let bytes = render_project_tofu(&source, "owner-state", "gcp/dev").unwrap();
@@ -374,15 +365,8 @@ mod tests {
                 ])
             );
         }
-        assert_eq!(
-            rendered["import"],
-            json!([
-                {"to": "google_container_cluster.cluster", "id": "projects/wamn-dev/locations/us-central1-a/clusters/wamn"},
-                {"to": "google_container_node_pool.main", "id": "wamn-dev/us-central1-a/wamn/main"},
-                {"to": "google_container_node_pool.bench", "id": "wamn-dev/us-central1-a/wamn/bench"},
-                {"to": "google_container_node_pool.pg", "id": "wamn-dev/us-central1-a/wamn/pg"},
-            ])
-        );
+        // An import of a missing cluster or pool refuses the plan (wamn-02nkn).
+        assert!(rendered.get("import").is_none());
     }
 
     #[test]
