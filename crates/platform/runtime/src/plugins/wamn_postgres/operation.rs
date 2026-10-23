@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use wamn_catalog::{ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
+use wamn_engine::invocation_trace::{InvocationTrace, RequestTrace};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::DeliveryClass;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
@@ -59,6 +60,8 @@ pub(super) struct OperationWorkload {
     operations: BTreeMap<String, PreparedStatementSet>,
     grants: BTreeMap<String, Option<String>>,
     schemas: BTreeMap<String, String>,
+    /// The digest of the member component that owns each operation.
+    digests: BTreeMap<String, String>,
     /// The package id of the composing application, bound as
     /// `app.application` for every operation of the entry, base operations
     /// included.
@@ -109,6 +112,7 @@ impl WamnPostgres {
         let mut operations = BTreeMap::new();
         let mut grants = BTreeMap::new();
         let mut schemas = BTreeMap::new();
+        let mut digests = BTreeMap::new();
         for component in &components {
             for (id, fact) in &component.operations {
                 let read = release
@@ -121,6 +125,7 @@ impl WamnPostgres {
                     Self::prepare_statement_set(lower_statements(&fact.statements), read),
                 );
                 grants.insert(id.clone(), fact.registered_operation.clone());
+                digests.insert(id.clone(), component.descriptor.component_digest.clone());
                 if let Some(schema) = &component.runtime_schema {
                     schemas.insert(id.clone(), schema.clone());
                 }
@@ -169,6 +174,7 @@ impl WamnPostgres {
                 operations,
                 grants,
                 schemas,
+                digests,
                 application,
                 members: Self::prepare_statement_members(members),
             }),
@@ -268,6 +274,8 @@ struct OpenOperation {
     transaction: Option<OperationTransaction>,
     source: String,
     settled: bool,
+    /// The request trace that `wamn.component.invoke` replaces until settle.
+    request_trace: Option<InvocationTrace>,
 }
 
 impl Drop for OpenOperation {
@@ -351,8 +359,13 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
             .operation_metrics
             .record(&open.source, DeliveryClass::Delivered);
         open.settled = true;
+        let request_trace = open.request_trace.take();
         drop(open);
-        accessor.with(|mut access| access.get().component_id = Arc::clone(&store.workload));
+        accessor.with(|mut access| {
+            let mut ctx = access.get();
+            ctx.component_id = Arc::clone(&store.workload);
+            swap_request_trace(ctx.table, request_trace);
+        });
         Ok(Ok(()))
     }
 
@@ -404,9 +417,12 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
             },
         );
         open.settled = true;
+        let request_trace = open.request_trace.take();
         drop(open);
         accessor.with(|mut access| {
-            access.get().component_id = Arc::clone(&store.workload);
+            let mut ctx = access.get();
+            ctx.component_id = Arc::clone(&store.workload);
+            swap_request_trace(ctx.table, request_trace);
         });
         Ok(rolled_back)
     }
@@ -478,10 +494,13 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
             },
         );
         open.settled = true;
+        let request_trace = open.request_trace.take();
         // Drop clears all authority on both success and refusal.
         drop(open);
         accessor.with(|mut access| {
-            access.get().component_id = Arc::clone(&store.workload);
+            let mut ctx = access.get();
+            ctx.component_id = Arc::clone(&store.workload);
+            swap_request_trace(ctx.table, request_trace);
         });
         Ok(committed)
     }
@@ -537,7 +556,14 @@ async fn enter<T: 'static + Send>(
     );
     let trace = accessor
         .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
+    let trace = trace.in_scope(|| {
+        entry_invocation_span(&postgres, &store.workload, caller.as_ref(), &operation)
+            .map_or_else(InvocationTrace::capture, |span| {
+                span.in_scope(InvocationTrace::capture)
+            })
+    });
     let result = trace
+        .clone()
         .run(begin(
             Arc::clone(&postgres),
             &store.workload,
@@ -559,10 +585,13 @@ async fn enter<T: 'static + Send>(
         postgres.operation_metrics.record(&source, class);
     }
     match result {
-        Ok((open, begun)) => {
-            if let Some(open) = &open {
+        Ok((mut open, begun)) => {
+            if let Some(open) = &mut open {
                 accessor.with(|mut access| {
-                    access.get().component_id = Arc::from(open.scope.as_str());
+                    let mut ctx = access.get();
+                    ctx.component_id = Arc::from(open.scope.as_str());
+                    // The operation's effects parent to `wamn.component.invoke`.
+                    open.request_trace = swap_request_trace(ctx.table, Some(trace));
                 });
             }
             *current = open;
@@ -570,6 +599,55 @@ async fn enter<T: 'static + Send>(
         }
         Err(refusal) => Ok(Err(refusal)),
     }
+}
+
+/// Open the entry operation's `wamn.component.invoke` span in the current span.
+///
+/// An unknown operation opens none; [`begin`] refuses it.
+fn entry_invocation_span(
+    postgres: &WamnPostgres,
+    workload: &str,
+    caller: Option<&AuthenticatedCaller>,
+    operation: &str,
+) -> Option<tracing::Span> {
+    let facts = postgres
+        .operation_workloads
+        .read()
+        .expect("operation workloads lock poisoned")
+        .get(workload)
+        .cloned()?;
+    let release = facts.release.scope();
+    let span = wamn_engine::invocation_trace::invocation_span(
+        &wamn_engine::invocation_trace::InvocationSite {
+            tenant_id: &release.tenant_id,
+            project: facts.claims.project.as_deref().unwrap_or_default(),
+            environment: &release.environment,
+            wiring_id: "",
+            wiring_version: 0,
+            node_id: "",
+            input_port: None,
+            operation,
+            component_digest: facts.digests.get(operation)?,
+            caller,
+        },
+        None,
+    );
+    if let Some(caller) = caller {
+        span.record("wamn.attachment_id", caller.attachment_id());
+    }
+    Some(span)
+}
+
+/// Replace the trace of the request's Store, and return the one it held.
+fn swap_request_trace(
+    table: &mut ResourceTable,
+    trace: Option<InvocationTrace>,
+) -> Option<InvocationTrace> {
+    let trace = trace?;
+    let request = table
+        .iter_mut()
+        .find_map(|entry| entry.downcast_mut::<RequestTrace>())?;
+    Some(std::mem::replace(&mut request.0, trace))
 }
 
 async fn begin(
@@ -623,6 +701,7 @@ async fn begin(
         transaction: None,
         source,
         settled: true,
+        request_trace: None,
     };
     let claims = SessionClaims {
         schema: facts

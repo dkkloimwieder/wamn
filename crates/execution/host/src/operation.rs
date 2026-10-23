@@ -21,7 +21,7 @@ use wamn_catalog::{
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
-use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
@@ -184,68 +184,7 @@ pub fn remote_trace_context(
     }
 }
 
-/// The coordinates of one `wamn.component.invoke` span.
-///
-/// A route has no wiring position, so it names the empty wiring, version 0
-/// and the empty node, the same as its effect spans.
-#[derive(Debug)]
-pub struct InvocationSite<'a> {
-    pub tenant_id: &'a str,
-    pub project: &'a str,
-    pub environment: &'a str,
-    pub wiring_id: &'a str,
-    pub wiring_version: u32,
-    pub node_id: &'a str,
-    pub input_port: Option<&'a str>,
-    pub operation: &'a str,
-    pub component_digest: &'a str,
-    pub caller: Option<&'a AuthenticatedCaller>,
-}
-
-pub fn invocation_span(
-    site: &InvocationSite<'_>,
-    remote_parent: Option<&opentelemetry::Context>,
-) -> tracing::Span {
-    let span = wamn_engine::invocation_trace::sampled_span(|| {
-        tracing::info_span!(
-            target: "wamn::router",
-            "wamn.component.invoke",
-            wamn.tenant = %site.tenant_id,
-            wamn.project = %site.project,
-            wamn.environment = %site.environment,
-            wamn.wiring_id = %site.wiring_id,
-            wamn.wiring_version = site.wiring_version,
-            wamn.component_digest = %site.component_digest,
-            wamn.node_id = %site.node_id,
-            wamn.operation = %site.operation,
-            wamn.caller_principal_id = tracing::field::Empty,
-            wamn.caller_credential_type = tracing::field::Empty,
-            wamn.input_port = tracing::field::Empty,
-            wamn.attachment_id = tracing::field::Empty,
-        )
-    });
-    if let Some(caller) = site.caller {
-        span.record("wamn.caller_principal_id", caller.principal_id());
-        span.record(
-            "wamn.caller_credential_type",
-            match caller.credential_type() {
-                CredentialType::Pat => "pat",
-                CredentialType::Session => "session",
-                CredentialType::QueuedService => "queued-service",
-            },
-        );
-    }
-    if let Some(input_port) = site.input_port {
-        span.record("wamn.input_port", input_port);
-    }
-    if let Some(parent) = remote_parent {
-        // A tracing subscriber without the OTel layer is the supported
-        // no-export mode. `set_parent` may then refuse; the span still records
-        // locally and no invocation is affected.
-        let _ = span.set_parent(parent.clone());
-    }
-    span
-}
+pub use wamn_engine::invocation_trace::{InvocationSite, invocation_span};
 
 /// The process capabilities that one released application runs on.
 ///

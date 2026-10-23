@@ -60,6 +60,71 @@ pub fn sampled_span(create: impl FnOnce() -> tracing::Span) -> tracing::Span {
     }
 }
 
+/// The coordinates of one `wamn.component.invoke` span.
+///
+/// A route has no wiring position, so it names the empty wiring, version 0
+/// and the empty node, the same as its effect spans.
+#[derive(Debug)]
+pub struct InvocationSite<'a> {
+    pub tenant_id: &'a str,
+    pub project: &'a str,
+    pub environment: &'a str,
+    pub wiring_id: &'a str,
+    pub wiring_version: u32,
+    pub node_id: &'a str,
+    pub input_port: Option<&'a str>,
+    pub operation: &'a str,
+    pub component_digest: &'a str,
+    pub caller: Option<&'a crate::flow_http_routing::AuthenticatedCaller>,
+}
+
+/// Open one `wamn.component.invoke` span, under `remote_parent` when given.
+#[must_use]
+pub fn invocation_span(
+    site: &InvocationSite<'_>,
+    remote_parent: Option<&opentelemetry::Context>,
+) -> tracing::Span {
+    let span = sampled_span(|| {
+        tracing::info_span!(
+            target: "wamn::router",
+            "wamn.component.invoke",
+            wamn.tenant = %site.tenant_id,
+            wamn.project = %site.project,
+            wamn.environment = %site.environment,
+            wamn.wiring_id = %site.wiring_id,
+            wamn.wiring_version = site.wiring_version,
+            wamn.component_digest = %site.component_digest,
+            wamn.node_id = %site.node_id,
+            wamn.operation = %site.operation,
+            wamn.caller_principal_id = tracing::field::Empty,
+            wamn.caller_credential_type = tracing::field::Empty,
+            wamn.input_port = tracing::field::Empty,
+            wamn.attachment_id = tracing::field::Empty,
+        )
+    });
+    if let Some(caller) = site.caller {
+        span.record("wamn.caller_principal_id", caller.principal_id());
+        span.record(
+            "wamn.caller_credential_type",
+            match caller.credential_type() {
+                crate::flow_http_routing::CredentialType::Pat => "pat",
+                crate::flow_http_routing::CredentialType::Session => "session",
+                crate::flow_http_routing::CredentialType::QueuedService => "queued-service",
+            },
+        );
+    }
+    if let Some(input_port) = site.input_port {
+        span.record("wamn.input_port", input_port);
+    }
+    if let Some(parent) = remote_parent {
+        // A tracing subscriber without the OTel layer is the supported
+        // no-export mode. `set_parent` may then refuse; the span still records
+        // locally and no invocation is affected.
+        let _ = tracing_opentelemetry::OpenTelemetrySpanExt::set_parent(&span, parent.clone());
+    }
+    span
+}
+
 /// Internal plugin identity for host invocation trace context.
 pub const INVOCATION_TRACES_ID: &str = "wamn:invocation-traces";
 
