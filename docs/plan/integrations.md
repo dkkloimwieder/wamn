@@ -139,6 +139,8 @@ Owner rulings of 2026-10-21. Each ruling holds for every integration from Epic 4
 
 Each epic names a goal and an exit condition. Only Epic 5 has issues. The order after Epic 5 is expected, not fixed. The owner re-orders at each review.
 
+Connections, external systems and their bindings follow [platform-config.md](platform-config.md) (C1, C3).
+
 ### Cloud
 
 | Epic | Goal | Exit condition |
