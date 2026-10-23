@@ -241,13 +241,38 @@ pub async fn assertions(
 fn assert_put(record: &Value) -> anyhow::Result<()> {
     ensure!(
         record["method"] == "PUT"
-            && record["target"] == "/services/rest/record/v1/customer/eid:push-one"
+            && record["target"].as_str().is_some_and(
+                |t| unreserved_decoded(t) == "/services/rest/record/v1/customer/eid:push-one"
+            )
             && record["json"] == json!({"entityId":"Pushed customer","externalId":"push-one"})
             && record["status"] == "204 No Content"
             && record["location"]
                 .as_str()
-                .is_some_and(|v| v.ends_with("/customer/eid:push-one")),
+                .is_some_and(|v| unreserved_decoded(v).ends_with("/customer/eid:push-one")),
         "wrong NetSuite push: {record}"
     );
     Ok(())
+}
+
+/// The target with each percent-encoded unreserved character decoded
+/// (RFC 3986 6.2.2.2). jsonata-core's $encodeUrlComponent encodes - . _ ~,
+/// and the two forms name the same resource.
+fn unreserved_decoded(target: &str) -> String {
+    let bytes = target.as_bytes();
+    let mut out = String::with_capacity(target.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(&target[i + 1..i + 3], 16)
+            && (byte.is_ascii_alphanumeric() || b"-._~".contains(&byte))
+        {
+            out.push(byte as char);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
