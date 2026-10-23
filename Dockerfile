@@ -11,7 +11,7 @@
 # `wamn-ctl build-platform` builds host, runner, gates, identity and roles, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches with locks
-# that prevent concurrent writes, and one shared locked native target cache.
+# that prevent concurrent writes, and one locked native target cache per checkout.
 # One build-native stage compiles all native packages in one invocation. The
 # host artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
@@ -56,11 +56,13 @@ COPY deploy ./deploy
 # rust-toolchain.toml is deliberately absent: the base image already ships the
 # pinned Rust line, and copying it would force a rustup download in the image.
 
+# The target cache is keyed by checkout, so a bump from one checkout reuses
+# its compiled dependencies and no other checkout overwrites them.
 FROM root-source AS build-native
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-identity -p wamn-gates -p wamn-component-composer \
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
@@ -98,7 +100,7 @@ FROM root-source AS build-edge-web
 ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-native,target=/build/target,sharing=locked \
+    --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
  && cargo build --locked --release -p wamn-edge --features web \
  && install -D -m 0755 target/release/wamn-edge /native-output/wamn-edge

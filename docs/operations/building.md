@@ -315,7 +315,7 @@ The target compiles with the Debian trixie cross compiler, so the box needs glib
 
 Keep one Cargo process per target directory.
 
-Docker target cache is one per machine; host target dirs stay per checkout.
+Each checkout keeps its own Docker target cache and its own host target directory.
 The six native images use one `build-native` stage, which compiles every native package in one `cargo build`, so features unify once.
 A second invocation in the same stage builds only `wamn-ctl-ops` with the `ops` feature, because that feature reaches shared code and the shipped `wamn-ctl` builds without it.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
@@ -326,6 +326,44 @@ A new checkout starts with a cold host build.
 Reuse that worktree's own target, and let Cargo decide which artifacts need rebuilding.
 Keep large build targets off temporary memory filesystems.
 [Running tests](running-tests.md#capture-a-run) explains result reporting and optional output directories.
+
+## Host image cache
+
+The `host` image takes its binaries from the `build-native` stage.
+That stage compiles every native image, so the first image build of a platform build carries all of the native compile time.
+`build-native` and `build-edge-web` mount the target cache `wamn-root-target-native-<checkout key>`.
+They share the Cargo registry and Git caches with every checkout.
+The cache mounts are not in the image. The stage copies each binary out of the target cache to `/native-output`, and the image copies it from there.
+
+A version bump changes `crates/control/lib/src/release_chart.rs`, `test-support/infrastructure/release_chart.rs` and `deploy/platform/release/Chart.yaml`.
+These files are in the `root-source` copy set, so Docker runs the `build-native` command again on every bump.
+The target cache stays. Cargo then rebuilds only the crates whose sources changed and the crates that depend on them.
+The version is a Rust constant in `wamn-control`. It is not in a `Cargo.toml` and it does not change `Cargo.lock`.
+So a bump alone rebuilds `wamn-control`, `wamn-test-infrastructure`, `wamn-ctl` and the crates of `wamn-gates`.
+It does not rebuild `wamn-host` or any dependency.
+
+These changes make Cargo rebuild more:
+
+- A changed `Cargo.lock`, Cargo feature, profile or `.cargo/config.toml` rebuilds the dependencies that they reach.
+- A new Rust image under the `rust:1.99-trixie` tag rebuilds everything.
+- A change to a widely used workspace crate rebuilds every crate that depends on it, and links each native binary again.
+- A new checkout has a new key, so its first image build compiles everything.
+- BuildKit garbage collection can remove a cache. Read the caches with `docker buildx du --verbose`.
+
+Before wamn-gc3sl.1, every checkout used the one target cache `wamn-root-target-native`.
+An image build from another checkout at another commit then compiled its own workspace crates into the cache.
+The next bump compiled them again, and it waited while another build held the cache lock.
+
+Stage times of the next real bump, from the `build-platform` stage lines:
+
+| Stage | Elapsed |
+|---|---|
+| `image-build-host` | not yet measured |
+| `image-build-runner` | not yet measured |
+| `image-build-gates` | not yet measured |
+| `image-build-identity` | not yet measured |
+| `image-build-edge-web` | not yet measured |
+| Total | not yet measured |
 
 ## Guest artifact comparisons
 

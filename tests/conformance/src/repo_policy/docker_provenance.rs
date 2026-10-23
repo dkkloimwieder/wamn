@@ -44,10 +44,11 @@ fn stage<'a>(source: &'a str, name: &str, problems: &mut Problems) -> Option<&'a
     )
 }
 
-/// One shared native target cache, and the download caches shared.
+/// One locked target cache per checkout, and the download caches shared.
 ///
-/// The native stage uses one locked target cache across checkouts
-/// (wamn-i6h97). Edge and cases keep their own per-checkout target caches.
+/// The native stages share one target cache within a checkout (wamn-i6h97).
+/// The checkout key keeps other checkouts from overwriting it (wamn-gc3sl.1).
+/// Edge and cases keep their own per-checkout target caches.
 fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Problems) {
     let mounts: Vec<_> = contents
         .lines()
@@ -67,12 +68,8 @@ fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Pr
             || format!("{owner} lost shared download cache {id}"),
         );
     }
-    let target = match stage_name {
-        "edge" | "cases" => {
-            format!("id=wamn-root-target-{stage_name}-${{WAMN_CHECKOUT_KEY}},target=/build/target")
-        }
-        _ => "id=wamn-root-target-native,target=/build/target".to_owned(),
-    };
+    let target =
+        format!("id=wamn-root-target-{stage_name}-${{WAMN_CHECKOUT_KEY}},target=/build/target");
     problems.require(
         mounts
             .iter()
