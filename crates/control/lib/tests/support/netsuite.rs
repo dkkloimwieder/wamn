@@ -104,9 +104,17 @@ pub async fn assertions(
         )
         .await?
         .get(0);
+    let advanced: bool = project
+        .query_one(
+            "SELECT (value #>> '{}')::timestamptz = $1::text::timestamptz \
+               FROM wamn_integration.setting WHERE key='last_synced_at'",
+            &[&due],
+        )
+        .await?
+        .get(0);
     ensure!(
-        checkpoint == due,
-        "checkpoint did not advance to due: {checkpoint}"
+        advanced,
+        "checkpoint did not advance to due {due}: {checkpoint}"
     );
     let items: Value = project
         .query_one(
