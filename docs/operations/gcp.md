@@ -132,6 +132,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
 The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:
 
 - The APIs, the quotas and the daily guard that sets pool `main` to 0 nodes at 03:00 New York time.
+- The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
 - The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases.
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.

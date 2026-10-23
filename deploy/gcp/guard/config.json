@@ -1,5 +1,7 @@
 {
   "project": "wamn-dev",
   "location": "us-central1-a",
-  "cluster": "wamn"
+  "cluster": "wamn",
+  "state_bucket": "wamn-dev-tofu-state",
+  "state_object": "guard/state.json"
 }
