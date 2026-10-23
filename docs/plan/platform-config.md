@@ -113,7 +113,7 @@ environment = {
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
 - `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern. A key named by `per=` or `reset=` must be a field of every model that uses the sequence, or a counter in the same pattern, or `date:FMT`; otherwise a build refusal.
 - `number = "<sequence>"` on a field: the generator fills it by calling `next_number` on insert with exactly the fields the pattern names; a write statement that supplies the field is a build refusal. On the key field: allowed, with the limits under Numbering.
-- `role = "actor"` on a field: the host fills it from the operation caller. The generated insert fills every actor field from `app.user_id`. The generated update fills `updated_by` from `app.user_id` and never touches `created_by`. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
+- `role = "actor"` on a field: the host fills it from the operation caller. The generated insert fills every actor field from `app.user_id`. The generated update fills `updated_by` from `app.user_id` and never touches `created_by`. An update that changes no field leaves `updated_by` as it leaves the revision. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `connections`: the names a package binds, each with the integration it expects and `mode = read | write`. A file store is one of them. `environment.k` maps each name to a connection name; apply refuses an unbound name, a connection the project has not enabled, an integration that differs from the declared one, or an integration not allowed at the environment.
 - `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` capability. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
 - A `wamn` connection's external system is the peer environment; its `parameters` carry `project/environment/application`. The connection adds transport and exchange only.
@@ -161,10 +161,10 @@ B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}
 ### Function
 
 1. Tokenize the pattern; resolve each key from `record`, from an already-rendered counter, or from the transaction time.
-2. For each counter in name order:
+2. For each counter in lock order: a counter keyed by another counter comes after that counter, and independent counters go in name order. The order is fixed for each pattern, so concurrent callers cannot deadlock.
    - `reset=`: `bump_counter(sequence, counter, key_value)` locks the row, inserts at 1 if absent, returns the value and increments.
    - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
-3. Render and return the text.
+3. Render and return the text. A hex counter renders in upper case (255 is `FF`).
 
 - Rendering, preview, validation and `set_counter` all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere.
 - Name-order locking within one call means two patterns on one sequence cannot deadlock each other. Two operations that insert into two models in opposite order can still deadlock on two sequences; Postgres detects it and one retries. The plugin guarantees no more than that.
