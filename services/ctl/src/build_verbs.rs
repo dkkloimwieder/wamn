@@ -21,6 +21,10 @@ pub struct BuildArgs {
     /// verification database there and drops it at the end.
     #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
     pub database_url: String,
+    /// Also write `<package>/package.digest`: the tag and the digest that the
+    /// built package packs to. Commit it with the package (wamn-vl6im).
+    #[arg(long)]
+    pub record_digest: bool,
 }
 
 /// Build each package and print its manifest digest and output directory.
@@ -47,6 +51,10 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
             receipt.outputs.manifest,
             package_output(&output_root, &receipt.package.id).display()
         );
+        if args.record_digest {
+            let line = wamn_control::package_artifact::record_package_digest(package)?;
+            print!("{}: {line}", package.display());
+        }
     }
     Ok(())
 }

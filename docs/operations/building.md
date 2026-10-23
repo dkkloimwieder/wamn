@@ -245,6 +245,16 @@ Run `pnpm install` at the repository root first.
 Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.
 The build compiles the package's components as [above](#native-programs-and-app-components) describes.
 
+### Package digest records
+
+Registry tags are immutable, so a package that changes under an unchanged version cannot be pushed to the GKE registry again. Each package that a file in `deploy/gcp/environments` names has a committed `package.digest` beside its `wamn.k`. The file holds one line, the tag and the digest that the built package packs to. The test `cargo test -p wamn-control --test package_digest` builds no package, so run `wamn build` first. It refuses when the digest changed and the tag did not, and when the tag changed and the file did not.
+
+When you change such a package, bump its version in `wamn.k`. Then write the file again and commit it with the change:
+
+```bash
+wamn build --record-digest apps/<package>
+```
+
 ## Pushing a package
 
 `wamn-ctl push-package --package <package root>` pushes one package artifact ([platform-deploy.md §7.2](../plan/platform-deploy.md)).

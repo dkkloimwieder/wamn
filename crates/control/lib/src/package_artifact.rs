@@ -232,6 +232,69 @@ pub(crate) fn fixture_package_root(
     })
 }
 
+/// The committed record of a package's tag and built artifact digest, beside
+/// its `wamn.k` (wamn-vl6im). Registry tags are immutable, so a package whose
+/// bytes change under an unchanged tag cannot be pushed again.
+pub const PACKAGE_DIGEST_FILE: &str = "package.digest";
+
+/// Pack the built package at `root` and write `<tag> <digest>` to its
+/// [`PACKAGE_DIGEST_FILE`]. Returns the line that it wrote.
+///
+/// # Errors
+///
+/// When the package does not pack or the file cannot be written.
+pub fn record_package_digest(root: &Path) -> anyhow::Result<String> {
+    let packed = pack_package(root)?;
+    let line = format!("{} {}\n", packed.tag(), packed.digest);
+    let path = root.join(PACKAGE_DIGEST_FILE);
+    std::fs::write(&path, &line).with_context(|| format!("write {}", path.display()))?;
+    Ok(line)
+}
+
+/// Refuse a built package whose tag or digest differs from its committed
+/// [`PACKAGE_DIGEST_FILE`].
+///
+/// # Errors
+///
+/// When the package does not pack, the file is absent or malformed, the
+/// digest changed under the same tag, or the tag changed and the file was not
+/// written again.
+pub fn check_package_digest(root: &Path) -> anyhow::Result<()> {
+    let packed = pack_package(root)?;
+    let path = root.join(PACKAGE_DIGEST_FILE);
+    let recorded = std::fs::read_to_string(&path).with_context(|| {
+        format!(
+            "read {}; run wamn build --record-digest {}",
+            path.display(),
+            root.display()
+        )
+    })?;
+    digest_refusal(&path, &recorded, &packed.tag(), &packed.digest)
+}
+
+fn digest_refusal(path: &Path, recorded: &str, tag: &str, digest: &str) -> anyhow::Result<()> {
+    let Some((recorded_tag, recorded_digest)) = recorded
+        .strip_suffix('\n')
+        .and_then(|line| line.split_once(' '))
+    else {
+        bail!("{} must hold one line `<tag> <digest>`", path.display());
+    };
+    ensure!(
+        recorded_tag != tag || recorded_digest == digest,
+        "package {tag} packs to {digest}, but {} records {recorded_digest} for the same tag; \
+         registry tags are immutable, so bump the version in wamn.k and run wamn build \
+         --record-digest",
+        path.display()
+    );
+    ensure!(
+        recorded_tag == tag,
+        "package {tag} packs to {digest}, but {} records {recorded_tag}; run wamn build \
+         --record-digest",
+        path.display()
+    );
+    Ok(())
+}
+
 /// The package artifact digest of the package at `root`, the key of its stage
 /// evidence and stage progress (docs/plan/platform-deploy.md §10.2): the
 /// offline manifest digest of the tree as it is ([`pack_package`]).
@@ -1302,6 +1365,30 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn a_package_digest_refuses_new_bytes_under_the_same_tag_and_a_stale_record() {
+        let path = Path::new("apps/p/package.digest");
+        let refusal = |recorded: &str, tag: &str, digest: &str| {
+            digest_refusal(path, recorded, tag, digest)
+                .err()
+                .map(|error| error.to_string())
+        };
+        assert_eq!(refusal("p-1.0.0 sha256:a\n", "p-1.0.0", "sha256:a"), None);
+        let changed = refusal("p-1.0.0 sha256:a\n", "p-1.0.0", "sha256:b").unwrap();
+        assert!(
+            changed.contains("immutable") && changed.contains("bump the version"),
+            "{changed}"
+        );
+        let stale = refusal("p-1.0.0 sha256:a\n", "p-1.0.1", "sha256:b").unwrap();
+        assert!(
+            stale.contains("records p-1.0.0") && stale.contains("--record-digest"),
+            "{stale}"
+        );
+        let bumped = refusal("p-1.0.0 sha256:a\n", "p-1.0.1", "sha256:a").unwrap();
+        assert!(bumped.contains("--record-digest"), "{bumped}");
+        assert!(refusal("p-1.0.0 sha256:a", "p-1.0.0", "sha256:a").is_some());
     }
 
     #[test]
