@@ -438,16 +438,19 @@ Before wamn-gc3sl.1, every checkout used the one target cache `wamn-root-target-
 An image build from another checkout at another commit then compiled its own workspace crates into the cache.
 The next bump compiled them again, and it waited while another build held the cache lock.
 
-Stage times of the next real bump, from the `build-platform` stage lines:
+Stage times from the `build-platform` stage lines.
+The 0.1.98 build on 2026-10-23 was the first build under its checkout key, so its target cache was empty.
+The next bump in the same checkout gives the times of a bump with a full cache.
 
-| Stage | Elapsed |
-|---|---|
-| `image-build-host` | not yet measured |
-| `image-build-runner` | not yet measured |
-| `image-build-gates` | not yet measured |
-| `image-build-identity` | not yet measured |
-| `image-build-edge-web` | not yet measured |
-| Total | not yet measured |
+| Stage | 0.1.98, empty cache | Next bump |
+|---|---|---|
+| `input-lookups` | 306.3 s | not yet measured |
+| `image-build-host` | 3107.3 s | not yet measured |
+| `image-build-runner` | 147.9 s | not yet measured |
+| `image-build-gates` | 3.8 s | not yet measured |
+| `image-build-identity` | 1.2 s | not yet measured |
+| `image-build-edge-web` | 549.9 s | not yet measured |
+| Total | 4223 s | not yet measured |
 
 ## Guest artifact comparisons
 
