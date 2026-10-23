@@ -453,7 +453,7 @@ You do not upgrade a project-environment database by hand.
 The package stage of `wamn-ctl env apply` applies the pending project files of its binary first, and a refusal stops the apply before any Kubernetes write.
 
 Without `--confirm`, the verb prints the pending files and changes nothing.
-One run applies the pending files in one transaction and records them in `registry.schema_migrations` or `app_system.schema_migrations`.
+One run applies the pending files in one transaction and records them in `registry.schema_migrations` or `platform.schema_migrations`.
 A failure leaves the database as it was.
 The verb refuses a recorded file that differs from the file of the binary, with `schema-migration-drift`.
 It runs system files as `wamn_system` and project files as the admin connection.

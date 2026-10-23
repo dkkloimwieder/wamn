@@ -20,10 +20,10 @@ Server authorization is authoritative. The UI may hide unavailable actions, but 
 Every admin write runs in the host. `wamn_app` remains SELECT-only on:
 
 ```text
-app_system.users
-app_system.roles
-app_system.user_roles
-app_system.permissions
+platform.users
+platform.roles
+platform.user_roles
+platform.permissions
 ```
 
 No guest component writes an authorization relation. No guest component receives a `wamn_system` connection.
@@ -153,7 +153,7 @@ identity.project_roles: project-admin
         ↓
 identity.project_env_memberships
         ↓
-app_system.user_roles: admin
+platform.user_roles: admin
 ```
 
 for every existing project and environment in the org.
@@ -165,7 +165,7 @@ identity.project_roles: project-admin
         ↓
 identity.project_env_memberships
         ↓
-app_system.user_roles: admin
+platform.user_roles: admin
 ```
 
 for every existing environment of that project.

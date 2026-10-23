@@ -131,7 +131,7 @@ async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
         // The local application's operator service holds the admin role.
         let principal: String = client
             .query_one(
-                "SELECT id::text FROM app_system.users WHERE tenant_id = $1 AND type = 'service' \
+                "SELECT id::text FROM platform.users WHERE tenant_id = $1 AND type = 'service' \
                    AND email = 'local@example.invalid'",
                 &[&tenant],
             )

@@ -339,7 +339,7 @@ Serialization and deadlock errors reach the caller without an automatic transact
 
 ### The write log
 
-`app_system.write_log` holds the idempotency record of every create, update, delete and command in one project database.
+`platform.write_log` holds the idempotency record of every create, update, delete and command in one project database.
 `deploy/sql/app-schema.sql` installs it, so no application migration names it.
 It has no tenant column and no row policy, because the database is the tenant, and no record history: the rows the work writes carry the actor.
 `wamn_app` holds `INSERT`, `SELECT`, `UPDATE (result)` and `DELETE` on it.
@@ -530,7 +530,7 @@ The [retention task](#retention-task) removes expired entries.
 
 [Generation validation](../../crates/schema/generator/src/generate/validation.rs) compares the declaration with the schema.
 It refuses a selected column that is absent or nullable, and a logged relation with no primary key.
-A selected time column must be `timestamptz`, and a selected actor column must be `uuid`, the type of `app_system.users.id`.
+A selected time column must be `timestamptz`, and a selected actor column must be `uuid`, the type of `platform.users.id`.
 Generation also refuses a column with a reserved name that the declaration does not select.
 Generation makes each column with a reserved stamp name server-owned by its name.
 It therefore refuses a writable declaration of that column and omits it from generated input.
@@ -705,7 +705,7 @@ The role holds schema `USAGE`, `DELETE`, and `SELECT (row_key, position, changed
 It revokes every other privilege of the role, so a change to `"unlimited"` or `"none"` revokes the grants.
 It changes nothing in a database that has no role.
 The provisioning grant verifier reads `pg_trigger` in each database with the query that the verb runs.
-It refuses any other grant, a grant on an `unlimited` history table, and a grant in a reserved schema or `app_system`.
+It refuses any other grant, a grant on an `unlimited` history table, and a grant in a reserved schema or `platform`.
 
 ### Integration state
 
@@ -720,7 +720,7 @@ Only the consumer schema requires CDC capture.
 
 ### Actors
 
-The actor is the `app_system.users` id of the executing principal, never the credential.
+The actor is the `platform.users` id of the executing principal, never the credential.
 The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each kind of delivery.
 A writer outside the host binds `app.user_id` with `set_config` in its own transaction.
 Provisioning binds `wamn:provisioning`.
@@ -730,14 +730,14 @@ The binding of a platform component also sets `app.operation` to the same `wamn:
 Administrative SQL must bind the operator's user row, and test fixtures must bind a provisioned test principal.
 Administrative SQL and test fixtures also bind `app.operation` as `admin:<kebab-purpose>`, including a transaction that only deletes rows.
 
-`app_system.users.type` is `user`, `service`, or `platform`, and it has no default.
+`platform.users.type` is `user`, `service`, or `platform`, and it has no default.
 Users have `user` rows, stations and integrations have `service` rows, and platform components have `platform` rows.
 The migrations that renamed `person` and `human` to `user` bind `wamn:provisioning`, so each changed row records that principal and that run, and old history rows keep the old name in their JSON.
 The type does not change how a principal authenticates.
 A `platform` row carries its `wamn:<component>` name in `display_name` and its derived id.
 Its email is `<component>@<platform-domain>`.
 The `users_platform_principal_check` constraint pins each name and id pair, and it refuses a `wamn:` name on another type.
-`wamn_app` has only `SELECT` on `app_system.users`.
+`wamn_app` has only `SELECT` on `platform.users`.
 
 The [platform principal owner](../../crates/control/provision/src/platform_principals.rs) renders the platform rows of one tenant.
 It refuses a platform domain that is not a valid domain name.
@@ -752,7 +752,7 @@ The file creates each history table with the tenant flag, so the table has a `te
 Each history table has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
 `wamn_app` holds `INSERT` on the entry columns of `configurations_history`, because a guest writes only `configurations`.
-`wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
+`wamn_app` holds no other privilege on a history table, so a guest reads no `platform` history and cannot set `position`.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles`, `permissions` and `environment`.
 It holds `INSERT` on the entry columns of their five history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
@@ -866,7 +866,7 @@ The application host writes roles, permissions and user roles through its [host 
 A member that `wamn-ctl grant-project-env-membership` or `wamn-ctl invite` adds gains the row at the next `wamn-ctl env apply`, because those verbs hold no tenant connection.
 A principal with no users row cannot write in the tenant.
 The invocation bind refuses it.
-`WamnPostgres::bind_session_claims` refuses a principal that owns no `app_system.users` row in the tenant.
+`WamnPostgres::bind_session_claims` refuses a principal that owns no `platform.users` row in the tenant.
 The caller sees `permission-denied`.
 The host's [auth memory](execution.md#auth-memory) answers the check, and a miss reads the row.
 A removed row stays accepted until a change message clears the memory or 60 seconds pass.

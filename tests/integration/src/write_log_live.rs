@@ -4,7 +4,7 @@
 //! One local application serves the fixture's routes over a disposable
 //! database. The host claims each item's key in the item's transaction. The
 //! create case posts `widget.create` items and reads `inventory.widget` and
-//! `app_system.write_log` directly: a retry with the same request answers the
+//! `platform.write_log` directly: a retry with the same request answers the
 //! stored result and adds no row, a changed request is refused, a refused
 //! item leaves its key free, and two concurrent calls with one key write one
 //! row. The batch case posts `widget.record_batch`: a retry with its lines in
@@ -139,7 +139,7 @@ async fn counts(database: &tokio_postgres::Client, key: &str) -> anyhow::Result<
     let row = database
         .query_one(
             "SELECT (SELECT count(*) FROM inventory.widget), \
-                    (SELECT count(*) FROM app_system.write_log \
+                    (SELECT count(*) FROM platform.write_log \
                       WHERE operation = 'platform-fixture:widget/create' \
                         AND idempotency_key = $1)",
             &[&key],
@@ -237,7 +237,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     let stored = " \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} }\t";
     database
         .execute(
-            "UPDATE app_system.write_log SET result = $1 \
+            "UPDATE platform.write_log SET result = $1 \
              WHERE operation = 'platform-fixture:widget/create' AND idempotency_key = 'k-3'",
             &[&stored],
         )
@@ -324,7 +324,7 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
     );
     let logged: i64 = database
         .query_one(
-            "SELECT count(*) FROM app_system.write_log \
+            "SELECT count(*) FROM platform.write_log \
               WHERE operation = 'platform-fixture:widget/record-batch' \
                 AND idempotency_key = 'k-batch'",
             &[],

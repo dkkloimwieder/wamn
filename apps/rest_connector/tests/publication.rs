@@ -254,7 +254,7 @@ async fn composed_sql_uses_released_schemas(
     let stored = client
         .query_one(
             "SELECT item.name, log.result::jsonb FROM rest_consumer_fixture.item AS item \
-             CROSS JOIN app_system.write_log AS log \
+             CROSS JOIN platform.write_log AS log \
              WHERE item.key = 'native-item' AND log.operation = 'rest-consumer-fixture:item/record' \
              AND log.idempotency_key = 'live-key'",
             &[],

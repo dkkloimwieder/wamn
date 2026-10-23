@@ -475,7 +475,7 @@ async fn seed_with_client(
         .batch_execute(&format!(
             "{role_bootstrap}\n\
              DROP SCHEMA IF EXISTS catalog CASCADE;\n\
-             DROP SCHEMA IF EXISTS app_system CASCADE;\n\
+             DROP SCHEMA IF EXISTS platform CASCADE;\n\
              DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
              {schema}\n\
              {app_schema}\n\

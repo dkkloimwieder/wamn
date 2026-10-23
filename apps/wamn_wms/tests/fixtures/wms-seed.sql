@@ -45,7 +45,7 @@ TRUNCATE wms.inventory_transaction,
          wms.packaging_quantity, wms.packaging,
          wms.product,
          wms.location;
-DELETE FROM app_system.write_log WHERE operation LIKE 'wamn-wms:%';
+DELETE FROM platform.write_log WHERE operation LIKE 'wamn-wms:%';
 \endif
 
 INSERT INTO wms.product (id, product_code)

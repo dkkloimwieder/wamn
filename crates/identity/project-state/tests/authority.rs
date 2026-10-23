@@ -73,7 +73,7 @@ fn current_database(url: &str) -> String {
 
 /// The superuser prelude: a production-prepared tenant-scoped App generation,
 /// the stable passwordless `wamn_app` ACL carrier it inherits, a fresh
-/// `app_system` applied verbatim from the DDL of record, and one tenant's rows.
+/// `platform` applied verbatim from the DDL of record, and one tenant's rows.
 /// Seeded as the superuser, so the seed itself is unaffected by the grants under
 /// test. The fixture writes as U1, its test principal, whose row stamps itself,
 /// under an administrative operation, and both bindings stay for the probes.
@@ -96,25 +96,25 @@ fn prelude(url: &str) -> (String, String) {
         APP_GENERATION_PASSWORD,
         APP_GENERATION_VALID_UNTIL,
     );
-    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&app_schema_sql());
     writeln!(
         script,
         r#"
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
-INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','user','u1@t1');
-INSERT INTO app_system.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
-INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
-INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
-INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
-INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);"#
+INSERT INTO platform.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','user','u1@t1');
+INSERT INTO platform.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
+INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
+INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
+INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
+INSERT INTO platform.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);"#
     )
     .expect("writing to a String cannot fail");
     (app_generation, script)
 }
 
-const TEARDOWN: &str = "\nDROP SCHEMA app_system CASCADE;\n";
+const TEARDOWN: &str = "\nDROP SCHEMA platform CASCADE;\n";
 
 /// Run `script` through `psql`, failing the test with its stderr if any statement
 /// or `ASSERT` does.
@@ -168,10 +168,10 @@ DECLARE relation text; operation text;
 BEGIN
   FOREACH relation IN ARRAY ARRAY['users','roles','user_roles','permissions','api_keys',
                                   'environment'] LOOP
-    ASSERT has_table_privilege('wamn_app'::name, ('app_system.'||relation)::text, 'SELECT'::text),
+    ASSERT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, 'SELECT'::text),
       format('%s must stay readable — the platform revokes writes, not reads', relation);
     FOREACH operation IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
-      ASSERT NOT has_table_privilege('wamn_app'::name, ('app_system.'||relation)::text, operation),
+      ASSERT NOT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, operation),
         format('wamn_app holds %s on %s — author SQL can mint its own authorization', operation, relation);
     END LOOP;
   END LOOP;
@@ -183,9 +183,9 @@ SET LOCAL ROLE {app_generation};
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
     'the tenant authority is the prepared App generation';
-  ASSERT (SELECT count(*) FROM app_system.users) = 1,
+  ASSERT (SELECT count(*) FROM platform.users) = 1,
     'the generation-derived tenant is live and users is still readable';
-  ASSERT (SELECT count(*) FROM app_system.user_roles) = 1,
+  ASSERT (SELECT count(*) FROM platform.user_roles) = 1,
     'the role linkage 4.2 resolves app.role from is still readable';
 END $$;
 
@@ -193,26 +193,26 @@ DO $$
 DECLARE probe_sql text;
 BEGIN
   FOREACH probe_sql IN ARRAY ARRAY[
-    'INSERT INTO app_system.users (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''user'', ''intruder@t1'')',
-    'INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES (''{TENANT}'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
-    'UPDATE app_system.users SET status = ''disabled''',
-    'UPDATE app_system.users SET display_name = ''wamn:intruder''',
-    'DELETE FROM app_system.users',
-    'INSERT INTO app_system.roles (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
-    'UPDATE app_system.roles SET description = ''changed''',
-    'DELETE FROM app_system.roles',
-    'INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES (''{TENANT}'', ''{U1}'', ''auditor'')',
-    'UPDATE app_system.user_roles SET role_name = ''admin''',
-    'DELETE FROM app_system.user_roles',
-    'INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES (''{TENANT}'', ''auditor'', ''platform-fixture:widget/list'')',
-    'UPDATE app_system.permissions SET permission = ''platform-fixture:widget/list''',
-    'DELETE FROM app_system.permissions',
-    'INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
-    'UPDATE app_system.api_keys SET revoked_at = now()',
-    'DELETE FROM app_system.api_keys',
-    'INSERT INTO app_system.environment (tenant_id, status) VALUES (''{TENANT}'', ''active'')',
-    'UPDATE app_system.environment SET status = ''active''',
-    'DELETE FROM app_system.environment'
+    'INSERT INTO platform.users (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''user'', ''intruder@t1'')',
+    'INSERT INTO platform.users (tenant_id, id, type, email, display_name) VALUES (''{TENANT}'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
+    'UPDATE platform.users SET status = ''disabled''',
+    'UPDATE platform.users SET display_name = ''wamn:intruder''',
+    'DELETE FROM platform.users',
+    'INSERT INTO platform.roles (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
+    'UPDATE platform.roles SET description = ''changed''',
+    'DELETE FROM platform.roles',
+    'INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES (''{TENANT}'', ''{U1}'', ''auditor'')',
+    'UPDATE platform.user_roles SET role_name = ''admin''',
+    'DELETE FROM platform.user_roles',
+    'INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES (''{TENANT}'', ''auditor'', ''platform-fixture:widget/list'')',
+    'UPDATE platform.permissions SET permission = ''platform-fixture:widget/list''',
+    'DELETE FROM platform.permissions',
+    'INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
+    'UPDATE platform.api_keys SET revoked_at = now()',
+    'DELETE FROM platform.api_keys',
+    'INSERT INTO platform.environment (tenant_id, status) VALUES (''{TENANT}'', ''active'')',
+    'UPDATE platform.environment SET status = ''active''',
+    'DELETE FROM platform.environment'
   ] LOOP
     BEGIN
       EXECUTE probe_sql;
@@ -249,7 +249,7 @@ DO $$
 DECLARE operation text;
 BEGIN
   FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE'] LOOP
-    ASSERT has_table_privilege('wamn_app'::name, 'app_system.configurations'::text, operation),
+    ASSERT has_table_privilege('wamn_app'::name, 'platform.configurations'::text, operation),
       format('configurations is tenant business state — %s must stay granted', operation);
   END LOOP;
 END $$;
@@ -260,15 +260,15 @@ SET LOCAL ROLE {app_generation};
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
     'the tenant authority is the prepared App generation';
-  INSERT INTO app_system.configurations (tenant_id, config_key, config_value)
+  INSERT INTO platform.configurations (tenant_id, config_key, config_value)
     VALUES ('{TENANT}', 'probe', 'true'::jsonb);
-  ASSERT (SELECT count(*) FROM app_system.configurations WHERE config_key = 'probe') = 1,
+  ASSERT (SELECT count(*) FROM platform.configurations WHERE config_key = 'probe') = 1,
     'a project may add its own configuration';
-  UPDATE app_system.configurations SET config_value = 'false'::jsonb WHERE config_key = 'probe';
-  ASSERT (SELECT config_value FROM app_system.configurations WHERE config_key = 'probe') = 'false'::jsonb,
+  UPDATE platform.configurations SET config_value = 'false'::jsonb WHERE config_key = 'probe';
+  ASSERT (SELECT config_value FROM platform.configurations WHERE config_key = 'probe') = 'false'::jsonb,
     'a project may rewrite its own configuration';
-  DELETE FROM app_system.configurations WHERE config_key = 'probe';
-  ASSERT (SELECT count(*) FROM app_system.configurations WHERE config_key = 'probe') = 0,
+  DELETE FROM platform.configurations WHERE config_key = 'probe';
+  ASSERT (SELECT count(*) FROM platform.configurations WHERE config_key = 'probe') = 0,
     'a project may remove its own configuration';
 END $$;
 
@@ -276,7 +276,7 @@ RESET ROLE;
 DO $$ BEGIN
   ASSERT (SELECT array_agg(type || '|' || tenant_id || '|' || operation || '|' || changed_by
                            ORDER BY position)
-            FROM app_system.configurations_history
+            FROM platform.configurations_history
            WHERE row_key = '{{"tenant_id": "{TENANT}", "config_key": "probe"}}'::jsonb)
          = ARRAY['insert|{TENANT}|admin:seed-authority-fixture|{U1}',
                  'update|{TENANT}|admin:seed-authority-fixture|{U1}',
@@ -291,7 +291,7 @@ ROLLBACK;"#
     run(&url, &script);
 }
 
-/// The history tables of `app_system` (epic ruling 76). An App generation
+/// The history tables of `platform` (epic ruling 76). An App generation
 /// reads no history table and writes none directly, except
 /// `configurations_history`, whose entry columns it inserts when the log
 /// trigger fires on its own `configurations` write. The grant leaves out
@@ -319,7 +319,7 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
             ),
         };
         format!(
-            "'INSERT INTO app_system.{history} ({column}tenant_id, row_key, type, operation, \
+            "'INSERT INTO platform.{history} ({column}tenant_id, row_key, type, operation, \
              changed_by, changed_at, transaction_id, before, after){overriding} VALUES \
              ({value}''{TENANT}'', ''{row_key}'', ''delete'', ''admin:forge-history'', \
              ''{U1}'', now(), 1, ''{{}}'', ''{{}}'')'"
@@ -375,18 +375,18 @@ BEGIN
                                  'permissions_history','configurations_history',
                                  'api_keys_history','environment_history'] LOOP
     FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
-      ASSERT NOT has_table_privilege('wamn_app'::name, ('app_system.'||history)::text, operation),
+      ASSERT NOT has_table_privilege('wamn_app'::name, ('platform.'||history)::text, operation),
         format('wamn_app holds table %s on %s', operation, history);
     END LOOP;
     FOREACH operation IN ARRAY ARRAY['SELECT','UPDATE'] LOOP
-      ASSERT NOT has_any_column_privilege('wamn_app'::name, ('app_system.'||history)::text, operation),
+      ASSERT NOT has_any_column_privilege('wamn_app'::name, ('platform.'||history)::text, operation),
         format('wamn_app holds column %s on %s', operation, history);
     END LOOP;
-    ASSERT has_any_column_privilege('wamn_app'::name, ('app_system.'||history)::text, 'INSERT')
+    ASSERT has_any_column_privilege('wamn_app'::name, ('platform.'||history)::text, 'INSERT')
            = (history = 'configurations_history'),
       format('wamn_app column INSERT on %s does not match its R11 class', history);
   END LOOP;
-  ASSERT NOT has_column_privilege('wamn_app'::name, 'app_system.configurations_history'::text,
+  ASSERT NOT has_column_privilege('wamn_app'::name, 'platform.configurations_history'::text,
                                   'position'::text, 'INSERT'::text),
     'wamn_app can choose the position of a configurations entry';
 END $$;
@@ -400,20 +400,20 @@ BEGIN
   ASSERT current_user = '{app_generation}',
     'the tenant authority is the prepared App generation';
   FOREACH probe_sql IN ARRAY ARRAY[
-    'SELECT count(*) FROM app_system.users_history',
-    'SELECT count(*) FROM app_system.roles_history',
-    'SELECT count(*) FROM app_system.user_roles_history',
-    'SELECT count(*) FROM app_system.permissions_history',
-    'SELECT count(*) FROM app_system.configurations_history',
-    'SELECT count(*) FROM app_system.api_keys_history',
-    'SELECT count(*) FROM app_system.environment_history',
+    'SELECT count(*) FROM platform.users_history',
+    'SELECT count(*) FROM platform.roles_history',
+    'SELECT count(*) FROM platform.user_roles_history',
+    'SELECT count(*) FROM platform.permissions_history',
+    'SELECT count(*) FROM platform.configurations_history',
+    'SELECT count(*) FROM platform.api_keys_history',
+    'SELECT count(*) FROM platform.environment_history',
     {direct_writes},
-    'UPDATE app_system.configurations_history SET operation = ''admin:forge-history''',
-    'DELETE FROM app_system.configurations_history'
+    'UPDATE platform.configurations_history SET operation = ''admin:forge-history''',
+    'DELETE FROM platform.configurations_history'
   ] LOOP
     BEGIN
       EXECUTE probe_sql;
-      RAISE EXCEPTION 'author SQL reached an app_system history table: %', probe_sql;
+      RAISE EXCEPTION 'author SQL reached an platform history table: %', probe_sql;
     EXCEPTION WHEN insufficient_privilege THEN NULL;
     END;
   END LOOP;

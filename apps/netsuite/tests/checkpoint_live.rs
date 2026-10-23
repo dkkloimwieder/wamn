@@ -90,7 +90,7 @@ pub async fn invoke(
         .await?;
     let principal: String = admin
         .query_one(
-            "SELECT id::text FROM app_system.users WHERE tenant_id=$1 AND type='service'",
+            "SELECT id::text FROM platform.users WHERE tenant_id=$1 AND type='service'",
             &[&TENANT],
         )
         .await?

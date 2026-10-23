@@ -452,7 +452,7 @@ pub struct EnableCdcProjectEnvArgs {
     pub env: String,
 
     /// The application DATA schema the publication covers (not the
-    /// `app_system` auth schema).
+    /// `platform` auth schema).
     #[arg(long, default_value = "public")]
     pub schema: String,
 

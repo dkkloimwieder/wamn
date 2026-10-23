@@ -169,7 +169,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $reset$ BEGIN \
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{generation}') THEN \
@@ -510,7 +510,7 @@ async fn install_lineage_fixture(url: &str) -> Client {
     admin
         .batch_execute(
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $reset$ BEGIN \
                IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
@@ -660,7 +660,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     let admin = install_lineage_fixture(&url).await;
     apply(&url, fixture_package_root()).await;
     apply(&url, overlay_package_root()).await;
-    // app_system and catalog are platform schemas. No package manifest names
+    // platform and catalog are platform schemas. No package manifest names
     // them, so the reconciler never reads a relation there. The floor grants the
     // two schema files install stand outside every package declaration, and so
     // does this seeded grant.
@@ -676,8 +676,8 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     .expect("reconcile the installed package set beside platform-schema authority");
 
     for (relation, privilege) in [
-        ("app_system.users", "SELECT"),
-        ("app_system.configurations", "UPDATE"),
+        ("platform.users", "SELECT"),
+        ("platform.configurations", "UPDATE"),
         ("catalog.packages", "SELECT"),
     ] {
         assert!(

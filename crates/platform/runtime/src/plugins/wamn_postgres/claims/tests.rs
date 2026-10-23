@@ -753,7 +753,7 @@ const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
 /// The platform principal id `wamn-project-state` derives for `wamn:executor`.
 const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 
-/// The `app_system.users` floor the provisioning check reads
+/// The `platform.users` floor the provisioning check reads
 /// (`wamn-0h0g.9.19`).
 ///
 /// Only the two columns the check names, because row existence is the whole
@@ -761,13 +761,13 @@ const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 /// row-level security and its type checks. The guest login reads it, so the
 /// fixture grants the stable ACL role what the production floor grants: usage
 /// on the schema and select on the table.
-const ENSURE_LIVE_USERS_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS app_system; \
-     CREATE TABLE IF NOT EXISTS app_system.users ( \
+const ENSURE_LIVE_USERS_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; \
+     CREATE TABLE IF NOT EXISTS platform.users ( \
          tenant_id text NOT NULL, \
          id uuid NOT NULL, \
          PRIMARY KEY (tenant_id, id)); \
-     GRANT USAGE ON SCHEMA app_system TO wamn_app; \
-     GRANT SELECT ON app_system.users TO wamn_app;";
+     GRANT USAGE ON SCHEMA platform TO wamn_app; \
+     GRANT SELECT ON platform.users TO wamn_app;";
 
 /// Install the users floor in one disposable database and name the principals
 /// that own a row there.
@@ -782,11 +782,11 @@ pub(in crate::plugins::wamn_postgres) async fn ensure_live_users_rows(
             "{ENSURE_GUEST_ACL_ROLE_SQL} {ENSURE_LIVE_USERS_TABLE_SQL}"
         ))
         .await
-        .expect("install the live app_system.users floor");
+        .expect("install the live platform.users floor");
     for principal in principals {
         admin
             .execute(
-                "INSERT INTO app_system.users (tenant_id, id) VALUES ($1, $2::text::uuid) \
+                "INSERT INTO platform.users (tenant_id, id) VALUES ($1, $2::text::uuid) \
                  ON CONFLICT DO NOTHING",
                 &[&tenant, principal],
             )
@@ -2434,7 +2434,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         .expect("drop the fixture");
 }
 
-/// The bind refuses a principal that owns no `app_system.users` row in the
+/// The bind refuses a principal that owns no `platform.users` row in the
 /// tenant, and the refusal names the cause (`wamn-0h0g.9.19`).
 ///
 /// The floor is installed and the row is left out, so the refusal is a
@@ -2550,7 +2550,7 @@ async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
     let admin = connect_raw(admin_url).await;
     admin
         .execute(
-            "DELETE FROM app_system.users WHERE tenant_id = $1",
+            "DELETE FROM platform.users WHERE tenant_id = $1",
             &[&TENANT],
         )
         .await

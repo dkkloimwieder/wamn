@@ -380,7 +380,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     .await;
 
     dev.execute(
-        "DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid",
+        "DELETE FROM platform.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid",
         &[&TENANT, &alice.id().as_str()],
     )
     .await
@@ -390,7 +390,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     seed_user(dev, &alice, TENANT, "receiver").await;
     for status in ["disabled", "invited"] {
         dev.execute(
-            "UPDATE app_system.users SET status=$1 WHERE tenant_id=$2 AND id=$3::text::uuid",
+            "UPDATE platform.users SET status=$1 WHERE tenant_id=$2 AND id=$3::text::uuid",
             &[&status, &TENANT, &alice.id().as_str()],
         )
         .await
@@ -398,7 +398,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         refuse(https, alice_pat.token(), aud).await;
     }
     dev.execute(
-        "DELETE FROM app_system.users WHERE tenant_id=$1 AND id=$2::text::uuid",
+        "DELETE FROM platform.users WHERE tenant_id=$1 AND id=$2::text::uuid",
         &[&TENANT, &alice.id().as_str()],
     )
     .await
@@ -850,7 +850,7 @@ async fn failed_role_queries_discard_reader(
     let before = only_reader_pid(dev, target).await;
     let prod_before = only_reader_pid(dev, &fixture.targets[1]).await;
     let other_before = only_reader_pid(dev, &fixture.targets[2]).await;
-    dev.batch_execute("BEGIN; LOCK TABLE app_system.user_roles IN ACCESS EXCLUSIVE MODE")
+    dev.batch_execute("BEGIN; LOCK TABLE platform.user_roles IN ACCESS EXCLUSIVE MODE")
         .await
         .expect_redacted("hold actual role read");
     let pending = request(https, pat, target.audience());
@@ -879,7 +879,7 @@ async fn failed_role_queries_discard_reader(
     );
 
     dev.batch_execute(&format!(
-        "REVOKE SELECT (role_name) ON app_system.user_roles FROM {}",
+        "REVOKE SELECT (role_name) ON platform.user_roles FROM {}",
         quote_ident(WorkloadRoleFamily::SessionRoleReader.acl_role())
     ))
     .await
@@ -1125,7 +1125,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
         .chain(&fixture.environments)
         .enumerate()
     {
-        let tables = database.client.query("SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('identity','registry','provisioning','app_system','catalog','wamn_run','wamn_authority') AND c.relkind='r' ORDER BY n.nspname,c.relname", &[])
+        let tables = database.client.query("SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('identity','registry','provisioning','platform','catalog','wamn_run','wamn_authority') AND c.relkind='r' ORDER BY n.nspname,c.relname", &[])
             .await.expect_redacted("fixture relation list");
         for table in tables {
             let schema: String = table.get(0);
@@ -1139,16 +1139,16 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
 }
 
 async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &str) {
-    client.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
+    client.execute("INSERT INTO platform.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
         .await.expect_redacted("tenant user fixture");
     client
         .execute(
-            "INSERT INTO app_system.roles (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            "INSERT INTO platform.roles (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
             &[&tenant, &role],
         )
         .await
         .expect_redacted("tenant role fixture");
-    client.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3) ON CONFLICT DO NOTHING", &[&tenant, &principal.id().as_str(), &role])
+    client.execute("INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3) ON CONFLICT DO NOTHING", &[&tenant, &principal.id().as_str(), &role])
         .await.expect_redacted("exact tenant/principal role fixture");
 }
 
@@ -1306,7 +1306,7 @@ async fn setup(raw: &str) -> Fixture {
             .batch_execute(&format!(
                 "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
                  SET app.operation = 'admin:session-exchange-fixture'; \
-                 INSERT INTO app_system.users (tenant_id,id,type,email) \
+                 INSERT INTO platform.users (tenant_id,id,type,email) \
                  VALUES ('{TENANT}','{FIXTURE_PRINCIPAL}','user','fixture@example.invalid');"
             ))
             .await
@@ -1632,7 +1632,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE app_system.users SET status='disabled' WHERE id=$1::text::uuid",
+            "UPDATE platform.users SET status='disabled' WHERE id=$1::text::uuid",
             &[&alice.id().as_str()],
         )
         .await
@@ -1648,7 +1648,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE app_system.users SET status='active' WHERE id=$1::text::uuid",
+            "UPDATE platform.users SET status='active' WHERE id=$1::text::uuid",
             &[&alice.id().as_str()],
         )
         .await
@@ -1800,16 +1800,20 @@ async fn password_environment_discovery_requires_current_authority() {
     fixture.environments[1]
         .client
         .execute(
-            "DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid",
+            "DELETE FROM platform.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid",
             &[&TENANT, &alice.id().as_str()],
         )
         .await
         .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
-    fixture.environments[0].client.execute(
-        "UPDATE app_system.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
-        &[&TENANT, &alice.id().as_str()],
-    ).await.unwrap();
+    fixture.environments[0]
+        .client
+        .execute(
+            "UPDATE platform.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
+            &[&TENANT, &alice.id().as_str()],
+        )
+        .await
+        .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
     seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();

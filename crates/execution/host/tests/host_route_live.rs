@@ -133,14 +133,14 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             "BEGIN; \
              SELECT set_config('app.user_id', '{MEMBER}', true), \
                     set_config('app.operation', 'admin:host-route-fixture', true); \
-             INSERT INTO app_system.roles (tenant_id, name) VALUES ('{TENANT}', 'written'); \
-             DELETE FROM app_system.roles WHERE tenant_id = '{TENANT}' AND name = 'written'; \
+             INSERT INTO platform.roles (tenant_id, name) VALUES ('{TENANT}', 'written'); \
+             DELETE FROM platform.roles WHERE tenant_id = '{TENANT}' AND name = 'written'; \
              COMMIT;"
         ))
         .await?;
     let entries: i64 = admin
         .query_one(
-            "SELECT count(*) FROM app_system.roles_history WHERE (before ->> 'name') = 'written' \
+            "SELECT count(*) FROM platform.roles_history WHERE (before ->> 'name') = 'written' \
                 OR (after ->> 'name') = 'written'",
             &[],
         )
@@ -344,7 +344,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     // the route.
     admin
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+            "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
              VALUES ($1, 'purchase-reader', 'wamn-control:role/list')",
             &[&TENANT],
         )
@@ -492,7 +492,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     );
     let stamp = admin
         .query_one(
-            "SELECT operation, changed_by::text FROM app_system.user_roles_history \
+            "SELECT operation, changed_by::text FROM platform.user_roles_history \
              WHERE (after ->> 'role_name') = 'clerk'",
             &[],
         )

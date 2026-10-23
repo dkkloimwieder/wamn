@@ -27,9 +27,9 @@ const SCOPE: &str = "write-log-item";
 fn write_log_sql() -> &'static str {
     let schema = include_str!("../../../../../../../deploy/sql/app-schema.sql");
     let start = schema
-        .find("CREATE TABLE IF NOT EXISTS app_system.write_log")
+        .find("CREATE TABLE IF NOT EXISTS platform.write_log")
         .expect("the schema creates the write log");
-    let grant = "GRANT DELETE ON app_system.write_log TO wamn_app;";
+    let grant = "GRANT DELETE ON platform.write_log TO wamn_app;";
     let end = schema[start..]
         .find(grant)
         .expect("the schema grants the write log")
@@ -144,7 +144,7 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
     };
     let rows = || {
         database
-            .execute(&["SELECT count(*) FROM app_system.write_log"])
+            .execute(&["SELECT count(*) FROM platform.write_log"])
             .expect("count the write log")
     };
     let outcome = StoredOutcome(json!({"value": {"id": 7}}));
@@ -204,7 +204,7 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
             let waits = database
                 .execute(&["SELECT count(*) FROM pg_stat_activity \
                      WHERE wait_event_type = 'Lock' \
-                       AND query LIKE 'INSERT INTO app_system.write_log%'"])
+                       AND query LIKE 'INSERT INTO platform.write_log%'"])
                 .expect("read the lock waits");
             if waits.trim() == "1" {
                 break;
@@ -276,7 +276,7 @@ async fn a_missing_finish_rolls_back_the_pipelined_commit() {
     ));
     assert_eq!(
         database
-            .execute(&["SELECT count(*) FROM app_system.write_log"])
+            .execute(&["SELECT count(*) FROM platform.write_log"])
             .unwrap()
             .trim(),
         "0"

@@ -34,7 +34,7 @@ serde_yaml = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-pg-core = { workspace = true }
 # The platform principal rows take their component list, names, and derived
-# ids from the app_system model.
+# ids from the platform model.
 wamn-project-state = { workspace = true }
 wamn-run-state = { workspace = true, features = ["tenant-key"] }
 # Operation-grant reconciliation consumes the same deny-unknown-fields package

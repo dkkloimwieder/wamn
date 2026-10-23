@@ -370,7 +370,7 @@ session_target() {
   target_secret=wamn-session-role-reader-$org--shared--$environment
   run "${kube[@]}" -n "$namespace" exec "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
     -c "CREATE DATABASE \"$database\"" >"$evidence_dir/session-$label-create.log" 2>&1
-  # The stamp function comes first, because every app_system table has a stamp trigger.
+  # The stamp function comes first, because every platform table has a stamp trigger.
   # The wamn_app history grants follow it, because this database is a tenant database.
   cat "$repo_root/deploy/sql/record-history.sql" "$repo_root/deploy/sql/record-history-app-grants.sql" \
     "$repo_root/deploy/sql/app-schema.sql" \
@@ -383,14 +383,14 @@ session_target() {
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
     --single-transaction <"$evidence_dir/session-$label-platform-principals.sql" >"$evidence_dir/session-$label-platform-principals.log" 2>&1
   # The fixture writes as the session user, whose row stamps itself, under
-  # an administrative operation, because every app_system table keeps a log.
+  # an administrative operation, because every platform table keeps a log.
   printf '%s\n' "SET app.user_id = '$session_user_id';" \
     "SET app.operation = 'admin:seed-session-journey-fixture';" \
     "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
     "REVOKE CONNECT, TEMPORARY ON DATABASE \"$database\" FROM PUBLIC;" \
-    "INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('$tenant','$session_user_id','user','session@example.invalid');" \
-    "INSERT INTO app_system.roles (tenant_id,name) VALUES ('$tenant','$role');" \
-    "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('$tenant','$session_user_id','$role');" \
+    "INSERT INTO platform.users (tenant_id,id,type,email) VALUES ('$tenant','$session_user_id','user','session@example.invalid');" \
+    "INSERT INTO platform.roles (tenant_id,name) VALUES ('$tenant','$role');" \
+    "INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ('$tenant','$session_user_id','$role');" \
     >"$evidence_dir/session-$label-data.sql"
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
     <"$evidence_dir/session-$label-data.sql" >"$evidence_dir/session-$label-data.log" 2>&1

@@ -12,7 +12,7 @@
 //! green report, and a release row of the shape the publish writes.
 //!
 //! Two databases on the PostgreSQL server of the test process: a project
-//! database with the tenant+app_system floor and a control database with the
+//! database with the tenant+platform floor and a control database with the
 //! system floor. The test holds the process lock of that server.
 
 use std::collections::BTreeMap;
@@ -487,7 +487,7 @@ async fn assert_nested_effect_snapshot(
 #[tokio::test]
 async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     let _lock = wamn_test_postgres::lock();
-    let project_database = wamn_project_state::test_database::tenant_app_system();
+    let project_database = wamn_project_state::test_database::tenant_platform();
     let control_database = wamn_control_provision::test_database::system();
     let project_url = project_database.url().to_owned();
     let control_url = control_database.url().to_owned();

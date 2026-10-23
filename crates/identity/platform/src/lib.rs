@@ -5,7 +5,7 @@
 //! This crate owns user and service principals, org memberships and roles, project-role assignments,
 //! project-environment memberships, passwords, invitations, personal access tokens, and session keys.
 //! It owns the fixed session-token profile but contains no HTTP, OIDC,
-//! or per-project `app_system` authority: every function here is
+//! or per-project `platform` authority: every function here is
 //! transport-neutral and takes an already-open client. An OIDC adapter may
 //! resolve an externally authenticated subject through [`resolve_subject`].
 //!
@@ -547,7 +547,7 @@ impl From<wamn_session::SessionError> for IdentityError {
 ///
 /// `email` is the user's deliverable address. It is separate from `subject`,
 /// which authenticates and carries no promise of delivery.
-/// `reconcile-run-plane` copies the email into the `app_system.users` user
+/// `reconcile-run-plane` copies the email into the `platform.users` user
 /// row of every tenant this user can write in (`wamn-0h0g.9.18`), so a user
 /// principal always has one.
 pub async fn create_user(

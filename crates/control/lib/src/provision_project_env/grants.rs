@@ -341,7 +341,7 @@ fn verify_retention_grants(role: &str, database: &str, grants: &[RoleAcl]) -> an
 /// `P<n>D`, and nothing else in the database. `retention_targets` lists those
 /// history tables as `(schema, history table)`, from the same query that the
 /// retention verb runs. So a grant on an `unlimited` history table, a wider
-/// grant, and a missing grant all refuse. A reserved schema or `app_system`
+/// grant, and a missing grant all refuse. A reserved schema or `platform`
 /// refuses in the grants and in the targets.
 pub(super) fn verify_audit_retention_grants(
     role: &str,
@@ -387,7 +387,7 @@ pub(super) fn verify_audit_retention_grants(
                         | "wamn_system"
                         | "catalog"
                         | "app"
-                        | "app_system"
+                        | "platform"
                 ),
             "stable role {role:?} carries audit-retention ACLs in reserved schema {schema:?} in database {database:?}"
         );
@@ -497,8 +497,8 @@ pub(super) fn verify_session_role_reader_grants(
     }
     let mut expected = BTreeSet::from([(
         "schema".to_string(),
-        "app_system".to_string(),
-        "app_system".to_string(),
+        "platform".to_string(),
+        "platform".to_string(),
         "USAGE".to_string(),
     )]);
     for (relation, columns) in [
@@ -508,7 +508,7 @@ pub(super) fn verify_session_role_reader_grants(
         for column in columns {
             expected.insert((
                 "column".to_string(),
-                "app_system".to_string(),
+                "platform".to_string(),
                 format!("{relation}.{column}"),
                 "SELECT".to_string(),
             ));
@@ -607,14 +607,14 @@ fn verify_executor_platform_grants(
     ]);
     expected.insert((
         "schema".to_owned(),
-        "app_system".to_owned(),
-        "app_system".to_owned(),
+        "platform".to_owned(),
+        "platform".to_owned(),
         "USAGE".to_owned(),
     ));
     for column in ["tenant_id", "id", "type", "status", "email"] {
         expected.insert((
             "column".to_owned(),
-            "app_system".to_owned(),
+            "platform".to_owned(),
             format!("users.{column}"),
             "SELECT".to_owned(),
         ));
@@ -715,7 +715,7 @@ pub(super) fn verify_http_admitter_grants(
 }
 
 /// Exact surface of the administration family (`wamn-a40n.2`): `USAGE` on
-/// `catalog`, `app_system` and `wamn_history`, `SELECT`, `INSERT`, `UPDATE`
+/// `catalog`, `platform` and `wamn_history`, `SELECT`, `INSERT`, `UPDATE`
 /// and `DELETE` on each relation of `sql::ADMINISTRATION_RELATIONS`, `INSERT`
 /// on the entry columns of its history table, `SELECT` on `catalog.releases`
 /// (`wamn-aemxz.1`), and `EXECUTE` on `row_image` and on the tenant-key
@@ -744,7 +744,7 @@ pub(super) fn verify_administration_grants(
     };
     let mut expected = BTreeSet::from([
         tuple("schema", "catalog", "catalog", "USAGE"),
-        tuple("schema", "app_system", "app_system", "USAGE"),
+        tuple("schema", "platform", "platform", "USAGE"),
         tuple("schema", "wamn_history", "wamn_history", "USAGE"),
         tuple("routine", "wamn_history", "row_image", "EXECUTE"),
         tuple("routine", "wamn_authority", "tenant_key", "EXECUTE"),
@@ -752,7 +752,7 @@ pub(super) fn verify_administration_grants(
     ]);
     for relation in sql::ADMINISTRATION_RELATIONS {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-            expected.insert(tuple("relation", "app_system", relation, privilege));
+            expected.insert(tuple("relation", "platform", relation, privilege));
         }
         for column in [
             "tenant_id",
@@ -767,7 +767,7 @@ pub(super) fn verify_administration_grants(
         ] {
             expected.insert(tuple(
                 "column",
-                "app_system",
+                "platform",
                 &format!("{relation}_history.{column}"),
                 "INSERT",
             ));

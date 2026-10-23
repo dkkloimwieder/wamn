@@ -238,7 +238,7 @@ pub async fn materialize_application_principals(
         );
         let written = transaction
             .execute(
-                "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                "INSERT INTO platform.users (tenant_id, id, type, email, display_name) \
              VALUES ($1, $2::text::uuid, 'service', $3, $4) ON CONFLICT (tenant_id, id) DO NOTHING",
                 &[
                     &tenant,

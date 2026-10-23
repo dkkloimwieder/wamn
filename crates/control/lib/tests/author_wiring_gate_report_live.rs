@@ -291,7 +291,7 @@ async fn stored_wirings(project: &Client, wiring_id: &str) -> i64 {
 #[tokio::test]
 async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     let _lock = wamn_test_postgres::lock();
-    let project_database = wamn_project_state::test_database::tenant_app_system();
+    let project_database = wamn_project_state::test_database::tenant_platform();
     let control_database = wamn_control_provision::test_database::system();
     let project_url = project_database.url().to_owned();
     let control_url = control_database.url().to_owned();
@@ -396,7 +396,7 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
 #[tokio::test]
 async fn one_graph_is_one_row_per_package_version() {
     let _lock = wamn_test_postgres::lock();
-    let project_database = wamn_project_state::test_database::tenant_app_system();
+    let project_database = wamn_project_state::test_database::tenant_platform();
     let control_database = wamn_control_provision::test_database::system();
     let project_url = project_database.url().to_owned();
     let control_url = control_database.url().to_owned();

@@ -47,7 +47,7 @@ async fn prepare_scratch_database(client: &Client) {
         .batch_execute(&format!(
             "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
              DROP SCHEMA IF EXISTS audit_app CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS registry CASCADE; \
@@ -304,7 +304,7 @@ async fn portable_fingerprints(
 }
 
 /// The one author-writable relation outside row security.
-const WRITE_LOG: &str = "app_system.write_log";
+const WRITE_LOG: &str = "platform.write_log";
 
 async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
     client

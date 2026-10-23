@@ -33,16 +33,16 @@ pub(super) mod transactions;
 
 /// The status row of the environment, which `wamn_app` reads under its
 /// tenant floor.
-const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM app_system.environment";
+const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform.environment";
 
 /// The users row of one principal, each role it holds and each permission
 /// of that role, in one read. No row means no users row. A role without
 /// permissions, such as `admin`, yields one row with a null permission, and a
 /// principal without roles yields one row with a null role.
 const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission \
-    FROM app_system.users u LEFT JOIN app_system.user_roles r \
+    FROM platform.users u LEFT JOIN platform.user_roles r \
     ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
-    LEFT JOIN app_system.permissions p \
+    LEFT JOIN platform.permissions p \
     ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
     WHERE u.tenant_id = $1 AND u.id = $2::text::uuid";
 
@@ -51,16 +51,16 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
 /// Row existence is the whole question, so the projection is a constant. The
 /// `users_tenant` policy already limits a guest login to its own tenant, and
 /// the bound `tenant_id` predicate keeps the read on the claimed tenant.
-const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM app_system.users \
+const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.users \
     WHERE tenant_id = $1 AND id = $2::text::uuid";
 
 /// Each role that the active user holds, with each permission of that
 /// role.
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
-    FROM app_system.users AS users \
-    JOIN app_system.user_roles AS user_roles \
+    FROM platform.users AS users \
+    JOIN platform.user_roles AS user_roles \
       ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
-    LEFT JOIN app_system.permissions AS permissions \
+    LEFT JOIN platform.permissions AS permissions \
       ON permissions.tenant_id = user_roles.tenant_id \
       AND permissions.role_name = user_roles.role_name \
     WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active'";
@@ -312,7 +312,7 @@ pub struct SessionClaims {
     pub release: Option<ReleaseIdentity>,
 }
 
-/// The bound principal has no `app_system.users` row in the tenant it claims
+/// The bound principal has no `platform.users` row in the tenant it claims
 /// (`wamn-0h0g.9.19`).
 ///
 /// A credential for such a principal is a provisioning defect: every write it
@@ -332,7 +332,7 @@ pub struct UnprovisionedPrincipal {
 }
 
 impl UnprovisionedPrincipal {
-    /// The tenant whose `app_system.users` table was read.
+    /// The tenant whose `platform.users` table was read.
     #[must_use]
     pub fn tenant(&self) -> &str {
         &self.tenant
@@ -355,7 +355,7 @@ impl std::fmt::Display for UnprovisionedPrincipal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "principal {} has no app_system.users row in tenant {} of project {}",
+            "principal {} has no platform.users row in tenant {} of project {}",
             self.principal_id, self.tenant, self.project
         )
     }
@@ -1352,7 +1352,7 @@ impl WamnPostgres {
     /// # The executing principal must own a users row (`wamn-0h0g.9.19`)
     ///
     /// A bind that names an `app.user_id` refuses when the principal owns no
-    /// `app_system.users` row in the tenant's project database. The credential
+    /// `platform.users` row in the tenant's project database. The credential
     /// of such a principal is a provisioning defect, and every write it makes
     /// records an actor that names no row. The host's
     /// [auth memory](crate::auth_cache) answers first: the route authenticator
@@ -1487,7 +1487,7 @@ impl WamnPostgres {
         Ok(())
     }
 
-    /// Read one `app_system.users` row and refuse the principal that owns none
+    /// Read one `platform.users` row and refuse the principal that owns none
     /// (`wamn-0h0g.9.19`).
     ///
     /// The read uses the tenant's own guest login, for two reasons. It is the
@@ -1514,7 +1514,7 @@ impl WamnPostgres {
             .checkout_guest(project, tenant)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))
-            .context("check out the tenant connection that reads app_system.users")?;
+            .context("check out the tenant connection that reads platform.users")?;
         let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
             Ok(statement) => statement,
             Err(error) => {
@@ -1528,13 +1528,13 @@ impl WamnPostgres {
                 tracing::info_span!("wamn.claims.principal.query")
             }))
             .await
-            .context("read the executing principal's app_system.users row")?;
+            .context("read the executing principal's platform.users row")?;
         if rows.is_empty() {
             tracing::warn!(
                 tenant,
                 project,
                 principal_id,
-                "wamn:postgres: refusing a bind for a principal with no app_system.users row"
+                "wamn:postgres: refusing a bind for a principal with no platform.users row"
             );
             return Err(UnprovisionedPrincipal {
                 tenant: tenant.to_owned(),
@@ -1988,7 +1988,7 @@ impl WamnPostgres {
     /// the inner result. The outer error is a failure of the transaction
     /// itself.
     /// Whether the environment of `tenant` is inactive, from its row of
-    /// `app_system.environment`, read as `wamn_app` (docs/plan/platform-ui.md
+    /// `platform.environment`, read as `wamn_app` (docs/plan/platform-ui.md
     /// §5.4). No row means active. The host keeps the answer in its
     /// [auth memory](crate::auth_cache).
     pub async fn environment_inactive(&self, project: &str, tenant: &str) -> anyhow::Result<bool> {

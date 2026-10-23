@@ -91,7 +91,7 @@ async fn drop_fixture_schemas(admin: &Client) {
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE;"
@@ -413,7 +413,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 
 #[tokio::test]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
-    let url = locked_database::database(wamn_project_state::test_database::tenant_app_system);
+    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;
@@ -705,7 +705,7 @@ async fn await_lock_waiters(
 /// apply-package changes the trigger only after that transaction commits.
 #[tokio::test]
 async fn a_retention_change_waits_for_a_running_prune() {
-    let url = locked_database::database(wamn_project_state::test_database::tenant_app_system);
+    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;

@@ -93,10 +93,10 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
 const MATRIX_RELATIONS: [&str; 25] = [
-    "app_system.environment",
-    "app_system.permissions",
-    "app_system.user_roles",
-    "app_system.users",
+    "platform.environment",
+    "platform.permissions",
+    "platform.user_roles",
+    "platform.users",
     "catalog.connection_bindings",
     "catalog.connection_generations",
     "catalog.connection_instances",
@@ -170,10 +170,6 @@ const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
-            "app_system.environment|SELECT|table",
-            "app_system.permissions|SELECT|table",
-            "app_system.user_roles|SELECT|table",
-            "app_system.users|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
@@ -184,6 +180,10 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.wiring_tombstones|SELECT|table",
             "catalog.wirings|SELECT|table",
             "catalog.workflow_schedules|SELECT|table",
+            "platform.environment|SELECT|table",
+            "platform.permissions|SELECT|table",
+            "platform.user_roles|SELECT|table",
+            "platform.users|SELECT|table",
             "wamn_run.effect_attempt_dispatches|SELECT|table",
             "wamn_run.effect_attempt_outcomes|SELECT|table",
             "wamn_run.effect_attempts|SELECT|table",
@@ -212,13 +212,13 @@ const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::ExecutorPlatform,
         relations: &[
-            "app_system.users|SELECT|column",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
             "catalog.releases|SELECT|table",
             "catalog.wirings|SELECT|table",
+            "platform.users|SELECT|column",
             "wamn_run.effect_attempts|SELECT|table",
             "wamn_run.environment_policies|SELECT|table",
             "wamn_run.run_queue|DELETE|table",
@@ -234,22 +234,22 @@ const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::HttpAdmitter,
         relations: &[
-            "app_system.permissions|SELECT|table",
-            "app_system.user_roles|SELECT|table",
-            "app_system.users|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
             "catalog.releases|SELECT|table",
+            "platform.permissions|SELECT|table",
+            "platform.user_roles|SELECT|table",
+            "platform.users|SELECT|table",
         ],
         routines: &[],
     },
     FamilyReach {
         family: WorkloadRoleFamily::SessionRoleReader,
         relations: &[
-            "app_system.user_roles|SELECT|column",
-            "app_system.users|SELECT|column",
+            "platform.user_roles|SELECT|column",
+            "platform.users|SELECT|column",
         ],
         routines: &[],
     },
@@ -280,28 +280,28 @@ const MATRIX: [FamilyReach; 10] = [
     // `wamn-a40n.2`: the host-run administration routes read and write the
     // application authorization relations, and the status routes write the
     // environment status (`wamn-zua8.2`), and `release.profile` reads an
-    // installed release (`wamn-aemxz.1`). `app_system.roles`, the history
+    // installed release (`wamn-aemxz.1`). `platform.roles`, the history
     // tables and `wamn_history.row_image` are outside the matrix universe.
     FamilyReach {
         family: WorkloadRoleFamily::Administration,
         relations: &[
-            "app_system.environment|DELETE|table",
-            "app_system.environment|INSERT|table",
-            "app_system.environment|SELECT|table",
-            "app_system.environment|UPDATE|table",
-            "app_system.permissions|DELETE|table",
-            "app_system.permissions|INSERT|table",
-            "app_system.permissions|SELECT|table",
-            "app_system.permissions|UPDATE|table",
-            "app_system.user_roles|DELETE|table",
-            "app_system.user_roles|INSERT|table",
-            "app_system.user_roles|SELECT|table",
-            "app_system.user_roles|UPDATE|table",
-            "app_system.users|DELETE|table",
-            "app_system.users|INSERT|table",
-            "app_system.users|SELECT|table",
-            "app_system.users|UPDATE|table",
             "catalog.releases|SELECT|table",
+            "platform.environment|DELETE|table",
+            "platform.environment|INSERT|table",
+            "platform.environment|SELECT|table",
+            "platform.environment|UPDATE|table",
+            "platform.permissions|DELETE|table",
+            "platform.permissions|INSERT|table",
+            "platform.permissions|SELECT|table",
+            "platform.permissions|UPDATE|table",
+            "platform.user_roles|DELETE|table",
+            "platform.user_roles|INSERT|table",
+            "platform.user_roles|SELECT|table",
+            "platform.user_roles|UPDATE|table",
+            "platform.users|DELETE|table",
+            "platform.users|INSERT|table",
+            "platform.users|SELECT|table",
+            "platform.users|UPDATE|table",
         ],
         routines: &["wamn_authority.tenant_key(text)"],
     },

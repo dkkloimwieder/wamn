@@ -28,7 +28,7 @@ pub async fn bind_fixture_principal(client: &Client, tenant: &str) -> Result<()>
         .context("bind the fixture test principal")?;
     client
         .execute(
-            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+            "INSERT INTO platform.users (tenant_id, id, type, email) \
              VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid') \
              ON CONFLICT DO NOTHING",
             &[&tenant, &FIXTURE_PRINCIPAL],
@@ -162,7 +162,7 @@ pub async fn snapshot(client: &Client, fixture: &Fixture) -> Result<Snapshot> {
         ), lines AS (
             SELECT * FROM receiving.purchase_order_line WHERE purchase_order_id = $1
         ), claims AS (
-            SELECT * FROM app_system.write_log
+            SELECT * FROM platform.write_log
             WHERE operation = 'wamn-receiving:receiving/record-receipt' AND starts_with(idempotency_key, $2)
         ), receipts AS (
             SELECT * FROM receiving.receipt

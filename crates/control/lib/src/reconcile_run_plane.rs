@@ -169,7 +169,7 @@ pub struct ReconcileRunPlaneOutcome {
     pub policy_changed: bool,
     /// Durability class of the source environment policy.
     pub durability_class: DurabilityClass,
-    /// What the tenant's `app_system` schema and identity rows needed.
+    /// What the tenant's `platform` schema and identity rows needed.
     pub tenant_identity: TenantIdentityOutcome,
 }
 
@@ -540,7 +540,7 @@ pub struct TenantIdentityOutcome {
     pub admin_rows_written: usize,
 }
 
-/// Install the tenant's `app_system` schema and its identity rows
+/// Install the tenant's `platform` schema and its identity rows
 /// (`wamn-0h0g.9.15`).
 ///
 /// This is the production application of `deploy/sql/app-schema.sql` and of the
@@ -579,13 +579,26 @@ async fn converge_tenant_identity(
 ) -> anyhow::Result<TenantIdentityOutcome> {
     anyhow::ensure!(!tenant_id.is_empty(), "tenant must not be empty");
     let mut outcome = TenantIdentityOutcome::default();
+    // A database installed before project migration 0024 holds the platform
+    // schema under its old name. The rename runs first, or app-schema.sql
+    // would install a second, empty platform schema beside it.
+    if crate::upgrade_schema::holds_legacy_project_schema(&*client).await? {
+        anyhow::ensure!(
+            apply,
+            "legacy-project-schema: this database holds the platform schema under its name \
+             before project migration 0024_platform_schema.sql; run upgrade-schema on it first"
+        );
+        crate::upgrade_schema::upgrade_project(client)
+            .await
+            .context("apply the pending project migrations before the tenant identity rows")?;
+    }
     let app_schema_present: bool = client
         .query_one(
-            "SELECT EXISTS ( SELECT FROM pg_namespace WHERE nspname = 'app_system' )",
+            "SELECT EXISTS ( SELECT FROM pg_namespace WHERE nspname = 'platform' )",
             &[],
         )
         .await
-        .context("probe the app_system schema")?
+        .context("probe the platform schema")?
         .get(0);
 
     // Every relation app-schema.sql creates has a stamp trigger, so the
@@ -607,7 +620,7 @@ async fn converge_tenant_identity(
     let missing_platform: Vec<PlatformComponent> = if app_schema_present {
         let present: BTreeSet<String> = client
             .query(
-                "SELECT id::text FROM app_system.users \
+                "SELECT id::text FROM platform.users \
                   WHERE tenant_id = $1 AND type = 'platform'",
                 &[&tenant_id],
             )
@@ -628,7 +641,7 @@ async fn converge_tenant_identity(
         if app_schema_present {
             client
                 .query(
-                    "SELECT id::text, type = 'user' FROM app_system.users WHERE tenant_id = $1",
+                    "SELECT id::text, type = 'user' FROM platform.users WHERE tenant_id = $1",
                     &[&tenant_id],
                 )
                 .await
@@ -669,7 +682,7 @@ async fn converge_tenant_identity(
     let present_admins: BTreeSet<String> = if app_schema_present {
         client
             .query(
-                "SELECT user_id::text FROM app_system.user_roles \
+                "SELECT user_id::text FROM platform.user_roles \
                   WHERE tenant_id = $1 AND role_name = $2",
                 &[&tenant_id, &wamn_project_state::ADMIN_ROLE],
             )
@@ -700,7 +713,7 @@ async fn converge_tenant_identity(
     anyhow::ensure!(
         stamp_function_present,
         "record-history-absent: this database has no wamn_history.stamp_row function, which every \
-         app_system stamp trigger calls. deploy/sql/record-history.sql arrives with the catalog \
+         platform stamp trigger calls. deploy/sql/record-history.sql arrives with the catalog \
          schema, so reconcile the catalog schema before the tenant identity rows"
     );
     let Some(platform_domain) = source.platform_domain.as_deref() else {

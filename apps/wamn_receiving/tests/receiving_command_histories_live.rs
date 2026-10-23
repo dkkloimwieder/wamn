@@ -753,7 +753,7 @@ async fn rollback_after_write(
     let trigger = format!(
         "CREATE FUNCTION receiving.receiving_history_rollback() RETURNS trigger LANGUAGE plpgsql AS $body$ \
          BEGIN IF NEW.purchase_order_id = '{id}'::uuid THEN \
-         IF NOT EXISTS (SELECT 1 FROM app_system.write_log c \
+         IF NOT EXISTS (SELECT 1 FROM platform.write_log c \
                         WHERE c.operation='wamn-receiving:receiving/record-receipt' AND c.result IS NULL) THEN \
              RAISE EXCEPTION 'receiving history checkpoint has no intermediate write'; END IF; \
          PERFORM pg_advisory_xact_lock({lock}); \
@@ -854,7 +854,7 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     let value = succeeded(&route.post(RECEIPT_PATH, &body).await?, "lost-response")?;
     let expected: String = db
         .query_one(
-            "SELECT result FROM app_system.write_log \
+            "SELECT result FROM platform.write_log \
          WHERE operation='wamn-receiving:receiving/record-receipt' AND idempotency_key=$1",
             &[&format!("{}-0", fixture.key_prefix)],
         )
@@ -903,8 +903,8 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     let mut writer = connect(&inputs.project_pg_url).await?;
     let holders = db
         .query(
-            "SELECT u.email FROM app_system.user_roles AS r \
-             JOIN app_system.users AS u ON u.tenant_id=r.tenant_id AND u.id=r.user_id \
+            "SELECT u.email FROM platform.user_roles AS r \
+             JOIN platform.users AS u ON u.tenant_id=r.tenant_id AND u.id=r.user_id \
              WHERE r.tenant_id=$1 AND r.role_name=$2 ORDER BY u.id",
             &[&inputs.tenant, &inputs.caller_role],
         )

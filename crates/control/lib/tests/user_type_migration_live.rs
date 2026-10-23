@@ -69,6 +69,12 @@ async fn the_migration_changes_the_user_type_as_a_fresh_install_has_it() {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install the application schema");
+    // The schema under its name before project migration 0024, as the
+    // databases that this migration ran on had it.
+    client
+        .batch_execute("ALTER SCHEMA platform RENAME TO app_system")
+        .await
+        .expect("name the schema as before 0024");
     let fresh = constraints(&client).await;
 
     // The database as 0003 left it, with one `person` row.

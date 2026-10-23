@@ -62,7 +62,7 @@ The platform reserves the package id `wamn`, because its operation tokens start 
 The catalog and the generator refuse it.
 
 The platform reserves the principal namespace `wamn:`.
-A platform component writes under the `app_system.users` row named `wamn:<component>`.
+A platform component writes under the `platform.users` row named `wamn:<component>`.
 The component is kebab-case and carries no action and no version.
 The row names the component, never the invocation.
 The closed component list is `provisioning`, `apply-package`, `materializer`, `executor`, and `audit-retention`.

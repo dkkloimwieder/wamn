@@ -45,7 +45,7 @@ const PUT_TIMEOUT: Duration = Duration::from_secs(1);
 /// The roles a principal holds in one tenant, with the permissions of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PrincipalGrants {
-    /// Whether the tenant has an `app_system.users` row for the principal.
+    /// Whether the tenant has an `platform.users` row for the principal.
     pub present: bool,
     /// Whether that row is `active`. An inactive principal holds no role.
     pub active: bool,

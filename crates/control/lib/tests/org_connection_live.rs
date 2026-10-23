@@ -177,8 +177,8 @@ async fn apply(
 async fn org_connection_materializes_once_per_environment() {
     let _lock = wamn_test_postgres::lock();
     let control_database = wamn_control_provision::test_database::system();
-    let database_a = wamn_project_state::test_database::tenant_app_system();
-    let database_b = wamn_project_state::test_database::tenant_app_system();
+    let database_a = wamn_project_state::test_database::tenant_platform();
+    let database_b = wamn_project_state::test_database::tenant_platform();
     let control = connect(control_database.url()).await;
     let a = connect(database_a.url()).await;
     let b = connect(database_b.url()).await;

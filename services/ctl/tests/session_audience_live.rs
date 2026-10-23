@@ -291,7 +291,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         ))
         .await?;
     // The fixture writes as its test principal, whose rows stamp themselves.
-    project.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; SET app.operation = 'admin:seed-session-audience-fixture'; INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('t1','11111111-1111-1111-1111-111111111111','user','one@example.invalid'),('t2','11111111-1111-1111-1111-111111111111','user','two@example.invalid'); INSERT INTO app_system.roles (tenant_id,name) VALUES ('t1','member'),('t2','other'); INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('t1','11111111-1111-1111-1111-111111111111','member'),('t2','11111111-1111-1111-1111-111111111111','other');").await?;
+    project.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; SET app.operation = 'admin:seed-session-audience-fixture'; INSERT INTO platform.users (tenant_id,id,type,email) VALUES ('t1','11111111-1111-1111-1111-111111111111','user','one@example.invalid'),('t2','11111111-1111-1111-1111-111111111111','user','two@example.invalid'); INSERT INTO platform.roles (tenant_id,name) VALUES ('t1','member'),('t2','other'); INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ('t1','11111111-1111-1111-1111-111111111111','member'),('t2','11111111-1111-1111-1111-111111111111','other');").await?;
     Ok(project)
 }
 
@@ -344,19 +344,19 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
         "CLI exposed the prepared credential"
     );
     let a = connect(a_target.connection().url()).await?;
-    let rows = a.query("SELECT r.role_name FROM app_system.users u JOIN app_system.user_roles r ON r.tenant_id=u.tenant_id AND r.user_id=u.id WHERE u.tenant_id=$1 AND u.status='active'", &[&TENANT]).await?;
+    let rows = a.query("SELECT r.role_name FROM platform.users u JOIN platform.user_roles r ON r.tenant_id=u.tenant_id AND r.user_id=u.id WHERE u.tenant_id=$1 AND u.status='active'", &[&TENANT]).await?;
     anyhow::ensure!(
         rows.len() == 1 && rows[0].get::<_, String>(0) == "member",
         "reader cannot load the target tenant's fresh roles"
     );
     for query in [
-        "SELECT email FROM app_system.users",
-        "SELECT * FROM app_system.user_roles",
-        "SELECT * FROM app_system.permissions",
+        "SELECT email FROM platform.users",
+        "SELECT * FROM platform.user_roles",
+        "SELECT * FROM platform.permissions",
         "SELECT * FROM catalog.probe",
         "SELECT * FROM wamn_run.probe",
-        "UPDATE app_system.users SET status='disabled'",
-        "DELETE FROM app_system.user_roles",
+        "UPDATE platform.users SET status='disabled'",
+        "DELETE FROM platform.user_roles",
     ] {
         let error = a
             .simple_query(query)

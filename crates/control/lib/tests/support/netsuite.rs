@@ -121,7 +121,7 @@ pub async fn assertions(
         "consumer rows differ: {items}"
     );
     // Since the rows predate capture, prove receipt through the actual command result.
-    let result: String = project.query_one("SELECT result FROM app_system.write_log WHERE operation='rest-consumer-fixture:item/record' AND idempotency_key=$1", &[&due]).await?.get(0);
+    let result: String = project.query_one("SELECT result FROM platform.write_log WHERE operation='rest-consumer-fixture:item/record' AND idempotency_key=$1", &[&due]).await?.get(0);
     let received: Value = serde_json::from_str(&result)?;
     ensure!(
         received["value"]["keys"] == json!(["1", "2", "3", "4"]),

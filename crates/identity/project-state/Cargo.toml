@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# The tenant+app_system test database floor (`test_database`). It starts a
+# The tenant+platform test database floor (`test_database`). It starts a
 # private PostgreSQL server for the test process, so no production build enables it.
 test-util = ["dep:wamn-catalog", "dep:wamn-test-postgres"]
 

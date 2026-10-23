@@ -558,11 +558,11 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
     verify(&exact).expect("the fresh permission reads have their exact grant set");
     for relation in ["users", "user_roles", "permissions"] {
         let mut missing = exact.clone();
-        missing.retain(|acl| acl.schema_name != "app_system" || acl.object_name != relation);
+        missing.retain(|acl| acl.schema_name != "platform" || acl.object_name != relation);
         verify(&missing).expect_err("a required fresh permission read is missing");
         for privilege in ["INSERT", "UPDATE", "DELETE"] {
             let mut widened = exact.clone();
-            widened.push(role_acl("relation", "app_system", relation, privilege));
+            widened.push(role_acl("relation", "platform", relation, privilege));
             verify(&widened).expect_err("the HTTP admitter cannot write permission authority");
         }
     }
@@ -611,7 +611,7 @@ fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl 
 
 #[test]
 fn session_reader_requires_exact_grants() {
-    let mut exact = vec![role_acl("schema", "app_system", "app_system", "USAGE")];
+    let mut exact = vec![role_acl("schema", "platform", "platform", "USAGE")];
     for column in [
         "users.tenant_id",
         "users.id",
@@ -620,7 +620,7 @@ fn session_reader_requires_exact_grants() {
         "user_roles.user_id",
         "user_roles.role_name",
     ] {
-        exact.push(role_acl("column", "app_system", column, "SELECT"));
+        exact.push(role_acl("column", "platform", column, "SELECT"));
     }
     let verify = |rows: &[RoleAcl]| {
         verify_session_role_reader_grants(
@@ -637,10 +637,10 @@ fn session_reader_requires_exact_grants() {
         assert!(verify(&missing).is_err());
     }
     for extra in [
-        role_acl("relation", "app_system", "users", "SELECT"),
-        role_acl("column", "app_system", "users.email", "SELECT"),
-        role_acl("column", "app_system", "users.status", "UPDATE"),
-        role_acl("relation", "app_system", "permissions", "SELECT"),
+        role_acl("relation", "platform", "users", "SELECT"),
+        role_acl("column", "platform", "users.email", "SELECT"),
+        role_acl("column", "platform", "users.status", "UPDATE"),
+        role_acl("relation", "platform", "permissions", "SELECT"),
         role_acl("schema", "catalog", "catalog", "USAGE"),
     ] {
         let mut widened = exact.clone();
@@ -697,7 +697,7 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
         role_acl("relation", "orders", "widget", "DELETE"),
         // The history table of an unlimited relation is not a target.
         role_acl("relation", "orders", "ledger_history", "DELETE"),
-        role_acl("schema", "app_system", "app_system", "USAGE"),
+        role_acl("schema", "platform", "platform", "USAGE"),
         role_acl("routine", "wamn_history", "log_row_change", "EXECUTE"),
     ] {
         let mut widened = exact.clone();
@@ -705,23 +705,18 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
         assert!(verify(&widened, &targets).is_err());
     }
     // A target in a reserved schema refuses, even with its exact grants.
-    let reserved = vec![("app_system".to_string(), "users_history".to_string())];
-    let mut app_system = vec![role_acl("schema", "app_system", "app_system", "USAGE")];
-    app_system.push(role_acl(
-        "relation",
-        "app_system",
-        "users_history",
-        "DELETE",
-    ));
+    let reserved = vec![("platform".to_string(), "users_history".to_string())];
+    let mut platform = vec![role_acl("schema", "platform", "platform", "USAGE")];
+    platform.push(role_acl("relation", "platform", "users_history", "DELETE"));
     for column in ["row_key", "position", "changed_at"] {
-        app_system.push(role_acl(
+        platform.push(role_acl(
             "column",
-            "app_system",
+            "platform",
             &format!("users_history.{column}"),
             "SELECT",
         ));
     }
-    assert!(verify(&app_system, &reserved).is_err());
+    assert!(verify(&platform, &reserved).is_err());
 }
 
 #[test]

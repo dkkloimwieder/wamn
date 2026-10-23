@@ -38,10 +38,10 @@ pub async fn queued_service_caller(
     let rows = client
         .query(
             "SELECT users.id::text, user_roles.role_name, permissions.permission \
-             FROM app_system.users AS users \
-             LEFT JOIN app_system.user_roles AS user_roles \
+             FROM platform.users AS users \
+             LEFT JOIN platform.user_roles AS user_roles \
                ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
-             LEFT JOIN app_system.permissions AS permissions \
+             LEFT JOIN platform.permissions AS permissions \
                ON permissions.tenant_id = user_roles.tenant_id \
               AND permissions.role_name = user_roles.role_name \
              WHERE users.tenant_id = $1 AND users.id = $2::text::uuid \
@@ -118,7 +118,7 @@ impl RouteAuthentication {
 }
 
 /// The application host's read of the status of its environment
-/// (docs/plan/platform-ui.md §5.4): its row of `app_system.environment`, as
+/// (docs/plan/platform-ui.md §5.4): its row of `platform.environment`, as
 /// `wamn_app`, kept in the host's [auth memory](crate::auth_cache).
 pub struct EnvironmentStatusReader {
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,

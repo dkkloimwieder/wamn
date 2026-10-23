@@ -18,8 +18,8 @@ const DATABASE: &str = "wamn_session_role_reader_test";
 const PASSWORD: &str = "session-role-reader-fixture-password";
 const FAMILY: WorkloadRoleFamily = WorkloadRoleFamily::SessionRoleReader;
 const PRINCIPAL: &str = "00000000-0000-0000-0000-000000000001";
-const READ_ROLES: &str = "SELECT r.role_name FROM app_system.users u \
-    JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+const READ_ROLES: &str = "SELECT r.role_name FROM platform.users u \
+    JOIN platform.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     WHERE u.tenant_id = 'fixture-a' AND u.id = '00000000-0000-0000-0000-000000000001' \
       AND u.status = 'active' ORDER BY r.role_name";
 
@@ -118,7 +118,7 @@ fn reset(admin: &str, roles: &[String]) {
     run(
         admin,
         "DROP SCHEMA IF EXISTS wamn_run CASCADE; DROP SCHEMA IF EXISTS catalog CASCADE; \
-        DROP SCHEMA IF EXISTS app_system CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE;",
+        DROP SCHEMA IF EXISTS platform CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE;",
     );
     for role in roles {
         run(
@@ -142,13 +142,13 @@ fn assert_surface(admin: &str) {
     assert_eq!(
         actual,
         [
-            "column|app_system|user_roles.role_name|SELECT|f",
-            "column|app_system|user_roles.tenant_id|SELECT|f",
-            "column|app_system|user_roles.user_id|SELECT|f",
-            "column|app_system|users.id|SELECT|f",
-            "column|app_system|users.status|SELECT|f",
-            "column|app_system|users.tenant_id|SELECT|f",
-            "schema|app_system|app_system|USAGE|f",
+            "column|platform|user_roles.role_name|SELECT|f",
+            "column|platform|user_roles.tenant_id|SELECT|f",
+            "column|platform|user_roles.user_id|SELECT|f",
+            "column|platform|users.id|SELECT|f",
+            "column|platform|users.status|SELECT|f",
+            "column|platform|users.tenant_id|SELECT|f",
+            "schema|platform|platform|USAGE|f",
         ]
         .join("\n"),
         "dedicated reader must hold only the six approved SELECT columns"
@@ -212,10 +212,10 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
                 "REVOKE TEMPORARY ON DATABASE {DATABASE} FROM PUBLIC; \
             SET app.user_id = '{PRINCIPAL}'; \
             SET app.operation = 'admin:seed-session-role-reader-fixture'; \
-            INSERT INTO app_system.users (tenant_id,id,type,email) VALUES \
+            INSERT INTO platform.users (tenant_id,id,type,email) VALUES \
               ('fixture-a','{PRINCIPAL}','user','a@fixture.invalid'), ('fixture-b','{PRINCIPAL}','user','b@fixture.invalid'); \
-            INSERT INTO app_system.roles (tenant_id,name) VALUES ('fixture-a','receiver'), ('fixture-b','outsider'); \
-            INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES \
+            INSERT INTO platform.roles (tenant_id,name) VALUES ('fixture-a','receiver'), ('fixture-b','outsider'); \
+            INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES \
               ('fixture-a','{PRINCIPAL}','receiver'), ('fixture-b','{PRINCIPAL}','outsider');"
             ),
         );
@@ -282,21 +282,21 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             assert_eq!(
                 run(
                     url,
-                    "SELECT tenant_id FROM app_system.users ORDER BY tenant_id"
+                    "SELECT tenant_id FROM platform.users ORDER BY tenant_id"
                 ),
                 "fixture-a\nfixture-b"
             );
             for statement in [
-                "SELECT email FROM app_system.users",
-                "SELECT created_at FROM app_system.user_roles",
-                "SELECT * FROM app_system.permissions",
-                "SELECT * FROM app_system.roles",
+                "SELECT email FROM platform.users",
+                "SELECT created_at FROM platform.user_roles",
+                "SELECT * FROM platform.permissions",
+                "SELECT * FROM platform.roles",
                 "SELECT * FROM catalog.packages",
                 "SELECT * FROM wamn_run.runs",
-                "INSERT INTO app_system.users (tenant_id,id,type,status) VALUES ('fixture-a','00000000-0000-0000-0000-000000000002','user','active')",
-                "UPDATE app_system.users SET status = 'disabled'",
-                "DELETE FROM app_system.user_roles",
-                "TRUNCATE app_system.users CASCADE",
+                "INSERT INTO platform.users (tenant_id,id,type,status) VALUES ('fixture-a','00000000-0000-0000-0000-000000000002','user','active')",
+                "UPDATE platform.users SET status = 'disabled'",
+                "DELETE FROM platform.user_roles",
+                "TRUNCATE platform.users CASCADE",
                 "SELECT wamn_authority.tenant_key('fixture-a')",
                 "SET ROLE wamn_platform",
                 "SET ROLE wamn_session_role_reader",
@@ -309,7 +309,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &format!(
                 "SET app.user_id = '{PRINCIPAL}'; \
                  SET app.operation = 'admin:disable-session-role-reader-fixture'; \
-                 UPDATE app_system.users SET status = 'disabled' WHERE tenant_id = 'fixture-a'"
+                 UPDATE platform.users SET status = 'disabled' WHERE tenant_id = 'fixture-a'"
             ),
         );
         assert_eq!(
@@ -322,23 +322,23 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &format!(
                 "SET app.user_id = '{PRINCIPAL}'; \
                  SET app.operation = 'admin:enable-session-role-reader-fixture'; \
-                 UPDATE app_system.users SET status = 'active' WHERE tenant_id = 'fixture-a'"
+                 UPDATE platform.users SET status = 'active' WHERE tenant_id = 'fixture-a'"
             ),
         );
         assert_eq!(run(&b_url, READ_ROLES), "receiver");
         // Reapply after deliberately widening both column and table ACLs.
         run(
             &admin,
-            "GRANT SELECT(email), UPDATE(status) ON app_system.users TO wamn_session_role_reader; \
-            GRANT SELECT ON app_system.permissions TO wamn_session_role_reader; \
+            "GRANT SELECT(email), UPDATE(status) ON platform.users TO wamn_session_role_reader; \
+            GRANT SELECT ON platform.permissions TO wamn_session_role_reader; \
             GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_session_role_reader; \
             GRANT SELECT ON catalog.packages, wamn_run.runs TO wamn_session_role_reader; \
             GRANT EXECUTE ON FUNCTION wamn_authority.tenant_key(text) TO wamn_session_role_reader;",
         );
         run(&admin, &sql::grant_session_role_reader_surface_sql());
         assert_surface(&admin);
-        denied(&a_url, "SELECT email FROM app_system.users");
-        denied(&b_url, "UPDATE app_system.users SET status = 'disabled'");
+        denied(&a_url, "SELECT email FROM platform.users");
+        denied(&b_url, "UPDATE platform.users SET status = 'disabled'");
         assert_eq!(run(&a_url, READ_ROLES), "receiver");
         let mut other = Url::parse(&a_url).unwrap();
         other.set_path("/postgres");

@@ -89,7 +89,7 @@ pub(super) async fn reconcile_journey_data_access(
 pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()> {
     let roles = project
         .query(
-            "SELECT name FROM app_system.roles WHERE tenant_id = $1 ORDER BY name COLLATE \"C\"",
+            "SELECT name FROM platform.roles WHERE tenant_id = $1 ORDER BY name COLLATE \"C\"",
             &[&identity().tenant.as_str()],
         )
         .await
@@ -99,7 +99,7 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
         .collect::<Vec<_>>();
     let permissions: i64 = project
         .query_one(
-            "SELECT count(*) FROM app_system.permissions WHERE tenant_id = $1",
+            "SELECT count(*) FROM platform.permissions WHERE tenant_id = $1",
             &[&identity().tenant.as_str()],
         )
         .await

@@ -181,7 +181,7 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
 }
 
 /// The deployment platform domain and the identity relations the reconciler
-/// reads to build a tenant's `app_system.users` rows (`wamn-0h0g.9.15`).
+/// reads to build a tenant's `platform.users` rows (`wamn-0h0g.9.15`).
 ///
 /// The shapes are the columns this reader uses, in the simplified style the
 /// rest of this fixture keeps. `deploy/sql/system-schema.sql` owns the real
@@ -283,7 +283,7 @@ async fn seed_pre_durability_system_env_policy(su: &Client) {
 async fn tenant_identity_leg(su: &Client) {
     let rows: Vec<(String, String, String, String)> = su
         .query(
-            "SELECT id::text, type, email, created_by::text FROM app_system.users \
+            "SELECT id::text, type, email, created_by::text FROM platform.users \
               WHERE tenant_id = 't1' ORDER BY email",
             &[],
         )
@@ -344,7 +344,7 @@ async fn tenant_identity_leg(su: &Client) {
     );
     let user_display_name: String = su
         .query_one(
-            "SELECT display_name FROM app_system.users \
+            "SELECT display_name FROM platform.users \
               WHERE tenant_id = 't1' AND id = $1::text::uuid",
             &[&FIXTURE_USER_ID],
         )
@@ -385,8 +385,8 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     .await
     .expect("bind the fixture actor");
     su.batch_execute(&format!(
-        "INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'stale-reader'); \
-         INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+        "INSERT INTO platform.roles (tenant_id, name) VALUES ('t1', 'stale-reader'); \
+         INSERT INTO platform.user_roles (tenant_id, user_id, role_name) \
            VALUES ('t1', '{FIXTURE_USER_ID}', 'stale-reader')"
     ))
     .await
@@ -402,7 +402,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     assert_eq!(outcome.tenant_identity.user_rows_removed, 1);
     let rows: Vec<(String, i64)> = su
         .query(
-            "SELECT type, count(*) FROM app_system.users WHERE tenant_id = 't1' \
+            "SELECT type, count(*) FROM platform.users WHERE tenant_id = 't1' \
              GROUP BY type ORDER BY type",
             &[],
         )
@@ -418,7 +418,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     );
     let roles: i64 = su
         .query_one(
-            "SELECT count(*) FROM app_system.user_roles WHERE tenant_id = 't1'",
+            "SELECT count(*) FROM platform.user_roles WHERE tenant_id = 't1'",
             &[],
         )
         .await
@@ -435,11 +435,9 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .await
         .expect("grant the membership again");
     assert_eq!(reconcile().await.tenant_identity.user_rows_written, 1);
-    su.batch_execute(
-        "DELETE FROM app_system.roles WHERE tenant_id = 't1' AND name = 'stale-reader'",
-    )
-    .await
-    .expect("remove the fixture role");
+    su.batch_execute("DELETE FROM platform.roles WHERE tenant_id = 't1' AND name = 'stale-reader'")
+        .await
+        .expect("remove the fixture role");
 
     // A project admin of the project gets its admin row from the reconcile,
     // which repairs an interrupted grant (docs/plan/platform-ui.md §4.4),
@@ -455,7 +453,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     assert_eq!(reconcile().await.tenant_identity.admin_rows_written, 1);
     let admin: i64 = su
         .query_one(
-            "SELECT count(*) FROM app_system.user_roles \
+            "SELECT count(*) FROM platform.user_roles \
              WHERE tenant_id = 't1' AND user_id = $1::text::uuid AND role_name = 'admin'",
             &[&FIXTURE_USER_ID],
         )
@@ -472,7 +470,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .await
         .expect("remove the fixture project admin");
     su.execute(
-        "DELETE FROM app_system.user_roles WHERE tenant_id = 't1' AND user_id = $1::text::uuid",
+        "DELETE FROM platform.user_roles WHERE tenant_id = 't1' AND user_id = $1::text::uuid",
         &[&FIXTURE_USER_ID],
     )
     .await

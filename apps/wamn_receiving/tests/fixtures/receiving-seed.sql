@@ -42,7 +42,7 @@ SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true),
 TRUNCATE receiving.receipt_line, receiving.receipt,
          receiving.purchase_order_line, receiving.purchase_order,
          receiving.supplier, receiving.item, receiving.location;
-DELETE FROM app_system.write_log WHERE operation LIKE 'wamn-receiving:%';
+DELETE FROM platform.write_log WHERE operation LIKE 'wamn-receiving:%';
 \endif
 
 INSERT INTO receiving.item (id, item_number)

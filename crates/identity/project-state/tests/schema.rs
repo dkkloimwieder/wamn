@@ -153,7 +153,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         APP_GENERATION_VALID_UNTIL,
     ));
     script.push_str(
-        "\nDROP SCHEMA IF EXISTS app_system CASCADE;\n\
+        "\nDROP SCHEMA IF EXISTS platform CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_sysschema_test CASCADE;\n",
     );
     // The schema itself (deploy/sql/app-schema.sql, applied verbatim as the superuser).
@@ -168,13 +168,13 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         script,
         "SET app.user_id = '{U1}';\n\
          SET app.operation = 'admin:seed-isolation-fixture';\n\
-         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
+         INSERT INTO platform.users (tenant_id, id, type, email) VALUES \
            ('t1','{U1}','user','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','user','u3@t2');\n\
-         INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
-         INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
-         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
-         INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
-         INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);"
+         INSERT INTO platform.roles (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
+         INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
+         INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
+         INSERT INTO platform.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
+         INSERT INTO platform.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);"
     )
     .expect("writing to a String cannot fail");
 
@@ -186,12 +186,12 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          SET LOCAL ROLE {tenant_1_app};\n\
          DO $$ BEGIN\n\
            ASSERT current_user='{tenant_1_app}', 'tenant authority is the prepared tenant-1 generation';\n\
-           ASSERT (SELECT count(*) FROM app_system.users)=2, 't1 sees its 2 users, not t2''s';\n\
-           ASSERT (SELECT count(*) FROM app_system.roles)=2, 't1 sees its roles';\n\
-           ASSERT (SELECT count(*) FROM app_system.user_roles)=1, 't1 sees its grant';\n\
-           ASSERT (SELECT count(*) FROM app_system.permissions)=1, 't1 sees its permission';\n\
-           ASSERT (SELECT count(*) FROM app_system.api_keys)=1, 't1 sees its api key';\n\
-           ASSERT (SELECT count(*) FROM app_system.configurations)=1, 't1 sees its config';\n\
+           ASSERT (SELECT count(*) FROM platform.users)=2, 't1 sees its 2 users, not t2''s';\n\
+           ASSERT (SELECT count(*) FROM platform.roles)=2, 't1 sees its roles';\n\
+           ASSERT (SELECT count(*) FROM platform.user_roles)=1, 't1 sees its grant';\n\
+           ASSERT (SELECT count(*) FROM platform.permissions)=1, 't1 sees its permission';\n\
+           ASSERT (SELECT count(*) FROM platform.api_keys)=1, 't1 sees its api key';\n\
+           ASSERT (SELECT count(*) FROM platform.configurations)=1, 't1 sees its config';\n\
          END $$;\n\
          COMMIT;"
     )
@@ -202,17 +202,17 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         script,
         "BEGIN;\n\
          SET LOCAL ROLE {tenant_2_app};\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=1, 't2 sees only its user'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.users)=1, 't2 sees only its user'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE {tenant_1_app};\n\
          SET LOCAL app.tenant = '{TENANT_2}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.users)=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
          SET LOCAL app.tenant = '{TENANT_1}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM app_system.users)=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.users)=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
@@ -228,7 +228,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
              JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace\n\
              LEFT JOIN pg_catalog.pg_attrdef AS def\n\
                ON def.adrelid = a.attrelid AND def.adnum = a.attnum\n\
-            WHERE namespace.nspname='app_system' AND relation.relname='users'\n\
+            WHERE namespace.nspname='platform' AND relation.relname='users'\n\
               AND a.attname='id' AND a.attnum > 0 AND NOT a.attisdropped;\n\
            ASSERT t='uuid', 'users.id must be uuid (the app.user_id ownership target)';\n\
            ASSERT d IS NULL, 'users.id must have no server default; the org issues it';\n\
@@ -238,11 +238,11 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "DO $$ BEGIN BEGIN\n\
-           INSERT INTO app_system.users (tenant_id, id, type, email, status) VALUES ('t1','{U3}','user','x@t1','zombie');\n\
+           INSERT INTO platform.users (tenant_id, id, type, email, status) VALUES ('t1','{U3}','user','x@t1','zombie');\n\
            ASSERT false, 'an unknown user status must be rejected';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n\
          DO $$ BEGIN BEGIN\n\
-           INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('','{U4}','user','x@none');\n\
+           INSERT INTO platform.users (tenant_id, id, type, email) VALUES ('','{U4}','user','x@none');\n\
            ASSERT false, 'a ''-tenant row must be rejected (a45)';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
     )
@@ -302,7 +302,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         writeln!(
             script,
             "DO $$ BEGIN BEGIN\n\
-               INSERT INTO app_system.{table} {insert};\n\
+               INSERT INTO platform.{table} {insert};\n\
                ASSERT false, 'a ''''-tenant {table} row must be rejected (a45)';\n\
              EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
         )
@@ -312,7 +312,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     for (index, status) in UserStatus::ALL.iter().enumerate() {
         writeln!(
             script,
-            "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
+            "INSERT INTO platform.users (tenant_id, id, type, email, status) \
              VALUES ('t1', '55555555-5555-5555-5555-{index:012}', 'user', 'status-{index}@t1', '{}');",
             status.as_str()
         )
@@ -322,30 +322,30 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // grant that the user cascade leaves.
     writeln!(
         script,
-        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U2}','admin');"
+        "INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U2}','admin');"
     )
     .expect("writing to a String cannot fail");
     // FK cascade: deleting U1 prunes its role grant and api key.
     writeln!(
         script,
-        "DELETE FROM app_system.users WHERE tenant_id='t1' AND id='{U1}';\n\
+        "DELETE FROM platform.users WHERE tenant_id='t1' AND id='{U1}';\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM app_system.user_roles WHERE user_id='{U1}')=0, 'user_roles cascade';\n\
-           ASSERT (SELECT count(*) FROM app_system.api_keys WHERE user_id='{U1}')=0, 'api_keys cascade';\n\
+           ASSERT (SELECT count(*) FROM platform.user_roles WHERE user_id='{U1}')=0, 'user_roles cascade';\n\
+           ASSERT (SELECT count(*) FROM platform.api_keys WHERE user_id='{U1}')=0, 'api_keys cascade';\n\
          END $$;"
     )
     .expect("writing to a String cannot fail");
     // FK cascade: deleting the clerk role prunes its permission, and deleting
     // the admin role prunes its remaining grant.
     script.push_str(
-        "DELETE FROM app_system.roles WHERE tenant_id='t1' AND name IN ('admin', 'clerk');\n\
+        "DELETE FROM platform.roles WHERE tenant_id='t1' AND name IN ('admin', 'clerk');\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM app_system.permissions WHERE role_name='clerk')=0, 'permissions cascade';\n\
-           ASSERT (SELECT count(*) FROM app_system.user_roles WHERE role_name='admin')=0, 'user_roles cascade from roles';\n\
+           ASSERT (SELECT count(*) FROM platform.permissions WHERE role_name='clerk')=0, 'permissions cascade';\n\
+           ASSERT (SELECT count(*) FROM platform.user_roles WHERE role_name='admin')=0, 'user_roles cascade from roles';\n\
          END $$;\n",
     );
 
-    script.push_str("DROP SCHEMA app_system CASCADE;\n");
+    script.push_str("DROP SCHEMA platform CASCADE;\n");
 
     run(&url, &script);
 }
@@ -397,7 +397,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     let provisioning = PlatformComponent::Provisioning;
     let executor = PlatformComponent::Executor;
     let mut script = sql::ensure_app_acl_role_sql();
-    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&record_history_sql());
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
@@ -418,28 +418,28 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         (
             "not_null_violation",
             format!(
-                "INSERT INTO app_system.users (tenant_id, id, email) \
+                "INSERT INTO platform.users (tenant_id, id, email) \
                  VALUES ('{TENANT}', '{USER}', 'untyped@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
-                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                "INSERT INTO platform.users (tenant_id, id, type, email) \
                  VALUES ('{TENANT}', '{USER}', 'robot', 'robot@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
-                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                "INSERT INTO platform.users (tenant_id, id, type, email) \
                  VALUES ('{TENANT}', '{USER}', 'platform', 'unnamed@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
-                "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                "INSERT INTO platform.users (tenant_id, id, type, email, display_name) \
                  VALUES ('{TENANT}', '{}', 'platform', 'swapped@{DOMAIN}', '{}')",
                 executor.principal_id(),
                 provisioning.principal_name(),
@@ -448,7 +448,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         (
             "check_violation",
             format!(
-                "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                "INSERT INTO platform.users (tenant_id, id, type, email, display_name) \
                  VALUES ('{TENANT}', '{USER}', 'platform', 'unknown@{DOMAIN}', 'wamn:unknown')"
             ),
         ),
@@ -461,11 +461,11 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
                 let user_type = user_type.as_str();
                 [
                     format!(
-                        "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                        "INSERT INTO platform.users (tenant_id, id, type, email, display_name) \
                          VALUES ('{TENANT}', '{USER}', '{user_type}', 'named@{DOMAIN}', 'wamn:user')"
                     ),
                     format!(
-                        "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                        "INSERT INTO platform.users (tenant_id, id, type, email, display_name) \
                          VALUES ('{TENANT}', '{}', '{user_type}', 'pinned@{DOMAIN}', '{}')",
                         provisioning.principal_id(),
                         provisioning.principal_name(),
@@ -492,7 +492,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         }
         writeln!(
             script,
-            "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+            "INSERT INTO platform.users (tenant_id, id, type, email, display_name) \
              VALUES ('other', '00000000-0000-0000-0000-00000000000{index}', '{user_type}', \
                      '{user_type}@{DOMAIN}', 'Fixture {user_type}');"
         )
@@ -500,10 +500,10 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     }
     writeln!(
         script,
-        "SELECT display_name, id, type, email FROM app_system.users \
+        "SELECT display_name, id, type, email FROM platform.users \
           WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
-         SELECT count(*) FROM app_system.users WHERE tenant_id = 'other';\n\
-         DROP SCHEMA app_system CASCADE;"
+         SELECT count(*) FROM platform.users WHERE tenant_id = 'other';\n\
+         DROP SCHEMA platform CASCADE;"
     )
     .expect("writing to a String cannot fail");
 
@@ -531,14 +531,14 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
 }
 
 /// Spec test 11, for the relations that `deploy/sql/app-schema.sql` owns. Every
-/// `app_system` relation carries the four stamp columns as `NOT NULL`, one
+/// `platform` relation carries the four stamp columns as `NOT NULL`, one
 /// `wamn_record_history_stamp` trigger, one `wamn_record_history_log` trigger with the
 /// argument `unlimited`, and its history table. The provisioning SQL binds
 /// `wamn:provisioning` for its writes, every platform row stamps that
 /// principal, and the `wamn:provisioning` row stamps itself. The binding ends
 /// with the provisioning transaction.
 #[test]
-fn app_system_relations_stamp_provisioning_writes_on_postgres() {
+fn platform_relations_stamp_provisioning_writes_on_postgres() {
     const TENANT: &str = "t1";
     const DOMAIN: &str = "example.invalid";
 
@@ -547,7 +547,7 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
     let url = test_database.url().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
-    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&record_history_sql());
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
@@ -558,20 +558,20 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
            FROM pg_catalog.pg_attribute AS a \
            JOIN pg_catalog.pg_class AS c ON c.oid = a.attrelid \
            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'app_system' AND c.relkind = 'r' \
+          WHERE n.nspname = 'platform' AND c.relkind = 'r' \
             AND a.attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
             AND a.attnum > 0 AND NOT a.attisdropped \
           ORDER BY c.relname COLLATE \"C\", a.attname;\n\
          SELECT 'relation|' || c.relname \
            FROM pg_catalog.pg_class AS c \
            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'app_system' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
+          WHERE n.nspname = 'platform' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
           ORDER BY c.relname COLLATE \"C\";\n\
          SELECT 'trigger|' || pg_catalog.pg_get_triggerdef(t.oid) \
            FROM pg_catalog.pg_trigger AS t \
            JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid \
            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'app_system' AND NOT t.tgisinternal \
+          WHERE n.nspname = 'platform' AND NOT t.tgisinternal \
           ORDER BY c.relname COLLATE \"C\", t.tgname;\n\
          BEGIN;\n",
     );
@@ -585,8 +585,8 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
          SELECT 'stamp|' || display_name || '|' || (id = created_by)::text || '|' \
                 || created_by::text || '|' || updated_by::text || '|' \
                 || (updated_at >= created_at)::text \
-           FROM app_system.users WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
-         DROP SCHEMA app_system CASCADE;"
+           FROM platform.users WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
+         DROP SCHEMA platform CASCADE;"
     )
     .expect("writing to a String cannot fail");
 
@@ -657,7 +657,7 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
 
 /// Record history level 2 for the relations that `deploy/sql/app-schema.sql`
 /// owns (epic rulings 14, 40 to 43, and 52 to 57). Administrative SQL writes
-/// each `app_system` relation in three transactions. Each change writes one
+/// each `platform` relation in three transactions. Each change writes one
 /// entry with the tenant of its row, the bound operation, and the bound actor.
 /// An update that changes a key column writes a delete and an insert entry.
 /// The user delete cascades to `user_roles` and `api_keys`, and those delete
@@ -665,7 +665,7 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
 /// `api_keys` images carry `key_hash` (ruling 41). The server ACLs show the
 /// `wamn_app` grant of every relation (ruling 76).
 #[test]
-fn app_system_relations_log_every_row_change_on_postgres() {
+fn platform_relations_log_every_row_change_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
@@ -680,7 +680,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
     let url = test_database.url().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
-    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&record_history_sql());
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
@@ -701,7 +701,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
                           GROUP BY acl.privilege_type) AS granted)) \
            FROM pg_catalog.pg_class AS c \
            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'app_system' AND c.relkind = 'r' \
+          WHERE n.nspname = 'platform' AND c.relkind = 'r' \
           ORDER BY c.relname COLLATE \"C\";\n",
     );
     writeln!(
@@ -709,39 +709,39 @@ fn app_system_relations_log_every_row_change_on_postgres() {
         "BEGIN;\n\
          SET LOCAL app.user_id = '{U1}';\n\
          SET LOCAL app.operation = '{SEED}';\n\
-         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
+         INSERT INTO platform.users (tenant_id, id, type, email) VALUES \
            ('t1', '{U1}', 'user', 'u1@t1'), ('t2', '{U2}', 'user', 'u2@t2'), \
            ('t1', '{U3}', 'service', 'u3@t1');\n\
-         INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
-         INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES \
+         INSERT INTO platform.roles (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
+         INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES \
            ('t1', '{U1}', 'admin'), ('t1', '{U3}', 'admin');\n\
-         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
+         INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES \
            ('t1', 'auditor', 'platform-fixture:widget/get');\n\
-         INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES \
+         INSERT INTO platform.configurations (tenant_id, config_key, config_value) VALUES \
            ('t1', 'theme', '\"dark\"');\n\
-         INSERT INTO app_system.api_keys (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
+         INSERT INTO platform.api_keys (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
            ('t1', '{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('t1', '{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL app.user_id = '{U2}';\n\
          SET LOCAL app.operation = '{CHANGE}';\n\
-         UPDATE app_system.users SET status = 'disabled' WHERE id = '{U2}';\n\
-         UPDATE app_system.roles SET description = 'administrators' WHERE name = 'admin';\n\
-         UPDATE app_system.user_roles SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
-         UPDATE app_system.permissions SET permission = 'platform-fixture:widget/list';\n\
-         UPDATE app_system.configurations SET config_value = '\"light\"';\n\
-         UPDATE app_system.api_keys SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
+         UPDATE platform.users SET status = 'disabled' WHERE id = '{U2}';\n\
+         UPDATE platform.roles SET description = 'administrators' WHERE name = 'admin';\n\
+         UPDATE platform.user_roles SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
+         UPDATE platform.permissions SET permission = 'platform-fixture:widget/list';\n\
+         UPDATE platform.configurations SET config_value = '\"light\"';\n\
+         UPDATE platform.api_keys SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL app.user_id = '{U3}';\n\
          SET LOCAL app.operation = '{REMOVE}';\n\
-         DELETE FROM app_system.user_roles WHERE user_id = '{U3}';\n\
-         DELETE FROM app_system.api_keys WHERE id = '{K2}';\n\
-         DELETE FROM app_system.permissions;\n\
-         DELETE FROM app_system.configurations;\n\
-         DELETE FROM app_system.users WHERE id = '{U1}';\n\
-         DELETE FROM app_system.users WHERE id = '{U2}';\n\
-         DELETE FROM app_system.roles WHERE name = 'admin';\n\
+         DELETE FROM platform.user_roles WHERE user_id = '{U3}';\n\
+         DELETE FROM platform.api_keys WHERE id = '{K2}';\n\
+         DELETE FROM platform.permissions;\n\
+         DELETE FROM platform.configurations;\n\
+         DELETE FROM platform.users WHERE id = '{U1}';\n\
+         DELETE FROM platform.users WHERE id = '{U2}';\n\
+         DELETE FROM platform.roles WHERE name = 'admin';\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
@@ -768,7 +768,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
                 || '|' || (after - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
            FROM ({entries}) AS entry \
           ORDER BY relation COLLATE \"C\", position;\n\
-         DROP SCHEMA app_system CASCADE;"
+         DROP SCHEMA platform CASCADE;"
     )
     .expect("writing to a String cannot fail");
 

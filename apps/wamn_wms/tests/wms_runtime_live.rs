@@ -797,10 +797,10 @@ pub(crate) async fn assert_committed_rows(
     let row = project
         .query_one(
             r"SELECT json_build_object(
-    'command_count', (SELECT count(*) FROM app_system.write_log
+    'command_count', (SELECT count(*) FROM platform.write_log
         WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
     'quantity_count', (SELECT count(*) FROM wms.packaging_quantity WHERE packaging_id = $2::text::uuid),
-    'command', (SELECT result::json -> 'value' FROM app_system.write_log
+    'command', (SELECT result::json -> 'value' FROM platform.write_log
         WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
     'packaging', (SELECT row_to_json(packaging) FROM (
         SELECT id, location_id, status, row_version FROM wms.packaging WHERE id = $2::text::uuid

@@ -239,10 +239,47 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     assert_eq!(
         scalar(
             &project_url,
-            "SELECT count(*) FROM app_system.schema_migrations"
+            "SELECT count(*) FROM platform.schema_migrations"
         )
         .await,
         i64::try_from(project_files.len()).unwrap()
+    );
+
+    // A project database installed before 0024: the run reads the record
+    // table in the old schema, applies the rename and records it in platform.
+    let client = connect(&project_url).await;
+    client
+        .0
+        .batch_execute(
+            "DELETE FROM platform.schema_migrations \
+              WHERE relative_path = 'migrations/project/0024_platform_schema.sql'; \
+             ALTER SCHEMA platform RENAME TO app_system;", // rename-app-system: keep
+        )
+        .await
+        .expect("make the database as 0023 left it");
+    close(client).await;
+    upgrade_schema_with(
+        &request(&system_url, Some(&project_url), None, true),
+        project_files,
+    )
+    .await
+    .expect("apply the rename");
+    assert_eq!(
+        scalar(
+            &project_url,
+            "SELECT count(*) FROM platform.schema_migrations"
+        )
+        .await,
+        i64::try_from(project_files.len()).unwrap()
+    );
+    assert_eq!(
+        scalar(
+            &project_url,
+            "SELECT count(*) FROM pg_namespace WHERE nspname = 'app_system'" // rename-app-system: keep
+        )
+        .await,
+        0,
+        "the rename leaves no schema under the old name"
     );
 
     // The system database: plan, apply, then nothing pending.
@@ -364,7 +401,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     let client = connect(&project_url).await;
     client
         .0
-        .batch_execute("DROP TABLE app_system.schema_migrations")
+        .batch_execute("DROP TABLE platform.schema_migrations")
         .await
         .expect("drop the record table");
     close(client).await;
@@ -373,7 +410,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
         "project",
         project_files.len(),
         "probe_one",
-        "CREATE TABLE app_system.upgrade_probe_one (x integer);",
+        "CREATE TABLE platform.upgrade_probe_one (x integer);",
     ));
     assert!(
         refusal(
@@ -395,7 +432,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     assert_eq!(
         scalar(
             &project_url,
-            "SELECT count(*) FROM app_system.schema_migrations"
+            "SELECT count(*) FROM platform.schema_migrations"
         )
         .await,
         i64::try_from(files.len()).unwrap()

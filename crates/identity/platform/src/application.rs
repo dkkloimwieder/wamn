@@ -22,32 +22,32 @@ use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
 /// One project database serves one tenant. Its platform rows, which
 /// `env apply` writes first, name it.
 const TENANT_SQL: &str =
-    "SELECT DISTINCT tenant_id FROM app_system.users WHERE type = 'platform' ORDER BY 1";
+    "SELECT DISTINCT tenant_id FROM platform.users WHERE type = 'platform' ORDER BY 1";
 
-const USER_ROW_SQL: &str = "INSERT INTO app_system.users \
+const USER_ROW_SQL: &str = "INSERT INTO platform.users \
     (tenant_id, id, type, email, display_name) VALUES ($1, $2::text::uuid, 'user', $3, $4) \
     ON CONFLICT (tenant_id, id) DO NOTHING";
 
-const SERVICE_ROW_SQL: &str = "INSERT INTO app_system.users \
+const SERVICE_ROW_SQL: &str = "INSERT INTO platform.users \
     (tenant_id, id, type, email, display_name) VALUES ($1, $2::text::uuid, 'service', $3, $4)";
 
-const ROLE_SQL: &str = "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2) \
+const ROLE_SQL: &str = "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, $2) \
     ON CONFLICT (tenant_id, name) DO NOTHING";
 
-const USER_ROLE_SQL: &str = "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+const USER_ROLE_SQL: &str = "INSERT INTO platform.user_roles (tenant_id, user_id, role_name) \
     VALUES ($1, $2::text::uuid, $3) ON CONFLICT DO NOTHING";
 
-const DROP_USER_ROLE_SQL: &str = "DELETE FROM app_system.user_roles \
+const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_roles \
     WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3";
 
-const DROP_USER_ROW_SQL: &str = "DELETE FROM app_system.users \
+const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.users \
     WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'";
 
 /// The status row of the environment. No row means active.
-const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO app_system.environment \
+const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.environment \
     (tenant_id, status) VALUES ($1, $2) \
     ON CONFLICT (tenant_id) DO UPDATE SET status = EXCLUDED.status \
-    WHERE app_system.environment.status <> EXCLUDED.status";
+    WHERE platform.environment.status <> EXCLUDED.status";
 
 /// The user an application row names.
 #[derive(Debug, Clone, Copy)]
@@ -305,15 +305,15 @@ pub struct PermissionGrantOutcome {
     pub rows_added: u64,
 }
 
-const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM app_system.roles WHERE tenant_id = $1 AND name = $2";
+const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM platform.roles WHERE tenant_id = $1 AND name = $2";
 
-const DROP_ROLE_SQL: &str = "DELETE FROM app_system.roles WHERE tenant_id = $1 AND name = $2";
+const DROP_ROLE_SQL: &str = "DELETE FROM platform.roles WHERE tenant_id = $1 AND name = $2";
 
-const PERMISSION_SQL: &str = "INSERT INTO app_system.permissions \
+const PERMISSION_SQL: &str = "INSERT INTO platform.permissions \
     (tenant_id, role_name, permission) VALUES ($1, $2, $3) \
     ON CONFLICT DO NOTHING";
 
-const DROP_PERMISSION_SQL: &str = "DELETE FROM app_system.permissions \
+const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permissions \
     WHERE tenant_id = $1 AND role_name = $2 AND permission = $3";
 
 // The writes below run in a transaction that the caller prepared: it holds
@@ -467,20 +467,20 @@ pub async fn revoke_user_role(
     Ok(removed == 1)
 }
 
-const USER_EXISTS_SQL: &str = "SELECT 1 FROM app_system.users \
+const USER_EXISTS_SQL: &str = "SELECT 1 FROM platform.users \
     WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'";
 
 const USERS_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
-    FROM app_system.users u \
-    LEFT JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+    FROM platform.users u \
+    LEFT JOIN platform.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     WHERE u.tenant_id = $1 AND u.type = 'user' \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
 
-const ROLES_SQL: &str = "SELECT name FROM app_system.roles WHERE tenant_id = $1 ORDER BY name";
+const ROLES_SQL: &str = "SELECT name FROM platform.roles WHERE tenant_id = $1 ORDER BY name";
 
-const PERMISSIONS_SQL: &str = "SELECT permission FROM app_system.permissions \
+const PERMISSIONS_SQL: &str = "SELECT permission FROM platform.permissions \
     WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission";
 
 /// One application user with the roles it holds.

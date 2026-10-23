@@ -109,7 +109,7 @@ async fn grant_service_operator(
     let email = format!("{subject}@example.invalid");
     project
         .execute(
-            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+            "INSERT INTO platform.users (tenant_id, id, type, email) \
              VALUES ($1, $2::text::uuid, 'service', $3)",
             &[&TENANT, &principal.id().as_str(), &email],
         )
@@ -139,7 +139,7 @@ fn package_root() -> PathBuf {
 async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<String>> {
     Ok(project
         .query(
-            "SELECT role_name || ':' || permission || ':' || xmin::text FROM app_system.permissions \
+            "SELECT role_name || ':' || permission || ':' || xmin::text FROM platform.permissions \
              WHERE tenant_id = $1 ORDER BY role_name, permission COLLATE \"C\"",
             &[&TENANT],
         )
@@ -175,7 +175,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("bind the fixture test principal")?;
     project
         .execute(
-            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+            "INSERT INTO platform.users (tenant_id, id, type, email) \
              VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid')",
             &[&TENANT, &FIXTURE_PRINCIPAL],
         )
@@ -183,14 +183,14 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("seed the fixture test principal")?;
     project
         .execute(
-            "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
+            "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, $2)",
             &[&TENANT, &ITEM_READER],
         )
         .await
         .context("seed the authored role")?;
     project
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+            "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
              VALUES ($1, $2, $3), ($1, $2, $4)",
             &[&TENANT, &ITEM_READER, &OPERATION_REFERENCE, &UNSERVED],
         )
@@ -214,7 +214,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("apply the route-authentication fixture package")?;
     let roles = project
         .query(
-            "SELECT name FROM app_system.roles WHERE tenant_id = $1 ORDER BY name",
+            "SELECT name FROM platform.roles WHERE tenant_id = $1 ORDER BY name",
             &[&TENANT],
         )
         .await
@@ -451,7 +451,7 @@ async fn assert_user_environment_membership(
     ).await?;
     project
         .execute(
-            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+            "INSERT INTO platform.users (tenant_id, id, type, email) \
          VALUES ($1, $2::text::uuid, 'user', 'member@example.test'), \
                 ($1, $3::text::uuid, 'user', 'other@example.test'), \
                 ('other-tenant', $2::text::uuid, 'user', 'member@example.test')",
@@ -460,7 +460,7 @@ async fn assert_user_environment_membership(
         .await?;
     project
         .execute(
-            "INSERT INTO app_system.roles (tenant_id, name) \
+            "INSERT INTO platform.roles (tenant_id, name) \
          VALUES ($1, 'user-reader'), ($1, 'user-extra'), \
                 ('other-tenant', 'user-reader')",
             &[&TENANT],
@@ -468,7 +468,7 @@ async fn assert_user_environment_membership(
         .await?;
     project
         .execute(
-            "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+            "INSERT INTO platform.user_roles (tenant_id, user_id, role_name) \
          VALUES ($1, $2::text::uuid, 'user-reader'), ($1, $2::text::uuid, 'user-extra'), \
                 ('other-tenant', $2::text::uuid, 'user-reader')",
             &[&TENANT, &user.id().as_str()],
@@ -476,7 +476,7 @@ async fn assert_user_environment_membership(
         .await?;
     project
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+            "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
          VALUES ($1, 'user-reader', $2), \
                 ($1, 'user-extra', 'route-auth-fixture:item/extra'), \
                 ('other-tenant', 'user-reader', 'route-auth-fixture:item/other-tenant')",
@@ -643,7 +643,7 @@ async fn assert_user_environment_membership(
         "membership alone cannot supply another user's permissions"
     );
     project.execute(
-        "DELETE FROM app_system.user_roles WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = 'user-reader'",
+        "DELETE FROM platform.user_roles WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = 'user-reader'",
         &[&TENANT, &user.id().as_str()],
     ).await?;
     assert_eq!(
@@ -658,11 +658,11 @@ async fn assert_user_environment_membership(
         "role removal must affect the next request"
     );
     project.execute(
-        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'user-reader')",
+        "INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'user-reader')",
         &[&TENANT, &user.id().as_str()],
     ).await?;
     project.execute(
-        "UPDATE app_system.users SET status = 'disabled' WHERE tenant_id = $1 AND id = $2::text::uuid",
+        "UPDATE platform.users SET status = 'disabled' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &user.id().as_str()],
     ).await?;
     assert_eq!(
@@ -676,7 +676,7 @@ async fn assert_user_environment_membership(
         Err(Refusal::Permission(OPERATION.into()))
     );
     project.execute(
-        "UPDATE app_system.users SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
+        "UPDATE platform.users SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &user.id().as_str()],
     ).await?;
     invoke(
@@ -1036,7 +1036,7 @@ async fn production_operator_authentication_and_operation_authorization() {
 
     project
         .execute(
-            "DELETE FROM app_system.permissions \
+            "DELETE FROM platform.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
             &[&TENANT, &ITEM_READER, &OPERATION_REFERENCE],
         )
@@ -1152,7 +1152,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     ] {
         project
             .execute(
-                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                "INSERT INTO platform.users (tenant_id, id, type, email) \
                  VALUES ($1, gen_random_uuid(), $2, $3)",
                 &[&TENANT, &kind, &email],
             )
@@ -1174,8 +1174,8 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         async move {
             project
                 .query(
-                    "SELECT r.role_name FROM app_system.user_roles r \
-                     JOIN app_system.users u ON u.tenant_id = r.tenant_id AND u.id = r.user_id \
+                    "SELECT r.role_name FROM platform.user_roles r \
+                     JOIN platform.users u ON u.tenant_id = r.tenant_id AND u.id = r.user_id \
                      WHERE r.tenant_id = $1 AND u.email = $2 ORDER BY r.role_name",
                     &[&TENANT, &email],
                 )

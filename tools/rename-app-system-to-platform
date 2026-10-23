@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Rename the project schema app_system to platform in the current tree.
+
+docs/plan/platform-config.md, C1.1. The script rewrites every current
+reference: SQL, Rust and other source, tests, fixtures and live docs. It
+replaces APP_SYSTEM with PLATFORM, app-system with platform and app_system
+with platform. It is idempotent, so a lane that rebases its own new code over
+the rename runs it again, then cargo fmt. History stays as it is: see
+EXCLUDED and KEEP.
+
+Project migration 0024_platform_schema.sql renames the schema in an existing
+database.
+
+usage: tools/rename-app-system-to-platform [run|dry-run]
+"""
+
+from pathlib import Path
+import subprocess
+import sys
+
+USAGE = "usage: tools/rename-app-system-to-platform [run|dry-run]"
+
+REPLACEMENTS = (
+    ("APP_SYSTEM", "PLATFORM"),
+    ("app-system", "platform"),
+    ("app_system", "platform"),
+)
+
+# A line that carries this marker names the old schema on purpose (the
+# upgrade path of a database installed before the rename), and stays.
+KEEP = "rename-app-system: keep"
+
+# Paths that stay byte-identical: a path equal to an entry, or under an entry
+# that ends with "/".
+EXCLUDED = (
+    # Applied migrations, as installed databases recorded them, and the
+    # migration that renames the schema, which names the old name.
+    "deploy/sql/migrations/",
+    # Applied one-off corrections.
+    "deploy/sql/corrections/",
+    # History documents.
+    "docs/history/",
+    # The plan that describes the rename.
+    "docs/plan/platform-config.md",
+    # Recorded sweep results.
+    "tests/sweeps/",
+    # The tracker export.
+    ".beads/",
+    # The submodule; its owner renames it.
+    "web/wfe",
+    # The frozen app-schema.sql of 4495e0d20 and the tests of applied project
+    # migrations on a database installed before the rename.
+    "crates/control/lib/tests/fixtures/app-schema-before-authored-roles.sql",
+    "crates/control/lib/tests/authored_roles_migration_live.rs",
+    "crates/control/lib/tests/environment_table_migration_live.rs",
+    "crates/control/lib/tests/user_type_migration_live.rs",
+    # This script.
+    "tools/rename-app-system-to-platform",
+)
+
+
+def excluded(path):
+    return any(
+        path.startswith(entry) if entry.endswith("/") else path == entry
+        for entry in EXCLUDED
+    )
+
+
+def rename(text):
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if KEEP in line:
+            continue
+        for old, new in REPLACEMENTS:
+            line = line.replace(old, new)
+        lines[index] = line
+    return "".join(lines)
+
+
+def main(arguments):
+    if len(arguments) > 1 or (arguments and arguments[0] not in ("run", "dry-run")):
+        print(USAGE, file=sys.stderr)
+        return 64
+    apply = not arguments or arguments[0] == "run"
+    root = Path(__file__).resolve().parent.parent
+    listed = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        check=True,
+        capture_output=True,
+    ).stdout.decode()
+    changed = 0
+    for path in sorted(set(filter(None, listed.split("\0")))):
+        if excluded(path):
+            continue
+        if any(old in path for old, _ in REPLACEMENTS):
+            print(f"rename-app-system-to-platform: the path {path} names the schema; rename it with git mv", file=sys.stderr)
+        file = root / path
+        if not file.is_file() or file.is_symlink():
+            continue
+        raw = file.read_bytes()
+        if b"\0" in raw:
+            continue
+        try:
+            text = raw.decode()
+        except UnicodeDecodeError:
+            continue
+        renamed = rename(text)
+        if renamed == text:
+            continue
+        changed += 1
+        print(("renamed " if apply else "would rename ") + path)
+        if apply:
+            file.write_bytes(renamed.encode())
+    print(f"{changed} files {'renamed' if apply else 'to rename'}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

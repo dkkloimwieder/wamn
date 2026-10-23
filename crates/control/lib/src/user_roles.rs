@@ -2,7 +2,7 @@
 //! of an environment, or take it away.
 //!
 //! `apply-package` writes the built-in role `admin`, and every other role is
-//! authored. This module writes only `app_system.user_roles`. The target is resolved in the
+//! authored. This module writes only `platform.user_roles`. The target is resolved in the
 //! registry the way `env apply` resolves it, because a role grant
 //! names an environment, not a database. The user is named by email and must
 //! already have its tenant `users` row, which `env apply` writes.
@@ -170,7 +170,7 @@ async fn resolve_user(
 ) -> anyhow::Result<String> {
     let rows = transaction
         .query(
-            "SELECT id::text FROM app_system.users \
+            "SELECT id::text FROM platform.users \
              WHERE tenant_id = $1 AND lower(email) = lower($2) ORDER BY id",
             &[&tenant, &user],
         )
@@ -249,7 +249,7 @@ pub(crate) async fn connect_target(
         );
         anyhow::ensure!(
             row.get::<_, bool>(1),
-            "the role verbs require SUPERUSER or BYPASSRLS, because app_system forces RLS"
+            "the role verbs require SUPERUSER or BYPASSRLS, because platform forces RLS"
         );
         Ok(())
     }

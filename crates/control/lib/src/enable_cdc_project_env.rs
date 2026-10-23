@@ -68,7 +68,7 @@ pub struct EnableCdcProjectEnvRequest {
     pub env: String,
 
     /// The application DATA schema the publication covers (not the
-    /// `app_system` auth schema).
+    /// `platform` auth schema).
     pub schema: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): derive the

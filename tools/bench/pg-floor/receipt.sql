@@ -22,7 +22,7 @@ SELECT ''::text AS role, s.purchase_order_id, s.line,
 \startpipeline
 BEGIN ISOLATION LEVEL READ COMMITTED;
 SELECT set_config('statement_timeout', :statement_timeout, true), set_config('search_path', COALESCE(:schema, current_setting('search_path')), true), set_config('app.runner', COALESCE(:runner, current_setting('app.runner', true)), true), set_config('app.role', :role, true), set_config('app.user_id', :principal, true), set_config('app.operation', :operation, true);
-INSERT INTO app_system.write_log (operation, idempotency_key, request) VALUES (:claim_operation::text, :request_id::text, :request_hash::bytea) ON CONFLICT (operation, idempotency_key) DO NOTHING RETURNING idempotency_key;
+INSERT INTO platform.write_log (operation, idempotency_key, request) VALUES (:claim_operation::text, :request_id::text, :request_hash::bytea) ON CONFLICT (operation, idempotency_key) DO NOTHING RETURNING idempotency_key;
 \endpipeline
 SELECT status
 FROM purchase_order
@@ -30,7 +30,7 @@ WHERE id = :purchase_order_id::uuid
 FOR UPDATE;
 -- record_receipt.sql
 \startpipeline
-WITH finished AS (UPDATE app_system.write_log SET result = :result::text WHERE operation = :claim_operation::text AND idempotency_key = :request_id::text AND result IS NULL RETURNING idempotency_key) SELECT 1 / count(*)::integer FROM finished;
+WITH finished AS (UPDATE platform.write_log SET result = :result::text WHERE operation = :claim_operation::text AND idempotency_key = :request_id::text AND result IS NULL RETURNING idempotency_key) SELECT 1 / count(*)::integer FROM finished;
 SELECT pg_logical_emit_message(true, 'wamn.causation', :causation::text);
 COMMIT;
 \endpipeline

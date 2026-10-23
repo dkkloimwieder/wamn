@@ -45,7 +45,7 @@ impl Migration {
 pub enum MigrationTarget {
     /// The system database `wamn_system`, recorded in `registry.schema_migrations`.
     System,
-    /// A project-environment database, recorded in `app_system.schema_migrations`.
+    /// A project-environment database, recorded in `platform.schema_migrations`.
     Project,
 }
 
@@ -62,7 +62,7 @@ impl MigrationTarget {
     pub fn record_table(self) -> &'static str {
         match self {
             Self::System => "registry.schema_migrations",
-            Self::Project => "app_system.schema_migrations",
+            Self::Project => "platform.schema_migrations",
         }
     }
 
@@ -346,6 +346,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0023_org_connection_source.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0024_platform_schema.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0024_platform_schema.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -401,41 +405,23 @@ mod tests {
         }
     }
 
-    /// The header of the generated project migration that lets the
-    /// administration family read releases, the latest rendering of the
-    /// administration surface. 0003, 0006, 0008 and 0016 hold the earlier
-    /// surfaces, as installed databases recorded them.
-    const ADMINISTRATION_GRANTS_HEADER: &str = "\
--- GENERATED FILE. Do not edit. It is the output of
--- wamn_control_provision::sql::grant_administration_surface_sql(\"wamn_run\"),
--- and a test in crates/control/provision/src/schema_migrations.rs renders that
--- function and compares the bytes.
---
--- The administration family reads catalog.releases, so the control host's
--- release.profile reads an installed release by its digest
--- (docs/plan/trx-pkg-plan.md, Spike and acceptance B). upgrade-schema runs
--- this file once in one transaction and records it. A fresh install records
--- it as applied, because provision-project-env applies the same surface when
--- it prepares the administration credential.
-";
-
+    /// The project migration that renames the schema to platform carries the
+    /// latest rendering of the administration surface after its rename. 0003,
+    /// 0006, 0008, 0016 and 0020 hold the earlier surfaces, as installed
+    /// databases recorded them.
     #[test]
     fn the_latest_administration_migration_is_the_rendered_administration_surface() {
         let rendered = format!(
-            "{ADMINISTRATION_GRANTS_HEADER}\n{}\n",
+            ";\n\n{}\n",
             crate::sql::grant_administration_surface_sql("wamn_run")
         );
         let migration = PROJECT_MIGRATIONS
             .iter()
-            .find(|migration| {
-                migration
-                    .relative_path
-                    .ends_with("_administration_release_read.sql")
-            })
-            .expect("the project migration that lets administration read releases exists");
-        assert_eq!(
-            migration.sql, rendered,
-            "{} is not the rendered administration surface",
+            .find(|migration| migration.relative_path.ends_with("_platform_schema.sql"))
+            .expect("the project migration that renames the schema to platform exists");
+        assert!(
+            migration.sql.ends_with(&rendered),
+            "{} does not end with the rendered administration surface",
             migration.relative_path
         );
     }

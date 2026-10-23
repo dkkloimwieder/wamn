@@ -1116,7 +1116,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // wamn-0h0g.22.11 CUT THE CALLABLE-HTTP CLASS OVER on the same terms.
     // Trusted component HTTP effects remain executor-only (wamn-0h0g.10.16),
     // but wamn-10yt.3.2 reuses that exact pool family for the host-owned
-    // app_system.permissions read that PAT/session routes require. Connection
+    // platform.permissions read that PAT/session routes require. Connection
     // resolution also uses this class. The manifest-derived gate retains the
     // pool for either demand; a host with neither retains the absent arm.
     // EventMaterializer uses the same explicit-source rule: only the dedicated

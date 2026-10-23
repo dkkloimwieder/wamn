@@ -96,6 +96,12 @@ async fn the_migration_creates_the_environment_table_as_a_fresh_install_has_it()
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install the application schema");
+    // The schema under its name before project migration 0024, as the
+    // databases that this migration ran on had it.
+    client
+        .batch_execute("ALTER SCHEMA platform RENAME TO app_system")
+        .await
+        .expect("name the schema as before 0024");
     let fresh = definition(&client).await;
     assert!(
         fresh

@@ -28,8 +28,8 @@ const REGISTERED_ORG_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.orgs WHE
 const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
     WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
     AND status = 'active')";
-const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM app_system.users u \
-    JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM platform.users u \
+    JOIN platform.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     WHERE u.tenant_id = $1 AND u.id = $2::text::uuid AND u.status = 'active' \
     ORDER BY r.role_name";
 

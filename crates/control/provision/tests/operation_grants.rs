@@ -9,7 +9,7 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use wamn_control_provision::operation_grants::{
-    APP_SYSTEM_FLOOR_MISSING, ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
+    ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL, PLATFORM_FLOOR_MISSING,
     operation_grant_floor_check_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
@@ -103,7 +103,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     run(
         &url,
         "reset application authority floor",
-        "DROP SCHEMA IF EXISTS app_system CASCADE; \
+        "DROP SCHEMA IF EXISTS platform CASCADE; \
          DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
          DO $role$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
@@ -116,10 +116,10 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     let (ok, _, missing_stderr) = psql(&url, &transaction());
     assert!(
         !ok,
-        "the admin write installed its own missing app_system floor"
+        "the admin write installed its own missing platform floor"
     );
     assert!(
-        missing_stderr.contains("55000") && missing_stderr.contains(APP_SYSTEM_FLOOR_MISSING),
+        missing_stderr.contains("55000") && missing_stderr.contains(PLATFORM_FLOOR_MISSING),
         "missing-floor refusal lost its SQLSTATE or literal:\n{missing_stderr}"
     );
 
@@ -134,10 +134,10 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
         &format!(
             "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
          set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
-         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
+         INSERT INTO platform.users (tenant_id, id, type, email) VALUES \
            ('t1', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
-         INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'clerk'); \
-         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
+         INSERT INTO platform.roles (tenant_id, name) VALUES ('t1', 'clerk'); \
+         INSERT INTO platform.permissions (tenant_id, role_name, permission) VALUES \
            ('t1', 'clerk', 'platform-fixture:widget/create'), \
            ('t1', 'clerk', 'platform-fixture:widget/get'); COMMIT;"
         ),
@@ -148,27 +148,27 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     assert_eq!(
         query(
             &url,
-            "SELECT string_agg(name, ',' ORDER BY name) FROM app_system.roles WHERE tenant_id = 't1'"
+            "SELECT string_agg(name, ',' ORDER BY name) FROM platform.roles WHERE tenant_id = 't1'"
         ),
         "admin,clerk",
         "apply-package did not leave admin beside the authored role"
     );
     assert_eq!(
-        query(&url, "SELECT count(*) FROM app_system.permissions"),
+        query(&url, "SELECT count(*) FROM platform.permissions"),
         "2",
         "the admin write changed an authored permission row"
     );
 
     let admin_row = refusal(
         &url,
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+        "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
          VALUES ('t1', 'admin', 'platform-fixture:widget/get')",
     )
     .expect("admin took a permission row");
     assert!(admin_row.contains("permissions_admin_check"), "{admin_row}");
     let sealed = refusal(
         &url,
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+        "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
          VALUES ('t1', 'clerk', 'platform-fixture:widget/list@2.1.0')",
     )
     .expect("a sealed operation id was stored as a reference");
@@ -176,7 +176,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     for name in ["Clerk", "-clerk", "clerk role", &"a".repeat(65)] {
         let refused = refusal(
             &url,
-            &format!("INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', '{name}')"),
+            &format!("INSERT INTO platform.roles (tenant_id, name) VALUES ('t1', '{name}')"),
         )
         .unwrap_or_else(|| panic!("role name {name:?} was stored"));
         assert!(refused.contains("roles_name_check"), "{refused}");
@@ -184,7 +184,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
 
     if let Some(error) = refusal(
         &url,
-        "DELETE FROM app_system.permissions WHERE tenant_id = 't1' AND role_name = 'clerk' \
+        "DELETE FROM platform.permissions WHERE tenant_id = 't1' AND role_name = 'clerk' \
          AND permission = 'platform-fixture:widget/create'",
     ) {
         panic!("revoke widget/create: {error}");
@@ -192,7 +192,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     assert_eq!(
         query(
             &url,
-            "SELECT string_agg(permission, ',') FROM app_system.permissions"
+            "SELECT string_agg(permission, ',') FROM platform.permissions"
         ),
         "platform-fixture:widget/get",
         "the revoke kept its row or removed another row"
@@ -201,6 +201,6 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     run(
         &url,
         "remove application authority floor",
-        "DROP SCHEMA app_system CASCADE; DROP SCHEMA wamn_authority CASCADE;",
+        "DROP SCHEMA platform CASCADE; DROP SCHEMA wamn_authority CASCADE;",
     );
 }

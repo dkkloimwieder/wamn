@@ -238,12 +238,12 @@ async fn fixture() -> (
     ensure_live_users_rows(database.url(), TENANT, &[LIVE_PRINCIPAL]).await;
     let schema = include_str!("../../../../../../../deploy/sql/app-schema.sql");
     let start = schema
-        .find("CREATE TABLE IF NOT EXISTS app_system.write_log")
+        .find("CREATE TABLE IF NOT EXISTS platform.write_log")
         .unwrap();
     let end = schema
-        .find("GRANT DELETE ON app_system.write_log TO wamn_app;")
+        .find("GRANT DELETE ON platform.write_log TO wamn_app;")
         .unwrap()
-        + "GRANT DELETE ON app_system.write_log TO wamn_app;".len();
+        + "GRANT DELETE ON platform.write_log TO wamn_app;".len();
     database.execute(&[
         &schema[start..end],
         "DO $$ BEGIN CREATE ROLE wamn_db_owner; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
@@ -436,7 +436,7 @@ async fn reads_authorize_without_a_transaction_and_refuse_begin() {
     }
     let count: i64 = connect(&database)
         .await
-        .query_one("SELECT count(*) FROM app_system.write_log", &[])
+        .query_one("SELECT count(*) FROM platform.write_log", &[])
         .await
         .unwrap()
         .get(0);
@@ -500,7 +500,7 @@ async fn rollback_removes_the_claim_and_statement_effects() {
     assert!(postgres.operation_transactions.lock().unwrap().is_empty());
     let count: i64 = connect(&database)
         .await
-        .query_one("SELECT count(*) FROM app_system.write_log", &[])
+        .query_one("SELECT count(*) FROM platform.write_log", &[])
         .await
         .unwrap()
         .get(0);
@@ -515,7 +515,7 @@ async fn rollback_then_begin_on_the_same_store_runs_the_unclaimed_key() {
     assert_eq!(value(&database).await, 2);
     let result: String = connect(&database)
         .await
-        .query_one("SELECT result FROM app_system.write_log", &[])
+        .query_one("SELECT result FROM platform.write_log", &[])
         .await
         .unwrap()
         .get(0);
@@ -556,7 +556,7 @@ async fn begin_commit_begin_on_the_same_store_uses_new_transaction_and_delivery(
     assert_eq!(transactions, 2);
     let keys: Vec<String> = client
         .query(
-            "SELECT idempotency_key FROM app_system.write_log ORDER BY idempotency_key",
+            "SELECT idempotency_key FROM platform.write_log ORDER BY idempotency_key",
             &[],
         )
         .await
@@ -581,7 +581,7 @@ async fn refused_commit_then_begin_on_the_same_store_is_accepted() {
     let (database, postgres, release) = fixture().await;
     database
         .execute(&[
-            "ALTER TABLE app_system.write_log ADD CONSTRAINT refuse_first_finish \
+            "ALTER TABLE platform.write_log ADD CONSTRAINT refuse_first_finish \
          CHECK (result IS NULL OR idempotency_key <> 'key')",
         ])
         .unwrap();
@@ -598,7 +598,7 @@ async fn store_drop_rolls_back_the_statement_and_claim() {
     assert!(postgres.operation_transactions.lock().unwrap().is_empty());
     let count: i64 = connect(&database)
         .await
-        .query_one("SELECT count(*) FROM app_system.write_log", &[])
+        .query_one("SELECT count(*) FROM platform.write_log", &[])
         .await
         .unwrap()
         .get(0);
@@ -626,7 +626,7 @@ async fn guest_begin_statement_commit_writes_the_log_and_history() {
     });
     let row = client
         .query_one(
-            "SELECT operation, idempotency_key, request, result FROM app_system.write_log",
+            "SELECT operation, idempotency_key, request, result FROM platform.write_log",
             &[],
         )
         .await
@@ -649,7 +649,7 @@ async fn guest_begin_statement_commit_writes_the_log_and_history() {
     assert_eq!(value(&database).await, 2);
     client
         .execute(
-            "UPDATE app_system.write_log SET request = 'different'::bytea",
+            "UPDATE platform.write_log SET request = 'different'::bytea",
             &[],
         )
         .await
@@ -657,7 +657,7 @@ async fn guest_begin_statement_commit_writes_the_log_and_history() {
     run_guest(Arc::clone(&postgres), Arc::clone(&release), 6).await;
     client
         .execute(
-            "UPDATE app_system.write_log SET request = $1, result = NULL",
+            "UPDATE platform.write_log SET request = $1, result = NULL",
             &[&vec![255_u8, 0, 128]],
         )
         .await

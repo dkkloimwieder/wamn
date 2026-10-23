@@ -193,7 +193,7 @@ impl NativePolicy {
     /// `app.user_id` and the admitted operation token as `app.operation`,
     /// which the record-history triggers record.
     ///
-    /// The bind also reads the executing principal's `app_system.users` row in
+    /// The bind also reads the executing principal's `platform.users` row in
     /// the tenant and refuses a principal that owns none. That refusal is an
     /// authorization fact, so it reaches the caller as the `permission-denied`
     /// the operation vocabulary already carries, not as a host failure.

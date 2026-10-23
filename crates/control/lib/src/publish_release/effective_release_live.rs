@@ -107,7 +107,7 @@ async fn provision_project(project: &Client) {
             // or the migrations are refused for want of CREATE on it. The test
             // creates every role it needs; it takes no out-of-band setup.
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
                PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
@@ -552,7 +552,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     project
         .batch_execute(
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE;",
         )
         .await

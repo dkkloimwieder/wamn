@@ -21,7 +21,7 @@ mod tests {
     const RECORD_HISTORY_APP_GRANTS_SQL: &str =
         include_str!("../../../deploy/sql/record-history-app-grants.sql");
     /// The test principal that the fixture writes as. This SQL-only fixture has
-    /// no `app_system` schema, and no stamp column reads a users row.
+    /// no `platform` schema, and no stamp column reads a users row.
     const FIXTURE_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f1);
     /// A second principal, so a stamp shows which write set it.
     const COMMAND_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f2);
@@ -1771,7 +1771,7 @@ mod tests {
         let row = client
             .query_one(
                 "SELECT \
-                 (SELECT count(*) FROM app_system.write_log \
+                 (SELECT count(*) FROM platform.write_log \
                    WHERE operation = 'wamn-receiving:receiving/record-receipt')::int8 AS command_count, \
                  (SELECT count(*) FROM receipt)::int8 AS receipt_count, \
                  (SELECT count(*) FROM receipt_line)::int8 AS receipt_line_count, \

@@ -7,7 +7,7 @@ use super::*;
 async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     const TENANT: &str = "local-configuration";
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_app_system();
+    let database = wamn_project_state::test_database::tenant_platform();
     let url = database.url().to_owned();
     let (mut client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
     tokio::spawn(connection);

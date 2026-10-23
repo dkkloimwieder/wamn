@@ -1,14 +1,16 @@
-//! Live test of `project/0020_administration_release_read.sql` (wamn-a40n.2,
-//! wamn-a40n.9, wamn-zua8.2, wamn-snz0.6, wamn-aemxz.1): on an installed project database, the latest migration of the
-//! administration surface gives `wamn_administration` the exact surface that
-//! provisioning grants. The test holds the process lock of
-//! its server, because the file creates a cluster-wide role.
+//! Live test of `project/0024_platform_schema.sql` (wamn-a40n.2,
+//! wamn-a40n.9, wamn-zua8.2, wamn-snz0.6, wamn-aemxz.1, wamn-aqd0m.1): on a
+//! project database installed before the schema rename, the latest migration
+//! of the administration surface renames the schema to platform and gives
+//! `wamn_administration` the exact surface that provisioning grants. The test
+//! holds the process lock of its server, because the file creates a
+//! cluster-wide role.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
 
 const MIGRATION: &str =
-    include_str!("../../../../deploy/sql/migrations/project/0020_administration_release_read.sql");
+    include_str!("../../../../deploy/sql/migrations/project/0024_platform_schema.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 
 async fn connect(url: &str) -> Client {
@@ -77,6 +79,10 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install the application schema");
+    client
+        .batch_execute("ALTER SCHEMA platform RENAME TO app_system") // rename-app-system: keep
+        .await
+        .expect("name the schema as before 0024");
 
     client
         .batch_execute(&format!("BEGIN; {MIGRATION} COMMIT;"))
@@ -84,16 +90,16 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .expect("apply the migration");
     let migrated = surface(&client).await;
     for expected in [
-        "column app_system.roles_history.operation INSERT",
+        "column platform.roles_history.operation INSERT",
         "routine wamn_authority.tenant_key(text) EXECUTE",
         "routine wamn_history.row_image(record) EXECUTE",
-        "schema app_system USAGE",
+        "schema platform USAGE",
         "schema catalog USAGE",
-        "table app_system.environment UPDATE",
+        "table platform.environment UPDATE",
         "table catalog.releases SELECT",
-        "table app_system.permissions DELETE",
-        "table app_system.user_roles INSERT",
-        "table app_system.users UPDATE",
+        "table platform.permissions DELETE",
+        "table platform.user_roles INSERT",
+        "table platform.users UPDATE",
     ] {
         assert!(
             migrated.iter().any(|entry| entry == expected),

@@ -118,9 +118,9 @@ The benched update changes one field (`supplier_id`) on one row of `receiving.pu
 
 Two pipelined trips, 7 statements, from the captured replay `tools/bench/pg-floor/update.sql`:
 
-1. Trip 1: `BEGIN`; one `SELECT` with six `set_config` calls (`statement_timeout`, `search_path`, `app.runner`, `app.role`, `app.user_id`, `app.operation`); `INSERT INTO app_system.write_log … ON CONFLICT DO NOTHING RETURNING` (the claim).
+1. Trip 1: `BEGIN`; one `SELECT` with six `set_config` calls (`statement_timeout`, `search_path`, `app.runner`, `app.role`, `app.user_id`, `app.operation`); `INSERT INTO platform.write_log … ON CONFLICT DO NOTHING RETURNING` (the claim).
 2. The command statement: `WITH target AS MATERIALIZED (SELECT … FOR UPDATE), updated AS (UPDATE purchase_order … RETURNING …) SELECT outcome …`.
-3. Trip 2: `UPDATE app_system.write_log SET result = $1` (the full row as JSON text); `pg_logical_emit_message(true, 'wamn.causation', …)`; `COMMIT`.
+3. Trip 2: `UPDATE platform.write_log SET result = $1` (the full row as JSON text); `pg_logical_emit_message(true, 'wamn.causation', …)`; `COMMIT`.
 
 Two row triggers fire on the one-row `UPDATE` (`deploy/sql/record-history.sql`):
 

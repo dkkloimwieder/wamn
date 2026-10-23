@@ -1410,7 +1410,7 @@ fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
 // ---------------------------------------------------------------------------
 // Generated create: the write log (`docs/plan/write-log.md`).
 //
-// A create claims its key in `app_system.write_log`, inserts its row and
+// A create claims its key in `platform.write_log`, inserts its row and
 // stores its result in one transaction that its codec holds. The model's
 // defaults mint the identities, and `RETURNING` hands them back.
 // ---------------------------------------------------------------------------
@@ -1811,7 +1811,7 @@ fn generated_create_contracts_publish_the_write_log_and_its_refusal() {
         json!({
             "key": "idempotency_key",
             "log": {
-                "schema": "app_system",
+                "schema": "platform",
                 "table": "write_log",
                 "operation": "platform-gadget:gadget/create",
             },

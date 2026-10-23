@@ -4,13 +4,13 @@ Updated through: 2026-09-26, `main` at `b32865103`.
 
 ## 1. Goal
 
-One platform table per database, `app_system.write_log`, holds the idempotency record of every create and command. It replaces every `*_command` table and every hand-written claim, replay and finalize statement. A retry with the same key and the same request answers the stored result. A retry with the same key and a different request is refused. Update and delete keep `row_version` as their guard and write nothing to the log.
+One platform table per database, `platform.write_log`, holds the idempotency record of every create and command. It replaces every `*_command` table and every hand-written claim, replay and finalize statement. A retry with the same key and the same request answers the stored result. A retry with the same key and a different request is refused. Update and delete keep `row_version` as their guard and write nothing to the log.
 
 The change removes one table per model and per command from every application schema, and three SQL files from every custom command. It adds no new rule: the retry rule is the one the claim tables enforce today, in one place.
 
 ## 2. Fixed rules
 
-- One idempotency record per database, `app_system.write_log`. No application table implements or references the claim.
+- One idempotency record per database, `platform.write_log`. No application table implements or references the claim.
 - The claim and the work commit together or not at all. There is no state between them.
 - The key is the field the operation's `idempotency.key` names in its contract (`idempotency_key` for a create, a path such as `value.idempotency_key` for a command). The codec reads it from there. Its scope is the database and the operation.
 - Same key, same request: the stored result, no work. Same key, different request: `idempotency_conflict`, no work.
@@ -39,14 +39,14 @@ Measured on `main` at `b32865103` on 2026-09-26.
 | The flow | The hand-written data access runs it inside one transaction: replay read, claim insert, work, commit; on a lost claim race a second replay read (`apps/wamn_wms/data/src/packaging.rs`). A stored request that differs answers `IdempotencyConflict`. |
 | Result on retry | Not stored. The replay re-reads the model row through the join. A custom command whose result is not one row (`record_receipt`) rebuilds it from the claim columns. |
 | Statement authority | The host builds one statement set per operation from the served contract's `statements[]` (`crates/execution/host/src/operation.rs:585-596`) and activates that set alone for the invocation (`crates/execution/host/src/operation/native_policy.rs:257-260`). A digest outside the set is `UnknownStatement` (`crates/platform/runtime/src/plugins/wamn_postgres/statements.rs:234-237`). |
-| `app_system` | Installed in every project database by `env apply` from `deploy/sql/app-schema.sql`. One project database serves one tenant (`docs/architecture/data-access.md:630`). |
+| `platform` | Installed in every project database by `env apply` from `deploy/sql/app-schema.sql`. One project database serves one tenant (`docs/architecture/data-access.md:630`). |
 | Edge | The engine's intent rules give an operation with no SQL its record in SQLite. `edge_samples` still has a claim table for `sample.record` on the platform side. |
 
 ## 4. Design
 
 ### 4.1 The table
 
-`app_system.write_log`, installed by `deploy/sql/app-schema.sql`, so `env apply` puts it in every project database and no application migration names it.
+`platform.write_log`, installed by `deploy/sql/app-schema.sql`, so `env apply` puts it in every project database and no application migration names it.
 
 | Column | Type | Rule |
 | --- | --- | --- |

@@ -22,7 +22,7 @@ The host checks that the original caller holds the entry, once, before the entry
 Component membership alone grants no permission to call an operation.
 
 An application host checks the status of its environment for each request, before the auth policy of the route.
-It reads its row of `app_system.environment` through the guest login of its tenant, as `wamn_app`, and no row means active.
+It reads its row of `platform.environment` through the guest login of its tenant, as `wamn_app`, and no row means active.
 The host keeps the answer in its [auth memory](#auth-memory).
 While the status is `inactive`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
 A failed read answers 503 `authentication-unavailable`.
@@ -161,7 +161,7 @@ A grant commits its system rows first, and then writes the `users` row, with `ad
 A revoke or a deactivation removes the application rows first, and commits its system rows only when every environment is done.
 If an environment fails, the route answers `application_write_incomplete` with that `environment` and the environments that completed, and the system rows of a revoke stay as they were.
 The four status routes need `org-admin`, and they write `registry.project_envs.status` through the `control` family, which holds `UPDATE` on that column only.
-Each status route also writes the status into the one row of `app_system.environment` in each environment, with the same administration login.
+Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
@@ -457,7 +457,7 @@ Repeated applies retain its identity and grants.
 Publish authorizes the operations that the application declares as dependencies.
 Apply assigns a role with those permissions. Repeated applies write no principal or role rows.
 The executor resolves the application principal when it admits the schedule run.
-Its database role reads only `tenant_id`, `id`, `type`, `status`, and `email` from `app_system.users`.
+Its database role reads only `tenant_id`, `id`, `type`, `status`, and `email` from `platform.users`.
 It can insert the principal into a run but cannot change that identity afterward.
 
 The queue reads its current permissions, and the router authorizes each registered consumer command through the existing operation check.
@@ -530,7 +530,7 @@ The host answers the auth facts of a repeated caller from its memory, so they co
 The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the scheduler NATS.
 The key `<tenant>.<principal>` holds the grants of a principal and whether the tenant has its users row.
 The key `<tenant>.environment` holds the environment status.
-One read of `app_system.users`, `app_system.user_roles` and `app_system.permissions` answers the permission check and the users-row check of the invocation bind.
+One read of `platform.users`, `platform.user_roles` and `platform.permissions` answers the permission check and the users-row check of the invocation bind.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 Each host watches the keys of its tenant and keeps each value it sees, so a fact one host reads serves every host of the tenant.
 The control host serves every tenant, so it watches every key.
@@ -913,7 +913,7 @@ Unsupported input types block submission.
 Unknown output types remain display-only and appear as opaque values.
 
 Record screens show the returned `created_by` and `updated_by` IDs.
-A display name comes from the application's own SQL, which joins `app_system.users.display_name` where it needs a name.
+A display name comes from the application's own SQL, which joins `platform.users.display_name` where it needs a name.
 The platform adds no query after the result (`wamn-stxy9.1`).
 The history view keeps its existing behavior.
 

@@ -167,7 +167,7 @@ for call in "${calls[@]}"; do
     update*)
       # receipt-<n> also moves row_version, so the update count is read here.
       psql "$database_url" -XAt -v ON_ERROR_STOP=1 -v operation="${operation%@*}" >"$work/update-counts" <<'SQL'
-SELECT sum(row_version - 1), (SELECT count(*) FROM app_system.write_log WHERE operation = :'operation' AND result IS NOT NULL) FROM receiving.purchase_order;
+SELECT sum(row_version - 1), (SELECT count(*) FROM platform.write_log WHERE operation = :'operation' AND result IS NOT NULL) FROM receiving.purchase_order;
 SQL
       ;;
     receipt-*)

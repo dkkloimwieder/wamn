@@ -42,7 +42,7 @@
 
 /// The Postgres schema the tables live in. The single source both the DDL and
 /// downstream consumers (`SET search_path` / qualified queries) reference.
-pub const SCHEMA_NAME: &str = "app_system";
+pub const SCHEMA_NAME: &str = "platform";
 
 /// Storage-format version, additive-within-major per the `0.1.x` freeze. A
 /// schema model, not a published JSON-Schema contract — no generated file.
@@ -152,7 +152,7 @@ pub const WAMN_NAMESPACE: uuid::Uuid =
 /// and no version. A tenant or application cannot create a name with this prefix.
 pub const PLATFORM_PRINCIPAL_PREFIX: &str = "wamn:";
 
-/// A platform component that writes under its own `app_system.users` row.
+/// A platform component that writes under its own `platform.users` row.
 ///
 /// The row names the component, never the invocation. The list is closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +201,7 @@ impl PlatformComponent {
         }
     }
 
-    /// The `app_system.users` id: the UUIDv5 of [`Self::principal_name`] under
+    /// The `platform.users` id: the UUIDv5 of [`Self::principal_name`] under
     /// [`WAMN_NAMESPACE`].
     pub fn principal_id(self) -> uuid::Uuid {
         uuid::Uuid::new_v5(&WAMN_NAMESPACE, self.principal_name().as_bytes())
@@ -221,7 +221,7 @@ pub struct Table {
 }
 
 impl Table {
-    /// The schema-qualified name, e.g. `app_system.users`.
+    /// The schema-qualified name, e.g. `platform.users`.
     pub fn qualified(&self) -> String {
         format!("{SCHEMA_NAME}.{}", self.name)
     }
@@ -288,7 +288,7 @@ pub const TABLES: &[Table] = &[
     ENVIRONMENT,
 ];
 
-/// Test databases with the tenant+app_system floor.
+/// Test databases with the tenant+platform floor.
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_database;
 
@@ -399,6 +399,6 @@ mod tests {
 
     #[test]
     fn qualified_prepends_the_schema() {
-        assert_eq!(USERS.qualified(), "app_system.users");
+        assert_eq!(USERS.qualified(), "platform.users");
     }
 }

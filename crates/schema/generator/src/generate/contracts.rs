@@ -396,7 +396,7 @@ fn idempotency_contract(key: &str, operation_id: &str) -> Value {
     json!({
         "key": key,
         "log": {
-            "schema": "app_system",
+            "schema": "platform",
             "table": "write_log",
             "operation": operation,
         },

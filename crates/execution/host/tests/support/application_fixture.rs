@@ -108,14 +108,14 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
     for role in ["admin", "purchase-reader"] {
         admin
             .execute(
-                "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
+                "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, $2)",
                 &[&TENANT, &role],
             )
             .await?;
     }
     admin
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+            "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
              VALUES ($1, 'purchase-reader', 'session-test:purchase/read')",
             &[&TENANT],
         )
@@ -126,14 +126,14 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
     ] {
         admin
             .execute(
-                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                "INSERT INTO platform.users (tenant_id, id, type, email) \
                  VALUES ($1, $2::text::uuid, 'user', $3)",
                 &[&TENANT, &principal, &email],
             )
             .await?;
         admin
             .execute(
-                "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+                "INSERT INTO platform.user_roles (tenant_id, user_id, role_name) \
                  VALUES ($1, $2::text::uuid, $3)",
                 &[&TENANT, &principal, &role],
             )

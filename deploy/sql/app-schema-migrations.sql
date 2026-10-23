@@ -5,7 +5,7 @@
 -- the full schema files already hold them. upgrade-schema applies and records
 -- the rest. The first run of upgrade-schema on a database installed before
 -- this table runs this block. wamn_app has no privilege on it.
-CREATE TABLE app_system.schema_migrations (
+CREATE TABLE platform.schema_migrations (
     ordinal integer PRIMARY KEY CHECK (ordinal > 0),
     relative_path text NOT NULL UNIQUE
         CHECK (relative_path ~ '^migrations/project/[0-9]{4}_[a-z0-9_]+\.sql$'),

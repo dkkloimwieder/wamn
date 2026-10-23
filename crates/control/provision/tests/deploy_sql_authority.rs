@@ -22,7 +22,7 @@
 //! The record-history log cases (`wamn-emtx.11`) test
 //! `wamn_history.create_history_table` and `wamn_history.log_row_change()`
 //! against level-2 spec tests 2, 3, 4, 5, 7, 8, 10, and 16.
-//! The `app_system` history case (`wamn-emtx.21`) tests spec test 20 for the
+//! The `platform` history case (`wamn-emtx.21`) tests spec test 20 for the
 //! six history tables of `deploy/sql/app-schema.sql`.
 //! Every case starts a PostgreSQL server of its own, because every case
 //! rebuilds cluster-wide roles and the `wamn` database.
@@ -52,7 +52,7 @@ const RECORD_HISTORY_APP_GRANTS: &str =
 const PLATFORM_PROBE_OUTSIDER: &str = "wamn_floor_outsider";
 
 /// The superuser login, not named `postgres`, that one case installs the
-/// catalog schema and the `app_system` schema as (`wamn-txmd`, `wamn-ccj4`).
+/// catalog schema and the `platform` schema as (`wamn-txmd`, `wamn-ccj4`).
 /// Named here so `reset` can drop it.
 const CATALOG_INSTALLER: &str = "wamn_floor_installer";
 
@@ -917,7 +917,7 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     );
 }
 
-/// The catalog and `app_system` schemas name no installing role (`wamn-txmd`,
+/// The catalog and `platform` schemas name no installing role (`wamn-txmd`,
 /// `wamn-ccj4`).
 ///
 /// A superuser with any name installs `CATALOG_SCHEMA_SQL` and then
@@ -965,10 +965,10 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
             installer_url,
             None,
             "SELECT nspowner::regrole::text FROM pg_catalog.pg_namespace \
-              WHERE nspname = 'app_system'"
+              WHERE nspname = 'platform'"
         ),
         CATALOG_INSTALLER,
-        "app-schema.sql applied as {CATALOG_INSTALLER} gave the app_system schema \
+        "app-schema.sql applied as {CATALOG_INSTALLER} gave the platform schema \
          another owner"
     );
 }
@@ -1260,13 +1260,13 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
             "BEGIN;\n\
              SELECT set_config('app.user_id', '{OPERATOR}', true), \
                     set_config('app.operation', 'admin:seed-operator-fixture', true);\n\
-             INSERT INTO app_system.users (tenant_id, id, type, email) \
+             INSERT INTO platform.users (tenant_id, id, type, email) \
                VALUES ('t1', '{OPERATOR}', 'user', 'operator@example.test');\n\
              COMMIT;\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\
              SELECT set_config('app.user_id', \
-               (SELECT id::text FROM app_system.users WHERE email = 'operator@example.test'), true);\n\
+               (SELECT id::text FROM platform.users WHERE email = 'operator@example.test'), true);\n\
              UPDATE rh_probe.stamped SET note = 'operator', updated_by = '{ACTOR_B}' WHERE id = 1;\n\
              INSERT INTO rh_probe.stamped (id, note, created_by) VALUES (3, 'operator', '{ACTOR_B}');\n\
              DO $$ BEGIN\n\
@@ -2787,15 +2787,15 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// Spec test 20 for the `app_system` log (epic rulings 40, 42, 43, and 58).
-/// `deploy/sql/app-schema.sql` gives each `app_system` relation a
+/// Spec test 20 for the `platform` log (epic rulings 40, 42, 43, and 58).
+/// `deploy/sql/app-schema.sql` gives each `platform` relation a
 /// `wamn_record_history_log` trigger with the argument `unlimited`. After
 /// apply-package converges the audit retention grants, the audit retention
-/// role holds no privilege on `app_system` or on any object in it. The
+/// role holds no privilege on `platform` or on any object in it. The
 /// `P30D` fixture relation is the control: the same convergence grants the
 /// role its history table.
 #[test]
-fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
+fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
     let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
     apply(
@@ -2813,7 +2813,7 @@ fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
         "SELECT string_agg(c.relname || ':' || encode(t.tgargs, 'escape'), ' ' \
                            ORDER BY c.relname COLLATE \"C\") \
            FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid \
-          WHERE c.relnamespace = 'app_system'::regnamespace \
+          WHERE c.relnamespace = 'platform'::regnamespace \
             AND t.tgname = 'wamn_record_history_log' AND NOT t.tgisinternal",
     );
     assert_eq!(
@@ -2821,7 +2821,7 @@ fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
         "api_keys:unlimited\\000 configurations:unlimited\\000 environment:unlimited\\000 \
          permissions:unlimited\\000 \
          roles:unlimited\\000 user_roles:unlimited\\000 users:unlimited\\000",
-        "every app_system relation must log with the retention unlimited"
+        "every platform relation must log with the retention unlimited"
     );
     let targets = psql(
         &db_url,
@@ -2837,25 +2837,25 @@ fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
         None,
         "SELECT concat_ws(' ', \
            has_table_privilege('wamn_audit_retention', 'rh_probe.tenanted_history', 'DELETE'), \
-           has_schema_privilege('wamn_audit_retention', 'app_system', 'USAGE'), \
+           has_schema_privilege('wamn_audit_retention', 'platform', 'USAGE'), \
            (SELECT count(*) FROM pg_namespace n \
              CROSS JOIN LATERAL aclexplode(n.nspacl) AS acl \
-             WHERE n.nspname = 'app_system' \
+             WHERE n.nspname = 'platform' \
                AND acl.grantee = 'wamn_audit_retention'::regrole), \
            (SELECT count(*) FROM pg_class c \
              CROSS JOIN LATERAL aclexplode(c.relacl) AS acl \
-             WHERE c.relnamespace = 'app_system'::regnamespace \
+             WHERE c.relnamespace = 'platform'::regnamespace \
                AND acl.grantee = 'wamn_audit_retention'::regrole), \
            (SELECT count(*) FROM pg_attribute a \
              JOIN pg_class c ON c.oid = a.attrelid \
              CROSS JOIN LATERAL aclexplode(a.attacl) AS acl \
-             WHERE c.relnamespace = 'app_system'::regnamespace \
+             WHERE c.relnamespace = 'platform'::regnamespace \
                AND acl.grantee = 'wamn_audit_retention'::regrole))",
     );
     assert_eq!(
         reach, "t f 0 0 0",
-        "the audit retention role reaches the app_system log (order: control \
-         DELETE on the P30D history table, app_system USAGE, schema ACL \
+        "the audit retention role reaches the platform log (order: control \
+         DELETE on the P30D history table, platform USAGE, schema ACL \
          entries, relation ACL entries, column ACL entries)"
     );
 

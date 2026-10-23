@@ -114,10 +114,10 @@ pub async fn install(
          has_column_privilege($1, 'rest_consumer_fixture.item', 'name', 'SELECT'), \
          has_column_privilege($1, 'rest_consumer_fixture.item', 'key', 'INSERT'), \
          has_column_privilege($1, 'rest_consumer_fixture.item', 'name', 'INSERT'), \
-         has_table_privilege($1, 'app_system.write_log', 'SELECT') \
-           AND has_table_privilege($1, 'app_system.write_log', 'INSERT') \
-           AND has_table_privilege($1, 'app_system.write_log', 'DELETE'), \
-         has_column_privilege($1, 'app_system.write_log', 'result', 'UPDATE')",
+         has_table_privilege($1, 'platform.write_log', 'SELECT') \
+           AND has_table_privilege($1, 'platform.write_log', 'INSERT') \
+           AND has_table_privilege($1, 'platform.write_log', 'DELETE'), \
+         has_column_privilege($1, 'platform.write_log', 'result', 'UPDATE')",
             &[&role],
         )
         .await?;

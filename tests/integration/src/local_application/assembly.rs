@@ -137,19 +137,19 @@ pub(super) async fn assemble(
         .await?;
     project
         .execute(
-            "INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'service','local@example.invalid')",
+            "INSERT INTO platform.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'service','local@example.invalid')",
             &[&input.tenant, &principal.id().as_str()],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO app_system.roles (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            "INSERT INTO platform.roles (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
             &[&input.tenant, &input.caller_role],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)",
+            "INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)",
             &[&input.tenant, &principal.id().as_str(), &input.caller_role],
         )
         .await?;

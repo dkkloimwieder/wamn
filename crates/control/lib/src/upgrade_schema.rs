@@ -18,6 +18,11 @@ use wamn_control_provision::schema_migrations::{Migration, MigrationTarget};
 /// The name of the system database.
 const SYSTEM_DATABASE: &str = "wamn_system";
 
+/// The name of schema `platform` in a project database installed before
+/// project migration `0024_platform_schema.sql` renamed it. Its record table
+/// is the one the run reads until that file runs.
+const LEGACY_PROJECT_SCHEMA: &str = "app_system"; // rename-app-system: keep
+
 /// Inputs of one `upgrade-schema` run.
 #[derive(Debug)]
 pub struct UpgradeSchemaRequest {
@@ -132,24 +137,20 @@ async fn upgrade(
             .await
             .context("assume the control owner")?;
     }
-    let table = target.record_table();
-    let exists: bool = transaction
-        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
-        .await
-        .with_context(|| format!("look for {table}"))?
-        .get(0);
-    match (exists, request.baseline) {
-        (false, None) => bail!(
-            "{table} does not exist; the first run on this database takes --baseline <ordinal>"
+    let table = match (record_table(&transaction, target).await?, request.baseline) {
+        (None, None) => bail!(
+            "{} does not exist; the first run on this database takes --baseline <ordinal>",
+            target.record_table()
         ),
-        (false, Some(_)) => {
+        (None, Some(_)) => {
             transaction
                 .batch_execute(target.record_table_sql())
                 .await
-                .with_context(|| format!("create {table}"))?;
+                .with_context(|| format!("create {}", target.record_table()))?;
+            target.record_table().to_owned()
         }
-        (true, _) => (),
-    }
+        (Some(table), _) => table,
+    };
     transaction
         .batch_execute(&format!("LOCK TABLE {table} IN EXCLUSIVE MODE"))
         .await
@@ -177,7 +178,7 @@ async fn upgrade(
                 )
             })?;
         for migration in &migrations[..count] {
-            record(&transaction, target, migration).await?;
+            record(&transaction, &table, migration).await?;
             println!("baseline {}", migration.relative_path);
         }
         held = count;
@@ -217,21 +218,89 @@ async fn upgrade(
             .batch_execute(migration.sql)
             .await
             .with_context(|| format!("apply {}", migration.relative_path))?;
-        record(&transaction, target, migration).await?;
+        // 0024_platform_schema.sql moves the record table of a database
+        // installed before it.
+        let table = record_table(&transaction, target)
+            .await?
+            .with_context(|| format!("{} moved the record table away", migration.relative_path))?;
+        record(&transaction, &table, migration).await?;
         println!("applied {}", migration.relative_path);
     }
     transaction.commit().await.context("commit the upgrade")?;
     Ok(())
 }
 
-async fn record(
+/// The record table of `target` in this database, if it has one: in the
+/// legacy schema for a project database installed before
+/// `0024_platform_schema.sql`.
+async fn record_table(
     transaction: &Transaction<'_>,
     target: MigrationTarget,
+) -> anyhow::Result<Option<String>> {
+    let legacy = (target == MigrationTarget::Project)
+        .then(|| format!("{LEGACY_PROJECT_SCHEMA}.schema_migrations"));
+    for table in std::iter::once(target.record_table().to_owned()).chain(legacy) {
+        let exists: bool = transaction
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
+            .await
+            .with_context(|| format!("look for {table}"))?
+            .get(0);
+        if exists {
+            return Ok(Some(table));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether the project database of `client` holds the schema under the name
+/// it had before `0024_platform_schema.sql`.
+///
+/// # Errors
+///
+/// When the probe fails.
+pub async fn holds_legacy_project_schema(
+    client: &impl tokio_postgres::GenericClient,
+) -> anyhow::Result<bool> {
+    Ok(client
+        .query_one(
+            "SELECT to_regnamespace($1) IS NOT NULL",
+            &[&LEGACY_PROJECT_SCHEMA],
+        )
+        .await
+        .context("probe the legacy project schema")?
+        .get(0))
+}
+
+/// Apply the pending project migrations of this binary, in one transaction,
+/// to the project database of `client`, which the caller already identified.
+///
+/// # Errors
+///
+/// When a recorded file drifted or a pending file fails.
+pub async fn upgrade_project(client: &mut Client) -> anyhow::Result<()> {
+    let request = UpgradeSchemaRequest {
+        system_database_url: String::new(),
+        admin_database_url: None,
+        baseline: None,
+        confirm: true,
+    };
+    upgrade(
+        client,
+        MigrationTarget::Project,
+        MigrationTarget::Project.migrations(),
+        &request,
+    )
+    .await
+}
+
+async fn record(
+    transaction: &Transaction<'_>,
+    table: &str,
     migration: &Migration,
 ) -> anyhow::Result<()> {
     transaction
         .execute(
-            &target.record_sql(),
+            &format!("INSERT INTO {table} (ordinal, relative_path, sha256) VALUES ($1, $2, $3)"),
             &[
                 &migration.ordinal(),
                 &migration.relative_path,

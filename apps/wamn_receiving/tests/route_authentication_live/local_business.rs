@@ -82,13 +82,13 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         // role admin for an authored role with one row: Acme's entry.
         client
             .execute(
-                "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, 'receipt-clerk')",
+                "INSERT INTO platform.roles (tenant_id, name) VALUES ($1, 'receipt-clerk')",
                 &[&tenant],
             )
             .await?;
         client
             .execute(
-                "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+                "INSERT INTO platform.permissions (tenant_id, role_name, permission) \
                  VALUES ($1, 'receipt-clerk', 'client-acme-receiving:acme/record-receipt')",
                 &[&tenant],
             )
@@ -96,7 +96,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         ensure!(
             client
                 .execute(
-                    "UPDATE app_system.user_roles SET role_name = 'receipt-clerk' \
+                    "UPDATE platform.user_roles SET role_name = 'receipt-clerk' \
                      WHERE tenant_id = $1 AND role_name = 'admin'",
                     &[&tenant],
                 )
@@ -247,7 +247,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     );
     let claim = first_client
         .query_one(
-            "SELECT request, result FROM app_system.write_log \
+            "SELECT request, result FROM platform.write_log \
              WHERE operation = $1 AND idempotency_key = $2",
             &[&ACME_OPERATION, &key],
         )
@@ -273,7 +273,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
         );
         second_client
             .execute(
-                "INSERT INTO app_system.write_log (operation, idempotency_key, request, result) \
+                "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
                  VALUES ($1, $2, $3, $4)",
                 &[&ACME_OPERATION, &key, &request, &result],
             )
@@ -423,7 +423,7 @@ async fn claims(
 ) -> anyhow::Result<Vec<(String, Option<String>)>> {
     Ok(project
         .query(
-            "SELECT operation, result FROM app_system.write_log \
+            "SELECT operation, result FROM platform.write_log \
              WHERE idempotency_key = $1 ORDER BY operation",
             &[&key],
         )
@@ -606,7 +606,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     // Acme's claim, so a retry through Acme runs again.
     project
         .execute(
-            "INSERT INTO app_system.write_log (operation, idempotency_key, request, result) \
+            "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
              VALUES ($1, 'part-era', '\\x01'::bytea, '{\"request_id\":\"part-era\",\"value\":{}}')",
             &[&RECEIVING_OPERATION],
         )

@@ -720,8 +720,8 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
 async fn application_rows(target: &Client, principal: &str) -> Vec<String> {
     target
         .query(
-            "SELECT 'user ' || tenant_id FROM app_system.users WHERE id = $1::text::uuid \
-             UNION ALL SELECT 'role ' || role_name FROM app_system.user_roles \
+            "SELECT 'user ' || tenant_id FROM platform.users WHERE id = $1::text::uuid \
+             UNION ALL SELECT 'role ' || role_name FROM platform.user_roles \
                WHERE user_id = $1::text::uuid \
              ORDER BY 1",
             &[&principal],
@@ -909,7 +909,7 @@ async fn statuses(admin: &Client, billing: &Client, shop: &Client) -> Vec<String
         .collect();
     for (name, target) in [("billing", billing), ("shop", shop)] {
         let row = target
-            .query_opt("SELECT status FROM app_system.environment", &[])
+            .query_opt("SELECT status FROM platform.environment", &[])
             .await
             .expect("read the status row");
         let status: String = row.map_or_else(|| "none".to_owned(), |row| row.get(0));
@@ -1337,13 +1337,13 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     )
     .await?;
     billing.batch_execute(
-        "INSERT INTO app_system.roles (tenant_id, name) VALUES ('t-billing', 'first'), ('t-billing', 'second'), ('other', 'ignored');
-         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES
+        "INSERT INTO platform.roles (tenant_id, name) VALUES ('t-billing', 'first'), ('t-billing', 'second'), ('other', 'ignored');
+         INSERT INTO platform.users (tenant_id, id, type, email) VALUES
            ('t-billing', '00000000-0000-0000-0000-000000000001', 'user', 'one@example.test'),
            ('t-billing', '00000000-0000-0000-0000-000000000002', 'user', 'two@example.test'),
            ('t-billing', '00000000-0000-0000-0000-000000000003', 'service', 'service@example.test'),
            ('other', '00000000-0000-0000-0000-000000000004', 'user', 'other@example.test');
-         INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES
+         INSERT INTO platform.user_roles (tenant_id, user_id, role_name) VALUES
            ('t-billing', '00000000-0000-0000-0000-000000000001', 'first'),
            ('t-billing', '00000000-0000-0000-0000-000000000001', 'second'),
            ('t-billing', '00000000-0000-0000-0000-000000000003', 'first'),
@@ -1390,7 +1390,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     );
     // A failed application query cannot turn runtime status into a refusal.
     billing
-        .batch_execute("ALTER TABLE app_system.roles RENAME TO unavailable_roles")
+        .batch_execute("ALTER TABLE platform.roles RENAME TO unavailable_roles")
         .await?;
     let mut unavailable = expected;
     unavailable["users_with_role"] = Value::Null;

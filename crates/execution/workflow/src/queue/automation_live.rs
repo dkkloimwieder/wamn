@@ -137,9 +137,9 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
         )?)
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    admin.batch_execute(&format!("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
-      INSERT INTO app_system.roles (tenant_id,name) VALUES ('{TENANT}','automation');
-      INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');")).await?;
+    admin.batch_execute(&format!("INSERT INTO platform.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
+      INSERT INTO platform.roles (tenant_id,name) VALUES ('{TENANT}','automation');
+      INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');")).await?;
     let released = wamn_catalog::ServingComponentOperation {
         registered_operation: Some(RECORD_RECEIPT.to_owned()),
         permissions: BTreeSet::from([RECORD_RECEIPT.to_owned()]),
@@ -159,7 +159,7 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
 
     admin
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id,role_name,permission) \
+            "INSERT INTO platform.permissions (tenant_id,role_name,permission) \
              VALUES ($1,'automation','wamn-receiving:receiving/record-receipt')",
             &[&TENANT],
         )
@@ -257,10 +257,10 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         )?)
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    admin.batch_execute(&format!("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
-      INSERT INTO app_system.roles (tenant_id,name) VALUES ('{TENANT}','automation');
-      INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
-      INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}');
+    admin.batch_execute(&format!("INSERT INTO platform.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
+      INSERT INTO platform.roles (tenant_id,name) VALUES ('{TENANT}','automation');
+      INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
+      INSERT INTO platform.permissions (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}');
       INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('{TENANT}','test','standard');
       INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
@@ -452,13 +452,13 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         let subject = wamn_platform_identity::application_subject(TENANT, "automation")?;
         admin
             .execute(
-                "UPDATE app_system.users SET email=$1 WHERE id=$2::text::uuid",
+                "UPDATE platform.users SET email=$1 WHERE id=$2::text::uuid",
                 &[&format!("{subject}@example.invalid"), &SERVICE],
             )
             .await?;
         admin
             .execute(
-                "DELETE FROM app_system.permissions WHERE tenant_id=$1",
+                "DELETE FROM platform.permissions WHERE tenant_id=$1",
                 &[&TENANT],
             )
             .await?;
@@ -678,7 +678,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let denied = workflows.start(&request).await?;
     admin
         .execute(
-            "DELETE FROM app_system.permissions WHERE tenant_id=$1",
+            "DELETE FROM platform.permissions WHERE tenant_id=$1",
             &[&TENANT],
         )
         .await?;
@@ -697,7 +697,12 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         .await?;
     assert_ne!(row.get::<_, String>(0), "completed");
     assert!(row.get::<_, Option<String>>(1).is_none());
-    admin.execute("UPDATE app_system.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",&[&TENANT,&SERVICE]).await?;
+    admin
+        .execute(
+            "UPDATE platform.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
+            &[&TENANT, &SERVICE],
+        )
+        .await?;
     request.idempotency_key = "inactive".to_owned();
     assert_eq!(
         workflows.start(&request).await.unwrap_err().error_type(),

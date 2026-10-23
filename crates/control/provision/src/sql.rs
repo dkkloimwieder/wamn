@@ -161,7 +161,7 @@ pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 5] = [
 ];
 
 /// The schemas that the callable-HTTP admitter uses.
-pub const HTTP_ADMITTER_SCHEMAS: [&str; 2] = ["catalog", "app_system"];
+pub const HTTP_ADMITTER_SCHEMAS: [&str; 2] = ["catalog", "platform"];
 
 /// Every relation that the callable-HTTP admitter reads, as `(schema, relation)`.
 ///
@@ -172,9 +172,9 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
         .iter()
         .map(|relation| ("catalog", *relation))
         .chain([
-            ("app_system", "permissions"),
-            ("app_system", "users"),
-            ("app_system", "user_roles"),
+            ("platform", "permissions"),
+            ("platform", "users"),
+            ("platform", "user_roles"),
         ])
 }
 
@@ -495,10 +495,10 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// (`wamn-0h0g.22.37`).
 ///
 /// The connection-effect snapshot and fresh operation-permission reads use
-/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three app-system relations of
+/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three platform relations of
 /// [`http_admitter_relations`].
 /// User permission reads join the active application user to its role grants;
-/// service permission reads continue to read `app_system.permissions` alone.
+/// service permission reads continue to read `platform.permissions` alone.
 /// A read route's ETag reads the WAL position without a table grant.
 /// `USAGE` on those two schemas plus
 /// eight `SELECT`s is the family's authority.
@@ -569,11 +569,11 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
     let schema = quote_ident(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_history, {schema} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_history, {schema} \
          FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_history, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, app_system, wamn_history TO {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_history, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog, platform, wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
          GRANT SELECT ON TABLE catalog.releases TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
@@ -581,9 +581,9 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
     for relation in ADMINISTRATION_RELATIONS {
         write!(
             sql,
-            " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE app_system.{relation} TO {role}; \
+            " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE platform.{relation} TO {role}; \
              GRANT INSERT (tenant_id, row_key, type, operation, changed_by, changed_at, \
-             transaction_id, before, after) ON TABLE app_system.{history} TO {role};",
+             transaction_id, before, after) ON TABLE platform.{history} TO {role};",
             relation = quote_ident(relation),
             history = quote_ident(&format!("{relation}_history")),
         )
@@ -603,16 +603,16 @@ pub fn grant_session_role_reader_surface_sql() -> String {
     let role = quote_ident(SESSION_ROLE_READER_ROLE);
     format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
          DO $session_column_acl$ DECLARE target record; BEGIN \
            FOR target IN \
              SELECT n.nspname, c.relname, a.attname \
                FROM pg_catalog.pg_attribute a \
                JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-              WHERE n.nspname IN ('catalog', 'app_system', 'wamn_run', 'wamn_authority') \
+              WHERE n.nspname IN ('catalog', 'platform', 'wamn_run', 'wamn_authority') \
                 AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
                 AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL \
            LOOP \
@@ -620,10 +620,10 @@ pub fn grant_session_role_reader_surface_sql() -> String {
                target.attname, target.nspname, target.relname, {role_literal}); \
            END LOOP; \
          END $session_column_acl$; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
-         GRANT USAGE ON SCHEMA app_system TO {role}; \
-         GRANT SELECT (tenant_id, id, status) ON TABLE app_system.users TO {role}; \
-         GRANT SELECT (tenant_id, user_id, role_name) ON TABLE app_system.user_roles TO {role};",
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
+         GRANT USAGE ON SCHEMA platform TO {role}; \
+         GRANT SELECT (tenant_id, id, status) ON TABLE platform.users TO {role}; \
+         GRANT SELECT (tenant_id, user_id, role_name) ON TABLE platform.user_roles TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
         role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
     )
@@ -679,10 +679,10 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
     let schema = quote_ident(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, app_system, {schema} TO {role};",
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog, platform, {schema} TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ExecutorPlatform),
     );
     for relation in EXECUTOR_PLATFORM_CATALOG_RELATIONS {
@@ -707,7 +707,7 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
-         GRANT SELECT (tenant_id, id, type, status, email) ON TABLE app_system.users TO {role};"
+         GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.users TO {role};"
     )
     .expect("writing to a String cannot fail");
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
@@ -730,9 +730,9 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
     let schema = quote_ident(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_authority, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_authority, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_authority, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_authority, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_authority, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_authority, {schema} FROM {role}; \
          GRANT USAGE ON SCHEMA catalog TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::EventMaterializer),
     );
@@ -1213,22 +1213,22 @@ mod tests {
         let sql = grant_http_admitter_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, \"wamn_run\" \
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             GRANT USAGE ON SCHEMA catalog, app_system TO \"wamn_http_admitter\"; \
+             GRANT USAGE ON SCHEMA catalog, platform TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE app_system.\"permissions\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE app_system.\"users\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\";",
+             GRANT SELECT ON TABLE platform.\"permissions\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE platform.\"users\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE platform.\"user_roles\" TO \"wamn_http_admitter\";",
             "the callable-HTTP admitter reads five catalog relations and three permission relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
@@ -1247,13 +1247,13 @@ mod tests {
         let sql = grant_executor_platform_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::ExecutorPlatform, &sql),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, \"wamn_run\" \
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
-             GRANT USAGE ON SCHEMA catalog, app_system, \"wamn_run\" TO \"wamn_executor_platform\"; \
+             GRANT USAGE ON SCHEMA catalog, platform, \"wamn_run\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_executor_platform\"; \
@@ -1285,7 +1285,7 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT (tenant_id, id, type, status, email) ON TABLE app_system.users \
+             GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.users \
              TO \"wamn_executor_platform\"; \
              GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
              TO \"wamn_executor_platform\";",
@@ -1756,7 +1756,7 @@ mod tests {
     fn publication_covers_the_schema_and_is_idempotent() {
         let sql = create_publication_sql("wamn_cdc_acme__billing__dev", "app");
         // FOR TABLES IN SCHEMA (auto-includes tables created later) — never the
-        // per-table form and never FOR ALL TABLES (which would leak app_system
+        // per-table form and never FOR ALL TABLES (which would leak platform
         // and any other schema into the stream).
         assert!(sql.contains(
             "CREATE PUBLICATION \"wamn_cdc_acme__billing__dev\" FOR TABLES IN SCHEMA \"app\""

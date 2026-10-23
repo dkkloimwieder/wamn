@@ -219,7 +219,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE app_system.users SET status='disabled' WHERE id=$1::text::uuid",
+            "UPDATE platform.users SET status='disabled' WHERE id=$1::text::uuid",
             &[&user.id().as_str()],
         )
         .await
@@ -235,7 +235,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE app_system.users SET status='active' WHERE id=$1::text::uuid",
+            "UPDATE platform.users SET status='active' WHERE id=$1::text::uuid",
             &[&user.id().as_str()],
         )
         .await
@@ -243,7 +243,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     fixture.environments[0]
         .client
         .execute(
-            "DELETE FROM app_system.user_roles WHERE user_id=$1::text::uuid",
+            "DELETE FROM platform.user_roles WHERE user_id=$1::text::uuid",
             &[&user.id().as_str()],
         )
         .await
@@ -256,7 +256,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.environments[0].client.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'receiver')",&[&TENANT,&user.id().as_str()]).await.unwrap();
+    fixture.environments[0].client.execute("INSERT INTO platform.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'receiver')",&[&TENANT,&user.id().as_str()]).await.unwrap();
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)

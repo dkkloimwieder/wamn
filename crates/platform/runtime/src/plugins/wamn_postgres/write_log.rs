@@ -1,4 +1,4 @@
-//! The write log, `app_system.write_log`, as the engine's intent store
+//! The write log, `platform.write_log`, as the engine's intent store
 //! (`docs/history/host-transaction.md` 4.2 and 4.3).
 //!
 //! An operation with SQL claims its key in its item transaction, so the claim
@@ -33,32 +33,32 @@ use super::{PgError, WamnPostgres};
 /// An uncommitted row of another transaction makes this insert wait until that
 /// transaction ends. A commit makes it return no row, and a rollback lets it
 /// insert.
-pub const CLAIM_SQL: &str = "INSERT INTO app_system.write_log (operation, idempotency_key, request) \
+pub const CLAIM_SQL: &str = "INSERT INTO platform.write_log (operation, idempotency_key, request) \
      VALUES ($1::text, $2::text, $3::bytea) \
      ON CONFLICT (operation, idempotency_key) DO NOTHING \
      RETURNING idempotency_key";
 
 /// Read the request and the result that a committed claim of one key holds.
-pub const READ_SQL: &str = "SELECT request, result FROM app_system.write_log \
+pub const READ_SQL: &str = "SELECT request, result FROM platform.write_log \
      WHERE operation = $1::text AND idempotency_key = $2::text";
 
 /// Store the result in a claim that has none.
-pub const FINISH_SQL: &str = "UPDATE app_system.write_log SET result = $3::text \
+pub const FINISH_SQL: &str = "UPDATE platform.write_log SET result = $3::text \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key";
 
 /// Abort on a missing claim because COMMIT is already queued behind this statement.
-pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE app_system.write_log SET result = $3::text \
+pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE platform.write_log SET result = $3::text \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key) SELECT 1 / count(*)::integer FROM finished";
 
 /// Free the key of a two-step claim whose item was refused.
-const RELEASE_SQL: &str = "DELETE FROM app_system.write_log \
+const RELEASE_SQL: &str = "DELETE FROM platform.write_log \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key";
 
 /// The two-step claims that never finished, oldest first.
-const UNCERTAIN_SQL: &str = "SELECT operation, idempotency_key FROM app_system.write_log \
+const UNCERTAIN_SQL: &str = "SELECT operation, idempotency_key FROM platform.write_log \
      WHERE result IS NULL ORDER BY created_at, operation, idempotency_key LIMIT $1::bigint";
 
 /// The write log operation of one operation: the operation without its

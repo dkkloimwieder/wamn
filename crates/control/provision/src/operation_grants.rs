@@ -5,7 +5,7 @@
 //! only creates the `admin` row when it is absent. Every other role is
 //! authored, and its permission rows are reconciled against the candidate
 //! serving release before activation, not by `apply-package`. The existing
-//! `app_system` floor is a precondition; this module never installs or
+//! `platform` floor is a precondition; this module never installs or
 //! redesigns that authority schema.
 
 use std::collections::BTreeSet;
@@ -24,7 +24,7 @@ pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtex
      'wamn.operation-grants:' || $1, 0))";
 
 /// Stable refusal when the project database has not installed its auth floor.
-pub const APP_SYSTEM_FLOOR_MISSING: &str = "wamn-operation-grants-app-system-floor-missing";
+pub const PLATFORM_FLOOR_MISSING: &str = "wamn-operation-grants-platform-floor-missing";
 
 /// Required statement inside the administrator-owned transaction.
 ///
@@ -40,10 +40,10 @@ pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_securit
 pub fn operation_grant_floor_check_sql() -> String {
     format!(
         "DO $operation_grant_floor$ BEGIN \
-           IF pg_catalog.to_regclass('app_system.roles') IS NULL \
-              OR pg_catalog.to_regclass('app_system.permissions') IS NULL THEN \
+           IF pg_catalog.to_regclass('platform.roles') IS NULL \
+              OR pg_catalog.to_regclass('platform.permissions') IS NULL THEN \
              RAISE EXCEPTION USING ERRCODE = '55000', \
-               MESSAGE = '{APP_SYSTEM_FLOOR_MISSING}'; \
+               MESSAGE = '{PLATFORM_FLOOR_MISSING}'; \
            END IF; \
          END $operation_grant_floor$;"
     )
@@ -152,7 +152,7 @@ pub fn operation_grant_tokens(
 /// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
 /// [`operation_grant_floor_check_sql`], then executes this statement. It
 /// changes one row or none.
-pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO app_system.roles (tenant_id, name) \
+pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.roles (tenant_id, name) \
      VALUES ($1, 'admin') ON CONFLICT (tenant_id, name) DO NOTHING";
 
 #[cfg(test)]

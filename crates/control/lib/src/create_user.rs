@@ -2,7 +2,7 @@
 //!
 //! This command uses the provisioning administrator for the system database.
 //! It creates the principal only. Access comes from
-//! `grant-project-env-membership`, and the tenant `app_system.users` user row
+//! `grant-project-env-membership`, and the tenant `platform.users` user row
 //! comes from `reconcile-run-plane`.
 
 use anyhow::Context as _;

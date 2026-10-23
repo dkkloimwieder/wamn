@@ -1,6 +1,6 @@
 //! The route plugin refuses every route of an inactive environment
 //! (docs/plan/platform-ui.md §5.4, wamn-zua8.2). The host reads its row of
-//! `app_system.environment` as a tenant's `wamn_app` generation, before the
+//! `platform.environment` as a tenant's `wamn_app` generation, before the
 //! route's policy, so an anonymous route is refused too. The host keeps the
 //! answer until a change message clears its auth memory (wamn-stxy9.2).
 //!
@@ -162,7 +162,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .await?;
     admin
         .execute(
-            "INSERT INTO app_system.environment (tenant_id, status) VALUES ($1, 'inactive')",
+            "INSERT INTO platform.environment (tenant_id, status) VALUES ($1, 'inactive')",
             &[&TENANT],
         )
         .await?;
@@ -177,7 +177,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         Err((503, "environment-inactive".to_owned()))
     );
     admin
-        .execute("UPDATE app_system.environment SET status = 'active'", &[])
+        .execute("UPDATE platform.environment SET status = 'active'", &[])
         .await?;
     reader.auth_cache().clear();
     assert_eq!(

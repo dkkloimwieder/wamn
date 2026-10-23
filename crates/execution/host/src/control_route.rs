@@ -20,7 +20,7 @@
 //! changes. The route reports success only when every environment is done.
 //!
 //! The status routes mirror the status of each environment into its row of
-//! `app_system.environment` in the same way (§5.4): an inactivation writes
+//! `platform.environment` in the same way (§5.4): an inactivation writes
 //! the environments first and commits the system rows last, and an
 //! activation commits the system rows first.
 //!
@@ -37,7 +37,7 @@
 //! tables from `pg_catalog`, on the environment's administration login, and
 //! answers the release's effect profile, with the operations each role of the
 //! environment holds (`admin` holds every operation of the release), from its
-//! `app_system.roles` and `app_system.permissions`. It writes nothing.
+//! `platform.roles` and `platform.permissions`. It writes nothing.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -849,12 +849,12 @@ const STATUS_COUNTS_TIMEOUT: Duration = Duration::from_secs(2);
 // query_one refuses missing or multiple tenants. EXISTS counts each human
 // user once even when that user holds several roles, and excludes services.
 const APPLICATION_COUNTS_SQL: &str = "SELECT \
-    (SELECT count(*)::int4 FROM app_system.users u \
+    (SELECT count(*)::int4 FROM platform.users u \
      WHERE u.tenant_id = t.tenant_id AND u.type = 'user' AND EXISTS \
-       (SELECT 1 FROM app_system.user_roles r \
+       (SELECT 1 FROM platform.user_roles r \
         WHERE r.tenant_id = u.tenant_id AND r.user_id = u.id)), \
-    (SELECT count(*)::int4 FROM app_system.roles r WHERE r.tenant_id = t.tenant_id) \
-    FROM (SELECT DISTINCT tenant_id FROM app_system.users WHERE type = 'platform') t";
+    (SELECT count(*)::int4 FROM platform.roles r WHERE r.tenant_id = t.tenant_id) \
+    FROM (SELECT DISTINCT tenant_id FROM platform.users WHERE type = 'platform') t";
 
 async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls).await?;
@@ -989,7 +989,7 @@ const RELATION_COLUMNS_SQL: &str = "SELECT c.relname::text, a.attname::text \
      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
      JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid \
      WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped \
-       AND n.nspname NOT IN ('information_schema', 'catalog', 'app_system') \
+       AND n.nspname NOT IN ('information_schema', 'catalog', 'platform') \
        AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname NOT LIKE 'wamn\\_%'";
 
 /// The effect profile of the installed release `digest`
