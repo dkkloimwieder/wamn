@@ -134,6 +134,7 @@ pub async fn write(
     let values = private.path("values.yaml");
     std::fs::write(&values, serde_yaml::to_string(&rendered)?)
         .with_context(|| format!("write {}", values.display()))?;
+    release_chart::recover_pending(&platform.target, &release_name).await?;
     release_chart::upgrade(
         &platform.target,
         &platform.chart,

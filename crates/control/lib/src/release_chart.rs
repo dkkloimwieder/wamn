@@ -515,6 +515,79 @@ pub async fn upgrade(
     .map(drop)
 }
 
+/// What clears an operation that a killed writer left pending.
+#[derive(Debug, PartialEq, Eq)]
+enum Recovery {
+    /// A first install never finished: no revision ever served.
+    Uninstall,
+    /// An upgrade or rollback never finished: the previous revision serves.
+    Rollback,
+}
+
+fn recovery(status: &str) -> Option<Recovery> {
+    match status {
+        "pending-install" => Some(Recovery::Uninstall),
+        "pending-upgrade" | "pending-rollback" => Some(Recovery::Rollback),
+        _ => None,
+    }
+}
+
+/// Clear a pending operation on one environment's release (wamn-jovpg).
+///
+/// Only the apply of this environment writes its release, and it holds the
+/// install lock, so a pending operation here belongs to a writer that died,
+/// for example an install Job deleted while Helm waited. Helm refuses every
+/// later upgrade with "another operation (install/upgrade/rollback) is in
+/// progress" until the pending revision is cleared.
+///
+/// # Errors
+///
+/// When Helm fails.
+pub async fn recover_pending(target: &Target, name: &str) -> anyhow::Result<()> {
+    let filter = format!("^{name}$");
+    let listed = helm(&[
+        "list".as_ref(),
+        "--pending".as_ref(),
+        "--filter".as_ref(),
+        filter.as_ref(),
+        "-o".as_ref(),
+        "json".as_ref(),
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "--namespace".as_ref(),
+        target.namespace.as_ref(),
+    ])
+    .await?;
+    let releases: Vec<serde_json::Value> =
+        serde_json::from_str(&listed).context("decode helm list")?;
+    let Some(status) = releases
+        .iter()
+        .find(|release| release["name"] == name)
+        .and_then(|release| release["status"].as_str())
+    else {
+        return Ok(());
+    };
+    match recovery(status) {
+        Some(Recovery::Uninstall) => uninstall(target, name).await,
+        Some(Recovery::Rollback) => helm(&[
+            "rollback".as_ref(),
+            name.as_ref(),
+            "--kubeconfig".as_ref(),
+            target.kubeconfig.as_os_str(),
+            "--kube-context".as_ref(),
+            target.context.as_ref(),
+            "--namespace".as_ref(),
+            target.namespace.as_ref(),
+            "--wait".as_ref(),
+        ])
+        .await
+        .map(drop),
+        None => Ok(()),
+    }
+}
+
 /// Uninstall one environment's release and wait for its objects to go.
 pub async fn uninstall(target: &Target, name: &str) -> anyhow::Result<()> {
     helm(&[
@@ -598,6 +671,15 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_pending_operation_is_recovered() {
+        assert_eq!(recovery("pending-install"), Some(Recovery::Uninstall));
+        assert_eq!(recovery("pending-upgrade"), Some(Recovery::Rollback));
+        assert_eq!(recovery("pending-rollback"), Some(Recovery::Rollback));
+        assert_eq!(recovery("deployed"), None);
+        assert_eq!(recovery("failed"), None);
+    }
 
     const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
