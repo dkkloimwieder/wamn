@@ -2655,6 +2655,12 @@ impl ModelDeclaration {
             .filter(|(_, declaration)| declaration.role == Some(FieldRole::Actor))
             .map(|(field, _)| field.as_str())
     }
+
+    /// The actor column an update fills: the actor field named `updated_by`.
+    /// An update never touches another actor field, such as `created_by`.
+    pub fn update_actor_field(&self) -> Option<&str> {
+        self.actor_fields().find(|field| *field == "updated_by")
+    }
 }
 
 /// Closed delete mode of a model that declares the `delete` action.

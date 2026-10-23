@@ -1,14 +1,15 @@
 //! Live test of invariant 1 of `docs/plan/platform-config.md` (wamn-aqd0m.1):
 //! in a project database, the application role `wamn_app` holds `SELECT` on
-//! the listed `platform` tables, `EXECUTE` on `platform.bump_counter`, the
+//! the listed `platform` tables, `EXECUTE` on `platform.bump_counter` and
+//! `platform.assign_counter`, the
 //! existing grants of `platform.write_log`, the engine's claim record, and
 //! nothing else in `platform`. It holds no grant on a history table or on
 //! `schema_migrations`, and no `credential`, `target` or `target_application`
 //! table exists. The test reads the privileges from the server catalogs, on a
 //! fresh install and on a database that `project/0025_platform_configuration.sql`
-//! and `project/0028_platform_singular_tables.sql` upgrade. It holds the
-//! process lock of its server, because the schema files create cluster-wide
-//! roles.
+//! and `project/0028_platform_singular_tables.sql` and
+//! `project/0029_number_assignment.sql` upgrade. It holds the process lock
+//! of its server, because the schema files create cluster-wide roles.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
@@ -18,6 +19,8 @@ const MIGRATION: &str =
 const SINGULAR_TABLES: &str =
     include_str!("../../../../deploy/sql/migrations/project/0028_platform_singular_tables.sql");
 const PLURAL_TABLES: &str = include_str!("fixtures/platform-singular-tables-before-0028.sql");
+const NUMBER_ASSIGNMENT: &str =
+    include_str!("../../../../deploy/sql/migrations/project/0029_number_assignment.sql");
 
 /// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
 /// that the host reads as `wamn_app` on each request
@@ -91,6 +94,7 @@ fn invariant_one() -> Vec<String> {
         .map(|table| format!("table platform.{table} SELECT"))
         .chain([
             "column platform.write_log.result UPDATE".to_owned(),
+            "routine platform.assign_counter(uuid,text,text) EXECUTE".to_owned(),
             "routine platform.bump_counter(uuid,text,text) EXECUTE".to_owned(),
             "schema platform USAGE".to_owned(),
             "table platform.write_log DELETE".to_owned(),
@@ -167,6 +171,7 @@ async fn the_migration_grants_the_application_role_invariant_one() {
     client
         .batch_execute(
             "CREATE SCHEMA wamn_run; \
+             DROP FUNCTION platform.assign_counter(uuid, text, text); \
              DROP FUNCTION platform.bump_counter(uuid, text, text); \
              DROP TABLE platform.setting_history, platform.number_sequence_history, \
                platform.project_connection_history, platform.integration_allow_history, \
@@ -204,9 +209,11 @@ async fn the_migration_grants_the_application_role_invariant_one() {
         .await
         .expect("apply the migration");
     client
-        .batch_execute(&format!("BEGIN; {SINGULAR_TABLES} COMMIT;"))
+        .batch_execute(&format!(
+            "BEGIN; {SINGULAR_TABLES} {NUMBER_ASSIGNMENT} COMMIT;"
+        ))
         .await
-        .expect("apply the plural table renames");
+        .expect("apply the plural table renames and the number assignment");
     assert_eq!(surface(&client).await, invariant_one());
     assert_eq!(control_plane_tables(&client).await, 0);
 }

@@ -18,6 +18,7 @@ use crate::plugins::effect_span::{
 };
 
 use super::claims::{OneShotResult, refuse_unattributed_statement, reject_claim_mutation};
+use super::numbering::{NumberCall, statement_number};
 use super::pool::destroy_connection;
 use super::statements::{
     BoundStatementSet, VerifiedStatement, resolve_statement, validate_prepared_statement,
@@ -198,7 +199,7 @@ pub(super) fn take_conn(state: &SharedTxnState) -> Result<Object, PgError> {
 /// errors destroy the connection and poison the transaction; statement-level
 /// errors return the connection to the slot (the transaction is aborted
 /// server-side until the guest rolls back, mirroring libpq semantics).
-async fn with_txn_conn<T, F, Fut>(
+pub(super) async fn with_txn_conn<T, F, Fut>(
     state: &SharedTxnState,
     destroyed: &Arc<AtomicU64>,
     op: F,
@@ -1307,26 +1308,21 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         lend_operation_transaction(accessor, None).await
     }
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the generated trait method is async; the refusal until C2.2 awaits nothing"
-    )]
     async fn next_number(
-        _accessor: &Accessor<T, Self>,
-        _name: String,
-        _record: String,
+        accessor: &Accessor<T, Self>,
+        name: String,
+        record: String,
     ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        Ok(Err(next_number_not_implemented()))
+        statement_number(accessor, name, record, NumberCall::Next).await
     }
-}
 
-/// `next-number` until the renderer lands (C2.2, wamn-83eth.2): a refusal
-/// that leaves the host, the transaction and every counter untouched.
-fn next_number_not_implemented() -> StatementError {
-    StatementError::Postgres(PgError::QueryError((
-        "0A000".to_owned(),
-        "next-number is not implemented by this host".to_owned(),
-    )))
+    async fn peek_number(
+        accessor: &Accessor<T, Self>,
+        name: String,
+        record: String,
+    ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
+        statement_number(accessor, name, record, NumberCall::Peek).await
+    }
 }
 
 impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
@@ -1764,17 +1760,22 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
         lend_operation_transaction(accessor, Some(id.instance())).await
     }
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the generated trait method is async; the refusal until C2.2 awaits nothing"
-    )]
     async fn next_number(
-        _accessor: &Accessor<T, Self>,
+        accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
-        _name: String,
-        _record: String,
+        name: String,
+        record: String,
     ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        Ok(Err(next_number_not_implemented()))
+        statement_number(accessor, name, record, NumberCall::Next).await
+    }
+
+    async fn peek_number(
+        accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+        name: String,
+        record: String,
+    ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
+        statement_number(accessor, name, record, NumberCall::Peek).await
     }
 }
 

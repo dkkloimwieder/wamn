@@ -770,6 +770,10 @@ pub(crate) fn generated_relation_access(
             access
                 .update_fields
                 .extend(operation.revision_field.iter().cloned());
+            // The generated update also fills the updated_by actor field.
+            access
+                .update_fields
+                .extend(model.update_actor_field().map(str::to_owned));
             access.lock = true;
         }
         // A hard delete removes the row, so the relation carries

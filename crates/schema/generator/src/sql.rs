@@ -96,7 +96,16 @@ pub(crate) fn create(
     )
 }
 
-pub(crate) fn update(table: &Table, operation: &OperationDeclaration, tombstoned: bool) -> String {
+/// Update the present fields when the revision matches.
+///
+/// A change also fills the model's `updated_by` actor field from the
+/// `app.user_id` claim; a true no-op leaves it, as it leaves the revision.
+pub(crate) fn update(
+    table: &Table,
+    model: &ModelDeclaration,
+    operation: &OperationDeclaration,
+    tombstoned: bool,
+) -> String {
     let revision = operation
         .revision_field
         .as_deref()
@@ -139,6 +148,12 @@ pub(crate) fn update(table: &Table, operation: &OperationDeclaration, tombstoned
         .map(|(field, present, value)| {
             format!("        {field} = CASE WHEN ${present}::boolean THEN {value} ELSE model.{field} END")
         })
+        .chain(model.update_actor_field().map(|field| {
+            format!(
+                "        {field} = CASE\n            WHEN {changed}\n            THEN current_setting('app.user_id')::{}\n            ELSE model.{field}\n        END",
+                postgres_type(column_type(table, field))
+            )
+        }))
         .chain(std::iter::once(format!(
             "        {revision} = CASE\n            WHEN {changed}\n            THEN model.{revision} + 1\n            ELSE model.{revision}\n        END"
         )))

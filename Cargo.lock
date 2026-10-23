@@ -6259,6 +6259,7 @@ dependencies = [
  "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-number-pattern",
  "wamn-package-artifact",
  "wamn-pg-core",
  "wamn-platform-identity",

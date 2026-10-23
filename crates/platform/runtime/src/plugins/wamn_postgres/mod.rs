@@ -61,6 +61,7 @@ mod claims;
 mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
+mod numbering;
 mod operation;
 mod operation_transaction;
 mod pool;

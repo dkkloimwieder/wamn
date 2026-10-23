@@ -32,6 +32,8 @@ wamn-platform-identity = { workspace = true }
 wamn-project-state = { workspace = true }
 wamn-session = { workspace = true }
 wamn-pg-core = { workspace = true }
+# The one parser of document-number patterns, which the renderer renders.
+wamn-number-pattern = { workspace = true }
 # `tenant-key`: the shipped runtime needs the framed scope digest to check a
 # guest credential against the tenant it will serve (wamn-0h0g.22.6.7).
 wamn-run-state = { workspace = true, features = ["tenant-key"] }

@@ -1,6 +1,7 @@
 //! Numbering and caller-filled columns (`docs/plan/platform-config.md`,
 //! "Numbering"): one refusal test per build rule, the two-statement generated
-//! insert, and the generated `sequences::<name>::next` binding.
+//! insert, the generated update of `updated_by`, and the generated
+//! `sequences::<name>::next` and `peek` bindings.
 
 use serde_json::{Value, json};
 use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, GenerateErrorType, GeneratedPackage};
@@ -43,6 +44,28 @@ fn actor_catalog() -> CatalogIr {
     columns.push(Column::new(
         "checked_by",
         ColumnType::Uuid,
+        false,
+        None,
+        None,
+    ));
+    replacing_table(
+        &base,
+        rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
+    )
+}
+
+/// The gadget catalog with the two stamp actors, `created_by` and
+/// `updated_by`, and `updated_at`, which the audit log pairs with them.
+fn stamped_catalog() -> CatalogIr {
+    let base = catalog(false);
+    let gadget = table(&base, "gadget");
+    let mut columns = gadget.columns().to_vec();
+    for name in ["created_by", "updated_by"] {
+        columns.push(Column::new(name, ColumnType::Uuid, false, None, None));
+    }
+    columns.push(Column::new(
+        "updated_at",
+        ColumnType::Timestamptz,
         false,
         None,
         None,
@@ -164,6 +187,8 @@ fn a_callable_sequence_gets_next_with_a_key_of_its_pattern_fields() {
         "pub batch_id: String,",
         "pub async fn next(key: PickLabelKey) -> Result<String, wamn_postgres_statements::StatementError>",
         r#"wamn_postgres_statements::next_number("pick_label", &[("batch_id", Some(batch_id))])"#,
+        "pub async fn peek(key: PickLabelKey) -> Result<String, wamn_postgres_statements::StatementError>",
+        r#"wamn_postgres_statements::peek_number("pick_label", &[("batch_id", Some(batch_id))])"#,
     ] {
         assert!(
             sequences.contains(&squashed(expected)),
@@ -171,6 +196,49 @@ fn a_callable_sequence_gets_next_with_a_key_of_its_pattern_fields() {
         );
     }
     assert!(text(&package, "generated/data/mod.rs").contains("pub mod sequences {"));
+}
+
+/// An insert fills every actor field; an update fills `updated_by` on a
+/// change and never touches `created_by` (owner ruling 2026-10-23).
+#[test]
+fn an_update_fills_updated_by_and_never_created_by() {
+    let mut manifest = numbered();
+    manifest["models"]["gadget"]["fields"]["created_by"] = json!({"role": "actor"});
+    manifest["models"]["gadget"]["fields"]["updated_by"] = json!({"role": "actor"});
+    manifest["models"]["gadget"]["audit_log"]["columns"] =
+        json!(["created_at", "created_by", "updated_at", "updated_by"]);
+    let package = run(&stamped_catalog(), &manifest, &QUERY_SOURCES).unwrap();
+    let create = text(&package, "generated/sql/gadget/create.sql");
+    assert!(
+        create.starts_with(
+            "INSERT INTO gadget (stock_id, part_code, created_by, updated_by)\n\
+             VALUES ($1::uuid, $2::text, current_setting('app.user_id')::uuid, \
+             current_setting('app.user_id')::uuid)\n"
+        ),
+        "{create}"
+    );
+    let update = text(&package, "generated/sql/gadget/update.sql");
+    assert!(
+        update.contains(
+            "        updated_by = CASE\n            \
+             WHEN ($3::boolean AND $4::uuid::text IS DISTINCT FROM model.stock_id::text)\n            \
+             THEN current_setting('app.user_id')::uuid\n            \
+             ELSE model.updated_by\n        END,\n"
+        ),
+        "{update}"
+    );
+    assert!(!update.contains("created_by ="), "{update}");
+
+    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
+    let model = object_named(overlay["relations"].as_array().unwrap(), "table", "gadget");
+    assert_eq!(
+        model["insert_fields"],
+        json!(["created_by", "part_code", "stock_id", "updated_by"])
+    );
+    assert_eq!(
+        model["update_fields"],
+        json!(["row_version", "stock_id", "updated_by"])
+    );
 }
 
 #[test]

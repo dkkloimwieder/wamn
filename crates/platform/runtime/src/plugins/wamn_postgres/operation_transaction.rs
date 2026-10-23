@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use super::resources::{
     PgTransaction, StatementConnectionGuard, prepare_statement_transaction, take_conn,
+    with_txn_conn,
 };
 use super::{PgError, StatementError, WamnPostgres};
 
@@ -99,6 +100,19 @@ impl OperationTransaction {
             connection.restore(&self.transaction.state);
         }
         Ok(())
+    }
+
+    /// Run host statements of the plugin with this transaction's connection,
+    /// under its claims, as `resources::with_txn_conn` runs them.
+    pub(super) async fn with_host_connection<T, F, Fut>(&self, op: F) -> Result<T, PgError>
+    where
+        F: FnOnce(StatementConnectionGuard) -> Fut,
+        Fut: std::future::Future<
+                Output = (StatementConnectionGuard, Result<T, tokio_postgres::Error>),
+            >,
+    {
+        self.start().await?;
+        with_txn_conn(&self.transaction.state, &self.transaction.destroyed, op).await
     }
 
     /// The owned transaction, for the host's own statements in it.

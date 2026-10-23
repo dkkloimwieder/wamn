@@ -694,8 +694,8 @@ pub(super) fn emit_package_data(
     insert_bytes(files, "generated/data/mod.rs", source.into_bytes())
 }
 
-/// `generated/data/sequences.rs`: `sequences::<name>::next(<Name>Key)` for
-/// each callable sequence. The key carries exactly the fields the pattern
+/// `generated/data/sequences.rs`: `sequences::<name>::next(<Name>Key)` and
+/// `sequences::<name>::peek(<Name>Key)` for each callable sequence. The key carries exactly the fields the pattern
 /// names, as the text of their one spelling.
 fn emit_sequences(callable: &[(&String, &crate::manifest::SequenceDeclaration)]) -> String {
     let mut source = String::from(HEADER);
@@ -733,10 +733,18 @@ fn emit_sequences(callable: &[(&String, &crate::manifest::SequenceDeclaration)])
              pub async fn next(key: {key}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
              let {key} {{ {} }} = key;\n\
              wamn_postgres_statements::next_number({name:?}, &[{record}]).await\n\
+             }}\n\n\
+             /// The current number, the last one issued for the key, with no\n\
+             /// lock and no advance. Never for assignment.\n\
+             ///\n/// # Errors\n///\n/// The host's refusal, and SQLSTATE `P0002` when no number was\n/// issued yet.\n\
+             pub async fn peek(key: {key}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
+             let {key} {{ {} }} = key;\n\
+             wamn_postgres_statements::peek_number({name:?}, &[{record}]).await\n\
              }}\n\
              }}",
             sequence.pattern.escape_debug(),
             field_name(name),
+            fields.join(", "),
             fields.join(", "),
         )
         .expect("writing to a String cannot fail");

@@ -372,6 +372,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0028_platform_singular_tables.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0029_number_assignment.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0029_number_assignment.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -452,32 +456,42 @@ mod tests {
         );
     }
 
+    /// The section of `app-schema.sql` that starts at the banner naming
+    /// `title`, up to the next such section or the end of the file.
+    fn app_schema_section(title: &str) -> String {
+        const BANNER: &str =
+            "-- ---------------------------------------------------------------------------\n-- ";
+        let app_schema = include_str!("../../../../deploy/sql/app-schema.sql");
+        let start = app_schema
+            .find(&format!("{BANNER}{title} ("))
+            .unwrap_or_else(|| panic!("app-schema.sql has the {title} section"));
+        let rest = &app_schema[start..];
+        let end = rest[1..].find(BANNER).map_or(rest.len(), |end| end + 1);
+        format!("{}\n", rest[..end].trim_end())
+    }
+
     /// The project migration that adds the platform configuration tables
     /// ends with the PLATFORM CONFIGURATION section of `app-schema.sql`, byte
     /// for byte, so a fresh install and an upgraded database hold the same
-    /// tables, function and grants.
+    /// tables, function and grants. The migration that adds
+    /// `platform.assign_counter` ends with the NUMBER ASSIGNMENT section.
     #[test]
-    fn the_platform_configuration_migration_is_the_app_schema_section() {
-        let app_schema = include_str!("../../../../deploy/sql/app-schema.sql");
-        let marker = "-- ---------------------------------------------------------------------------\n\
-                      -- PLATFORM CONFIGURATION (";
-        let start = app_schema
-            .find(marker)
-            .expect("app-schema.sql has the platform configuration section");
-        let section = &app_schema[start..];
-        let migration = PROJECT_MIGRATIONS
-            .iter()
-            .find(|migration| {
-                migration
-                    .relative_path
-                    .ends_with("_platform_configuration.sql")
-            })
-            .expect("the platform configuration migration exists");
-        assert!(
-            migration.sql.ends_with(section),
-            "{} does not end with the platform configuration section of app-schema.sql",
-            migration.relative_path
-        );
+    fn the_platform_configuration_migrations_are_the_app_schema_sections() {
+        for (suffix, title) in [
+            ("_platform_configuration.sql", "PLATFORM CONFIGURATION"),
+            ("_number_assignment.sql", "NUMBER ASSIGNMENT"),
+        ] {
+            let section = app_schema_section(title);
+            let migration = PROJECT_MIGRATIONS
+                .iter()
+                .find(|migration| migration.relative_path.ends_with(suffix))
+                .unwrap_or_else(|| panic!("the {title} migration exists"));
+            assert!(
+                migration.sql.ends_with(&section),
+                "{} does not end with the {title} section of app-schema.sql",
+                migration.relative_path
+            );
+        }
     }
 
     #[test]

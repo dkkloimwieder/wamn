@@ -429,6 +429,19 @@ pub async fn next_number(
         .map_err(StatementError::from_wire)
 }
 
+/// The current number of sequence `name` for `record`: the last number
+/// issued, rendered by the host with no lock and no advance. Never for
+/// assignment. `record` is as for [`next_number`]. The host answers SQLSTATE
+/// `P0002` when no number was issued yet.
+pub async fn peek_number(
+    name: &str,
+    record: &[(&str, Option<String>)],
+) -> Result<String, StatementError> {
+    host::peek_number(name.to_string(), record_json(record))
+        .await
+        .map_err(StatementError::from_wire)
+}
+
 /// The record as one JSON object document of strings and nulls.
 fn record_json(record: &[(&str, Option<String>)]) -> String {
     let mut json = String::from("{");

@@ -607,7 +607,7 @@ fn emit_operation_sql(
     let sql = match action {
         CrudAction::Create => sql::create(table, model, operation),
         CrudAction::Get => sql::get(table, tombstoned),
-        CrudAction::Update => sql::update(table, operation, tombstoned),
+        CrudAction::Update => sql::update(table, model, operation, tombstoned),
         CrudAction::Delete => sql::delete(
             table,
             operation,
