@@ -113,7 +113,7 @@ environment = {
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
 - `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern. A key named by `per=` or `reset=` must be a field of every model that uses the sequence, or a counter in the same pattern, or `date:FMT`; otherwise a build refusal.
 - `number = "<sequence>"` on a field: the generator fills it by calling `next_number` on insert with exactly the fields the pattern names; a write statement that supplies the field is a build refusal. On the key field: allowed, with the limits under Numbering.
-- `role = "actor"` on a field: the host fills it from the operation caller. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
+- `role = "actor"` on a field: the host fills it from the operation caller. The generated insert fills every actor field from `app.user_id`. The generated update fills `updated_by` from `app.user_id` and never touches `created_by`. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `connections`: the names a package binds, each with the integration it expects and `mode = read | write`. A file store is one of them. `environment.k` maps each name to a connection name; apply refuses an unbound name, a connection the project has not enabled, an integration that differs from the declared one, or an integration not allowed at the environment.
 - `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` capability. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
 - A `wamn` connection's external system is the peer environment; its `parameters` carry `project/environment/application`. The connection adds transport and exchange only.
@@ -508,10 +508,10 @@ C1 is done: `wamn-aqd0m` merged at `3bb4c488e`, and its epic-close kind run pass
 
 Rulings for C2:
 
-- `next-number(name, record) -> text` is one added function on `wamn:postgres/statements`, with no version bump. The host refuses it outside an open operation transaction. The renderer lives in the plugin. `bump_counter` is the only writer of `number_counter`.
+- `next-number(name, record) -> text` and `peek-number(name, record) -> text` are two added functions on `wamn:postgres/statements`, with no version bump. `peek` is generated from `peek-number` (owner ruling 2026-10-23). It renders the current value with no lock and no advance. The host refuses both outside an open operation transaction. The renderer lives in the plugin. `bump_counter` is the only writer of `number_counter`.
 - The application is the composing application of the `app.application` claim (C1.2 ruling). `next_number` refuses a sequence of another application by the claim, never by SQL text.
 - `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
-- `role = "actor"` fills from `app.user_id`. A payload that supplies it is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
+- `role = "actor"` fills from `app.user_id`. An insert fills every actor field. An update fills `updated_by` and never touches `created_by` (owner ruling 2026-10-23). A payload that supplies an actor field is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
 - Build refusals: a write that supplies a `number` or `actor` field; a sequence with no field and no caller; `per=` on a key field; `reset=` or `per=` on a sequence bound to a key field; an `int32` key with anything but a bare `{seq}`; a key named by `per=` or `reset=` that is not a field of every model using the sequence, another counter, or `date:`.
 - `set_counter` is a control route. It writes through `bump_counter`'s lock, lands in the write log with the actor, refuses a set below a live number by the dry render, and never touches a `per=` mapping.
