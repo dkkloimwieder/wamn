@@ -168,15 +168,21 @@ pub async fn assertions(
     project.execute("INSERT INTO rest_consumer_fixture.item (key,name) VALUES ('push-one','Pushed customer')", &[]).await?;
     let pushes = wait(project, "netsuite_push", 1).await?;
     ensure!(
-        pushes[0]["trigger_source"] == "event" && pushes[0]["service_principal_id"] == principal,
+        pushes[0]["trigger_source"] == "event"
+            && pushes[0]["service_principal_id"].is_null()
+            && pushes[0]["registration_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()),
         "wrong push identity: {pushes:?}"
     );
+    // A scheduled pull can land again while the push waits, so only the PUTs count.
     let first = requests(run).await?;
+    let first: Vec<_> = first.into_iter().filter(|r| r["method"] == "PUT").collect();
     ensure!(
-        first.len() == 3,
+        first.len() == 1,
         "one insert must send exactly one PUT: {first:?}"
     );
-    assert_put(&first[2])?;
+    assert_put(&first[0])?;
 
     // Replay the exact delivered input through the released wiring. A new run
     // key forces a second HTTP call rather than merely returning the first run.
@@ -198,19 +204,33 @@ pub async fn assertions(
         .await?;
     wait(project, "netsuite_push", 2).await?;
     let records = requests(run).await?;
+    let records: Vec<_> = records
+        .into_iter()
+        .filter(|r| r["method"] == "PUT")
+        .collect();
     ensure!(
-        records.len() == 4,
+        records.len() == 2,
         "unexpected request after redelivery: {records:?}"
     );
-    assert_put(&records[3])?;
+    assert_put(&records[1])?;
     ensure!(
-        records[2]["target"] == records[3]["target"]
-            && records[2]["location"] == records[3]["location"],
+        records[0]["target"] == records[1]["target"]
+            && records[0]["location"] == records[1]["location"],
         "retry changed the external-id path"
     );
+    // The pull runs every minute, so more than one run can exist by now.
+    let pulls: Vec<Value> = project
+        .query("SELECT to_jsonb(r) FROM wamn_run.runs r WHERE package_id='netsuite' AND wiring_id='netsuite_pull'", &[])
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
     ensure!(
-        completed(project, "netsuite_pull", 1).await?.len() == 1,
-        "expected one pull"
+        pulls.iter().all(|r| !matches!(
+            r["status"].as_str(),
+            Some("failed" | "infrastructure-failure" | "effect-uncertain")
+        )) && pulls.iter().any(|r| r["status"] == "completed"),
+        "a pull did not complete: {pulls:?}"
     );
     task.abort();
     Ok(
