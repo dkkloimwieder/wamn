@@ -35,23 +35,36 @@ async fn prepare_synchronous_release(
         }
         None => (0, None),
     };
-    // A route reads the same release component list with no wiring.
-    if components.is_none() && routes > 0 {
+    // A route reads the same release component list with no wiring. The
+    // composed entry serves every route instead, and publish admitted and
+    // verified its application, so the host compiles the entry only.
+    let entry = manifest
+        .composed_entry
+        .as_ref()
+        .filter(|_| components.is_none() && routes > 0);
+    if components.is_none() && routes > 0 && entry.is_none() {
         components = Some(operations.release_components().await?);
     }
-    let Some(components) = components else {
-        return Ok(PreparedReleaseReadiness {
-            synchronous_wirings: 0,
-            synchronous_routes: 0,
-            component_digests: 0,
-        });
-    };
-    let digests: Vec<_> = components
-        .iter()
-        .map(|component| component.component_digest.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let digests: Vec<_> = match (&components, entry) {
+        (Some(components), _) => components
+            .iter()
+            .map(|component| component.component_digest.clone())
+            .collect::<BTreeSet<_>>(),
+        (None, Some(entry)) => entry
+            .members
+            .iter()
+            .map(|member| member.digest.clone())
+            .collect(),
+        (None, None) => {
+            return Ok(PreparedReleaseReadiness {
+                synchronous_wirings: 0,
+                synchronous_routes: 0,
+                component_digests: 0,
+            });
+        }
+    }
+    .into_iter()
+    .collect();
     let bindings_ready = operations
         .postgres
         .release_component_bindings_ready(
@@ -63,7 +76,9 @@ async fn prepare_synchronous_release(
         )
         .await?;
     anyhow::ensure!(bindings_ready, "release-component-requirement-unbound");
-    operations.prepare_released(&components).await?;
+    if let Some(components) = &components {
+        operations.prepare_released(components).await?;
+    }
     tracing::info!(
         target: "wamn::router",
         synchronous_wirings,
