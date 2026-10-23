@@ -126,9 +126,16 @@ impl HostPlugin for RouterDelivery {
         if !interfaces.contains("wamn", "router-delivery", &["delivery"]) {
             return Ok(());
         }
-        delivery::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
+        add_to_linker(item.linker())?;
         Ok(())
     }
+}
+
+/// Link the delivery import. A store without this plugin traps on each call.
+pub fn add_to_linker(
+    linker: &mut wash_runtime::wasmtime::component::Linker<SharedCtx>,
+) -> wash_runtime::wasmtime::Result<()> {
+    delivery::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
 fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<RouterDelivery>> {

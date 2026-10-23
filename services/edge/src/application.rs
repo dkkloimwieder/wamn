@@ -48,6 +48,7 @@ impl EdgeApplication {
                 namespace: scope.tenant_id.clone(),
                 name: scope.environment.clone(),
                 components: release.native_components(),
+                entry: None,
                 warm_reuse: WarmReuse::default(),
                 local_resources: wash_runtime::types::LocalResources::default(),
                 host_interfaces,

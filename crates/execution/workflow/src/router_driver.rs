@@ -481,7 +481,7 @@ impl RouterDriver {
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let application = self.operations.load_application(native).await?;
+        let application = self.operations.load_application(native, None).await?;
         let target = &request.target;
         let driver_request = RouterDriverRequest {
             tenant_id: target.tenant_id.clone(),

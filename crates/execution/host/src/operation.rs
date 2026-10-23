@@ -82,7 +82,7 @@ use invocation_policy::ApplicationHost;
 use native_call::prepare_native;
 use native_policy::{NATIVE_POLICY_ID, NativePolicyResources, new_native_policy};
 pub use native_policy::{NativeFacts, NativePolicy};
-use native_workload::{NativeApplication, NativeComponent};
+use native_workload::{NativeApplication, NativeComponent, NativeEntry};
 use native_workload::{NativeWorkloadSpec, load_native_application};
 
 /// Keep at most two verified artifact fetches in flight per release load.
@@ -394,7 +394,7 @@ impl OperationHost {
         components: &Arc<[AdmittedComponent]>,
     ) -> anyhow::Result<()> {
         let application = self.released_application(components).await?;
-        for id in application.workload.facts_by_component_id.keys() {
+        for id in application.workload.component_ids() {
             let target = application.dispatch_target(id)?;
             prepare_native(
                 target,
@@ -427,7 +427,37 @@ impl OperationHost {
         components: Arc<[AdmittedComponent]>,
     ) -> anyhow::Result<ReleasedApplication> {
         validate_released_components(&self.release, &components, None)?;
-        let pulls = components.iter().cloned().map(|fact| {
+        // The composed entry runs its members, so the host loads the entry
+        // and not their own components. One compile then serves the HTTP
+        // entry and every call here.
+        let recorded = self.release.manifest().composed_entry.as_ref();
+        let (members, own): (Vec<_>, Vec<_>) = components.iter().cloned().partition(|fact| {
+            recorded.is_some_and(|entry| {
+                entry.members.iter().any(|member| {
+                    member.package_id == fact.scope.package_id
+                        && member.component == fact.component
+                        && member.digest == fact.component_digest
+                })
+            })
+        });
+        let entry = match recorded {
+            Some(recorded) if !members.is_empty() => {
+                let entry = self
+                    .source
+                    .pull_entry(&recorded.reference)
+                    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
+                        tracing::info_span!("wamn.component.pull", wamn.composed_entry = true)
+                    }))
+                    .await?;
+                Some(NativeEntry {
+                    members,
+                    bytes: entry.bytes,
+                    digest: entry.digest,
+                })
+            }
+            _ => None,
+        };
+        let pulls = own.into_iter().map(|fact| {
             let source = self.source.clone();
             async move {
                 let bytes = source
@@ -448,9 +478,14 @@ impl OperationHost {
             native.push(component?);
         }
         drop(pulls);
-        let application = self.load_application(native).await?;
+        let application = self.load_application(native, entry).await?;
+        let entry_members = application
+            .workload
+            .entry
+            .as_ref()
+            .map_or(0, |(_, members)| members.len());
         anyhow::ensure!(
-            components.len() == application.workload.facts_by_component_id.len(),
+            components.len() == application.workload.facts_by_component_id.len() + entry_members,
             "native-release-component-closure-mismatch"
         );
         Ok(ReleasedApplication {
@@ -460,12 +495,16 @@ impl OperationHost {
         })
     }
 
+    /// Load `components`, and the composed entry that runs its members, as one
+    /// application.
     pub async fn load_application(
         &self,
         components: Vec<NativeComponent>,
+        entry: Option<NativeEntry>,
     ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
         let policy = new_native_policy(
             &components,
+            entry.as_ref(),
             NativePolicyResources {
                 postgres: Arc::clone(&self.postgres),
                 logging: Arc::clone(&self.logging),
@@ -509,6 +548,7 @@ impl OperationHost {
                 namespace: self.project.clone(),
                 name: self.owner_prefix.clone(),
                 components,
+                entry,
                 warm_reuse: self.warm_reuse.clone(),
                 local_resources: wash_runtime::types::LocalResources::default(),
                 host_interfaces,
@@ -688,6 +728,46 @@ fn prepare_statement_members(
                     WamnPostgres::prepare_statement_set(lower_statement_set(statements), false),
                 )
             }),
+    ))
+}
+
+/// Lower and seal the statement set of each named `statements` import of the
+/// composed entry.
+///
+/// `instances` is the record verified in the entry's bytes. Publication keeps
+/// a composed application's named imports in the entry, so their sets are the
+/// composing member's. A plain application gets one named import there, whose
+/// set is the statements of all its operations.
+///
+/// # Errors
+///
+/// Refuses an entry whose record names imports the release does not bind.
+fn prepare_entry_members(
+    instances: &BTreeMap<String, String>,
+    composing: &ServingComponent,
+) -> anyhow::Result<PreparedStatementMembers> {
+    if !composing.statement_instances.is_empty() {
+        return prepare_statement_members(instances, composing);
+    }
+    anyhow::ensure!(
+        instances
+            .values()
+            .all(|digest| digest == composing.descriptor.component_digest.as_str()),
+        "statement-instances-unreleased: the entry imports {:?} for another member",
+        instances.keys().collect::<Vec<_>>()
+    );
+    let statements = composing
+        .operations
+        .values()
+        .flat_map(|fact| fact.statements.clone())
+        .collect();
+    Ok(WamnPostgres::prepare_statement_members(
+        instances.keys().map(|instance| {
+            (
+                instance.clone(),
+                WamnPostgres::prepare_statement_set(lower_statement_set(&statements), false),
+            )
+        }),
     ))
 }
 

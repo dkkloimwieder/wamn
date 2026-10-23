@@ -33,6 +33,17 @@ pub struct NativeComponent {
     pub bytes: Vec<u8>,
 }
 
+/// The composed entry of a release: one component that exports the
+/// operations of every member it carries.
+#[derive(Debug)]
+pub struct NativeEntry {
+    /// The admitted facts of the members, each a component of the release.
+    pub members: Vec<AdmittedComponent>,
+    pub bytes: Vec<u8>,
+    /// The digest that the HTTP entry start compiles the same bytes under.
+    pub digest: String,
+}
+
 /// The immutable release or candidate workload selected by the owning driver.
 #[derive(Debug)]
 pub struct NativeWorkloadSpec {
@@ -41,6 +52,9 @@ pub struct NativeWorkloadSpec {
     pub namespace: String,
     pub name: String,
     pub components: Vec<NativeComponent>,
+    /// The composed entry, which runs its members' operations in place of
+    /// their own components.
+    pub entry: Option<NativeEntry>,
     pub local_resources: LocalResources,
     pub host_interfaces: Vec<WitInterface>,
 }
@@ -56,6 +70,8 @@ pub struct NativeWorkloadSpec {
 pub struct NativeWorkload {
     workloads: BTreeMap<String, ResolvedWorkload>,
     pub facts_by_component_id: BTreeMap<String, AdmittedComponent>,
+    /// The native id of the composed entry and the members that it runs.
+    pub entry: Option<(String, Vec<AdmittedComponent>)>,
     // The workload's stores hold this handler weakly, so the application keeps
     // it alive. `NullServer` refuses every outgoing request.
     _egress: Arc<dyn HostHandler>,
@@ -66,6 +82,7 @@ impl std::fmt::Debug for NativeWorkload {
         f.debug_struct("NativeWorkload")
             .field("workloads", &self.workloads)
             .field("facts_by_component_id", &self.facts_by_component_id)
+            .field("entry", &self.entry)
             .finish_non_exhaustive()
     }
 }
@@ -75,6 +92,25 @@ impl NativeWorkload {
         self.workloads
             .get(component_id)
             .context("native-workload-component-missing")
+    }
+
+    /// Every native component id of this application.
+    pub fn component_ids(&self) -> impl Iterator<Item = &str> {
+        self.workloads.keys().map(String::as_str)
+    }
+
+    /// The native id that runs `fact`: its own component, or the composed
+    /// entry that carries it.
+    pub fn component_id(&self, fact: &AdmittedComponent) -> Option<&str> {
+        self.facts_by_component_id
+            .iter()
+            .find_map(|(id, loaded)| (loaded == fact).then_some(id.as_str()))
+            .or_else(|| {
+                self.entry
+                    .as_ref()
+                    .filter(|(_, members)| members.contains(fact))
+                    .map(|(id, _)| id.as_str())
+            })
     }
 
     /// The native dispatch target of one admitted component.
@@ -164,7 +200,7 @@ pub async fn load_native_application<P: InvocationPolicy>(
     let workload =
         Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);
     let mut dispatch_targets = BTreeMap::new();
-    for id in workload.facts_by_component_id.keys() {
+    for id in workload.component_ids() {
         let target = match workload.dispatch_target(id, policy.id()).await {
             Ok(target) => target,
             Err(error) => {
@@ -175,7 +211,7 @@ pub async fn load_native_application<P: InvocationPolicy>(
                 return Err(error);
             }
         };
-        dispatch_targets.insert(id.clone(), target);
+        dispatch_targets.insert(id.to_owned(), target);
     }
     Ok(Arc::new(NativeApplication {
         _cleanup: cleanup,
@@ -183,6 +219,11 @@ pub async fn load_native_application<P: InvocationPolicy>(
         policy,
         dispatch_targets,
     }))
+}
+
+/// Name the composed entry by the digest that its bytes compile under.
+pub fn native_entry_name(digest: &str) -> String {
+    format!("wamn-entry:{digest}")
 }
 
 /// Identify a complete admitted fact before native plugin binding begins.
@@ -260,11 +301,29 @@ pub(super) async fn load_native_workload(
             }
         }
     }
+    // The entry compiles under the digest of the HTTP entry start, and runs
+    // with no warm pool (poolSize 0), as that start does.
+    let entry = spec.entry.map(|entry| {
+        let component = Component {
+            name: native_entry_name(&entry.digest),
+            bytes: entry.bytes.into(),
+            digest: Some(entry.digest),
+            local_resources: spec.local_resources.clone(),
+            ..Component::default()
+        };
+        (component, Some(entry.members))
+    });
     let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let host = HostRef::from_handler(&egress);
     let mut workloads = BTreeMap::new();
     let mut facts_by_component_id = BTreeMap::new();
-    for component in components {
+    let mut loaded_entry = None;
+    let items = components
+        .into_iter()
+        .map(|component| (component, None))
+        .chain(entry);
+    for (component, members) in items {
+        let name = component.name.clone();
         // Boxed so the loop does not carry native resolution inline in every caller's future.
         let loaded = Box::pin(load_component_workload(
             &engine,
@@ -277,12 +336,18 @@ pub(super) async fn load_native_workload(
             plugin_bindings,
             &host,
             meters,
-            &mut facts_by_name,
         ))
         .await;
         match loaded {
-            Ok((component_id, resolved, fact)) => {
-                facts_by_component_id.insert(component_id.clone(), fact);
+            Ok((component_id, resolved)) => {
+                if let Some(members) = members {
+                    loaded_entry = Some((component_id.clone(), members));
+                } else {
+                    let fact = facts_by_name
+                        .remove(&name)
+                        .expect("each loaded component names one admitted fact");
+                    facts_by_component_id.insert(component_id.clone(), fact);
+                }
                 workloads.insert(component_id, resolved);
             }
             Err(error) => {
@@ -296,6 +361,7 @@ pub(super) async fn load_native_workload(
     Ok(NativeWorkload {
         workloads,
         facts_by_component_id,
+        entry: loaded_entry,
         _egress: egress,
     })
 }
@@ -316,14 +382,11 @@ async fn load_component_workload(
     plugin_bindings: &PluginBindings,
     host: &HostRef,
     meters: &Meters,
-    facts_by_name: &mut BTreeMap<String, AdmittedComponent>,
-) -> anyhow::Result<(String, ResolvedWorkload, AdmittedComponent)> {
-    // The component name is a fixed-length fact digest, so no workload id is a
-    // prefix of another. Plugins clear their state by workload id prefix.
+) -> anyhow::Result<(String, ResolvedWorkload)> {
+    // The component name is a fixed-length fact or entry digest, so no
+    // workload id is a prefix of another. Plugins clear their state by
+    // workload id prefix.
     let id = format!("{application_id}/{}", component.name);
-    let fact = facts_by_name
-        .remove(&component.name)
-        .context("native-component-admitted-fact-missing")?;
     let workload = Workload {
         namespace: namespace.to_owned(),
         name: name.to_owned(),
@@ -354,7 +417,7 @@ async fn load_component_workload(
         }
     };
     match component_id {
-        Ok(component_id) => Ok((component_id, resolved, fact)),
+        Ok(component_id) => Ok((component_id, resolved)),
         Err(error) => {
             resolved
                 .unbind_all_plugins()

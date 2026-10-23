@@ -1322,7 +1322,7 @@ impl HostPlugin for FlowHttpRouting {
         if !interfaces.contains("wamn", "flow-http-routing", &["routing"]) {
             return Ok(());
         }
-        routing::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
+        add_to_linker(item.linker())?;
         Ok(())
     }
 
@@ -1354,6 +1354,13 @@ impl HostPlugin for FlowHttpRouting {
             .remove(workload_id);
         Ok(())
     }
+}
+
+/// Link the routing import. A store without this plugin traps on each call.
+pub fn add_to_linker(
+    linker: &mut wash_runtime::wasmtime::component::Linker<SharedCtx>,
+) -> wash_runtime::wasmtime::Result<()> {
+    routing::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
 fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<FlowHttpRouting>> {

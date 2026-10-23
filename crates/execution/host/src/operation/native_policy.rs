@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_catalog::{AdmittedComponent, ServingComponentOperation};
+use wamn_catalog::{AdmittedComponent, ServingComponent, ServingComponentOperation};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{INVOCATION_TRACES_ID, InvocationTrace, InvocationTraces};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -27,8 +27,12 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_call::{NativeCallFailure, NativeInvocation};
-use super::native_workload::{NativeComponent, native_component_name};
-use super::{NodeAcquisition, prepare_statement_members, prepare_statement_sets};
+use super::native_workload::{
+    NativeComponent, NativeEntry, native_component_name, native_entry_name,
+};
+use super::{
+    NodeAcquisition, prepare_entry_members, prepare_statement_members, prepare_statement_sets,
+};
 
 pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 
@@ -98,12 +102,29 @@ impl NativeFacts {
     }
 }
 
+/// The admitted components that one native component runs: its own fact, or
+/// every member that the composed entry carries.
+type ServedPolicies = Arc<[Arc<ComponentPolicy>]>;
+
+/// The served component that `acquisition` names.
+fn served_component<'a>(
+    served: &'a [Arc<ComponentPolicy>],
+    acquisition: &NodeAcquisition,
+) -> Option<&'a Arc<ComponentPolicy>> {
+    let invocation = &acquisition.invocation;
+    served.iter().find(|component| {
+        component.fact.scope.package_id == invocation.package_id
+            && component.fact.component == invocation.component
+            && component.fact.component_digest == invocation.component_digest
+    })
+}
+
 /// Immutable component policy and the authority of calls that are still active.
 #[derive(Debug, Clone)]
 pub struct NativePolicy {
     resources: Arc<NativePolicyResources>,
-    components: Arc<BTreeMap<String, Arc<ComponentPolicy>>>,
-    bindings: Arc<RwLock<BTreeMap<String, Arc<ComponentPolicy>>>>,
+    components: Arc<BTreeMap<String, ServedPolicies>>,
+    bindings: Arc<RwLock<BTreeMap<String, ServedPolicies>>>,
     /// The scopes of calls that are still active.
     invocations: Arc<Mutex<BTreeSet<String>>>,
     traces: Arc<InvocationTraces>,
@@ -111,17 +132,12 @@ pub struct NativePolicy {
 
 pub(super) fn new_native_policy(
     components: &[NativeComponent],
+    entry: Option<&NativeEntry>,
     resources: NativePolicyResources,
 ) -> anyhow::Result<Arc<NativePolicy>> {
-    let mut facts = BTreeMap::new();
-    for NativeComponent { fact, bytes } in components {
-        let name = native_component_name(fact)?;
-        if facts.contains_key(&name) {
-            continue;
-        }
-        let served = resources
-            .release
-            .manifest()
+    let manifest = resources.release.manifest();
+    let served_of = |fact: &AdmittedComponent| {
+        manifest
             .components
             .iter()
             .find(|served| {
@@ -129,22 +145,46 @@ pub(super) fn new_native_policy(
                     && served.descriptor.component == fact.component
                     && served.descriptor.component_digest.as_str() == fact.component_digest
             })
-            .context("component-not-in-carried-release")?;
+            .context("component-not-in-carried-release")
+    };
+    let policy =
+        |fact: &AdmittedComponent, served: &ServingComponent, members: PreparedStatementMembers| {
+            Arc::new(ComponentPolicy {
+                fact: fact.clone(),
+                operations: served.operations.clone(),
+                statements: prepare_statement_sets(served, &manifest.routes),
+                members,
+                runtime_schema: served.runtime_schema.clone(),
+                application: manifest.composing_application(served).to_owned(),
+            })
+        };
+    let mut facts = BTreeMap::new();
+    for NativeComponent { fact, bytes } in components {
+        let name = native_component_name(fact)?;
+        if facts.contains_key(&name) {
+            continue;
+        }
+        let served = served_of(fact)?;
         let instances = wamn_engine::statement_instances::statement_instances(bytes)
             .context("statement-instance-wiring")?;
-        let policy = ComponentPolicy {
-            fact: fact.clone(),
-            operations: served.operations.clone(),
-            statements: prepare_statement_sets(served, &resources.release.manifest().routes),
-            members: prepare_statement_members(&instances, served)?,
-            runtime_schema: served.runtime_schema.clone(),
-            application: resources
-                .release
-                .manifest()
-                .composing_application(served)
-                .to_owned(),
-        };
-        facts.insert(name, Arc::new(policy));
+        let members = prepare_statement_members(&instances, served)?;
+        facts.insert(name, ServedPolicies::from([policy(fact, served, members)]));
+    }
+    // Each member runs in the entry under its own facts, through the
+    // statement instances that the entry carries.
+    if let Some(entry) = entry {
+        let instances = wamn_engine::statement_instances::statement_instances(&entry.bytes)
+            .context("statement-instance-wiring")?;
+        let composing = manifest
+            .composing_member()
+            .context("entry has no application members")?;
+        let members = prepare_entry_members(&instances, composing)?;
+        let served = entry
+            .members
+            .iter()
+            .map(|fact| Ok(policy(fact, served_of(fact)?, members.clone())))
+            .collect::<anyhow::Result<ServedPolicies>>()?;
+        facts.insert(native_entry_name(&entry.digest), served);
     }
     Ok(Arc::new(NativePolicy {
         resources: Arc::new(resources),
@@ -170,15 +210,14 @@ impl NativePolicy {
             .bindings
             .read()
             .expect("native component bindings lock poisoned");
-        let component = bindings
+        let served = bindings
             .get(component_id)
             .context("native invocation component is not admitted")?;
+        let component = served_component(served, acquisition)
+            .context("native-invocation-component-identity-mismatch")?;
         let fact = &component.fact;
         anyhow::ensure!(
             fact.scope.tenant_id == acquisition.claims.tenant
-                && fact.scope.package_id == acquisition.invocation.package_id
-                && fact.component == acquisition.invocation.component
-                && fact.component_digest == acquisition.invocation.component_digest
                 && acquisition.invocation.operation == operation
                 && acquisition.claims.project.as_deref() == Some(self.resources.project.as_str()),
             "native-invocation-component-identity-mismatch"
@@ -334,6 +373,7 @@ impl InvocationPolicy for NativePolicy {
             .expect("native component bindings lock poisoned");
         let component = bindings
             .get(component_id)
+            .and_then(|served| served_component(served, acquisition))
             .context("native invocation component is not admitted")?;
         let statement_set = component
             .statements
@@ -443,8 +483,12 @@ impl HostPlugin for NativePolicy {
         imports.extend(self.resources.logging.world().imports);
         imports.extend(self.resources.connection_http.world().imports);
         imports.extend(self.resources.blobstore.world().imports);
+        // The route layer of a composed entry imports these. A call enters an
+        // operation export, never the HTTP handler, so none reaches them.
+        imports.insert(WitInterface::from("wamn:flow-http-routing/routing@0.1.0"));
+        imports.insert(WitInterface::from("wamn:router-delivery/delivery@0.4.0"));
         let mut exports = HashSet::new();
-        for entry in self.components.values() {
+        for entry in self.components.values().flat_map(|served| served.iter()) {
             for name in entry.fact.operations.keys() {
                 exports.insert(WitInterface::from(name.as_str()));
             }
@@ -488,9 +532,17 @@ impl HostPlugin for NativePolicy {
         let interfaces = WitInterfaces::new(&imports);
         let component = item.component().clone();
         let linker = item.linker();
+        // No native call binds an operation entry, so each `wamn:operation`
+        // call of the entry's route layer refuses as on an unbound entry.
         self.resources
             .postgres
             .add_linker_entries(linker, &component, &interfaces)?;
+        if interfaces.contains("wamn", "flow-http-routing", &["routing"]) {
+            wamn_engine::flow_http_routing::add_to_linker(linker)?;
+        }
+        if interfaces.contains("wamn", "router-delivery", &["delivery"]) {
+            wamn_engine::router_delivery::add_to_linker(linker)?;
+        }
         self.resources
             .logging
             .add_linker_entries(linker, &interfaces)?;

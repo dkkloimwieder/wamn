@@ -86,6 +86,7 @@ async fn load_with_reuse(
             namespace: "test".into(),
             name: "native-import-admission-test".into(),
             components,
+            entry: None,
             local_resources: LocalResources::default(),
             // Host policy implements nested calls. Declaring an interface here
             // must not bypass the admitted provider uniqueness check.

@@ -205,10 +205,13 @@ pub async fn invoke(
         .join("components/rest_consumer_fixture.wasm"),
     )?;
     let application = host
-        .load_application(vec![NativeComponent {
-            fact: component.clone(),
-            bytes,
-        }])
+        .load_application(
+            vec![NativeComponent {
+                fact: component.clone(),
+                bytes,
+            }],
+            None,
+        )
         .await?;
     let intents = host.call_intents(component, OPERATION)?;
     eprintln!(
@@ -289,10 +292,13 @@ pub async fn invoke(
         .join("components/rest_connector.wasm"),
     )?;
     let connector_application = host
-        .load_application(vec![NativeComponent {
-            fact: connector.clone(),
-            bytes: connector_bytes,
-        }])
+        .load_application(
+            vec![NativeComponent {
+                fact: connector.clone(),
+                bytes: connector_bytes,
+            }],
+            None,
+        )
         .await?;
     let mut failed_payload = serde_json::Value::Null;
     for request in [

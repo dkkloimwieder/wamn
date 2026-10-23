@@ -24,6 +24,23 @@ pub trait ArtifactSource: Send + Sync {
         &self,
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError>;
+
+    /// Pull and verify the composed entry that a release records as `reference`.
+    async fn pull_entry(
+        &self,
+        reference: &str,
+    ) -> Result<VerifiedEntry, ComponentArtifactFetchError>;
+}
+
+/// The verified bytes of a composed entry and the digest they compile under.
+///
+/// The digest is the one the HTTP entry start reports for the same bytes: the
+/// registry manifest digest, or the content digest of a local file. Both
+/// starts then share one compile.
+#[derive(Debug)]
+pub struct VerifiedEntry {
+    pub bytes: Vec<u8>,
+    pub digest: String,
 }
 
 /// Stable classification of a refused component artifact pull.
@@ -154,6 +171,38 @@ impl ArtifactSource for LocalComponentSource {
             &named,
         )?;
         Ok(bytes)
+    }
+
+    /// Read the recorded local `file:` entry, which publication names by its
+    /// content digest inside this directory.
+    async fn pull_entry(
+        &self,
+        reference: &str,
+    ) -> Result<VerifiedEntry, ComponentArtifactFetchError> {
+        let path = Path::new(
+            reference
+                .strip_prefix("file:")
+                .ok_or_else(ComponentArtifactFetchError::invalid_reference)?,
+        );
+        let digest = format!(
+            "sha256:{}",
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(ComponentArtifactFetchError::invalid_reference)?
+        );
+        if path != local_component_path(&self.directory, &digest)? {
+            return Err(ComponentArtifactFetchError::invalid_reference());
+        }
+        let bytes = tokio::fs::read(path).await.map_err(|_| {
+            ComponentArtifactFetchError::unavailable(reference, "composed-entry-body-unavailable")
+        })?;
+        if component_digest(&bytes) != digest {
+            return Err(ComponentArtifactFetchError::mismatched(
+                reference,
+                "composed-entry-body-digest-mismatch",
+            ));
+        }
+        Ok(VerifiedEntry { bytes, digest })
     }
 }
 
@@ -295,6 +344,39 @@ mod tests {
                 .error_type(),
             ComponentArtifactFetchErrorType::InvalidReference
         );
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_entry_compiles_under_its_content_digest_inside_the_directory() {
+        let root = std::env::temp_dir().join(format!("wamn-local-entry-{}", std::process::id()));
+        std::fs::create_dir(&root).expect("create owned local entry fixture");
+        let bytes = b"composed-local-entry";
+        let digest = component_digest(bytes);
+        let path = local_component_path(&root, &digest).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let source = LocalComponentSource::new(root.clone());
+        let reference = format!("file:{}", path.display());
+        let entry = source.pull_entry(&reference).await.unwrap();
+        assert_eq!(
+            (entry.bytes.as_slice(), entry.digest.as_str()),
+            (&bytes[..], &*digest)
+        );
+        std::fs::write(&path, b"changed-local-entry").unwrap();
+        assert_eq!(
+            source
+                .pull_entry(&reference)
+                .await
+                .unwrap_err()
+                .error_type(),
+            ComponentArtifactFetchErrorType::Mismatched
+        );
+        let outside = format!("file:/elsewhere/{}.wasm", &digest["sha256:".len()..]);
+        assert_eq!(
+            source.pull_entry(&outside).await.unwrap_err().error_type(),
+            ComponentArtifactFetchErrorType::InvalidReference
+        );
+        std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(root).unwrap();
     }
 

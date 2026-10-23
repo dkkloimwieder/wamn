@@ -178,9 +178,7 @@ fn component_id_of<'a, P: InvocationPolicy>(
 ) -> anyhow::Result<&'a str> {
     application
         .workload
-        .facts_by_component_id
-        .iter()
-        .find_map(|(id, fact)| (fact == component).then_some(id.as_str()))
+        .component_id(component)
         .context("native-node-component-fact-missing")
 }
 

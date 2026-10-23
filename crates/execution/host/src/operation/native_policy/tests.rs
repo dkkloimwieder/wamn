@@ -51,6 +51,8 @@ use wamn_engine::operation::node_types;
 
 #[path = "tests/authenticated.rs"]
 mod authenticated;
+#[path = "tests/entry.rs"]
+mod entry;
 #[path = "tests/trace.rs"]
 mod trace;
 #[path = "tests/warm.rs"]
@@ -756,6 +758,7 @@ impl Fixture {
         let vault = Arc::new(WamnCredentials::from_projects(HashMap::new()));
         let policy = new_native_policy(
             &native,
+            None,
             NativePolicyResources {
                 connection_http: Arc::new(ConnectionHttp::new(
                     Arc::clone(&postgres),
@@ -812,6 +815,7 @@ impl Fixture {
                 namespace: "test".into(),
                 name: "native-policy-test".into(),
                 components: native,
+                entry: None,
                 local_resources: LocalResources::default(),
                 host_interfaces: vec![
                     WitInterface::from(ROOT),

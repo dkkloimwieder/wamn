@@ -37,7 +37,10 @@ async fn prepare_synchronous_release(
     };
     // A route reads the same release component list with no wiring. The
     // composed entry serves every route instead, and publish admitted and
-    // verified its application, so the host compiles the entry only.
+    // verified its application, so the host compiles the entry only. A
+    // wiring runs its entry members on the entry too, so preparing the
+    // released application below compiles the entry, under the digest the
+    // HTTP entry start compiles it, and not the members' own components.
     let entry = manifest
         .composed_entry
         .as_ref()

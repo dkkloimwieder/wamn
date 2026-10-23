@@ -78,15 +78,18 @@ pub async fn invoke(
         .unwrap()
         .facts();
     let application = host
-        .load_application(vec![NativeComponent {
-            fact: component.clone(),
-            bytes: std::fs::read(
-                wamn_schema_generator::output_root(
-                    &super::support::repository().join("apps/netsuite"),
-                )
-                .join("components/netsuite.wasm"),
-            )?,
-        }])
+        .load_application(
+            vec![NativeComponent {
+                fact: component.clone(),
+                bytes: std::fs::read(
+                    wamn_schema_generator::output_root(
+                        &super::support::repository().join("apps/netsuite"),
+                    )
+                    .join("components/netsuite.wasm"),
+                )?,
+            }],
+            None,
+        )
         .await?;
     let principal: String = admin
         .query_one(
