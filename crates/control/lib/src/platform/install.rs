@@ -108,9 +108,11 @@ pub async fn apply(
         for (path, _, digest) in &published.releases {
             progress(&format!("{}: release = \"{digest}\"", path.display()))?;
         }
-        if published.releases.iter().any(|(_, environment, _)| {
-            environment.release == crate::environment::document::DeclaredRelease::None
-        }) {
+        if published
+            .releases
+            .iter()
+            .any(|(_, environment, digest)| unrecorded(&environment.release, digest))
+        {
             progress(
                 "Commit the release lines in the environment files, then rerun platform apply for step 4.17.",
             )?;
@@ -237,6 +239,13 @@ pub fn registry(
     document: &ClusterDocument,
 ) -> anyhow::Result<wamn_package_artifact::PackageRegistry> {
     super::packages::registry(document)
+}
+
+/// Whether 4.16 must stop for this environment: its committed release is
+/// `none` or a digest other than the one 4.14 published, so 4.17 would apply
+/// an old release (wamn-ky3mq).
+fn unrecorded(declared: &crate::environment::document::DeclaredRelease, published: &str) -> bool {
+    *declared != crate::environment::document::DeclaredRelease::Digest(published.to_owned())
 }
 
 fn applied_steps(
@@ -989,6 +998,21 @@ pub(super) async fn helm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_none_or_stale_committed_release_stops_at_4_16() {
+        use crate::environment::document::DeclaredRelease;
+        let published = format!("sha256:{}", "a".repeat(64));
+        assert!(unrecorded(&DeclaredRelease::None, &published));
+        assert!(unrecorded(
+            &DeclaredRelease::Digest(format!("sha256:{}", "b".repeat(64))),
+            &published
+        ));
+        assert!(!unrecorded(
+            &DeclaredRelease::Digest(published.clone()),
+            &published
+        ));
+    }
     use crate::platform::document::Provider;
 
     #[test]
