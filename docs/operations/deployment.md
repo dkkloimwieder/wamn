@@ -233,8 +233,12 @@ wamn-ctl qualify-release \
 ```
 
 `publish-release` records the release by its canonical manifest digest.
-Publication composes the pinned route guest with the application and pushes the entry beneath `<release-artifact-base>/entries`.
-Format 11 records the entry's OCI manifest reference and the member byte digests.
+Publication composes the pinned route guest with the application.
+It pushes the entry to `<component-artifact-base>/entries`, beside the members.
+Format 11 records the entry as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
+Format 11 also records the member byte digests.
+Each host joins the entry path with its own `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
+The manifest names no registry, so a release copied with its components and entry starts in the new registry.
 Publish every release again before you use the format-11 host.
 The release chart starts that entry with `poolSize: 0`.
 Receiving no longer declares a trusted warm digest or native pool override.

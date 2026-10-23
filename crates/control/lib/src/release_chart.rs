@@ -160,7 +160,8 @@ pub async fn qualification_images(chart: &Path) -> anyhow::Result<QualificationI
 #[derive(Debug, Clone)]
 pub struct Role {
     pub name: RoleName,
-    /// The HTTP entry reference recorded by the release.
+    /// The HTTP entry path recorded by the release, relative to the component
+    /// artifact base. [`values`] joins it with the host group's base.
     pub entry: Option<String>,
     /// The entry's named SQL import instances.
     pub statements: Vec<String>,
@@ -370,6 +371,13 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         }),
         "the host group body sets a scope variable, which the release chart derives"
     );
+    // The http Workload image is the entry path joined with the base the
+    // hosts resolve members against.
+    let component_base = variables
+        .iter()
+        .find(|variable| variable["name"].as_str() == Some("WAMN_COMPONENT_ARTIFACT_BASE"))
+        .and_then(|variable| variable["value"].as_str())
+        .map(str::to_owned);
     for (variable, value) in HOST_VARIABLES.into_iter().zip([
         input.org.clone(),
         input.project.clone(),
@@ -405,8 +413,13 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             let mut entry = Mapping::new();
             entry.insert("name".into(), role.name.as_str().into());
             entry.insert("config".into(), Value::Mapping(role.config.clone()));
-            if let Some(reference) = &role.entry {
-                entry.insert("entry".into(), reference.clone().into());
+            if let Some(recorded) = &role.entry {
+                let image = wamn_catalog::composed_entry_start_reference(
+                    component_base.as_deref(),
+                    recorded,
+                )
+                .context("the host group's WAMN_COMPONENT_ARTIFACT_BASE resolves the entry")?;
+                entry.insert("entry".into(), image.into());
             }
             entry.insert(
                 "statements".into(),
@@ -415,9 +428,9 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             if let Some(environment) = &role.environment {
                 entry.insert("environment".into(), Value::Mapping(environment.clone()));
             }
-            Value::Mapping(entry)
+            Ok(Value::Mapping(entry))
         })
-        .collect();
+        .collect::<anyhow::Result<_>>()?;
     let mut runtime = Mapping::new();
     runtime.insert(
         "terminationGracePeriodSeconds".into(),
@@ -591,6 +604,13 @@ mod tests {
     fn input() -> ValuesInput {
         let mut group = Mapping::new();
         group.insert("replicas".into(), 3.into());
+        group.insert(
+            "env".into(),
+            serde_yaml::from_str(
+                "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}]",
+            )
+            .expect("yaml"),
+        );
         ValuesInput {
             org: "acme".into(),
             project: "wms".into(),
@@ -599,7 +619,7 @@ mod tests {
             artifact_base: "registry.example/releases".into(),
             route_host: "wms.acme.example".into(),
             roles: vec![Role {
-                entry: Some(format!("registry/entry@sha256:{}", "a".repeat(64))),
+                entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
                 statements: vec!["sql-0".to_owned()],
                 name: RoleName::Http,
                 config: Mapping::new(),
@@ -672,7 +692,8 @@ mod tests {
         assert_eq!(
             group["env"],
             serde_yaml::from_str::<Value>(
-                "[{name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
+                "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}, \
+                 {name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
                  {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}, \
                  {name: OTEL_EXPORTER_OTLP_ENDPOINT, \
                   value: 'http://otel-collector.platform.svc.cluster.local:4317'}, \
@@ -696,8 +717,21 @@ mod tests {
         assert!(values.get("platform").is_none());
         assert_eq!(
             values["roles"][0]["entry"].as_str(),
-            input().roles[0].entry.as_deref()
+            Some(
+                format!(
+                    "registry.example/components/entries@sha256:{}",
+                    "a".repeat(64)
+                )
+                .as_str()
+            )
         );
+    }
+
+    #[test]
+    fn values_refuse_an_entry_without_a_component_base() {
+        let mut input = input();
+        input.host_group.remove("env");
+        assert!(values(&input).is_err());
     }
 
     #[test]

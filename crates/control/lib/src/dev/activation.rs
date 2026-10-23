@@ -2093,7 +2093,7 @@ mod tests {
             artifact_base: "local/releases".into(),
             route_host: "receiving.localhost".into(),
             roles: vec![release_chart::Role {
-                entry: Some(format!("registry/entry@sha256:{}", "a".repeat(64))),
+                entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
                 statements: Vec::new(),
                 name: release_chart::RoleName::Http,
                 config: serde_yaml::Mapping::from_iter([(

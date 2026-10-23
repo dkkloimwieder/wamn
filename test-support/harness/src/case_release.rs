@@ -542,7 +542,9 @@ fn archive_index(
 /// Copy the candidate's release manifest and every component it names from
 /// the release repository and the component repository beside it into
 /// `wamn/releases` and `wamn/components` of `to`, each under the tag of its
-/// digest, the references the hosts pull.
+/// digest, the references the hosts pull. The composed HTTP entry is copied
+/// by its manifest digest to the same path under `wamn/components` of `to`,
+/// because the manifest names it relative to the component artifact base.
 ///
 /// # Errors
 ///
@@ -567,6 +569,23 @@ pub async fn copy_release(candidate: &Candidate, to: &Registry) -> anyhow::Resul
         let source = tagged(base, digest)?;
         let target = tagged(&format!("{}/wamn/{repository}", to.authority), digest)?;
         copy(&source, &from, &target, to).await?;
+    }
+    if let Some(entry) = &manifest.composed_entry {
+        let joined = |base: &str| -> anyhow::Result<Reference> {
+            let reference =
+                wamn_catalog::composed_entry_start_reference(Some(base), &entry.reference)
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+            reference
+                .parse()
+                .with_context(|| format!("parse the entry reference {reference}"))
+        };
+        let source = joined(&components)?;
+        let target = joined(&format!("{}/wamn/components", to.authority))?;
+        let copied = copy(&source, &from, &target, to).await?;
+        ensure!(
+            source.digest() == Some(copied.as_str()),
+            "the composed entry {source} does not hash to its digest"
+        );
     }
     Ok(())
 }

@@ -620,10 +620,17 @@ Sources.
 
 Owner ruling, 2026-10-21: publication records the composed HTTP entry in format 11.
 The `composed-entry` record names the entry reference, the pinned route digest, and the application member identities.
-A deployed entry uses `repository@sha256:<manifest-digest>`. The record carries no entry byte digest.
+Owner ruling, 2026-10-23: a deployed entry records `entries@sha256:<manifest-digest>`.
+That path is relative to the component artifact base.
+Each host joins the path with its configured base, the same base it resolves members against.
+The release chart renders the http Workload image as the host group's `WAMN_COMPONENT_ARTIFACT_BASE` joined with the path.
+The manifest never names a registry, so a copy of the release keeps its digest.
+A copy of a release copies the entry by its manifest digest beside the members.
+The catalog refuses an absolute or tagged entry reference.
+The record carries no entry byte digest.
 Each member retains its package, component name, and original digest for SQL authority and dependency pins.
 Publication admits and composes the bytes. The host records each start reference before the runtime pulls, verifies, and compiles the component.
-The binding callback compares that reference with the release. It does not hash the entry.
+The binding callback checks that the reference is the release's entry path under a valid component artifact base. It does not hash the entry.
 Local publication names an absolute `file:` reference to its existing digest-named artifact file.
 Local loading retains the file loader's byte verification. Entry binding uses the same reference comparison as deployed binding.
 Every release must be published again. Format 10 releases cannot load on the format 11 host.

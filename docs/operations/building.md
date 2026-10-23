@@ -57,7 +57,8 @@ A plain `cargo build` of a guest does not use the guest RUSTFLAGS, so its bytes 
 The release publisher also needs the pinned `http-route` guest.
 The ctl image carries it at `/usr/local/share/wamn/http_route.wasm`.
 For native publication, set `WAMN_FLOW_HTTP_COMPONENT` to the built guest and `WAMN_COMPONENT_ARTIFACT_BASE` to the component repository.
-Publication pushes the composed entry beneath `<release-artifact-base>/entries` and records its OCI manifest reference.
+Publication pushes the composed entry to `<component-artifact-base>/entries`.
+The manifest records only the path `entries@sha256:<manifest-digest>`, relative to the component artifact base.
 
 The workload guests `http-route` and `materializer` belong to no package. Release qualification and the cluster cases build each one with the same guest build, through `wamn_schema_generator::build::build_guest`.
 

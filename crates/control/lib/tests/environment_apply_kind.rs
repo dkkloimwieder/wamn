@@ -2156,7 +2156,12 @@ async fn compose_http_releases(
     );
     let entry = compose_application(&admission, &route, &pin)?;
     wash_runtime::oci::set_extra_ca_certificates(&[run.work.join("ca.crt")])?;
-    let entry_repository = format!("{registry}/wamn/entries");
+    // The entry lives under the test's component artifact base; the manifest
+    // records only the path relative to it.
+    let entry_repository = format!(
+        "{registry}/wamn/components/{}",
+        wamn_catalog::COMPOSED_ENTRY_REPOSITORY
+    );
     let digest = wash_runtime::oci::push_component(
         &format!(
             "{entry_repository}:{}",
@@ -2168,8 +2173,8 @@ async fn compose_http_releases(
     )
     .await
     .context("publish the fixture's composed HTTP entry")?;
-    let reference = format!("{entry_repository}@{digest}");
-    wamn_catalog::validate_component_start_reference(&reference)?;
+    let reference = format!("{}@{digest}", wamn_catalog::COMPOSED_ENTRY_REPOSITORY);
+    wamn_catalog::validate_composed_entry_path(&reference)?;
     for bytes in &mut manifests {
         let (manifest, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
         let mut published = PublishedRelease {

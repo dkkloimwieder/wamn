@@ -937,7 +937,7 @@ async fn read_and_push(
         run_schema,
     )?;
     let mut published = published;
-    entry_publication::publish(&mut published, components, registry, release_artifact_base).await?;
+    entry_publication::publish(&mut published, components, registry).await?;
     push_manifest_bytes(
         &published.canonical_bytes,
         release_artifact_base,

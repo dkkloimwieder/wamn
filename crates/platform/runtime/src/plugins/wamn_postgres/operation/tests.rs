@@ -95,7 +95,7 @@ fn release() -> Arc<LoadedRelease> {
         BTreeMap::new(),
     ).unwrap();
     manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
-        reference: format!("registry.example/entry@{}", digest('e')),
+        reference: format!("entries@{}", digest('e')),
         route_digest: digest('f'),
         members: BTreeSet::from([wamn_catalog::ServingEntryMember {
             package_id: "base".into(),
@@ -272,12 +272,7 @@ async fn fixture() -> (
         .bind_operation_workload(
             WORKLOAD,
             Arc::clone(&release),
-            &release
-                .manifest()
-                .composed_entry
-                .as_ref()
-                .unwrap()
-                .reference,
+            &entry_start(&release),
             "entry",
             SessionClaims {
                 tenant: TENANT.into(),
@@ -409,12 +404,7 @@ async fn anonymous_read_authorization_needs_no_database_credentials() {
         .bind_operation_workload(
             WORKLOAD,
             Arc::clone(&release),
-            &release
-                .manifest()
-                .composed_entry
-                .as_ref()
-                .unwrap()
-                .reference,
+            &entry_start(&release),
             "entry",
             SessionClaims {
                 tenant: TENANT.into(),
@@ -681,6 +671,20 @@ async fn anonymous_caller_on_a_granted_operation_refuses() {
     assert_eq!(value(&database).await, 1);
 }
 
+/// The entry reference a host with the fixture component base starts.
+fn entry_start(release: &LoadedRelease) -> String {
+    wamn_catalog::composed_entry_start_reference(
+        Some("registry.example/components"),
+        &release
+            .manifest()
+            .composed_entry
+            .as_ref()
+            .unwrap()
+            .reference,
+    )
+    .unwrap()
+}
+
 #[test]
 fn entry_binding_requires_the_started_reference_and_component_name() {
     let release = release();
@@ -713,12 +717,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
         .bind_operation_workload(
             WORKLOAD,
             Arc::clone(&release),
-            &release
-                .manifest()
-                .composed_entry
-                .as_ref()
-                .unwrap()
-                .reference,
+            &entry_start(&release),
             "entry",
             claims,
         )

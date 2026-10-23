@@ -204,7 +204,7 @@ fn publication_records_the_exact_entry_and_members() {
         manifest,
     };
     let before = published.digest.clone();
-    let reference = format!("registry.example/entry@sha256:{}", "a".repeat(64));
+    let reference = format!("entries@sha256:{}", "a".repeat(64));
     record_composed_entry(&mut published, &entry, &reference).unwrap();
     let recorded = published.manifest.composed_entry.as_ref().unwrap();
     assert_eq!(recorded.reference, reference);

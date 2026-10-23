@@ -76,7 +76,7 @@ spec:
           interfaces: [statements]
       components:
         - name: flow-http
-          image: registry.wamn-system.svc.cluster.local:5000/wamn/releases/entries@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          image: registry.wamn-system.svc.cluster.local:5000/wamn/components/entries@sha256:0000000000000000000000000000000000000000000000000000000000000000
           imagePullPolicy: Always
           poolSize: 0
           localResources:

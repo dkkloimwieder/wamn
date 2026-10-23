@@ -211,6 +211,69 @@ pub fn validate_component_start_reference(
     Ok(())
 }
 
+/// The repository, under the component artifact base, that holds composed entries.
+pub const COMPOSED_ENTRY_REPOSITORY: &str = "entries";
+
+/// Require the composed entry path that a serving manifest records:
+/// `entries@sha256:<manifest-digest>`, relative to the component artifact base.
+///
+/// # Errors
+///
+/// Refuses an absolute reference, a tag, another repository, or an invalid digest.
+pub fn validate_composed_entry_path(path: &str) -> Result<(), ComponentArtifactReferenceError> {
+    let digest = path
+        .strip_prefix(COMPOSED_ENTRY_REPOSITORY)
+        .and_then(|rest| rest.strip_prefix('@'))
+        .ok_or_else(|| {
+            ComponentArtifactReferenceError::new(
+                ComponentArtifactReferenceErrorType::InvalidBase,
+                "expected entries@sha256:<manifest-digest>",
+            )
+        })?;
+    component_digest_tag(digest)?;
+    Ok(())
+}
+
+/// The reference a host starts for the recorded composed entry.
+///
+/// A local `file:` entry is started as recorded. A relative entry path is
+/// joined with the component artifact base, the same base the members resolve
+/// against, so a release copied to another registry starts there.
+///
+/// # Errors
+///
+/// Refuses a relative entry without a base, an invalid base, or an invalid path.
+pub fn composed_entry_start_reference(
+    component_artifact_base: Option<&str>,
+    recorded: &str,
+) -> Result<String, ComponentArtifactReferenceError> {
+    if recorded.starts_with("file:") {
+        return Ok(recorded.to_owned());
+    }
+    let base = component_artifact_base.ok_or_else(|| {
+        ComponentArtifactReferenceError::new(
+            ComponentArtifactReferenceErrorType::InvalidBase,
+            "a composed entry requires a component artifact base",
+        )
+    })?;
+    parse_component_artifact_base(base)?;
+    validate_composed_entry_path(recorded)?;
+    Ok(format!("{base}/{recorded}"))
+}
+
+/// Whether `reference` starts the recorded composed entry under a valid
+/// component artifact base, or is the recorded local file.
+pub fn composed_entry_starts_as(recorded: &str, reference: &str) -> bool {
+    if recorded.starts_with("file:") {
+        return reference == recorded;
+    }
+    validate_composed_entry_path(recorded).is_ok()
+        && reference
+            .strip_suffix(recorded)
+            .and_then(|base| base.strip_suffix('/'))
+            .is_some_and(|base| parse_component_artifact_base(base).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +357,39 @@ mod start_reference_tests {
                 validate_component_start_reference(reference).is_err(),
                 "{reference}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod composed_entry_tests {
+    use super::*;
+
+    #[test]
+    fn the_entry_path_is_relative_and_joins_the_component_base() {
+        let path = format!("entries@sha256:{}", "a".repeat(64));
+        assert!(validate_composed_entry_path(&path).is_ok());
+        let joined =
+            composed_entry_start_reference(Some("registry.example:5000/wamn/components"), &path)
+                .unwrap();
+        assert_eq!(
+            joined,
+            format!("registry.example:5000/wamn/components/{path}")
+        );
+        assert!(validate_component_start_reference(&joined).is_ok());
+        assert!(composed_entry_starts_as(&path, &joined));
+        assert!(!composed_entry_starts_as(&path, &path));
+        assert!(composed_entry_start_reference(None, &path).is_err());
+        for refused in [
+            format!(
+                "registry.example:5000/wamn/components/entries@sha256:{}",
+                "a".repeat(64)
+            ),
+            format!("entries:{}", "a".repeat(64)),
+            format!("other@sha256:{}", "a".repeat(64)),
+            "entries@sha256:abc".to_owned(),
+        ] {
+            assert!(validate_composed_entry_path(&refused).is_err(), "{refused}");
         }
     }
 }

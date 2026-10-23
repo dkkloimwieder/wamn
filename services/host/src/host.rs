@@ -1645,6 +1645,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_handler(Arc::new(commands::Commands {
                 postgres: Arc::clone(&postgres),
                 operations: operations.clone(),
+                component_artifact_base: args.component_artifact_base.clone(),
             }));
     if let Some(starts) = args.max_concurrent_starts {
         control_builder = control_builder.with_max_concurrent_starts(starts);

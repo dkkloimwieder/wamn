@@ -1093,6 +1093,8 @@ pub struct ServingEntryMember {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComposedEntry {
+    /// `entries@sha256:<manifest digest>`, relative to the component artifact
+    /// base that each host resolves members against, or a local absolute `file:`.
     pub reference: String,
     pub route_digest: String,
     pub members: BTreeSet<ServingEntryMember>,
@@ -1293,8 +1295,11 @@ impl ServingManifest {
                 if !std::path::Path::new(path).is_absolute() {
                     return invalid("a local composed entry must name an absolute file");
                 }
-            } else if crate::validate_component_start_reference(&entry.reference).is_err() {
-                return invalid("a composed entry requires an OCI manifest digest reference");
+            } else if crate::validate_composed_entry_path(&entry.reference).is_err() {
+                return invalid(
+                    "a composed entry requires the path entries@sha256:<manifest digest> \
+                     relative to the component artifact base",
+                );
             }
             ArtifactHash::parse(entry.route_digest.clone())?;
             if entry.members.is_empty() {
@@ -1866,7 +1871,7 @@ mod tests {
 
     fn entry_for(manifest: &ServingManifest) -> ServingComposedEntry {
         ServingComposedEntry {
-            reference: format!("registry.example/entry@sha256:{}", "e".repeat(64)),
+            reference: format!("entries@sha256:{}", "e".repeat(64)),
             route_digest: format!("sha256:{}", "f".repeat(64)),
             members: manifest
                 .components
@@ -1890,7 +1895,7 @@ mod tests {
         assert_eq!(decoded, manifest);
         assert_ne!(digest, original);
         manifest.composed_entry.as_mut().unwrap().reference =
-            format!("registry.example/entry@sha256:{}", "b".repeat(64));
+            format!("entries@sha256:{}", "b".repeat(64));
         let reference_digest = manifest.digest();
         assert_ne!(reference_digest, digest);
         manifest.composed_entry.as_mut().unwrap().route_digest =
@@ -1906,6 +1911,18 @@ mod tests {
         manifest.composed_entry = Some(entry);
         assert!(ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).is_ok());
         manifest.composed_entry.as_mut().unwrap().reference = "file:entry.wasm".into();
+        assert!(ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).is_err());
+    }
+
+    #[test]
+    fn composed_entry_refuses_an_absolute_reference() {
+        let mut manifest = manifest();
+        let mut entry = entry_for(&manifest);
+        entry.reference = format!(
+            "172.28.0.6:5000/wamn/releases/entries@sha256:{}",
+            "e".repeat(64)
+        );
+        manifest.composed_entry = Some(entry);
         assert!(ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).is_err());
     }
 

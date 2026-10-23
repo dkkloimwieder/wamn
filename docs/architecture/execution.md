@@ -284,11 +284,13 @@ Application manifests cannot grant that trust.
 
 An application is one composed component, and it loads as its own native workload.
 Publication composes the pinned HTTP route guest with the application and records the entry reference in serving manifest format 11.
-A deployed reference names an OCI manifest with `repository@sha256:<manifest-digest>`.
-The host records the reference by workload id before it calls the runtime's default start handler.
-The runtime pulls, verifies, and compiles the component. The operation binding compares the recorded reference with the loaded release.
+A deployed entry is recorded as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
+The host joins that path with its `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
+The host records the joined reference by workload id before it calls the runtime's default start handler.
+The runtime pulls, verifies, and compiles the component. The operation binding checks that the recorded reference is the release's entry path under a valid base.
 The composed entry uses fresh Stores and calls base operations inside the component.
-The release chart fixes its `poolSize` at zero and reads its image from the release entry reference.
+The release chart fixes its `poolSize` at zero.
+Its image is the host group's `WAMN_COMPONENT_ARTIFACT_BASE` joined with the release entry path.
 Receiving carries no trusted warm digest or native pool override.
 Host routes and wiring attachments keep the router-delivery import.
 Local publication records an absolute `file:` reference to a digest-named artifact. The existing local file loader checks its bytes before binding.

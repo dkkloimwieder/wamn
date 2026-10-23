@@ -16,7 +16,6 @@ pub(super) async fn publish(
     published: &mut PublishedRelease,
     components: &ReleaseComponents,
     registry: &PackageRegistry,
-    release_artifact_base: &str,
 ) -> anyhow::Result<()> {
     if !published
         .manifest
@@ -74,7 +73,11 @@ pub(super) async fn publish(
     }
     let entry =
         selected.context("release routes have no composed application covering their members")?;
-    let repository = format!("{release_artifact_base}/entries");
+    // The entry lives beside the members, under the component artifact base.
+    let repository = format!(
+        "{component_base}/{}",
+        wamn_catalog::COMPOSED_ENTRY_REPOSITORY
+    );
     let base = wamn_catalog::parse_component_artifact_base(&repository)?;
     let credentials =
         read_registry_push_credentials(&registry.registry_auth_file, base.registry())?;
@@ -100,10 +103,11 @@ pub(super) async fn publish(
     )
     .await
     .context("publish composed HTTP entry")?;
-    let reference = format!("{repository}@{digest}");
+    // The manifest records only the path relative to the component artifact base.
+    let path = format!("{}@{digest}", wamn_catalog::COMPOSED_ENTRY_REPOSITORY);
     ensure!(
-        wamn_catalog::validate_component_start_reference(&reference).is_ok(),
+        wamn_catalog::validate_composed_entry_path(&path).is_ok(),
         "component publisher returned an invalid manifest digest"
     );
-    super::record_composed_entry(published, &entry, &reference)
+    super::record_composed_entry(published, &entry, &path)
 }

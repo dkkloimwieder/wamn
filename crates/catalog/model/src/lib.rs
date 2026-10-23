@@ -26,9 +26,11 @@ mod wiring_compatibility;
 pub mod test_database;
 
 pub use component_artifact_reference::{
-    ComponentArtifactBase, ComponentArtifactReference, ComponentArtifactReferenceError,
-    ComponentArtifactReferenceErrorType, component_artifact_reference, component_digest_tag,
-    parse_component_artifact_base, validate_component_start_reference,
+    COMPOSED_ENTRY_REPOSITORY, ComponentArtifactBase, ComponentArtifactReference,
+    ComponentArtifactReferenceError, ComponentArtifactReferenceErrorType,
+    component_artifact_reference, component_digest_tag, composed_entry_start_reference,
+    composed_entry_starts_as, parse_component_artifact_base, validate_component_start_reference,
+    validate_composed_entry_path,
 };
 pub use component_facts::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,

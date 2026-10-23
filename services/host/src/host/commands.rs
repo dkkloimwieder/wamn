@@ -11,6 +11,8 @@ use wamn_runtime::plugins::WamnPostgres;
 pub(super) struct Commands {
     pub postgres: Arc<WamnPostgres>,
     pub operations: Option<Arc<OperationHost>>,
+    /// The base the host resolves members and the composed entry against.
+    pub component_artifact_base: Option<String>,
 }
 
 struct PendingStart<'a> {
@@ -45,9 +47,13 @@ impl HostCommandHandler for Commands {
         if let Some(operations) = &self.operations
             && let Some(entry) = &operations.release.manifest().composed_entry
         {
+            let reference = wamn_catalog::composed_entry_start_reference(
+                self.component_artifact_base.as_deref(),
+                &entry.reference,
+            )?;
             let mut entries = components
                 .iter()
-                .filter(|component| component.image == entry.reference);
+                .filter(|component| component.image == reference);
             if let Some(component) = entries.next() {
                 anyhow::ensure!(
                     entries.next().is_none(),

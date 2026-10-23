@@ -88,6 +88,11 @@ fn input(env: &str) -> ValuesInput {
     group.insert("replicas".into(), 3.into());
     let http: Value = serde_yaml::from_str("{enabled: true, port: 80}").expect("yaml");
     group.insert("http".into(), http);
+    let base: Value = serde_yaml::from_str(
+        "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}]",
+    )
+    .expect("yaml");
+    group.insert("env".into(), base);
     let mut config = Mapping::new();
     config.insert("wamn.tenant".into(), "acme".into());
     let mut environment = Mapping::new();
@@ -102,7 +107,7 @@ fn input(env: &str) -> ValuesInput {
         roles: vec![
             Role {
                 name: RoleName::Http,
-                entry: Some(format!("registry/entry@sha256:{}", "a".repeat(64))),
+                entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
                 statements: vec!["sql-0".to_owned(), "sql-1".to_owned()],
                 config: config.clone(),
                 environment: None,
@@ -333,7 +338,14 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
             .or_else(|| spec["service"]["image"].as_str())
             .expect("a role image");
         if spec["components"].is_sequence() {
-            assert_eq!(image, format!("registry/entry@sha256:{}", "a".repeat(64)));
+            // The http image is the component base joined with the entry path.
+            assert_eq!(
+                image,
+                format!(
+                    "registry.example/components/entries@sha256:{}",
+                    "a".repeat(64)
+                )
+            );
             assert_eq!(spec["components"][0]["poolSize"].as_i64(), Some(0));
         } else {
             assert_eq!(image, set.materializer);

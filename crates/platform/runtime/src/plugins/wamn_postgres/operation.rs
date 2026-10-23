@@ -78,7 +78,7 @@ impl WamnPostgres {
             .as_ref()
             .context("release has no composed entry")?;
         anyhow::ensure!(
-            reference == entry.reference,
+            wamn_catalog::composed_entry_starts_as(&entry.reference, reference),
             "composed entry reference differs from the release"
         );
         anyhow::ensure!(
@@ -201,7 +201,9 @@ impl WamnPostgres {
                     .manifest()
                     .composed_entry
                     .as_ref()
-                    .is_some_and(|released| &released.reference == reference),
+                    .is_some_and(|released| {
+                        wamn_catalog::composed_entry_starts_as(&released.reference, reference)
+                    }),
                 "started entry reference differs from the release"
             );
         }
