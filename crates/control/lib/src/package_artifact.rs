@@ -1313,7 +1313,7 @@ mod tests {
         let second = pack_package(&root).unwrap();
         assert_eq!(first.digest, second.digest);
         assert_eq!(first.digest, sha256_digest(&first.manifest));
-        assert_eq!(first.tag(), "wamn_receiving-2.2.3");
+        assert_eq!(first.tag(), "wamn_receiving-2.2.4");
 
         let layout = first
             .layers
@@ -1382,7 +1382,7 @@ mod tests {
             manifest["annotations"],
             serde_json::json!({
                 "wamn.package.id": "wamn_receiving",
-                "wamn.package.version": "2.2.3",
+                "wamn.package.version": "2.2.4",
             })
         );
         remove(&root);
