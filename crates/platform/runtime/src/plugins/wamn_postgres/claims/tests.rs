@@ -2905,7 +2905,13 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
         .expect("application B binds");
     let carried = async |scope: &str| {
         let result = pg
-            .one_shot_statement(scope, "sha256:application", &application_statement(), &[])
+            .one_shot_statement(
+                scope,
+                "sha256:application",
+                &application_statement(),
+                &[],
+                false,
+            )
             .await
             .expect("the transactional statement runs");
         match &result.rows[0][0] {
