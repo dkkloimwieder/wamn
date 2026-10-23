@@ -2901,11 +2901,7 @@ mod tests {
         let file = "deploy/gcp/environments/dkk--receiving--dev.json";
         let environment: Value =
             serde_json::from_str(&fs::read_to_string(real.join(file)).unwrap()).unwrap();
-        let mut named = vec![
-            file.to_owned(),
-            environment["edge"]["values"].as_str().unwrap().to_owned(),
-            environment["url_map"]["file"].as_str().unwrap().to_owned(),
-        ];
+        let mut named = vec![file.to_owned()];
         for package in environment["packages"].as_array().unwrap() {
             named.push(format!("{}/README.md", package.as_str().unwrap()));
         }
