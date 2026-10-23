@@ -92,6 +92,13 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
 
     // qualify-release pushes it. A re-run on the same inputs, by any runner,
     // builds the same bytes and finds them already present.
+    let key = image_set_digests(&image_set('c')).expect("the image set is pinned");
+    assert_eq!(
+        qualification_artifact::lookup(&releases, release, &key)
+            .await
+            .expect("an absent tag is no error"),
+        None
+    );
     let cases = ["cluster::released_wms_routes"];
     let (pushed, disposition) =
         qualification_artifact::push(&releases, &payload(release, &image_set('c'), &cases), size)
@@ -108,6 +115,23 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
             pushed.as_str(),
             QualificationPushDisposition::AlreadyPresent
         )
+    );
+
+    // qualify-release reuses it by the release and the image digests: a host
+    // copied under another tag and registry keeps the key.
+    let mut retagged = image_set('c');
+    retagged.host = format!("elsewhere.example/host:2@sha256:{}", "b".repeat(64));
+    let found = qualification_artifact::lookup(
+        &releases,
+        release,
+        &image_set_digests(&retagged).expect("the image set is pinned"),
+    )
+    .await
+    .expect("read the qualification")
+    .expect("the qualification is under its tag");
+    assert_eq!(
+        (found.digest.as_str(), &found.payload),
+        (pushed.as_str(), &payload(release, &image_set('c'), &cases))
     );
 
     // The tag is immutable: another artifact under it refuses and names both.

@@ -63,13 +63,28 @@ The artifact is an OCI image manifest with the artifact type `application/vnd.wa
 Its `subject` is the release manifest.
 Its one layer is canonical JSON with payload format 2.
 It names the release digest, the platform image set, and the names of the cases that passed. It names no runner and no chart version.
-A run again on the same inputs writes the same bytes, and the command reports that the artifact is already present.
+A run again on the same inputs reuses that artifact and runs no case, as [reuse](#reuse-of-a-qualification) describes.
 The artifact goes into the release repository under the immutable tag `qualification-<release sha256 hex>-<first 32 hex of the image set sha256>`.
 An OCI tag holds at most 128 characters, so the tag carries only part of the image set digest. The reader compares the whole image set in the layer.
 
 An environment can use the qualification when its platform image set is the one that the artifact names, whatever chart version selected that image set.
 A release on a new host image or role component needs a new qualification.
 The gates and identity images are not part of the key.
+
+### Reuse of a qualification
+
+`qualify-release` reads the qualification tag before it runs a case.
+The tag comes from the release digest and the digests of the host image and the two role components.
+It does not come from the image tags, the registry names or the chart version.
+A platform version can copy an unchanged host image under a new tag. The digest stays the same, so the tag stays the same.
+If the tag holds a qualification, the command checks it as `apply` does.
+If the qualification passed the cases that the release runs, the command runs no case.
+It names the qualification, its digest, the image digests and the cases on standard error.
+It prints the qualification digest and `Reused` on standard output.
+If the qualification passed other cases, the command refuses and runs nothing, because the tag is immutable.
+If the tag holds an artifact that fails a check, the command refuses.
+A qualification of an earlier payload format refuses in the same way.
+A new release digest, a new host digest or a new role component digest gives a new tag, so the cases run.
 
 ## Deployment
 

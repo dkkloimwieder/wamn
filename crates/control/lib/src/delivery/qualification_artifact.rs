@@ -10,6 +10,8 @@
 //! platform image set, and it is immutable: another artifact under the tag
 //! refuses. `env apply` derives the same tag from the release it applies and
 //! the release chart's image set and reads the artifact from the registry.
+//! `qualify-release` reads it the same way before any case runs, and reuses
+//! a qualification it finds there.
 
 use std::collections::BTreeMap;
 
@@ -62,11 +64,23 @@ pub struct QualificationPayload {
     pub cases: Vec<String>,
 }
 
-/// Whether the push wrote the artifact or found the same one under its tag.
+/// Whether the push wrote the artifact or found the same one under its tag,
+/// or whether `qualify-release` found it before any case ran and reused it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QualificationPushDisposition {
     Pushed,
     AlreadyPresent,
+    Reused,
+}
+
+/// A qualification read from its tag and checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundQualification {
+    /// `<release repository>:<tag>`.
+    pub reference: String,
+    /// The artifact's manifest digest.
+    pub digest: String,
+    pub payload: QualificationPayload,
 }
 
 /// The `sha256:<hex>` of each image of the platform image set: the host and
@@ -234,14 +248,34 @@ pub async fn find(
     image_set: &ImageSet,
 ) -> anyhow::Result<String> {
     let image_set = image_set_digests(image_set)?;
-    let tag = qualification_tag(release_digest, &image_set)?;
-    let repository = Repository::open(releases, &tag)?;
-    let Some((bytes, digest)) = repository.manifest().await? else {
+    let Some(found) = lookup(releases, release_digest, &image_set).await? else {
+        let tag = qualification_tag(release_digest, &image_set)?;
         bail!(
             "release {release_digest} has no qualification on the chart's image set: \
              {} is absent",
-            repository.reference
+            Repository::open(releases, &tag)?.reference
         );
+    };
+    Ok(found.digest)
+}
+
+/// Read the qualification of `release_digest` on the image set digests
+/// `image_set` from the release repository of `releases`, with every check
+/// of [`find`]. Returns `None` when the tag is absent.
+///
+/// # Errors
+///
+/// When the tag holds an artifact that is not a qualification of that
+/// release on that image set, or one of another payload format.
+pub async fn lookup(
+    releases: &PackageRegistry,
+    release_digest: &str,
+    image_set: &BTreeMap<String, String>,
+) -> anyhow::Result<Option<FoundQualification>> {
+    let tag = qualification_tag(release_digest, image_set)?;
+    let repository = Repository::open(releases, &tag)?;
+    let Some((bytes, digest)) = repository.manifest().await? else {
+        return Ok(None);
     };
     let manifest: Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse qualification {}", repository.reference))?;
@@ -291,12 +325,16 @@ pub async fn find(
         payload.format
     );
     ensure!(
-        payload.release_digest == release_digest && payload.image_set == image_set,
+        payload.release_digest == release_digest && payload.image_set == *image_set,
         "qualification {} names release {} on another image set",
         repository.reference,
         payload.release_digest
     );
-    Ok(digest)
+    Ok(Some(FoundQualification {
+        reference: repository.reference.to_string(),
+        digest,
+        payload,
+    }))
 }
 
 #[cfg(test)]
@@ -350,6 +388,26 @@ mod tests {
         assert!(
             qualification_tag("sha256:abc", &image_set_digests(&set("r", 'c')).unwrap()).is_err()
         );
+    }
+
+    /// A platform version that copies the host under its own tag and keeps
+    /// every digest keeps the tag. Another host digest is another tag.
+    #[test]
+    fn the_tag_is_the_host_digest_and_not_its_tag() {
+        let release = format!("sha256:{}", "1".repeat(64));
+        let tag =
+            |set: &ImageSet| qualification_tag(&release, &image_set_digests(set).unwrap()).unwrap();
+        let before = set("registry.example", 'c');
+        let mut bumped = before.clone();
+        bumped.host = format!("registry.example/host:0.1.98@sha256:{}", "b".repeat(64));
+        assert_eq!(tag(&before), tag(&bumped));
+        let mut rebuilt = bumped.clone();
+        rebuilt.host = format!("registry.example/host:0.1.98@sha256:{}", "e".repeat(64));
+        assert_ne!(tag(&bumped), tag(&rebuilt));
+        let mut materializer = bumped;
+        materializer.materializer =
+            format!("registry.example/materializer@sha256:{}", "e".repeat(64));
+        assert_ne!(tag(&before), tag(&materializer));
     }
 
     #[test]

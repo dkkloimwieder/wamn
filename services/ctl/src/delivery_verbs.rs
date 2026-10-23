@@ -65,7 +65,8 @@ pub struct BuildPlatformArgs {
 }
 
 /// Qualify one published release by its digest, and print the
-/// qualification's digest and whether this run pushed it.
+/// qualification's digest and whether this run pushed it, found it already
+/// pushed, or reused it without running a case.
 pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
     let (digest, disposition) = qualification::qualify(qualification::QualifyReleaseRequest {
         release_digest: args.release_digest,

@@ -9,7 +9,8 @@ use anyhow::{Context as _, ensure};
 use tokio::process::Command;
 
 use super::qualification_artifact::{
-    self, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload, QualificationPushDisposition,
+    self, FoundQualification, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload,
+    QualificationPushDisposition,
 };
 use super::{ApplicationResult, Candidate, CheckResult, Qualification};
 use crate::package_artifact::PackageRegistry;
@@ -157,6 +158,11 @@ pub(super) fn require_complete_checks(result: &Qualification) -> anyhow::Result<
 /// Execute fresh required checks and, after every case passed, push the
 /// qualification beside the release (§8.2). Returns the qualification's
 /// manifest digest. A failed qualification pushes nothing.
+///
+/// A qualification already under the tag of this release and image set is
+/// reused, and no case runs: the tag names the release digest and the
+/// digests of the host and role images, so a platform version that changes
+/// no such digest changes no tag.
 pub async fn qualify(
     request: QualifyReleaseRequest,
 ) -> anyhow::Result<(String, QualificationPushDisposition)> {
@@ -165,6 +171,14 @@ pub async fn qualify(
     let (candidate, release_size) =
         write_candidate(&request, &temporary.path, &candidate_path).await?;
     let (manifest, digest) = candidate.manifest()?;
+    let image_set = qualification_artifact::image_set_digests(&candidate.images)?;
+    if let Some(found) =
+        qualification_artifact::lookup(&request.releases, digest.as_str(), &image_set).await?
+    {
+        let report = reuse(&found, application(&candidate)?.cases)?;
+        eprintln!("{report}");
+        return Ok((found.digest, QualificationPushDisposition::Reused));
+    }
     let mut result = Qualification {
         release: manifest.release,
         manifest_digest: digest.as_str().to_owned(),
@@ -182,10 +196,41 @@ pub async fn qualify(
     let payload = QualificationPayload {
         format: QUALIFICATION_PAYLOAD_FORMAT,
         release_digest: result.manifest_digest.clone(),
-        image_set: qualification_artifact::image_set_digests(&result.candidate.images)?,
+        image_set,
         cases: cases.iter().map(|case| (*case).to_owned()).collect(),
     };
     qualification_artifact::push(&request.releases, &payload, release_size).await
+}
+
+/// The report of reusing `found`, the checked qualification under the tag
+/// of this release and image set, when it passed exactly `cases`, the cases
+/// this release runs. Other cases refuse: a run would push other bytes under
+/// the immutable tag, which the push refuses.
+fn reuse(found: &FoundQualification, cases: &[&str]) -> anyhow::Result<String> {
+    let payload = &found.payload;
+    ensure!(
+        payload.cases == cases,
+        "qualification {} of release {} passed the cases [{}], and this release runs [{}]; \
+         its tag is immutable, so qualify-release neither reuses it nor runs",
+        found.reference,
+        payload.release_digest,
+        payload.cases.join(", "),
+        cases.join(", ")
+    );
+    let images = payload
+        .image_set
+        .iter()
+        .map(|(name, digest)| format!("{name} {digest}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!(
+        "qualify-release reuses qualification {} {} and runs no case: it qualifies release {} \
+         on the same image digests ({images}) with the cases [{}]",
+        found.reference,
+        found.digest,
+        payload.release_digest,
+        payload.cases.join(", ")
+    ))
 }
 
 /// Pull the release by its digest into `directory` and write the candidate
@@ -698,6 +743,39 @@ mod tests {
         ] {
             assert!(cases(refused).is_err(), "accepted {refused:?}");
         }
+    }
+
+    #[test]
+    fn a_found_qualification_is_reused_only_for_the_cases_the_release_runs() {
+        let found = FoundQualification {
+            reference: "registry.example/wamn/releases:qualification-1".to_owned(),
+            digest: format!("sha256:{}", "9".repeat(64)),
+            payload: QualificationPayload {
+                format: QUALIFICATION_PAYLOAD_FORMAT,
+                release_digest: format!("sha256:{}", "1".repeat(64)),
+                image_set: std::collections::BTreeMap::from([(
+                    "host".to_owned(),
+                    format!("sha256:{}", "b".repeat(64)),
+                )]),
+                cases: strings(RECEIVING_BASE_CASES),
+            },
+        };
+        let report = reuse(&found, RECEIVING_BASE_CASES).unwrap();
+        for named in [
+            "reuses qualification registry.example/wamn/releases:qualification-1",
+            &found.digest,
+            "runs no case",
+            &found.payload.release_digest,
+            &format!("host sha256:{}", "b".repeat(64)),
+            RECEIVING_BASE_CASES[0],
+        ] {
+            assert!(report.contains(named), "{report} lacks {named}");
+        }
+        let refused = reuse(&found, RECEIVING_CASES).unwrap_err().to_string();
+        assert!(
+            refused.contains("immutable") && refused.contains(RECEIVING_CASES[1]),
+            "{refused}"
+        );
     }
 
     #[test]
