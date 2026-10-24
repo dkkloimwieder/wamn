@@ -97,28 +97,28 @@ pub(super) async fn publish(
         timeout: Some(Duration::from_secs(30)),
         ..Default::default()
     };
-    let digest =
-        match wash_runtime::oci::push_component(&reference, entry.bytes(), config(), None).await {
-            Ok(digest) => digest,
-            // The tag is the entry's content digest, so a present tag already
-            // holds these bytes. Each push writes a new config creation time, so
-            // an immutable tag refuses the repeat. Reuse the present manifest.
-            Err(push) => {
-                let (bytes, digest) = wash_runtime::oci::pull_component(
-                    &reference,
-                    config(),
-                    wash_runtime::oci::OciPullPolicy::Always,
-                )
-                .await
-                .map_err(|_| push)
-                .context("publish composed HTTP entry")?;
-                ensure!(
-                    bytes == entry.bytes(),
-                    "composed HTTP entry tag {reference} holds other bytes"
-                );
-                digest
-            }
-        };
+    // The tag is the entry's content digest, so a present tag already holds
+    // these bytes. Each push writes a new config creation time, so a repeat
+    // push to a mutable tag returns a new manifest digest and a new release
+    // (wamn-uhjx2). Reuse the present manifest, and push only when it is absent.
+    let digest = match wash_runtime::oci::pull_component(
+        &reference,
+        config(),
+        wash_runtime::oci::OciPullPolicy::Always,
+    )
+    .await
+    {
+        Ok((bytes, digest)) => {
+            ensure!(
+                bytes == entry.bytes(),
+                "composed HTTP entry tag {reference} holds other bytes"
+            );
+            digest
+        }
+        Err(_) => wash_runtime::oci::push_component(&reference, entry.bytes(), config(), None)
+            .await
+            .context("publish composed HTTP entry")?,
+    };
     // The manifest records only the path relative to the component artifact base.
     let path = format!("{}@{digest}", wamn_catalog::COMPOSED_ENTRY_REPOSITORY);
     ensure!(
