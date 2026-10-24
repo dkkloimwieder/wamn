@@ -97,3 +97,44 @@ At each minute it reads the enabled schedule workflows of its application and ad
 The task uses `WAMN_EXECUTOR_PLATFORM_PG_URL`.
 An enable or a disable takes effect at the next minute.
 See [workflows](../architecture/execution.md#workflows) for timing and retry behavior.
+
+## Cutover: the NetSuite pull
+
+A release no longer carries the NetSuite pull's minute schedule.
+An environment that ran the pull from its release, such as wamn-dev, stops pulling when it applies such a release.
+Do these steps once, after that apply, as an environment admin.
+Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project>/<env>`, its tenant, and your `platform."user"` id as `$ADMIN_ID`.
+
+1. Create the role the pull executes with. It holds exactly the consumer command that the pull's `record` node calls:
+
+   ```bash
+   wamn-ctl create-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
+     --org <org> --project <project> --env <env> --tenant <tenant> --role netsuite-pull
+   wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
+     --org <org> --project <project> --env <env> --tenant <tenant> --role netsuite-pull \
+     --operation <consumer package>:<interface>/<operation>
+   ```
+
+2. Grant the role to the `workflow` user, whose email is `workflow@<platform domain>`, with `wamn-ctl grant-role --role netsuite-pull`.
+   The enabler must also hold the role, or hold `admin`.
+3. Author the released wiring `apps/netsuite/publication/wirings/netsuite_pull.json` as a schedule workflow of the application `netsuite`:
+
+   ```bash
+   wamn-ctl workflow author --tenant <tenant> --environment <env> --coordinate <org>/<project>/<env> \
+     --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --application netsuite \
+     --document apps/netsuite/publication/wirings/netsuite_pull.json \
+     --execution-type role --execution-role netsuite-pull --schedule '* * * * *' --principal-id "$ADMIN_ID"
+   ```
+
+   The author needs a green gate report under the document's hash, as for any workflow.
+4. Enable it:
+
+   ```bash
+   wamn-ctl workflow enable --tenant <tenant> --environment <env> --coordinate <org>/<project>/<env> \
+     --application netsuite --workflow-id netsuite_pull --version 1 --principal-id "$ADMIN_ID"
+   ```
+
+The next minute admits the first pull.
+Its run key is `schedule:netsuite/netsuite_pull:<due>`, and the run executes as the `workflow` user with `netsuite-pull`.
+`wamn-ctl workflow list` shows the enabled version, and `wamn-ctl workflow disable` stops the pull.
+The pull keeps its checkpoint in `wamn_integration.setting`, so the first pull after cutover continues from the last pull of the release.

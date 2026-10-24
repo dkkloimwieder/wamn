@@ -405,7 +405,7 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 - An authenticated caller of a route binds its principal id.
 - A post-commit registration delivery binds `wamn:materializer`.
 - An automation delivery binds its admitted service principal.
-- A schedule delivery binds the service principal of its application.
+- A schedule delivery binds the environment's `workflow` user.
 - A workflow run binds its execution principal.
 - A legacy queue delivery or management candidate case binds `wamn:executor`.
 
@@ -469,6 +469,7 @@ Every application host runs one schedule task, which wakes at each minute bounda
 Its first tick is strictly after startup.
 At each tick it reads the enabled schedule rows of its application with one `SELECT`, and calls `WamnPostgres::admit_schedule_run` for each row whose cron names that minute.
 An enable or a disable between ticks takes effect at the next tick.
+The task polls the rows; it does not reload on an enable or disable message over event NATS, which would cost one more subject and a stale window when the broker is lost.
 The run has input `{"due":"<due RFC 3339>"}` and key `schedule:<application>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
 Replicas use the same key, so concurrent admissions return one run.
 The run executes as the `workflow` user with its execution role, or with `admin` for type `invoker`.

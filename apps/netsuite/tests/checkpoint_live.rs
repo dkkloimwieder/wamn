@@ -91,23 +91,70 @@ pub async fn invoke(
             None,
         )
         .await?;
-    let principal: String = admin
-        .query_one(
-            "SELECT id::text FROM platform.\"user\" WHERE type='service'",
-            &[],
-        )
-        .await?
-        .get(0);
-    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
-        &admin, TENANT, &principal, None,
-    )
-    .await?;
     let document = wamn_schema_generator::operation_reference::read_authored_document(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../apps/netsuite/publication/wirings/netsuite_pull.json"),
         wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
     )?;
     let wiring: wamn_catalog::WiringDocument = serde_json::from_value(document)?;
+    // The NetSuite pull is an environment workflow (docs/plan/workflows.md
+    // epic 2), authored, enabled and admitted at one due moment. Its run
+    // executes as the `workflow` user with its execution role, which holds
+    // exactly the operation of the graph that needs a grant: the consumer
+    // command of another package of the release.
+    let workflow_host = super::consumer_live::workflow_host(&admin, &database, manifest).await?;
+    let run = super::consumer_live::schedule_run(
+        &database,
+        &workflow_host,
+        manifest,
+        "netsuite",
+        &wiring,
+        "netsuite-pull",
+        &["rest-consumer-fixture:item/record"],
+        "2026-10-22T12:00:00Z",
+    )
+    .await?;
+    // A second role the `workflow` user holds, without the consumer command.
+    // It is granted before the first grant read, which the host's auth memory
+    // keeps.
+    super::consumer_live::execution_role(&database, "netsuite-pull-without-record", &[]).await?;
+    let caller =
+        super::consumer_live::run_caller(&admin, &workflow_host, &run, "netsuite-pull").await?;
+    // The router's check before the `record` node: the node's registered
+    // operation against the grants the run's role holds now. A role without
+    // the consumer command refuses the node.
+    let record = &wiring.nodes["record"];
+    let registered =
+        wamn_catalog::resolve_workflow_components(TENANT, "netsuite", manifest, &wiring)?["record"]
+            .operations[&record.operation]
+            .registered_operation
+            .clone();
+    assert_eq!(
+        registered.as_deref(),
+        Some("rest-consumer-fixture:item/record@0.1.0")
+    );
+    wamn_engine::router_delivery::authorize_registered_operation(
+        Some(&caller),
+        registered.as_deref(),
+    )?;
+    let without = workflow_host
+        .workflow_node_caller(
+            "test",
+            TENANT,
+            &wamn_project_state::workflow_user_id().to_string(),
+            "netsuite-pull-without-record",
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("the workflow user holds the role without the command"))?;
+    let refusal = wamn_engine::router_delivery::authorize_registered_operation(
+        Some(&without),
+        registered.as_deref(),
+    )
+    .expect_err("a role without the consumer command refuses the record node");
+    assert_eq!(
+        refusal.refusal_type(),
+        wamn_engine::router_delivery::OperationRefusalType::PermissionDenied
+    );
     let write = &wiring.nodes["write"];
     let intents = host.call_intents(component, &write.operation)?;
     // The command stores the due time in its normalized timestamptz form.

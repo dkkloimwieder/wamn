@@ -965,3 +965,88 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         .get(0);
     assert_eq!(fixture.outcome(&run).await.0, "completed");
 }
+
+/// Schedules run from rows (docs/plan/workflows.md, Invariants and checks):
+/// the serving release declares no schedule, an authored and enabled row
+/// fires, and a tick missed while the task waits on the database is skipped,
+/// not caught up. The enable after start and the disable are the case above.
+/// A missed tick during a slow admission is the schedule task's unit test
+/// `ticks_missed_during_a_slow_admission_are_skipped`. Here the task's read
+/// of the rows waits on a lock across a whole minute, in real time: about
+/// three minutes.
+#[tokio::test(flavor = "multi_thread")]
+async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = fixture().await;
+    let stored: Vec<u8> = fixture
+        .admin
+        .query_one(
+            "SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1",
+            &[&fixture.digest],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let stored: Value = serde_json::from_slice(&stored).unwrap();
+    assert!(
+        stored.pointer("/workflow/schedules").is_none(),
+        "the serving release declares no schedule: {stored}"
+    );
+    fixture.grant_workflow_user("reader").await;
+    fixture
+        .author(
+            "minutely",
+            WorkflowTrigger::Schedule("* * * * *"),
+            WorkflowExecution::Role("reader"),
+        )
+        .await
+        .expect("author the schedule workflow");
+    fixture
+        .enable("minutely", READER)
+        .await
+        .expect("an enabler holding the role enables");
+
+    // Start clear of a minute boundary, so the task's first tick is `first`.
+    if Utc::now().timestamp().rem_euclid(60) > 50 {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+    }
+    // Hold the rows from before the first tick until after the second.
+    let mut locker = connect(&fixture.url).await;
+    let hold = locker.transaction().await.unwrap();
+    hold.batch_execute("LOCK TABLE catalog.workflows IN ACCESS EXCLUSIVE MODE")
+        .await
+        .unwrap();
+    let first = next_minute(Utc::now());
+    let schedules = wamn_workflow::schedule::PostgresSchedules::new(
+        connect(&fixture.executor_url).await,
+        Arc::clone(&fixture.postgres),
+        PROJECT,
+        TENANT,
+        ENVIRONMENT,
+        APPLICATION,
+        &fixture.digest,
+    );
+    let (stop, stopping) = tokio::sync::watch::channel(false);
+    let task =
+        tokio::spawn(async move { wamn_workflow::schedule::serve(&schedules, stopping).await });
+    let second = next_minute(first);
+    let third = next_minute(second);
+    let until = |moment: DateTime<Utc>| (moment - Utc::now()).to_std().unwrap_or_default();
+    tokio::time::sleep(until(second + chrono::Duration::seconds(5))).await;
+    assert!(
+        fixture.dues("minutely").await.is_empty(),
+        "no run is admitted while the rows are locked"
+    );
+    hold.commit().await.unwrap();
+    tokio::time::sleep(until(third + chrono::Duration::seconds(15))).await;
+    stop.send(true).unwrap();
+    task.await
+        .unwrap()
+        .expect("the schedule task stops at shutdown");
+    assert_eq!(
+        fixture.dues("minutely").await,
+        [first, third],
+        "the late first tick admits its own due, the missed second tick is skipped, \
+         and the third fires"
+    );
+}

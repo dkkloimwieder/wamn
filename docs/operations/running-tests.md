@@ -1011,7 +1011,8 @@ cargo test -p wamn-workflow --lib schedule::
 
 The live test authors schedule workflows on a disposable PostgreSQL 18 database, admits due moments, and drains the runs through the real queue.
 One case runs the host's schedule task in real time: a row enabled after the task starts fires at its next tick, and a disabled row fires at no later tick.
-That case takes up to about three minutes.
+Another holds a lock on the rows across one minute: the late tick admits its own due moment, the missed tick is skipped, and the next tick fires.
+Each of these two cases takes up to about three minutes.
 
 ```bash
 cargo test -p wamn-control --test workflow_schedule_live -- --nocapture

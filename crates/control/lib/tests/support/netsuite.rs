@@ -6,6 +6,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
 
+use super::integration::WorkflowEnvironment;
 use super::{Run, http_connection};
 
 pub async fn seed(project: &tokio_postgres::Client) -> anyhow::Result<()> {
@@ -82,19 +83,23 @@ async fn wait(
 pub async fn assertions(
     run: &Run,
     project: &tokio_postgres::Client,
-    project_url: &str,
-    tenant: &str,
+    workflows: &WorkflowEnvironment<'_>,
     principal: &str,
-    digest: &str,
 ) -> anyhow::Result<Value> {
+    let (project_url, tenant, digest) = (workflows.project_url, workflows.tenant, workflows.digest);
     let pulls = wait(project, "netsuite_pull", 1).await?;
+    // One pull is enough. The admin disables the schedule, so no later pull
+    // adds requests to the log.
+    super::integration::disable_schedule(workflows, "netsuite", "netsuite_pull").await?;
     let pull = &pulls[0];
     let due = pull["input_json"]["due"].as_str().context("schedule due")?;
     ensure!(
         pull["trigger_source"] == "schedule"
-            && pull["service_principal_id"] == principal
+            && pull["invoked_by"] == "schedule"
+            && pull["execution_principal_id"] == wamn_project_state::workflow_user_id().to_string()
+            && pull["execution_role"] == super::integration::PULL_ROLE
             && pull["manifest_digest"] == digest
-            && pull["idempotency_key"] == format!("schedule:netsuite/pull:{due}"),
+            && pull["idempotency_key"] == format!("schedule:netsuite/netsuite_pull:{due}"),
         "wrong pull identity: {pull}"
     );
     let checkpoint: Value = project

@@ -40,7 +40,8 @@ The caller must keep that order as the query's actual final ordering clause.
 
 ## Pull and push
 
-The minute schedule runs `netsuite_pull` with its due time.
+The pull is an environment workflow, not part of the release: an environment admin authors `netsuite_pull` with a minute schedule and enables it ([cutover](../../docs/operations/queued-automation.md#cutover-the-netsuite-pull)).
+Each due moment runs `netsuite_pull` with its due time, as the `workflow` user with the role that holds the consumer command.
 The first mapping places that time in the optional `carry` field of `setting.read`.
 The window mapping builds a customer query from `last_synced_at` through the due time, ordered by `id`.
 The lower bound is inclusive and the upper bound is exclusive.
@@ -110,8 +111,7 @@ Place that JSON as a string in the mounted host credential file:
 ```
 
 Bind each HTTP component's `upstream` requirement with `connections = { upstream = { org = "netsuite" } }` in the environment document.
-Apply creates the application principal and grants its declared consumer dependency.
-No manual consumer grant is needed.
+The pull runs as the `workflow` user with its execution role, so grant that role the consumer command.
 
 Oracle publishes separate [SuiteTalk and RESTlet authorities](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_157011836591.html).
 For a live RESTlet deployment, bind `http-request` to `<account>.restlets.api.netsuite.com` through its org definition.
@@ -202,3 +202,5 @@ It seeds four consumer rows and advances the private, inactive CDC slot past tho
 The consumer command result proves that the pull delivered all four keys.
 A later insert triggers one push, and a replay of its input sends the same external-ID path again.
 The case reads HTTP evidence from `/recorded` and application state from PostgreSQL.
+It authors and enables the pull as a minutely schedule workflow after seeding, and disables it after the first pull, so a second pull cannot race the assertions.
+The lead runs the ignored kind target once at epic close.

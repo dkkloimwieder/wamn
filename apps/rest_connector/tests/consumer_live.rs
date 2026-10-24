@@ -23,10 +23,262 @@ use wamn_runtime::plugins::wamn_postgres::{
 const TENANT: &str = "rest--publication--test";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.0";
 const PASSWORD: &str = "rest-consumer-live-test";
+/// The execution role of the rest_connector item: exactly the operation its
+/// graph calls that needs a grant.
+const ROLE: &str = "rest-item";
+/// The user who authors and enables a schedule workflow, as an environment
+/// admin does. It holds the workflow's execution role.
+const ENABLER: &str = "00000000-0000-4000-8000-0000000000e1";
 
-/// The released schedule start this test used is gone with epic 2.
-fn released_schedule_run() -> anyhow::Result<String> {
-    anyhow::bail!("the rest_connector schedule is not yet a workflow row (wamn-o763w.3)")
+/// The role administration an environment admin does before enabling a
+/// workflow: `role` with exactly `operations`, held by the `workflow` user and
+/// by the enabler. Returns the admin's project connection.
+pub async fn execution_role(
+    database: &wamn_test_postgres::Database,
+    role: &str,
+    operations: &[&str],
+) -> anyhow::Result<Client> {
+    let (project, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    tokio::spawn(connection);
+    project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:schedule-fixture', false)",
+            &[&wamn_project_state::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ($1::text::uuid, 'user', 'enabler@example.test') ON CONFLICT (id) DO NOTHING",
+            &[&ENABLER],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2)",
+            &[&TENANT, &role],
+        )
+        .await?;
+    for operation in operations {
+        project
+            .execute(
+                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
+                 VALUES ($1, $2, $3)",
+                &[&TENANT, &role, operation],
+            )
+            .await?;
+    }
+    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    for user in [ENABLER, workflow_user.as_str()] {
+        project
+            .execute(
+                "INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
+                 VALUES ($1, $2::text::uuid, $3)",
+                &[&TENANT, &user, &role],
+            )
+            .await?;
+    }
+    Ok(project)
+}
+
+/// Install the run plane, the environment policy and `manifest` as the
+/// serving release, and return the host's platform database access under the
+/// scoped logins of its families: the executor for admission, and the
+/// admitter for the per-node grant read. The host's credential check refuses
+/// any other login, the superuser included.
+pub async fn workflow_host(
+    admin: &Client,
+    database: &wamn_test_postgres::Database,
+    manifest: &wamn_catalog::ServingManifest,
+) -> anyhow::Result<Arc<WamnPostgres>> {
+    wamn_control::reconcile_run_plane::reconcile(
+        admin,
+        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
+        true,
+    )
+    .await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&TENANT]).await?;
+    let (_, digest) =
+        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
+    wamn_control::environment::stage::write_release(
+        database.url(),
+        TENANT,
+        digest.as_str(),
+        manifest,
+    )
+    .await?;
+    let mut credentials = ClassCredentials::default();
+    for (family, class) in [
+        (
+            WorkloadRoleFamily::ExecutorPlatform,
+            AuthorityClass::ExecutorPlatform,
+        ),
+        (
+            WorkloadRoleFamily::HttpAdmitter,
+            AuthorityClass::CallableHttp,
+        ),
+    ] {
+        let role = workload_generation_role(
+            family,
+            WorkloadRoleScope::ProjectEnvironment {
+                org: TENANT,
+                project: "test",
+                environment: "test",
+                database: database.name(),
+            },
+            CredentialGeneration::A,
+        )?;
+        admin
+            .batch_execute(&sql::prepare_workload_generation_sql(
+                family,
+                database.name(),
+                &role,
+                PASSWORD,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await?;
+        let mut login = url::Url::parse(database.url())?;
+        login.set_username(&role).unwrap();
+        login.set_password(Some(PASSWORD)).unwrap();
+        credentials = credentials.with_class(class, login.to_string());
+    }
+    Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
+        StaticCredentialProvider::new(
+            HashMap::from([(
+                "test".into(),
+                ProjectConfig {
+                    credentials,
+                    guest_pool_max_size: 1,
+                    platform_pool_max_size: 2,
+                    wait_timeout_ms: 5000,
+                    statement_timeout_ms: 10000,
+                    row_limit: 1000,
+                },
+            )]),
+            None,
+        ),
+    ))))
+}
+
+/// Author `document` as a minutely schedule workflow of `application` and
+/// enable it, as an environment admin does with
+/// `wamn-ctl workflow author --schedule '* * * * *'` and `enable`, then admit
+/// its run due at `due` as the host's schedule task does, through `host` from
+/// [`workflow_host`]. The run executes as the `workflow` user with `role`,
+/// which holds exactly `operations`. Returns the run id.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one fixture step over the project and control databases"
+)]
+pub async fn schedule_run(
+    database: &wamn_test_postgres::Database,
+    host: &WamnPostgres,
+    manifest: &wamn_catalog::ServingManifest,
+    application: &str,
+    document: &wamn_catalog::WiringDocument,
+    role: &str,
+    operations: &[&str],
+    due: &str,
+) -> anyhow::Result<String> {
+    use wamn_control::author_workflow::{
+        AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
+    };
+    use wamn_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
+    use wamn_runtime::plugins::wamn_postgres::{ScheduleRunAdmission, ScheduleRunAdmitted};
+
+    let (_, digest) =
+        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
+    let mut project = execution_role(database, role, operations).await?;
+
+    // The gate's green report under the graph's hash, which authoring reads.
+    let control = wamn_control_provision::test_database::system();
+    let (gate, connection) = tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
+    tokio::spawn(connection);
+    gate.execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .await?;
+    gate.execute(
+        "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+         VALUES ($1, $2, true, '{}'::jsonb)",
+        &[&TENANT, &document.wiring_hash().as_str()],
+    )
+    .await?;
+    author_workflow_in_databases(
+        database.url(),
+        control.url(),
+        &AuthorWorkflowRequest {
+            tenant_id: TENANT,
+            environment: "test",
+            application,
+            document,
+            trigger: WorkflowTrigger::Schedule("* * * * *"),
+            execution: WorkflowExecution::Role(role),
+            created_by: ENABLER,
+            manifest_digest: digest.as_str(),
+        },
+    )
+    .await?;
+    enable_workflow(
+        database.url(),
+        &wamn_control_registry::Triple::new("rest", application, "test"),
+        &mut project,
+        &WorkflowVersion {
+            tenant_id: TENANT,
+            environment: "test",
+            application,
+            workflow_id: &document.wiring_id,
+            version: document.version,
+        },
+        ENABLER,
+        digest.as_str(),
+    )
+    .await?;
+    match host
+        .admit_schedule_run(
+            "test",
+            TENANT,
+            &ScheduleRunAdmission {
+                environment: "test",
+                application,
+                workflow_id: &document.wiring_id,
+                manifest_digest: digest.as_str(),
+                due: chrono::DateTime::parse_from_rfc3339(due)?.with_timezone(&chrono::Utc),
+            },
+        )
+        .await?
+    {
+        ScheduleRunAdmitted::Queued { run_id } => Ok(run_id),
+        other => anyhow::bail!("the schedule admission queued no run: {other:?}"),
+    }
+}
+
+/// The caller of one node of the schedule run `run`, which executes as the
+/// `workflow` user with `role` active: the grants the role holds now, read
+/// through `host` as the router reads them before each node.
+pub async fn run_caller(
+    admin: &Client,
+    host: &WamnPostgres,
+    run: &str,
+    role: &str,
+) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
+    let row = admin
+        .query_one(
+            "SELECT execution_principal_id::text, execution_role FROM wamn_run.runs WHERE run_id=$1",
+            &[&run],
+        )
+        .await?;
+    let principal: String = row.get(0);
+    let execution_role: String = row.get(1);
+    anyhow::ensure!(
+        principal == wamn_project_state::workflow_user_id().to_string() && execution_role == role,
+        "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
+    );
+    host.workflow_node_caller("test", TENANT, &principal, &execution_role)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("the workflow user does not hold {execution_role}"))
 }
 
 pub async fn install(
@@ -224,36 +476,28 @@ pub async fn invoke(
     let (admin, connection) =
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     tokio::spawn(connection);
-    wamn_control::reconcile_run_plane::reconcile(
-        &admin,
-        &wamn_schema_control::BareSchemaName::new("wamn_run")?,
-        true,
-    )
-    .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&TENANT]).await?;
-    let (_, digest) =
-        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
-    wamn_control::environment::stage::write_release(
-        database.url(),
-        TENANT,
-        digest.as_str(),
+    // The rest_connector item is an environment workflow, authored, enabled
+    // and admitted at one due moment (docs/plan/workflows.md epic 2).
+    let document: wamn_catalog::WiringDocument = serde_json::from_value(
+        wamn_schema_generator::operation_reference::read_authored_document(
+            &super::support::repository()
+                .join("apps/rest_connector/publication/wirings/rest_item.json"),
+            wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+        )?,
+    )?;
+    let workflow_host = workflow_host(&admin, database, manifest).await?;
+    let run = schedule_run(
+        database,
+        &workflow_host,
         manifest,
+        "rest_connector",
+        &document,
+        ROLE,
+        &["rest-consumer-fixture:item/record"],
+        "2026-10-21T12:02:00Z",
     )
     .await?;
-    // No release declares a schedule (docs/plan/workflows.md epic 2). E2.3
-    // authors the rest_connector schedule as a workflow row and admits it here.
-    let run = released_schedule_run()?;
-    let principal: String = admin
-        .query_one(
-            "SELECT service_principal_id::text FROM wamn_run.runs WHERE run_id=$1",
-            &[&run],
-        )
-        .await?
-        .get(0);
-    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
-        &admin, TENANT, &principal, None,
-    )
-    .await?;
+    let caller = run_caller(&admin, &workflow_host, &run, ROLE).await?;
     wamn_engine::router_delivery::authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     let finish_operation = "rest-connector:sync/finish@0.1.0";
     let connector = admissions

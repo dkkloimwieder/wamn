@@ -5,7 +5,7 @@ It shares one release with the separate `rest_consumer_fixture` application.
 Both dependencies use exact versions and component digests.
 Build the base and consumer before this package.
 
-The minute schedule supplies `due`.
+The item pull is an environment workflow: an environment admin authors `rest_item` with a minute schedule and enables it. Each due moment supplies `due`.
 The first node reads `last_synced_at` through the base's `setting.read` operation.
 The `http-page` node collects the fixture pages and carries `/due` into its output.
 JSONata maps the items into one consumer command envelope, including when the item array is empty.
@@ -17,7 +17,7 @@ The checkpoint value is a JSON string containing an RFC 3339 timestamp.
 An absent checkpoint means that no sync completed.
 
 Bind the `http-page` requirement `upstream` to the fixture API before deployment.
-Grant the integration principal a role with the consumer's `item.record` permission.
+The pull runs as the `workflow` user with its execution role. Grant that role the consumer's `item.record` permission.
 The fixture uses `/pages?limit=2`.
 
 The second workflow starts on a consumer item insert.

@@ -26,6 +26,9 @@
 //!    Wrong and missing signatures return 401 with an empty body and no fixture request.
 //!    A second wiring sends a POST that the fixture verifies with its HMAC secret.
 //!    OAuth2 reuses one token for two sends, and the fixture verifies OAuth1 signatures.
+//!    A minutely schedule workflow, authored and enabled in the environment,
+//!    leaves one completed run at each of two ticks, run as the `workflow`
+//!    user with its role.
 //!    The REST schedule retries page two after 429 and stores each item once.
 //! 5. A12: two environments in one namespace; every object and Secret name
 //!    differs and derives from the coordinate, and each host mounts only its
@@ -1367,10 +1370,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .await?
         .get(0);
     let database = wamn_control_provision::project_env_database_name(ORG, PROJECT, "http", &suffix);
-    let (http_project, http_task) = connect(&format!(
-        "postgresql://postgres:{password}@127.0.0.1:{port}/{database}"
-    ))
-    .await?;
+    let http_project_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
+    let (http_project, http_task) = connect(&http_project_url).await?;
     let http_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
     // Register the same gated graphs that the fixture release carries.
     for wiring in [
@@ -1452,7 +1453,22 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         assertion.is_ok(),
     );
     assertion?;
-    http_connection::assert_triggers(run, &http_name, &http.route_host, status, &body).await?;
+    http_connection::assert_triggers(
+        run,
+        &http_project,
+        &integration::WorkflowEnvironment {
+            system_url: &platform.system_database_url,
+            project_url: &http_project_url,
+            scope: &http.triple(),
+            tenant: &http_tenant,
+            digest: &http_digest,
+        },
+        &http_name,
+        &http.route_host,
+        status,
+        &body,
+    )
+    .await?;
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;

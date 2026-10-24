@@ -6,9 +6,10 @@
 //! component of that release whose descriptor carries the node's component,
 //! interface version and operation, and
 //! [`validate_resolved_wiring_compatibility`] judges the graph over those
-//! per-node facts. An operation node resolves only to a component of the
-//! application. A platform node (an operation with no registered operation)
-//! resolves to the component of any package of the release.
+//! per-node facts. A node resolves within the application first, then within
+//! any package of the release. A node whose operation has a registered
+//! operation needs that permission in the run's role, checked per node like
+//! every other call.
 //!
 //! Authoring, enable and the host's `workflow.start` admission all gate
 //! through this one owner.
@@ -52,10 +53,9 @@ impl std::error::Error for WorkflowGateError {
 /// it, as the facts [`validate_resolved_wiring_compatibility`] reads.
 ///
 /// A node resolves to a component whose descriptor carries the node's
-/// component, interface version and operation. An operation node (one whose
-/// operation has a registered operation) resolves only within `application`.
-/// A platform node resolves within the application first, then within any
-/// package of the release; two different digests there refuse as ambiguous.
+/// component, interface version and operation. It resolves within the
+/// application first, then within any package of the release; two different
+/// digests there refuse as ambiguous.
 pub fn resolve_workflow_components(
     tenant_id: &str,
     application: &str,
@@ -101,14 +101,6 @@ pub fn resolve_workflow_components(
                 )));
             }
             ([], [first, rest @ ..]) => {
-                let operation = &first.descriptor.operations[&node.operation];
-                if operation.registered_operation.is_some() {
-                    return Err(WorkflowGateError::new(format!(
-                        "workflow node {node_id:?} names operation {:?} of package {:?}, \
-                         which application {application:?} does not serve",
-                        node.operation, first.package_id
-                    )));
-                }
                 if rest.iter().any(|other| {
                     other.descriptor.component_digest != first.descriptor.component_digest
                 }) {
@@ -264,10 +256,16 @@ mod tests {
     }
 
     #[test]
-    fn an_operation_of_another_package_refuses() {
+    fn an_operation_of_another_package_resolves_in_that_package() {
         let manifest = manifest(vec![component("palette", "data", PALETTE_GET, true)]);
-        resolve_workflow_components("t1", APPLICATION, &manifest, &document("data", PALETTE_GET))
-            .expect_err("an operation outside the application refuses");
+        let resolved = resolve_workflow_components(
+            "t1",
+            APPLICATION,
+            &manifest,
+            &document("data", PALETTE_GET),
+        )
+        .unwrap();
+        assert_eq!(resolved["node"].scope.package_id, "palette");
     }
 
     #[test]

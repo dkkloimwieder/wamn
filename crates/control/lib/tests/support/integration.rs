@@ -9,6 +9,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
+use wamn_control::author_workflow::{
+    AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
+};
 use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::component_declaration::{
     authored_base_digests, render_declaration_document, render_palette_declaration,
@@ -20,6 +23,7 @@ use wamn_control::publish_release::{
     PublishReleaseRequest, ReleaseWiringTarget, assemble_local_release,
 };
 use wamn_control::release_chart::ImageSet;
+use wamn_control::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
 use wamn_control_provision::events::{
     advisory_stream_config, registration_consumers, source_stream_config,
 };
@@ -33,6 +37,179 @@ use super::{
 
 const ENVIRONMENT: &str = "integration";
 const CONSUMER: &str = "rest_consumer_fixture";
+/// The execution role of the connector's pull: exactly the consumer command
+/// its graph calls.
+pub const PULL_ROLE: &str = "connector-pull";
+/// The user who authors and enables schedule workflows, as an environment
+/// admin does. It holds each execution role it assigns.
+const ENABLER: &str = "00000000-0000-4000-8000-0000000000e1";
+
+/// One kind environment in which a test authors workflows.
+pub struct WorkflowEnvironment<'a> {
+    pub system_url: &'a str,
+    pub project_url: &'a str,
+    pub scope: &'a wamn_control_registry::Triple,
+    pub tenant: &'a str,
+    /// The release the environment serves.
+    pub digest: &'a str,
+}
+
+impl WorkflowEnvironment<'_> {
+    fn version<'a>(&'a self, application: &'a str, workflow_id: &'a str) -> WorkflowVersion<'a> {
+        WorkflowVersion {
+            tenant_id: self.tenant,
+            environment: &self.scope.env,
+            application,
+            workflow_id,
+            version: 1,
+        }
+    }
+}
+
+/// The wiring of the connector's scheduled pull.
+fn pull_wiring(connector: &str) -> &'static str {
+    if connector == "netsuite" {
+        "netsuite_pull"
+    } else {
+        "rest_item"
+    }
+}
+
+/// One owned connection, as the workflow verbs take it.
+async fn connect_owned(
+    url: &str,
+) -> anyhow::Result<(tokio_postgres::Client, tokio::task::JoinHandle<()>)> {
+    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    let task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    Ok((client, task))
+}
+
+/// The first minute boundary strictly after `after`.
+pub fn next_minute(after: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp(after.timestamp().div_euclid(60) * 60 + 60, 0)
+        .expect("a minute boundary after a valid time is a valid time")
+}
+
+/// Author `document` as a minutely schedule workflow of `application` and
+/// enable it, as an environment admin does with
+/// `wamn-ctl workflow author --schedule '* * * * *'` and `enable`. The admin
+/// first creates `role` with exactly `operations` and grants it to the
+/// `workflow` user and to itself, so the runs execute as the `workflow` user
+/// with `role`. A green gate report under the graph's hash stands in for the
+/// gate.
+pub async fn enable_schedule(
+    environment: &WorkflowEnvironment<'_>,
+    application: &str,
+    document: &WiringDocument,
+    role: &str,
+    operations: &[&str],
+) -> anyhow::Result<()> {
+    let tenant = environment.tenant;
+    let (mut project, project_task) = connect_owned(environment.project_url).await?;
+    project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:schedule-fixture', false)",
+            &[&wamn_project_state::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ($1::text::uuid, 'user', $2) ON CONFLICT (id) DO NOTHING",
+            &[
+                &ENABLER,
+                &format!("schedule-enabler@{}", super::PLATFORM_DOMAIN),
+            ],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2)",
+            &[&tenant, &role],
+        )
+        .await?;
+    for operation in operations {
+        project
+            .execute(
+                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
+                 VALUES ($1, $2, $3)",
+                &[&tenant, &role, operation],
+            )
+            .await?;
+    }
+    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    for user in [ENABLER, workflow_user.as_str()] {
+        project
+            .execute(
+                "INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
+                 VALUES ($1, $2::text::uuid, $3)",
+                &[&tenant, &user, &role],
+            )
+            .await?;
+    }
+    let (control, control_task) = connect_owned(environment.system_url).await?;
+    control
+        .execute("SELECT set_config('app.tenant', $1, false)", &[&tenant])
+        .await?;
+    control
+        .execute(
+            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+             VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
+            &[&tenant, &document.wiring_hash().as_str()],
+        )
+        .await?;
+    control_task.abort();
+    author_workflow_in_databases(
+        environment.project_url,
+        environment.system_url,
+        &AuthorWorkflowRequest {
+            tenant_id: tenant,
+            environment: &environment.scope.env,
+            application,
+            document,
+            trigger: WorkflowTrigger::Schedule("* * * * *"),
+            execution: WorkflowExecution::Role(role),
+            created_by: ENABLER,
+            manifest_digest: environment.digest,
+        },
+    )
+    .await?;
+    enable_workflow(
+        environment.system_url,
+        environment.scope,
+        &mut project,
+        &environment.version(application, &document.wiring_id),
+        ENABLER,
+        environment.digest,
+    )
+    .await?;
+    project_task.abort();
+    Ok(())
+}
+
+/// Disable the schedule workflow `workflow_id` of `application`, as an
+/// environment admin does with `wamn-ctl workflow disable`.
+pub async fn disable_schedule(
+    environment: &WorkflowEnvironment<'_>,
+    application: &str,
+    workflow_id: &str,
+) -> anyhow::Result<()> {
+    let (mut project, project_task) = connect_owned(environment.project_url).await?;
+    disable_workflow(
+        environment.system_url,
+        environment.scope,
+        &mut project,
+        &environment.version(application, workflow_id),
+    )
+    .await?;
+    project_task.abort();
+    Ok(())
+}
 
 pub async fn exercise(
     run: &mut Run,
@@ -233,19 +410,42 @@ pub async fn exercise(
         super::netsuite::seed(&project).await?;
     }
     let mut reader = start_reader(run, repository, &broker, &server, admin_url).await?;
-    let observed = if connector == "netsuite" {
-        super::netsuite::assertions(
-            run,
-            &project,
-            project_url.as_str(),
-            &tenant,
-            &principal,
-            &digest,
-        )
-        .await
-    } else {
-        assertions(run, &project, &tenant, &principal, &digest, &mut reader).await
+    // The release declares no schedule. The pull is an environment workflow
+    // of the connector, authored and enabled after apply
+    // (docs/plan/workflows.md epic 2).
+    let workflows = WorkflowEnvironment {
+        system_url: &platform.system_database_url,
+        project_url: project_url.as_str(),
+        scope: &scope,
+        tenant: &tenant,
+        digest: &digest,
     };
+    let pull = manifest
+        .workflow
+        .wirings
+        .iter()
+        .find(|wiring| {
+            wiring.package_id == connector && wiring.graph.wiring_id == pull_wiring(connector)
+        })
+        .context("the release carries the pull's wiring")?
+        .graph
+        .clone();
+    let observed = async {
+        enable_schedule(
+            &workflows,
+            connector,
+            &pull,
+            PULL_ROLE,
+            &["rest-consumer-fixture:item/record"],
+        )
+        .await?;
+        if connector == "netsuite" {
+            super::netsuite::assertions(run, &project, &workflows, &principal).await
+        } else {
+            assertions(run, &project, &tenant, &digest, &mut reader).await
+        }
+    }
+    .await;
     reader.kill().await.context("stop the fixture CDC reader")?;
     reader.wait().await?;
     project_task.abort();
@@ -258,9 +458,9 @@ pub async fn exercise(
     })?;
     run.pass(
         &format!(
-            "{connector} scheduled pull and consumer event push under the application principal"
+            "{connector} scheduled pull as the workflow user with its role and consumer event push"
         ),
-        "scheduled pull after apply; SELECT runs, item, setting and command results; GET /recorded",
+        "author and enable the pull's schedule workflow after apply; SELECT runs, item, setting and command results; GET /recorded",
         observed,
         true,
     );
@@ -603,10 +803,10 @@ async fn assertions(
     run: &Run,
     project: &tokio_postgres::Client,
     tenant: &str,
-    principal: &str,
     digest: &str,
     reader: &mut Child,
 ) -> anyhow::Result<Value> {
+    let principal = wamn_project_state::workflow_user_id().to_string();
     let deadline = Instant::now() + Duration::from_secs(150);
     loop {
         ensure!(
@@ -638,11 +838,13 @@ async fn assertions(
             let due = &scheduled["input_json"]["due"];
             ensure!(
                 scheduled["trigger_source"] == "schedule"
-                    && scheduled["service_principal_id"] == principal
+                    && scheduled["invoked_by"] == "schedule"
+                    && scheduled["execution_principal_id"] == principal
+                    && scheduled["execution_role"] == PULL_ROLE
                     && scheduled["manifest_digest"] == digest
                     && scheduled["idempotency_key"]
                         == format!(
-                            "schedule:rest_connector/item:{}",
+                            "schedule:rest_connector/rest_item:{}",
                             due.as_str().context("schedule due")?
                         )
                     && rows["last_synced_at"] == *due,

@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
+use chrono::Utc;
 use serde_json::{Value, json};
 
 use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
@@ -564,6 +565,8 @@ pub async fn request_log(run: &Run) -> anyhow::Result<String> {
 
 pub async fn assert_triggers(
     run: &mut Run,
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
     release_name: &str,
     route_host: &str,
     unsigned_status: u16,
@@ -665,7 +668,89 @@ pub async fn assert_triggers(
 
     assert_oauth(run, &base, route_host).await?;
     assert_paged(run, &base, route_host).await?;
+
+    // The release declares no schedule. The scheduled wiring runs as an
+    // environment workflow. Its nodes call no operation that needs a grant,
+    // so its execution role holds no permission.
+    let document = scheduled_wiring()?;
+    super::integration::enable_schedule(environment, PACKAGE, &document, SCHEDULE, &[]).await?;
+    let first_due = super::integration::next_minute(Utc::now());
+    let result = tokio::time::timeout(
+        Duration::from_secs(150),
+        scheduled_runs(database, environment.tenant, first_due),
+    )
+    .await;
+    let result = result
+        .context("schedule did not complete two due moments within 150 seconds")
+        .and_then(std::convert::identity);
+    run.pass("an enabled schedule workflow starts exactly one run per due key as the workflow user with its role",
+        "author and enable the schedule workflow; SELECT schedule runs from wamn_run.runs",
+        json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
+        result.is_ok());
+    result?;
     Ok(())
+}
+
+/// The runs of the schedule workflow at its first two due moments from
+/// `first_due`, once both completed.
+async fn scheduled_runs(
+    database: &tokio_postgres::Client,
+    tenant: &str,
+    first_due: chrono::DateTime<Utc>,
+) -> anyhow::Result<Value> {
+    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    let dues = [first_due, first_due + chrono::Duration::minutes(1)]
+        .map(|due| due.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    let keys = dues
+        .clone()
+        .map(|due| format!("schedule:{PACKAGE}/{SCHEDULE}:{due}"));
+    loop {
+        let rows: Value = database.query_one(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
+                'idempotency_key', idempotency_key, 'trigger_source', trigger_source, \
+                'execution_principal_id', execution_principal_id, 'execution_role', execution_role, \
+                'invoked_by', invoked_by, 'input_json', input_json, 'status', status, \
+                'package_id', package_id, 'wiring_id', wiring_id, 'wiring_version', wiring_version) \
+                ORDER BY idempotency_key), '[]'::jsonb) FROM wamn_run.runs \
+                WHERE tenant_id = $1 AND idempotency_key = ANY($2)",
+            &[&tenant, &keys.as_slice()],
+        ).await?.get(0);
+        let runs = rows.as_array().context("schedule run rows")?;
+        for (key, due) in keys.iter().zip(&dues) {
+            let matching: Vec<_> = runs
+                .iter()
+                .filter(|row| row["idempotency_key"] == *key)
+                .collect();
+            ensure!(
+                matching.len() <= 1,
+                "multiple schedule runs for {key}: {rows}"
+            );
+            if let Some(row) = matching.first() {
+                ensure!(
+                    row["trigger_source"] == "schedule"
+                        && row["invoked_by"] == "schedule"
+                        && row["execution_principal_id"] == workflow_user
+                        && row["execution_role"] == SCHEDULE
+                        && row["package_id"] == PACKAGE
+                        && row["wiring_id"] == SCHEDULE
+                        && row["wiring_version"] == 1
+                        && row["input_json"] == json!({"due": due}),
+                    "schedule run has wrong identity, input or principal: {row}"
+                );
+                ensure!(
+                    !matches!(
+                        row["status"].as_str(),
+                        Some("failed" | "infrastructure-failure" | "effect-uncertain")
+                    ),
+                    "scheduled workflow failed: {row}"
+                );
+            }
+        }
+        if runs.len() == 2 && runs.iter().all(|row| row["status"] == "completed") {
+            return Ok(rows);
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
 async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Result<()> {
