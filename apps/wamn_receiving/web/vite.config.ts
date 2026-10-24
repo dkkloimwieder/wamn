@@ -25,10 +25,10 @@ export default defineConfig(({ command, mode }) => {
           const solid = modules.filter((id) => /\/solid-js\//.test(id));
           if (
             !solid.length ||
-            solid.some((id) => !id.includes("solid-js@2.0.0-rc.16/")) ||
+            solid.some((id) => !id.includes("solid-js@2.0.0-rc.18/")) ||
             modules.some((id) => /\/web\/(shell|ui|components)\//.test(id))
           ) {
-            this.error("Receiving must bundle Solid 2.0.0-rc.16 and the wfe UI only");
+            this.error("Receiving must bundle Solid 2.0.0-rc.18 and the wfe UI only");
           }
         },
       },

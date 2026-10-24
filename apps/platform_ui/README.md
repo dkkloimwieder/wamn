@@ -4,7 +4,7 @@ This application owns the shared Solid 2 shell.
 [Execution](../../docs/architecture/execution.md) owns those rules.
 The application uses wfe components from the `web/wfe` submodule and the shared session and transport in `web/runtime`.
 Vite uses the `wfe-source` export condition, so it compiles the pinned source without a separate wfe build.
-The runtime and compiler use Solid `2.0.0-rc.16`.
+The runtime and compiler use Solid `2.0.0-rc.18`.
 The build refuses Solid 1 modules and imports from the old UI packages.
 
 The shell core owns addresses, permission filtering, navigation, and query values.

@@ -12,7 +12,7 @@ describe("the app shell", () => {
       await waitFor(() => expect(container.textContent).not.toBe(""));
       expect(container.firstElementChild?.hasAttribute("data-ui")).toBe(true);
       expect(container.querySelectorAll(":scope > [data-ui]")).toHaveLength(1);
-      expect(container.firstElementChild?.getAttribute("data-ui-density")).toBe("compact");
+      expect(container.firstElementChild?.getAttribute("data-ui-density")).toBe("default");
       expect(container.firstElementChild?.hasAttribute("data-ui-theme")).toBe(false);
     },
   );

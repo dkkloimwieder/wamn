@@ -4,6 +4,9 @@ import { flush } from "solid-js";
 import { orgAdmin, user } from "@wamn/control-org-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
+// The shell loads its layout lazily. Loading it here keeps module transform
+// time out of the first render that the tests wait for.
+import "../src/layout";
 import { GrantMembership } from "../src/membership";
 import { NotFoundBoundary } from "../src/page";
 import { InviteUser, User, Users, userSections } from "../src/users";

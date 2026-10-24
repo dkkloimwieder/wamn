@@ -5,6 +5,9 @@ import { createTransport } from "@wamn/web-runtime";
 import { createAddress, matchPath } from "../src/address";
 import { ControlNavigation } from "../src/control-navigation";
 import { Shell } from "../src/shell";
+// The shell loads its layout lazily. Loading it here keeps module transform
+// time out of the first render that the tests wait for.
+import "../src/layout";
 import { controlSections } from "../src/projects";
 import { userSections } from "../src/users";
 import { CONTROL, identity, input } from "./fixtures";

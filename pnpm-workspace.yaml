@@ -10,6 +10,7 @@ packages:
   - web/wfe/packages/form
   - web/wfe/packages/generator
   - web/wfe/packages/shell
+  - web/wfe/packages/sync
 
 # Install scripts that pnpm may run. esbuild places its platform binary for
 # Vite, and @parcel/watcher builds the file watcher of the Tailwind CLI.
@@ -18,20 +19,20 @@ allowBuilds:
   "@parcel/watcher": true
 
 minimumReleaseAgeExclude:
-  - solid-js@2.0.0-rc.16
-  - "@solidjs/babel-plugin@2.0.0-rc.16"
-  - "@solidjs/compiler-darwin-arm64@2.0.0-rc.16"
-  - "@solidjs/compiler-darwin-x64@2.0.0-rc.16"
-  - "@solidjs/compiler-linux-arm64-gnu@2.0.0-rc.16"
-  - "@solidjs/compiler-linux-x64-gnu@2.0.0-rc.16"
-  - "@solidjs/compiler-wasm32-wasi@2.0.0-rc.16"
-  - "@solidjs/compiler-win32-x64-msvc@2.0.0-rc.16"
-  - "@solidjs/compiler@2.0.0-rc.16"
-  - "@solidjs/signals@2.0.0-rc.16"
-  - "@solidjs/web@2.0.0-rc.16"
+  - solid-js@2.0.0-rc.18
+  - "@solidjs/babel-plugin@2.0.0-rc.18"
+  - "@solidjs/compiler-darwin-arm64@2.0.0-rc.18"
+  - "@solidjs/compiler-darwin-x64@2.0.0-rc.18"
+  - "@solidjs/compiler-linux-arm64-gnu@2.0.0-rc.18"
+  - "@solidjs/compiler-linux-x64-gnu@2.0.0-rc.18"
+  - "@solidjs/compiler-wasm32-wasi@2.0.0-rc.18"
+  - "@solidjs/compiler-win32-x64-msvc@2.0.0-rc.18"
+  - "@solidjs/compiler@2.0.0-rc.18"
+  - "@solidjs/signals@2.0.0-rc.18"
+  - "@solidjs/web@2.0.0-rc.18"
 
-# Keep the Solid 2 runtime and compiler aligned with wfe v0.0.5.
+# Keep the Solid 2 runtime and compiler aligned with the wfe pin.
 overrides:
-  "@solidjs/compiler": 2.0.0-rc.16
-  "@solidjs/babel-plugin": 2.0.0-rc.16
-  "@solidjs/signals": 2.0.0-rc.16
+  "@solidjs/compiler": 2.0.0-rc.18
+  "@solidjs/babel-plugin": 2.0.0-rc.18
+  "@solidjs/signals": 2.0.0-rc.18
