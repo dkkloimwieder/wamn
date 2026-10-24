@@ -199,7 +199,8 @@ impl WorkflowVersion<'_> {
 
 /// Enable `workflow` under the lifecycle lock of `triple`, checked against
 /// the release `manifest_digest` the environment serves and the authority of
-/// `enabler` (the text of its `platform."user"` id).
+/// `enabler` (the text of its `platform."user"` id). The graph gates within
+/// the packages `declared` names for the workflow's application first.
 ///
 /// # Errors
 ///
@@ -212,10 +213,17 @@ pub async fn enable_workflow(
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
     manifest_digest: &str,
+    declared: &wamn_catalog::EnvironmentApplications,
 ) -> Result<(), WorkflowLifecycleError> {
+    // Enable adds no declaration check: an application the environment does
+    // not declare gates with no package of its own.
+    let packages = declared
+        .get(workflow.application)
+        .map(|application| application.packages.clone())
+        .unwrap_or_default();
     under_lock(system_url, triple, async || {
         let transaction = begin(project, workflow.tenant_id).await?;
-        enable_in(&transaction, workflow, enabler, manifest_digest).await?;
+        enable_in(&transaction, workflow, enabler, manifest_digest, &packages).await?;
         commit(transaction).await
     })
     .await
@@ -313,6 +321,7 @@ async fn enable_in(
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
     manifest_digest: &str,
+    packages: &std::collections::BTreeSet<String>,
 ) -> Result<(), WorkflowLifecycleError> {
     let version = workflow.version()?;
     let key = key(workflow, &version);
@@ -332,7 +341,7 @@ async fn enable_in(
     let hash = gate_against_release(
         transaction,
         workflow.tenant_id,
-        workflow.application,
+        packages,
         manifest_digest,
         &graph,
     )

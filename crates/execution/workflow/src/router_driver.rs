@@ -492,7 +492,24 @@ impl RouterDriver {
             node_digests,
             identity,
         } = request;
-        self.validate_request_scope(&run)?;
+        // A workflow run's package id is its application, a name the
+        // environment declares with its packages, never a package.
+        let scope = self.release.scope();
+        anyhow::ensure!(run.wiring_version > 0, "wiring-version-zero");
+        anyhow::ensure!(
+            scope.tenant_id == run.tenant_id && scope.environment == run.environment,
+            "router-request-release-scope-mismatch"
+        );
+        let application_packages = &scope
+            .applications
+            .get(&run.package_id)
+            .with_context(|| {
+                format!(
+                    "the environment declares no application {:?}",
+                    run.package_id
+                )
+            })?
+            .packages;
         let manifest_digest = self.release.release().manifest_digest.as_str();
         let resolved = self
             .operations
@@ -503,6 +520,7 @@ impl RouterDriver {
                     tenant_id: &run.tenant_id,
                     environment: &run.environment,
                     application: &run.package_id,
+                    application_packages,
                     workflow_id: &run.wiring_id,
                     version: run.wiring_version,
                     manifest_digest,

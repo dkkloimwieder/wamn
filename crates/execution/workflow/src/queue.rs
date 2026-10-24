@@ -89,12 +89,17 @@ impl QueueService {
         let scope = QueueScope {
             tenant_id: release.scope().tenant_id.clone(),
             project: config.project.clone(),
+            // Released runs carry a package of the release, and workflow runs
+            // the name of a declared application.
             package_ids: release
                 .manifest()
                 .release
                 .packages
                 .iter()
                 .map(|package| package.package_id().to_owned())
+                .chain(release.scope().applications.keys().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
                 .collect(),
             environment: release.scope().environment.clone(),
         };

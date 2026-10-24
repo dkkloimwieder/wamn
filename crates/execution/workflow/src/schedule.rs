@@ -2,8 +2,8 @@
 //! (docs/plan/workflows.md R3, R8, epic 2).
 //!
 //! The task wakes at every minute boundary, reads the enabled schedule
-//! workflows of the serving application once, and admits a run for each row
-//! whose cron names that minute. A row enabled or disabled between ticks takes
+//! workflows of the applications its environment declares in one SELECT, and
+//! admits a run for each row whose cron names that minute. A row enabled or disabled between ticks takes
 //! effect at the next tick.
 
 use std::sync::Arc;
@@ -14,9 +14,10 @@ use wamn_catalog::parse_workflow_schedule;
 use wamn_runtime::plugins::WamnPostgres;
 use wamn_runtime::plugins::wamn_postgres::{ScheduleRunAdmission, ScheduleRunAdmitted, due_text};
 
-/// One enabled schedule workflow of the serving application.
+/// One enabled schedule workflow of a declared application.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnabledSchedule {
+    pub application: String,
     pub workflow_id: String,
     /// Five-field cron, evaluated in UTC.
     pub schedule: String,
@@ -25,26 +26,26 @@ pub struct EnabledSchedule {
 /// Where the schedule task reads its rows and admits its runs.
 #[async_trait::async_trait]
 pub trait ScheduleRows: Send + Sync {
-    /// The enabled schedule workflows of the serving application.
+    /// The enabled schedule workflows of the declared applications.
     async fn enabled(&self) -> anyhow::Result<Vec<EnabledSchedule>>;
 
-    /// Admit the run of `workflow_id` due at `due`.
+    /// Admit the run of `schedule` due at `due`.
     async fn admit(
         &self,
-        workflow_id: &str,
+        schedule: &EnabledSchedule,
         due: DateTime<Utc>,
     ) -> anyhow::Result<ScheduleRunAdmitted>;
 }
 
-/// The enabled schedule workflows of one application. Binds: `$1` tenant,
-/// `$2` environment, `$3` application.
+/// The enabled schedule workflows of the declared applications. Binds: `$1`
+/// tenant, `$2` environment, `$3` the application names.
 const ENABLED_SCHEDULES_SQL: &str = "\
-SELECT workflow_id, schedule FROM catalog.workflows \
- WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
+SELECT application, workflow_id, schedule FROM catalog.workflows \
+ WHERE tenant_id = $1 AND environment = $2 AND application = ANY($3) \
    AND enabled AND trigger = 'schedule'";
 
-/// The schedule rows of the application a host serves. It reads them on the
-/// task's executor connection and admits through
+/// The schedule rows of the applications a host's environment declares. It
+/// reads them on the task's executor connection and admits through
 /// [`WamnPostgres::admit_schedule_run`].
 pub struct PostgresSchedules {
     client: tokio_postgres::Client,
@@ -52,7 +53,9 @@ pub struct PostgresSchedules {
     project: String,
     tenant: String,
     environment: String,
-    application: String,
+    applications: wamn_catalog::EnvironmentApplications,
+    /// The names of `applications`, as the read binds them.
+    names: Vec<String>,
     /// The release the host serves, as its manifest digest.
     manifest_digest: String,
 }
@@ -63,14 +66,14 @@ impl std::fmt::Debug for PostgresSchedules {
             .field("project", &self.project)
             .field("tenant", &self.tenant)
             .field("environment", &self.environment)
-            .field("application", &self.application)
+            .field("applications", &self.applications)
             .field("manifest_digest", &self.manifest_digest)
             .finish_non_exhaustive()
     }
 }
 
 impl PostgresSchedules {
-    /// Serve the schedules of `application` in `tenant` and `environment`,
+    /// Serve the schedules of `applications` in `tenant` and `environment`,
     /// against the release `manifest_digest`.
     pub fn new(
         client: tokio_postgres::Client,
@@ -78,16 +81,18 @@ impl PostgresSchedules {
         project: impl Into<String>,
         tenant: impl Into<String>,
         environment: impl Into<String>,
-        application: impl Into<String>,
+        applications: wamn_catalog::EnvironmentApplications,
         manifest_digest: impl Into<String>,
     ) -> Self {
+        let names = applications.keys().cloned().collect();
         Self {
+            names,
             client,
             postgres,
             project: project.into(),
             tenant: tenant.into(),
             environment: environment.into(),
-            application: application.into(),
+            applications,
             manifest_digest: manifest_digest.into(),
         }
     }
@@ -100,15 +105,16 @@ impl ScheduleRows for PostgresSchedules {
             .client
             .query(
                 ENABLED_SCHEDULES_SQL,
-                &[&self.tenant, &self.environment, &self.application],
+                &[&self.tenant, &self.environment, &self.names],
             )
             .await
             .context("read the enabled workflow schedules")?;
         rows.iter()
             .map(|row| {
                 Ok(EnabledSchedule {
-                    workflow_id: row.try_get(0)?,
-                    schedule: row.try_get(1)?,
+                    application: row.try_get(0)?,
+                    workflow_id: row.try_get(1)?,
+                    schedule: row.try_get(2)?,
                 })
             })
             .collect::<Result<_, tokio_postgres::Error>>()
@@ -117,17 +123,22 @@ impl ScheduleRows for PostgresSchedules {
 
     async fn admit(
         &self,
-        workflow_id: &str,
+        schedule: &EnabledSchedule,
         due: DateTime<Utc>,
     ) -> anyhow::Result<ScheduleRunAdmitted> {
+        let application = self
+            .applications
+            .get(&schedule.application)
+            .with_context(|| format!("application {:?} is not declared", schedule.application))?;
         self.postgres
             .admit_schedule_run(
                 &self.project,
                 &self.tenant,
                 &ScheduleRunAdmission {
                     environment: &self.environment,
-                    application: &self.application,
-                    workflow_id,
+                    application: &schedule.application,
+                    application_packages: &application.packages,
+                    workflow_id: &schedule.workflow_id,
                     manifest_digest: &self.manifest_digest,
                     due,
                 },
@@ -202,7 +213,7 @@ async fn serve_with_clock(
                     let admitted = tokio::select! {
                         biased;
                         _ = stopping.changed() => return Ok(()),
-                        admitted = rows.admit(&schedule.workflow_id, tick) => admitted,
+                        admitted = rows.admit(&schedule, tick) => admitted,
                     };
                     match admitted {
                         Ok(ScheduleRunAdmitted::Queued { run_id }) => {
@@ -239,6 +250,7 @@ mod tests {
 
     fn row(workflow_id: &str, schedule: &str) -> EnabledSchedule {
         EnabledSchedule {
+            application: "app".into(),
             workflow_id: workflow_id.into(),
             schedule: schedule.into(),
         }
@@ -262,13 +274,13 @@ mod tests {
         }
         async fn admit(
             &self,
-            workflow_id: &str,
+            schedule: &EnabledSchedule,
             due: DateTime<Utc>,
         ) -> anyhow::Result<ScheduleRunAdmitted> {
             self.admitted
                 .lock()
                 .unwrap()
-                .push((workflow_id.to_owned(), due));
+                .push((schedule.workflow_id.clone(), due));
             let slow = self.slow.lock().unwrap().take();
             if let Some(slow) = slow {
                 tokio::time::sleep(slow).await;

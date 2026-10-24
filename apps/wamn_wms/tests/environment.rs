@@ -728,6 +728,12 @@ pub async fn publish(
             route_host: identity().route_host.clone(),
             client_package: None,
             policy: String::new(),
+            applications: BTreeMap::from([(
+                package.package_id().to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: BTreeSet::from([package.package_id().to_owned()]),
+                },
+            )]),
             connections: BTreeMap::new(),
             floors: BTreeMap::new(),
         },

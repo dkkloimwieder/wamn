@@ -2092,6 +2092,7 @@ mod tests {
             manifest_digest: digest.clone(),
             artifact_base: "local/releases".into(),
             route_host: "receiving.localhost".into(),
+            applications: std::collections::BTreeMap::new(),
             roles: vec![release_chart::Role {
                 entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
                 statements: Vec::new(),
@@ -2229,6 +2230,7 @@ mod tests {
             "--release-manifest-digest", // Deployed releases use a registry.
             "--local-application", // Local releases use staged files.
             "--local-application-digest", // Local releases use staged files.
+            "--applications", // Local candidates have no environment document.
             "DOCKER_CONFIG", // Local releases require no registry credentials.
             "WAMN_COMPONENT_ARTIFACT_BASE", // Local components use staged files.
             "WAMN_REGISTRY_TOKEN_METADATA", // Local releases require no registry token.

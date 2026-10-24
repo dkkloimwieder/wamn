@@ -71,7 +71,7 @@ Independent of node pins and of the released-workflow migration. Nothing that re
 
 ### Epic 2 — schedules from rows
 
-Built: the schedule task, schedule rows and their admission are in [workflows](../architecture/execution.md#workflows), and the wamn-dev cutover step is in [queued automation](../operations/queued-automation.md#cutover-the-netsuite-pull). Not built: the NetSuite pull and the rest_connector item run as environment workflows. Their graphs call the consumer command of another package of the release, which the workflow gate refuses, and their releases have several packages and no composed entry, so the host names no application and starts no schedule task.
+Built: the schedule task, schedule rows and their admission, a workflow's call of another package's operation under its role, and the application map that `environment.k` declares (application name to its packages), which the host, the gate, the executor and the queue read, are in [workflows](../architecture/execution.md#workflows). The wamn-dev cutover step is in [queued automation](../operations/queued-automation.md#cutover-the-netsuite-pull). Not built: the cutover itself on wamn-dev, and a kind run of the NetSuite pull and the rest_connector item as schedule rows.
 
 ### Epic 3 — events from rows and the released-workflow retirement
 

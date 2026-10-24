@@ -649,7 +649,7 @@ mod tests {
 
     /// `workflow.start` names no user, role or release: the caller is the
     /// authenticated one and the release is the served one
-    /// (docs/plan/workflows.md R3).
+    /// (docs/plan/workflows.md R3). It names the declared application.
     #[test]
     fn workflow_start_input_names_no_user() {
         let input: Value = serde_json::from_str(include_str!(
@@ -666,6 +666,7 @@ mod tests {
             paths,
             [
                 "request_id",
+                "value.application",
                 "value.workflow_id",
                 "value.input_json",
                 "value.idempotency_key"

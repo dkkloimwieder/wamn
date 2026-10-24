@@ -22,6 +22,16 @@
       "text": "This workflow runs as its caller, and the caller must hold exactly one role."
     },
     {
+      "literal": "application_not_declared",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The environment declares no application of this name."
+    },
+    {
       "literal": "workflow_not_enabled",
       "from": "transaction_invariant",
       "detail": {

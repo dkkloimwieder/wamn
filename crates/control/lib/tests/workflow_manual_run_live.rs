@@ -66,6 +66,9 @@ const TENANT: &str = "manual-live";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
+/// The application the environment declares, with the package `orders`. Its
+/// name is no package (docs/plan/platform-config.md).
+const APP: &str = "erp";
 const WORKFLOW: &str = "orders_report";
 const PASSWORD: &str = "manual-live-test-only";
 /// The read operation of the application, and the stable reference a role
@@ -238,12 +241,24 @@ fn manifest(
     .expect("the fixture release is valid")
 }
 
+/// The applications the fixture environment declares: the one package of
+/// its release.
+fn declared() -> wamn_catalog::EnvironmentApplications {
+    [(
+        APP.to_owned(),
+        wamn_catalog::ApplicationDefinition {
+            packages: [APPLICATION.to_owned()].into(),
+        },
+    )]
+    .into()
+}
+
 fn load(manifest: &ServingManifest) -> Arc<LoadedRelease> {
     Arc::new(
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "manual-live",
-            ReleaseScope::new(TENANT, ENVIRONMENT),
+            ReleaseScope::new(TENANT, ENVIRONMENT).with_applications(declared()),
         )
         .expect("the fixture release loads"),
     )
@@ -538,7 +553,8 @@ impl Fixture {
             &AuthorWorkflowRequest {
                 tenant_id: TENANT,
                 environment: ENVIRONMENT,
-                application: APPLICATION,
+                application: APP,
+                declared: &declared(),
                 document,
                 trigger: WorkflowTrigger::Manual,
                 execution: WorkflowExecution::Invoker,
@@ -558,12 +574,13 @@ impl Fixture {
             &WorkflowVersion {
                 tenant_id: TENANT,
                 environment: ENVIRONMENT,
-                application: APPLICATION,
+                application: APP,
                 workflow_id: WORKFLOW,
                 version,
             },
             enabler,
             &self.digest,
+            &declared(),
         )
         .await
         .expect("enable the workflow version");
@@ -612,6 +629,17 @@ impl Fixture {
     /// Start the workflow through `delivery` as a session of `user`: the one
     /// outcome item of the route, its `value` or its `error`.
     async fn start_on(&self, delivery: &HostRouteDelivery, user: &str, key: &str) -> Value {
+        self.start_in(delivery, APP, user, key).await
+    }
+
+    /// [`Self::start_on`] naming the application `application`.
+    async fn start_in(
+        &self,
+        delivery: &HostRouteDelivery,
+        application: &str,
+        user: &str,
+        key: &str,
+    ) -> Value {
         let caller = self.session(user).await;
         let report = delivery
             .deliver(
@@ -619,7 +647,7 @@ impl Fixture {
                     source: Source::Attachment(start_attachment()),
                     delivery_id: format!("manual-live-{key}"),
                     payload: json!([{"request_id": key, "value": {
-                        "workflow_id": WORKFLOW, "input_json": {"day": 1}, "idempotency_key": key,
+                        "application": application, "workflow_id": WORKFLOW, "input_json": {"day": 1}, "idempotency_key": key,
                     }}])
                     .to_string(),
                     caller: None,
@@ -804,18 +832,25 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role() {
             row.get::<_, String>(9),
             row.get::<_, i32>(10)
         ),
-        (APPLICATION.to_owned(), WORKFLOW.to_owned(), 1)
+        (APP.to_owned(), WORKFLOW.to_owned(), 1)
     );
 }
 
-/// Check 2: a stored row whose hash is not its graph's refuses at
-/// `workflow.start`, and a run whose hash is not the stored row's refuses at
+/// Check 2: an application the environment does not declare and a stored row
+/// whose hash is not its graph's refuse at `workflow.start`, and a run whose hash is not the stored row's refuses at
 /// `resolve_workflow`: the queue fails it.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
 async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
+
+    // An application the environment does not declare refuses before any
+    // row is read.
+    let item = fixture
+        .start_in(&fixture.delivery, "billing", READER, "undeclared")
+        .await;
+    assert_eq!(item["error"]["code"], "application_not_declared", "{item}");
 
     // A row written past authorship, enabled, under another graph's hash.
     let graph = serde_json::to_string(&workflow(1, READ)).unwrap();
@@ -830,7 +865,7 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
             &[
                 &TENANT,
                 &ENVIRONMENT,
-                &APPLICATION,
+                &APP,
                 &WORKFLOW,
                 &graph,
                 &wrong,
@@ -860,7 +895,7 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
             PROJECT,
             TENANT,
             &ManualRunAdmission {
-                package_id: APPLICATION,
+                package_id: APP,
                 manifest_digest: &fixture.digest,
                 environment: ENVIRONMENT,
                 workflow_id: WORKFLOW,

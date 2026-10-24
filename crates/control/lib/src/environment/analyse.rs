@@ -882,6 +882,54 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 ));
             }
         }
+        refusals.extend(application_refusals(
+            &document.applications,
+            release
+                .manifest
+                .release
+                .packages
+                .iter()
+                .map(wamn_catalog::PackageCoordinate::package_id),
+        ));
+    }
+    refusals
+}
+
+/// The refusals of the declared applications against the packages of the
+/// release (docs/plan/platform-config.md): each package of the release
+/// belongs to exactly one application, and each assigned package is in the
+/// release.
+fn application_refusals<'a>(
+    applications: &wamn_catalog::EnvironmentApplications,
+    release_packages: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let release_packages: BTreeSet<&str> = release_packages.into_iter().collect();
+    let mut refusals = Vec::new();
+    for package in &release_packages {
+        let owners: Vec<&str> = applications
+            .iter()
+            .filter(|(_, application)| application.packages.contains(*package))
+            .map(|(name, _)| name.as_str())
+            .collect();
+        match owners.as_slice() {
+            [] => refusals.push(format!(
+                "package {package} of the release is assigned to no application"
+            )),
+            [_] => {}
+            _ => refusals.push(format!(
+                "package {package} is assigned to the applications {}",
+                owners.join(", ")
+            )),
+        }
+    }
+    for (name, application) in applications {
+        for package in &application.packages {
+            if !release_packages.contains(package.as_str()) {
+                refusals.push(format!(
+                    "application {name} names package {package}, which the release does not carry"
+                ));
+            }
+        }
     }
     refusals
 }
@@ -1129,6 +1177,7 @@ mod tests {
             route_host: "wms.acme.example".to_owned(),
             client_package: None,
             policy: "prod".to_owned(),
+            applications: BTreeMap::new(),
             connections: BTreeMap::new(),
             floors: floors
                 .iter()
@@ -1268,6 +1317,58 @@ mod tests {
         assert!(
             none_first[0].contains("no floor advances"),
             "{none_first:?}"
+        );
+    }
+
+    fn applications(entries: &[(&str, &[&str])]) -> wamn_catalog::EnvironmentApplications {
+        entries
+            .iter()
+            .map(|(name, packages)| {
+                (
+                    (*name).to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        packages: packages.iter().map(|id| (*id).to_owned()).collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_release_package_belongs_to_one_application() {
+        let declared = applications(&[("netsuite", &["netsuite", "wamn_integration"])]);
+        assert!(application_refusals(&declared, ["netsuite", "wamn_integration"]).is_empty());
+    }
+
+    #[test]
+    fn a_release_package_assigned_to_no_application_is_refused() {
+        let declared = applications(&[("netsuite", &["netsuite"])]);
+        assert_eq!(
+            application_refusals(&declared, ["netsuite", "wamn_integration"]),
+            ["package wamn_integration of the release is assigned to no application"]
+        );
+    }
+
+    #[test]
+    fn a_package_assigned_to_two_applications_is_refused() {
+        let declared = applications(&[
+            ("netsuite", &["netsuite", "wamn_integration"]),
+            ("rest", &["wamn_integration"]),
+        ]);
+        assert_eq!(
+            application_refusals(&declared, ["netsuite", "wamn_integration"]),
+            ["package wamn_integration is assigned to the applications netsuite, rest"]
+        );
+    }
+
+    #[test]
+    fn an_assigned_package_missing_from_the_release_is_refused() {
+        let declared = applications(&[("netsuite", &["netsuite", "rest_consumer_fixture"])]);
+        assert_eq!(
+            application_refusals(&declared, ["netsuite"]),
+            [
+                "application netsuite names package rest_consumer_fixture, which the release does not carry"
+            ]
         );
     }
 

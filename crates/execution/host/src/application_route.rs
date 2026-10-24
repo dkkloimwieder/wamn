@@ -13,7 +13,8 @@
 //!
 //! `workflow.start` is the one granted route here (docs/plan/workflows.md R3,
 //! epic 1): it admits a run of the enabled version of an environment workflow
-//! against the release the host serves, as the identity the workflow names.
+//! of an application the environment declares, against the release the host
+//! serves, as the identity the workflow names.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,7 +22,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{
-    HostAttachment, HostHandler, HostRouteAuthority, ServingManifest, gate_workflow_document,
+    HostAttachment, HostHandler, HostRouteAuthority, gate_workflow_document,
     is_granted_host_route_operation, is_host_route_operation, resolve_workflow_components,
     sealed_operation_reference,
 };
@@ -75,10 +76,12 @@ struct PermissionRequest {
 
 /// The input of `workflow.start`. It names no user, role or release: the
 /// caller is the authenticated one, and the release is the one the host
-/// serves (docs/plan/workflows.md R3).
+/// serves (docs/plan/workflows.md R3). It names the application by the name
+/// the environment declares.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkflowStartRequest {
+    application: String,
     workflow_id: String,
     input_json: Value,
     idempotency_key: String,
@@ -154,22 +157,9 @@ fn start_refusal(code: &'static str, field: &str) -> Refusal {
     }
 }
 
-/// The application package of a release: the member that composes its
-/// entry, or its one package when it has no composed entry.
-pub fn release_application(manifest: &ServingManifest) -> Option<&str> {
-    if let Some(composing) = manifest.composing_member() {
-        return Some(&composing.package_id);
-    }
-    let mut packages = manifest.release.packages.iter();
-    match (packages.next(), packages.next()) {
-        (Some(package), None) => Some(package.package_id()),
-        _ => None,
-    }
-}
-
 impl ApplicationRoutes<'_> {
-    /// Admit one run of the enabled version of a workflow of the release's
-    /// application (docs/plan/workflows.md R3, R8). The stored graph is gated
+    /// Admit one run of the enabled version of a workflow of an application
+    /// the environment declares (docs/plan/workflows.md R3, R8). The stored graph is gated
     /// against the release the host serves, and the run freezes the
     /// component digest of every node. A `role` workflow executes as the
     /// `workflow` user with its role, an `invoker` workflow as the caller
@@ -180,6 +170,9 @@ impl ApplicationRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let request: WorkflowStartRequest = parse(payload)?;
+        if request.application.is_empty() {
+            return Err(start_refusal("invalid_input", "application"));
+        }
         if request.workflow_id.is_empty() {
             return Err(start_refusal("invalid_input", "workflow_id"));
         }
@@ -189,11 +182,11 @@ impl ApplicationRoutes<'_> {
         let manifest = self.release.manifest();
         let scope = self.release.scope();
         let tenant = scope.tenant_id.as_str();
-        let application = release_application(manifest).ok_or_else(|| {
-            Refusal::Failed(anyhow::anyhow!(
-                "the serving release names no application package"
-            ))
-        })?;
+        let Some(declared) = scope.applications.get(&request.application) else {
+            return Err(start_refusal("application_not_declared", "application"));
+        };
+        let application = request.application.as_str();
+        let packages = &declared.packages;
         let workflow = self
             .postgres
             .enabled_workflow(
@@ -206,13 +199,13 @@ impl ApplicationRoutes<'_> {
             .await?
             .ok_or_else(|| start_refusal("workflow_not_enabled", "workflow_id"))?;
         let not_served = |_| start_refusal("workflow_not_served", "workflow_id");
-        let hash = gate_workflow_document(tenant, application, manifest, &workflow.graph)
+        let hash = gate_workflow_document(tenant, packages, manifest, &workflow.graph)
             .map_err(not_served)?;
         if hash.as_str() != workflow.wiring_hash {
             return Err(start_refusal("workflow_not_served", "workflow_id"));
         }
         let node_digests: serde_json::Map<String, Value> =
-            resolve_workflow_components(tenant, application, manifest, &workflow.graph)
+            resolve_workflow_components(tenant, packages, manifest, &workflow.graph)
                 .map_err(not_served)?
                 .into_iter()
                 .map(|(node, component)| (node, Value::String(component.component_digest)))
@@ -576,12 +569,14 @@ mod tests {
     #[test]
     fn a_start_refuses_a_user_id() {
         let start = json!({
+            "application": "orders",
             "workflow_id": "nightly",
             "input_json": {"day": 1},
             "idempotency_key": "first",
         });
         let parsed: WorkflowStartRequest =
             parse(&start.to_string()).unwrap_or_else(|_| panic!("the contract input parses"));
+        assert_eq!(parsed.application, "orders");
         assert_eq!(parsed.workflow_id, "nightly");
         for (member, value) in [
             ("user_id", json!("11111111-1111-4111-8111-111111111111")),

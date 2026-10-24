@@ -314,7 +314,7 @@ mod tests {
         let document = EnvironmentDocument::from_json(
             br#"{
             "org":"test","project":"one","env":"dev","release":"none",
-            "route_host":"one.example.com","policy":"dev"
+            "route_host":"one.example.com","policy":"dev","applications":{}
         }"#,
         )
         .unwrap();

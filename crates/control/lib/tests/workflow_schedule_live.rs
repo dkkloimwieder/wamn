@@ -3,7 +3,7 @@
 //! of a schedule, the host-owned admission of a due moment, and the host's
 //! schedule task, which reads the enabled rows at each tick.
 //!
-//! The fixture release carries one application, `orders`, with one read
+//! The fixture release carries one package, `orders`, with one read
 //! operation (a WAT component that answers fixed rows and writes nothing). A
 //! one-node workflow over the read is authored through the code path of
 //! `wamn-ctl workflow author --schedule`, enabled, and admitted with
@@ -57,6 +57,9 @@ const TENANT: &str = "schedule-live";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
+/// The application the environment declares, with the package `orders`. Its
+/// name is no package (docs/plan/platform-config.md).
+const APP: &str = "erp";
 const PASSWORD: &str = "schedule-live-test-only";
 const READ: &str = "orders:order/read@1.0.0";
 const READ_REFERENCE: &str = "orders:order/read";
@@ -275,7 +278,7 @@ async fn fixture() -> Fixture {
         LoadedRelease::load_canonical_bytes(
             &served.canonical_bytes(),
             "schedule-live",
-            ReleaseScope::new(TENANT, ENVIRONMENT),
+            ReleaseScope::new(TENANT, ENVIRONMENT).with_applications(declared()),
         )
         .expect("the fixture release loads"),
     );
@@ -388,6 +391,18 @@ async fn scoped_postgres(admin: &Client, url: &str) -> (Arc<WamnPostgres>, Strin
     (postgres, executor_url)
 }
 
+/// The applications the fixture environment declares: `erp`, with the one
+/// package of its release.
+fn declared() -> wamn_catalog::EnvironmentApplications {
+    [(
+        APP.to_owned(),
+        wamn_catalog::ApplicationDefinition {
+            packages: [APPLICATION.to_owned()].into(),
+        },
+    )]
+    .into()
+}
+
 impl Fixture {
     /// Author version 1 of `id` as `wamn-ctl workflow author` does, with a
     /// green gate report under its hash.
@@ -396,6 +411,17 @@ impl Fixture {
         id: &str,
         trigger: WorkflowTrigger<'_>,
         execution: WorkflowExecution<'_>,
+    ) -> anyhow::Result<()> {
+        self.author_in(id, trigger, execution, &declared()).await
+    }
+
+    /// [`Self::author`] in an environment that declares `declared`.
+    async fn author_in(
+        &self,
+        id: &str,
+        trigger: WorkflowTrigger<'_>,
+        execution: WorkflowExecution<'_>,
+        declared: &wamn_catalog::EnvironmentApplications,
     ) -> anyhow::Result<()> {
         let document = workflow(id);
         self.control
@@ -412,7 +438,8 @@ impl Fixture {
             &AuthorWorkflowRequest {
                 tenant_id: TENANT,
                 environment: ENVIRONMENT,
-                application: APPLICATION,
+                application: APP,
+                declared,
                 document: &document,
                 trigger,
                 execution,
@@ -432,12 +459,13 @@ impl Fixture {
             &WorkflowVersion {
                 tenant_id: TENANT,
                 environment: ENVIRONMENT,
-                application: APPLICATION,
+                application: APP,
                 workflow_id: id,
                 version: 1,
             },
             enabler,
             &self.digest,
+            &declared(),
         )
         .await
     }
@@ -450,7 +478,7 @@ impl Fixture {
             &WorkflowVersion {
                 tenant_id: TENANT,
                 environment: ENVIRONMENT,
-                application: APPLICATION,
+                application: APP,
                 workflow_id: id,
                 version: 1,
             },
@@ -491,7 +519,8 @@ impl Fixture {
                 TENANT,
                 &ScheduleRunAdmission {
                     environment: ENVIRONMENT,
-                    application: APPLICATION,
+                    application: APP,
+                    application_packages: &declared()[APP].packages,
                     workflow_id: id,
                     manifest_digest: &self.digest,
                     due: due(at),
@@ -652,6 +681,46 @@ async fn an_invalid_cron_refuses_at_author() {
     }
 }
 
+/// An application the environment does not declare refuses at author with
+/// the stable application refusal, and no row is written.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_undeclared_application_refuses_at_author() {
+    let _lock = wamn_test_postgres::lock();
+    let fixture = fixture().await;
+    let other: wamn_catalog::EnvironmentApplications = [(
+        "billing".to_owned(),
+        wamn_catalog::ApplicationDefinition {
+            packages: [APPLICATION.to_owned()].into(),
+        },
+    )]
+    .into();
+    for declared in [wamn_catalog::EnvironmentApplications::new(), other] {
+        let refusal = fixture
+            .author_in(
+                "nightly",
+                WorkflowTrigger::Manual,
+                WorkflowExecution::Role("reader"),
+                &declared,
+            )
+            .await
+            .expect_err("an undeclared application refuses");
+        assert_eq!(
+            refusal
+                .downcast_ref::<AuthorWorkflowError>()
+                .expect("an authorship refusal")
+                .error_type(),
+            AuthorWorkflowErrorType::Application,
+        );
+    }
+    let rows: i64 = fixture
+        .admin
+        .query_one("SELECT count(*) FROM catalog.workflows", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(rows, 0);
+}
+
 /// A `role` schedule workflow: two admissions of one due moment answer one
 /// run of the schedule workflow grain, and the queue executes it as the
 /// `workflow` user with the one role. A workflow whose role lacks the read
@@ -725,13 +794,13 @@ async fn a_role_schedule_run_is_admitted_once_per_due_and_runs_as_the_workflow_u
     assert!(row.get::<_, bool>(11), "no invoking user");
     assert_eq!(
         row.get::<_, String>(12),
-        "schedule:orders/nightly:2026-10-20T10:15:00Z"
+        "schedule:erp/nightly:2026-10-20T10:15:00Z"
     );
     assert_eq!(
         serde_json::from_str::<Value>(&row.get::<_, String>(13)).unwrap(),
         json!({"due": "2026-10-20T10:15:00Z"})
     );
-    assert_eq!(row.get::<_, String>(14), APPLICATION);
+    assert_eq!(row.get::<_, String>(14), APP);
 
     fixture.drain().await;
     let (status, result) = fixture.outcome(&run).await;
@@ -862,7 +931,7 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
         &WorkflowVersion {
             tenant_id: TENANT,
             environment: ENVIRONMENT,
-            application: APPLICATION,
+            application: APP,
             workflow_id: "nightly",
             version: 1,
         },
@@ -905,7 +974,7 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         PROJECT,
         TENANT,
         ENVIRONMENT,
-        APPLICATION,
+        declared(),
         &fixture.digest,
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
@@ -1023,7 +1092,7 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
         PROJECT,
         TENANT,
         ENVIRONMENT,
-        APPLICATION,
+        declared(),
         &fixture.digest,
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);

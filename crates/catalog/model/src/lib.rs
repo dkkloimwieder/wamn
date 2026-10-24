@@ -14,6 +14,7 @@ mod component_artifact_reference;
 mod component_facts;
 mod connection;
 pub mod edge_bundle;
+mod environment_application;
 mod host_route;
 mod package;
 mod route_identity;
@@ -47,6 +48,7 @@ pub use connection::{
     ConnectionField, ConnectionFieldOwner, ConnectionFieldOwnership, ConnectionTypeDescriptor,
     CredentialInjection, RequirementType, org_credential_handle, parse_org_credential_handle,
 };
+pub use environment_application::{ApplicationDefinition, EnvironmentApplications};
 pub use host_route::{
     HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteSet, host_route_package,
     host_route_path_prefix, host_route_version, is_granted_host_route_operation,

@@ -42,11 +42,13 @@ Then submit an input file:
 
 ```bash
 wamn-ctl workflow start \
-  --host-url "https://$APPLICATION_HOST" --workflow-id nightly \
+  --host-url "https://$APPLICATION_HOST" --application orders --workflow-id nightly \
   --idempotency-key batch-42 --input /tmp/orders-input.json
 ```
 
 The command prints the stored run id.
+`--application` names an application that the environment document declares under `applications`.
+The host refuses another name with `application_not_declared`.
 The host admits the enabled version against the release it serves.
 It gates the graph against that release and refuses `workflow_not_served` when the graph does not gate or its hash differs from the stored hash.
 A workflow with no enabled version refuses `workflow_not_enabled`.
@@ -93,7 +95,8 @@ A package declares no schedule.
 Author a schedule workflow in the environment with `wamn-ctl workflow author --schedule '<cron>'`, then enable it.
 
 Every application host runs one schedule task.
-At each minute it reads the enabled schedule workflows of its application and admits a run for each one whose cron names that minute.
+At each minute it reads, in one query, the enabled schedule workflows of the applications its environment declares, and admits a run for each one whose cron names that minute.
+`wamn-ctl workflow author` refuses an application that the environment does not declare.
 The task uses `WAMN_EXECUTOR_PLATFORM_PG_URL`.
 An enable or a disable takes effect at the next minute.
 See [workflows](../architecture/execution.md#workflows) for timing and retry behavior.
@@ -102,6 +105,16 @@ See [workflows](../architecture/execution.md#workflows) for timing and retry beh
 
 A release no longer carries the NetSuite pull's minute schedule.
 An environment that ran the pull from its release, such as wamn-dev, stops pulling when it applies such a release.
+That apply also declares the environment's applications, which `env apply` now requires.
+Add one application `netsuite` to the environment document of the wamn-dev NetSuite environment, and list every package of its release in it:
+
+```python
+    applications = {
+        netsuite = {packages = ["netsuite", "wamn_integration", "<consumer package>"]}
+    }
+```
+
+`env apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
 Do these steps once, after that apply, as an environment admin.
 Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project>/<env>`, its tenant, and your `platform."user"` id as `$ADMIN_ID`.
 

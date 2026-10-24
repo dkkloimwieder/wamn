@@ -96,6 +96,7 @@ pub async fn write(
         manifest_digest: release.digest.clone(),
         artifact_base: platform.release_artifact_base.clone(),
         route_host: document.route_host.clone(),
+        applications: document.applications.clone(),
         roles,
         drain_bound_seconds: u32::try_from(policy.drain_bound_seconds)?,
         actor: analysis.actor.clone(),

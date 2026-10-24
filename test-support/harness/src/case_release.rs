@@ -681,6 +681,8 @@ pub async fn install_candidate(
         route_host: String::new(),
         client_package: None,
         policy: String::new(),
+        // The package stage reads no application.
+        applications: std::collections::BTreeMap::new(),
         connections: std::collections::BTreeMap::new(),
         floors: std::collections::BTreeMap::new(),
     };
@@ -957,6 +959,7 @@ mod tests {
             manifest_digest: format!("sha256:{}", "e".repeat(64)),
             artifact_base: "172.18.0.5:5000/wamn/releases".to_owned(),
             route_host: "wms.example".to_owned(),
+            applications: std::collections::BTreeMap::new(),
             roles: Vec::new(),
             drain_bound_seconds: 70,
             actor: "case".to_owned(),
@@ -970,6 +973,6 @@ mod tests {
             arguments.last().and_then(Value::as_str),
             Some("--allow-insecure-registries")
         );
-        assert_eq!(arguments.len(), 4);
+        assert_eq!(arguments.len(), 5);
     }
 }

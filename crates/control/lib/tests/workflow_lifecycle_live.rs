@@ -31,6 +31,17 @@ use wamn_control_registry::Triple;
 const TENANT: &str = "workflow-tenant";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
+
+/// The applications the fixture environment declares.
+fn declared() -> wamn_catalog::EnvironmentApplications {
+    [(
+        APPLICATION.to_owned(),
+        wamn_catalog::ApplicationDefinition {
+            packages: [APPLICATION.to_owned()].into(),
+        },
+    )]
+    .into()
+}
 const OPERATION: &str = "orders:order/get@1.0.0";
 const DOMAIN: &str = "example.invalid";
 const ALICE: &str = "11111111-1111-1111-1111-111111111111";
@@ -196,6 +207,7 @@ impl Fixture {
                 tenant_id: TENANT,
                 environment: ENVIRONMENT,
                 application: APPLICATION,
+                declared: &declared(),
                 document,
                 trigger: WorkflowTrigger::Manual,
                 execution,
@@ -234,6 +246,7 @@ impl Fixture {
             &key(id, version),
             enabler,
             &digest,
+            &declared(),
         )
         .await
     }

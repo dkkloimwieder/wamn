@@ -2,8 +2,9 @@
 //! §10.1, R21).
 //!
 //! The document names the coordinate, the release digest or `none`, the route
-//! host, the policy by name, the connection definitions and the floors, and
-//! nothing else. It compiles with the `environment` KCL schema module to JSON,
+//! host, the policy by name, the applications and their packages
+//! (docs/plan/platform-config.md), the connection definitions and the floors,
+//! and nothing else. It compiles with the `environment` KCL schema module to JSON,
 //! which this module reads into [`EnvironmentDocument`]. Its canonical form is
 //! RFC 8785 JSON, as `wamn.json` is.
 
@@ -14,7 +15,7 @@ use std::path::Path;
 use anyhow::{Context as _, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wamn_catalog::RequirementType;
+use wamn_catalog::{EnvironmentApplications, RequirementType};
 use wamn_control_registry::Triple;
 
 /// One environment document.
@@ -32,6 +33,8 @@ pub struct EnvironmentDocument {
     pub client_package: Option<String>,
     /// A policy of `registry.env_policies`, by name.
     pub policy: String,
+    /// Application name to the packages of the release that belong to it.
+    pub applications: EnvironmentApplications,
     /// Connection definitions by instance id.
     #[serde(default)]
     pub connections: BTreeMap<String, ConnectionDefinition>,
@@ -146,6 +149,17 @@ impl EnvironmentDocument {
             self.route_host
         );
         ensure!(!self.policy.is_empty(), "policy is empty");
+        for (name, application) in &self.applications {
+            ensure!(!name.is_empty(), "an application has an empty name");
+            ensure!(
+                !application.packages.is_empty(),
+                "application {name} has no packages"
+            );
+            ensure!(
+                !application.packages.contains(""),
+                "application {name} has an empty package id"
+            );
+        }
         let mut org_names = BTreeSet::new();
         for (instance, connection) in &self.connections {
             ensure!(
@@ -214,6 +228,16 @@ impl EnvironmentDocument {
         if let Some(package) = &self.client_package {
             lines.push(format!("    client_package = {}", quote(package)));
         }
+        lines.push("    applications = {".to_owned());
+        for (name, application) in &self.applications {
+            let packages: Vec<String> = application.packages.iter().map(|id| quote(id)).collect();
+            lines.push(format!(
+                "        {} = {{packages = [{}]}}",
+                quote(name),
+                packages.join(", ")
+            ));
+        }
+        lines.push("    }".to_owned());
         lines.push("    connections = {".to_owned());
         for (instance, connection) in &self.connections {
             match connection {
@@ -265,6 +289,7 @@ mod tests {
             "release": format!("sha256:{}", "a".repeat(64)),
             "route_host": "wms.acme.example",
             "policy": "prod",
+            "applications": {"wms": {"packages": ["wamn_wms"]}},
             "connections": {
                 "files": {"type": "blobstore", "definition": {"endpoint": "https://s3.example", "container": "files", "prefix": "wms/"}}
             },
@@ -453,6 +478,52 @@ mod tests {
     }
 
     #[test]
+    fn applications_are_required_named_and_hold_packages() {
+        let mut missing = document();
+        missing.as_object_mut().unwrap().remove("applications");
+        let error = EnvironmentDocument::from_json(missing.to_string().as_bytes()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("missing field `applications`"),
+            "{error:#}"
+        );
+        for (applications, reason) in [
+            (
+                json!({"": {"packages": ["wamn_wms"]}}),
+                "an application has an empty name",
+            ),
+            (
+                json!({"wms": {"packages": []}}),
+                "application wms has no packages",
+            ),
+            (
+                json!({"wms": {"packages": [""]}}),
+                "application wms has an empty package id",
+            ),
+        ] {
+            let mut value = document();
+            value["applications"] = applications;
+            let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
+            assert_eq!(error.to_string(), reason);
+        }
+        let directory =
+            std::env::temp_dir().join(format!("wamn-environment-apps-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create the directory");
+        let file = directory.join("environment.k");
+        let kcl = EnvironmentDocument::from_json(document().to_string().as_bytes())
+            .unwrap()
+            .to_kcl();
+        let start = kcl.find("    applications = {").unwrap();
+        let end = start + kcl[start..].find("\n    }\n").unwrap() + "\n    }\n".len();
+        std::fs::write(&file, format!("{}{}", &kcl[..start], &kcl[end..])).unwrap();
+        let refused = EnvironmentDocument::compile(&file);
+        std::fs::remove_dir_all(&directory).expect("remove the directory");
+        assert!(
+            refused.is_err(),
+            "KCL refuses a document without applications"
+        );
+    }
+
+    #[test]
     fn reads_none_and_a_full_digest_and_refuses_another_value() {
         assert_eq!(
             DeclaredRelease::parse("none").unwrap(),
@@ -519,7 +590,7 @@ mod tests {
         let file = directory.join("bad.k");
         std::fs::write(
             &file,
-            "import environment\n\nenvironment.Environment {\n    org = \"acme\"\n    project = \"wms\"\n    env = \"prod\"\n    release = \"none\"\n    route_host = \"wms.acme.example\"\n    policy = \"prod\"\n    image = \"host\"\n}\n",
+            "import environment\n\nenvironment.Environment {\n    org = \"acme\"\n    project = \"wms\"\n    env = \"prod\"\n    release = \"none\"\n    route_host = \"wms.acme.example\"\n    policy = \"prod\"\n    applications = {}\n    image = \"host\"\n}\n",
         )
         .expect("write the document");
         let refused = EnvironmentDocument::compile(&file);

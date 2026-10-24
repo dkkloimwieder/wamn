@@ -31,7 +31,7 @@ fn document(project: &str) -> EnvironmentDocument {
     EnvironmentDocument::from_json(
         json!({
             "org": "acme", "project": project, "env": "dev", "release": "none",
-            "route_host": "app.acme.example", "policy": "dev",
+            "route_host": "app.acme.example", "policy": "dev", "applications": {},
             "connections": {"erp": {"org": "shared_erp"}}
         })
         .to_string()

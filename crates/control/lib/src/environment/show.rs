@@ -2,7 +2,7 @@
 //! (docs/plan/platform-deploy.md §10.1, R21 (3)).
 //!
 //! The release is the digest of the newest successful Helm revision, or
-//! `none`. The route host and the policy name come from the environment row.
+//! `none`, and the applications are the ones that revision keeps. The route host and the policy name come from the environment row.
 //! The connections are the enabled instances of the project database, and the
 //! floors are the recorded floors. `show` takes no lock.
 
@@ -31,6 +31,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         route_host: String::new(),
         client_package: None,
         policy: String::new(),
+        applications: BTreeMap::new(),
         connections: BTreeMap::new(),
         floors: BTreeMap::new(),
     };
@@ -52,6 +53,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         document.client_package = revision.values["webClients"][&document.route_host]
             .as_str()
             .map(str::to_owned);
+        document.applications = revision_applications(&revision.values)?;
     }
     if let Some(project) = read_project(platform, &document, &row).await? {
         for (instance, existing) in project.instances {
@@ -79,6 +81,35 @@ pub async fn serving_release(platform: &Platform, triple: &Triple) -> anyhow::Re
         .await?
         .and_then(|revision| revision.manifest_digest().map(str::to_owned))
         .with_context(|| format!("environment {triple} serves no release"))
+}
+
+/// The applications an environment serves, as [`show`] derives them: the
+/// ones the newest successful Helm revision keeps.
+///
+/// # Errors
+///
+/// When Helm cannot be read, or the environment serves no release.
+pub async fn serving_applications(
+    platform: &Platform,
+    triple: &Triple,
+) -> anyhow::Result<wamn_catalog::EnvironmentApplications> {
+    let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
+    let revision = read_revision(platform, &name)
+        .await?
+        .with_context(|| format!("environment {triple} serves no release"))?;
+    revision_applications(&revision.values)
+}
+
+/// The applications one revision's values keep. A revision written before
+/// the values carried them keeps none.
+fn revision_applications(
+    values: &serde_json::Value,
+) -> anyhow::Result<wamn_catalog::EnvironmentApplications> {
+    match values.get("applications") {
+        None | Some(serde_json::Value::Null) => Ok(BTreeMap::new()),
+        Some(applications) => serde_json::from_value(applications.clone())
+            .context("read the applications of the Helm revision"),
+    }
 }
 
 /// Reconstruct the source form used by show and rollback.

@@ -52,6 +52,9 @@ pub struct WorkflowEnvironment<'a> {
     pub tenant: &'a str,
     /// The release the environment serves.
     pub digest: &'a str,
+    /// The applications the environment declares, as the serving Helm
+    /// revision keeps them.
+    pub applications: &'a wamn_catalog::EnvironmentApplications,
 }
 
 impl WorkflowEnvironment<'_> {
@@ -171,6 +174,7 @@ pub async fn enable_schedule(
             tenant_id: tenant,
             environment: &environment.scope.env,
             application,
+            declared: environment.applications,
             document,
             trigger: WorkflowTrigger::Schedule("* * * * *"),
             execution: WorkflowExecution::Role(role),
@@ -186,6 +190,7 @@ pub async fn enable_schedule(
         &environment.version(application, &document.wiring_id),
         ENABLER,
         environment.digest,
+        environment.applications,
     )
     .await?;
     project_task.abort();
@@ -268,6 +273,16 @@ pub async fn exercise(
         route_host: "integration.orders.example".into(),
         client_package: None,
         policy: POLICY.into(),
+        // The connector's application holds the three packages of its
+        // release (docs/plan/platform-config.md).
+        applications: BTreeMap::from([(
+            connector.to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: [connector, "wamn_integration", CONSUMER]
+                    .map(str::to_owned)
+                    .into(),
+            },
+        )]),
         connections: BTreeMap::new(),
         floors: BTreeMap::new(),
     };
@@ -419,6 +434,7 @@ pub async fn exercise(
         scope: &scope,
         tenant: &tenant,
         digest: &digest,
+        applications: &environment::show::serving_applications(&platform, &scope).await?,
     };
     let pull = manifest
         .workflow

@@ -2275,7 +2275,8 @@ mod tests {
         assert_eq!(published.manifest.components.len(), 2);
         let document = crate::environment::document::EnvironmentDocument::from_json(
             serde_json::json!({"org":"acme", "project":"erp", "env":"dev", "release":published.digest.as_str(),
-                "route_host":"erp.acme.example", "policy":"dev"}).to_string().as_bytes()
+                "route_host":"erp.acme.example", "policy":"dev",
+                "applications": {"erp": {"packages": ["consumer", "integration"]}}}).to_string().as_bytes()
         ).unwrap();
         let authorities = Authorities {
             release_name: "acme--erp--dev".to_owned(),

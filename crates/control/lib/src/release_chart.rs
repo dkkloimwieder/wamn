@@ -329,6 +329,10 @@ pub struct ValuesInput {
     pub manifest_digest: String,
     pub artifact_base: String,
     pub route_host: String,
+    /// The applications the environment declares. The host takes them in
+    /// `--applications` beside `--environment`, and the values keep them for
+    /// `env show`.
+    pub applications: wamn_catalog::EnvironmentApplications,
     pub roles: Vec<Role>,
     /// The drain bound of the environment policy, rendered as the host pods'
     /// `terminationGracePeriodSeconds` and as the host's
@@ -346,6 +350,16 @@ pub struct ValuesInput {
 /// enforce. The owner ruling of 2026-10-21 (wamn-upgrade-2.11) keeps count
 /// unless the host group body names a mode.
 pub const SOCKET_EGRESS: &str = "count";
+
+/// The canonical JSON of the declared applications, as `--applications`
+/// carries it.
+fn applications_argument(
+    applications: &wamn_catalog::EnvironmentApplications,
+) -> anyhow::Result<String> {
+    let value = serde_json::to_value(applications).context("encode the applications")?;
+    String::from_utf8(wamn_execution_contract::canonical_json_bytes(&value))
+        .context("the canonical applications are UTF-8")
+}
 
 /// Render the install values of one environment.
 pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
@@ -400,6 +414,11 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             format!("--release-artifact-base={}", input.artifact_base).into(),
             format!("--release-manifest-digest={}", input.manifest_digest).into(),
             format!("--environment={}", input.env).into(),
+            format!(
+                "--applications={}",
+                applications_argument(&input.applications)?
+            )
+            .into(),
         ]),
     );
     group
@@ -463,6 +482,10 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     );
     values.insert("environment".into(), environment.into());
     values.insert("routeHost".into(), input.route_host.clone().into());
+    values.insert(
+        "applications".into(),
+        serde_yaml::to_value(&input.applications).context("render the applications")?,
+    );
     values.insert("roles".into(), Value::Sequence(roles));
     values.insert("audit".into(), mapping([("actor", input.actor.clone())]));
     values.insert("runtime-operator".into(), Value::Mapping(operator));
@@ -704,6 +727,13 @@ mod tests {
             manifest_digest: DIGEST.into(),
             artifact_base: "registry.example/releases".into(),
             route_host: "wms.acme.example".into(),
+            applications: [(
+                "wms".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: ["wamn_wms".to_owned()].into(),
+                },
+            )]
+            .into(),
             roles: vec![Role {
                 entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
                 statements: vec!["sql-0".to_owned()],
@@ -795,9 +825,13 @@ mod tests {
             group["extraArgs"],
             serde_yaml::from_str::<Value>(&format!(
                 "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}, \
-                 --environment=prod]"
+                 --environment=prod, '--applications={{\"wms\":{{\"packages\":[\"wamn_wms\"]}}}}']"
             ))
             .expect("yaml")
+        );
+        assert_eq!(
+            values["applications"],
+            serde_yaml::from_str::<Value>("{wms: {packages: [wamn_wms]}}").expect("yaml")
         );
         assert_eq!(group["networking"]["socketEgress"].as_str(), Some("count"));
         assert!(runtime.get("image").is_none());

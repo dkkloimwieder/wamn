@@ -14,6 +14,10 @@
 //! An exact resubmission converges. Other bytes under the same version refuse.
 //! A version is authored disabled; [`crate::workflow_lifecycle`] enables it.
 //!
+//! The application is one the environment declares in `environment.k`, as
+//! the serving Helm revision keeps it ([`crate::environment::show`]). An
+//! application it does not declare refuses before the graph is gated.
+//!
 //! The trigger is part of the version: `manual`, or `schedule` with a
 //! five-field UTC cron, parsed as the schedule task parses it
 //! ([`wamn_catalog::parse_workflow_schedule`]). An invalid cron refuses
@@ -69,6 +73,8 @@ pub enum AuthorWorkflowErrorType {
     Conflict,
     /// The schedule is not a five-field UTC cron.
     Schedule,
+    /// The environment declares no application of this name.
+    Application,
 }
 
 impl AuthorWorkflowErrorType {
@@ -80,6 +86,7 @@ impl AuthorWorkflowErrorType {
             Self::Report => "report",
             Self::Conflict => "conflict",
             Self::Schedule => "schedule",
+            Self::Application => "application",
         }
     }
 }
@@ -212,9 +219,12 @@ impl<'a> WorkflowTrigger<'a> {
 pub struct AuthorWorkflowRequest<'a> {
     pub tenant_id: &'a str,
     pub environment: &'a str,
-    /// The application package id of the release, whose operations the graph
-    /// calls.
+    /// The application of the workflow, by the name the environment declares.
     pub application: &'a str,
+    /// The applications the environment declares, as the serving Helm
+    /// revision keeps them
+    /// ([`crate::environment::show::serving_applications`]).
+    pub declared: &'a wamn_catalog::EnvironmentApplications,
     pub document: &'a WiringDocument,
     pub trigger: WorkflowTrigger<'a>,
     pub execution: WorkflowExecution<'a>,
@@ -228,7 +238,7 @@ pub struct AuthorWorkflowRequest<'a> {
 pub(crate) async fn gate_against_release(
     transaction: &Transaction<'_>,
     tenant_id: &str,
-    application: &str,
+    application_packages: &std::collections::BTreeSet<String>,
     manifest_digest: &str,
     document: &WiringDocument,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
@@ -250,15 +260,14 @@ pub(crate) async fn gate_against_release(
             error,
         )
     })?;
-    wamn_catalog::gate_workflow_document(tenant_id, application, &manifest, document).map_err(
-        |error| {
+    wamn_catalog::gate_workflow_document(tenant_id, application_packages, &manifest, document)
+        .map_err(|error| {
             AuthorWorkflowError::with_source(
                 AuthorWorkflowErrorType::Gate,
                 "the graph does not gate against the serving release",
                 error,
             )
-        },
-    )
+        })
 }
 
 /// Gate and append one disabled workflow version in the caller's transaction.
@@ -274,6 +283,15 @@ pub async fn author_workflow(
         .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
         .await
         .map_err(|error| storage("claim the authoring tenant", error))?;
+    let Some(declared) = request.declared.get(request.application) else {
+        return Err(AuthorWorkflowError::new(
+            AuthorWorkflowErrorType::Application,
+            format!(
+                "the environment declares no application {:?}",
+                request.application
+            ),
+        ));
+    };
     if let Some(cron) = request.trigger.schedule() {
         parse_workflow_schedule(cron).map_err(|error| {
             AuthorWorkflowError::with_source(
@@ -287,7 +305,7 @@ pub async fn author_workflow(
     let hash = gate_against_release(
         transaction,
         request.tenant_id,
-        request.application,
+        &declared.packages,
         request.manifest_digest,
         document,
     )

@@ -241,7 +241,7 @@ mod tests {
         let environment: EnvironmentDocument = serde_json::from_value(json!({
             "org": "test", "project": "receiving", "env": "dev",
             "release": format!("sha256:{}", "a".repeat(64)),
-            "route_host": "test.example.com", "policy": "dev"
+            "route_host": "test.example.com", "policy": "dev", "applications": {}
         }))
         .unwrap();
         let request = request(&environment, "test-web", "registry/runner@sha256:abc").unwrap();

@@ -527,6 +527,10 @@ pub async fn assert_startup(
             &inputs.test_id,
             "--environment",
             &inputs.environment,
+            // The burst authors no workflow, so its environment declares no
+            // application.
+            "--applications",
+            "{}",
             "--scheduler-nats-url",
             &inputs.scheduler_nats_url,
             "--http-addr",

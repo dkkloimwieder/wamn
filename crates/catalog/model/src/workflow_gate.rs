@@ -6,15 +6,17 @@
 //! component of that release whose descriptor carries the node's component,
 //! interface version and operation, and
 //! [`validate_resolved_wiring_compatibility`] judges the graph over those
-//! per-node facts. A node resolves within the application first, then within
-//! any package of the release. A node whose operation has a registered
+//! per-node facts. A node resolves within the packages of its application
+//! first, then within any package of the release. An application is a name
+//! the environment declares with its packages
+//! ([`crate::EnvironmentApplications`]), never a package. A node whose operation has a registered
 //! operation needs that permission in the run's role, checked per node like
 //! every other call.
 //!
 //! Authoring, enable and the host's `workflow.start` admission all gate
 //! through this one owner.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     AdmittedComponent, ComponentPackageScope, DefinitionHash, ServingManifest, WiringDocument,
@@ -53,12 +55,14 @@ impl std::error::Error for WorkflowGateError {
 /// it, as the facts [`validate_resolved_wiring_compatibility`] reads.
 ///
 /// A node resolves to a component whose descriptor carries the node's
-/// component, interface version and operation. It resolves within the
-/// application first, then within any package of the release; two different
-/// digests there refuse as ambiguous.
+/// component, interface version and operation. It resolves within
+/// `application_packages`, the packages the environment declares for the
+/// workflow's application, first, then within any package of the release;
+/// two different digests there refuse as ambiguous. A declared package the
+/// release does not carry refuses.
 pub fn resolve_workflow_components(
     tenant_id: &str,
-    application: &str,
+    application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
 ) -> Result<BTreeMap<String, AdmittedComponent>, WorkflowGateError> {
@@ -68,9 +72,12 @@ pub fn resolve_workflow_components(
         .iter()
         .map(|package| (package.package_id(), package.package_version()))
         .collect();
-    if !versions.contains_key(application) {
+    if let Some(package) = application_packages
+        .iter()
+        .find(|package| !versions.contains_key(package.as_str()))
+    {
         return Err(WorkflowGateError::new(format!(
-            "the serving release carries no application {application:?}"
+            "the serving release does not carry package {package:?} of the application"
         )));
     }
     let mut resolved = BTreeMap::new();
@@ -89,7 +96,7 @@ pub fn resolve_workflow_components(
             .collect();
         let in_application: Vec<_> = serving
             .iter()
-            .filter(|component| component.package_id == application)
+            .filter(|component| application_packages.contains(&component.package_id))
             .collect();
         let chosen = match (in_application.as_slice(), serving.as_slice()) {
             ([component], _) => **component,
@@ -133,11 +140,12 @@ fn ambiguous(node_id: &str) -> WorkflowGateError {
 /// hash. The hash is produced only on the far side of the gate.
 pub fn gate_workflow_document(
     tenant_id: &str,
-    application: &str,
+    application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
 ) -> Result<DefinitionHash, WorkflowGateError> {
-    let components = resolve_workflow_components(tenant_id, application, manifest, document)?;
+    let components =
+        resolve_workflow_components(tenant_id, application_packages, manifest, document)?;
     validate_resolved_wiring_compatibility(document, &components).map_err(|error| {
         WorkflowGateError {
             detail: format!(
@@ -152,8 +160,6 @@ pub fn gate_workflow_document(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use super::*;
     use crate::{
         AdmittedComponentOperation, PackageCoordinate, ServingComponent, ServingRelease,
@@ -161,6 +167,11 @@ mod tests {
     };
 
     const APPLICATION: &str = "orders";
+
+    /// The packages of the workflow's application.
+    fn packages() -> BTreeSet<String> {
+        BTreeSet::from([APPLICATION.to_owned()])
+    }
     const ORDERS_GET: &str = "orders:order/get@1.0.0";
     const PALETTE_GET: &str = "palette:data/get@2.0.0";
 
@@ -177,6 +188,16 @@ mod tests {
     }
 
     fn component(package: &str, name: &str, op: &str, registered: bool) -> ServingComponent {
+        component_with_digest(package, name, op, registered, '1')
+    }
+
+    fn component_with_digest(
+        package: &str,
+        name: &str,
+        op: &str,
+        registered: bool,
+        digest: char,
+    ) -> ServingComponent {
         let fact = AdmittedComponent {
             scope: ComponentPackageScope {
                 tenant_id: "t1".to_owned(),
@@ -186,7 +207,7 @@ mod tests {
             component: name.to_owned(),
             interface_version: "0.1".to_owned(),
             operations: BTreeMap::from([(op.to_owned(), operation(op, registered))]),
-            component_digest: format!("sha256:{}", "1".repeat(64)),
+            component_digest: format!("sha256:{}", digest.to_string().repeat(64)),
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "6".repeat(64)),
             effects: Vec::new(),
@@ -238,10 +259,10 @@ mod tests {
         let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
         let document = document("data", ORDERS_GET);
         let resolved =
-            resolve_workflow_components("t1", APPLICATION, &manifest, &document).unwrap();
+            resolve_workflow_components("t1", &packages(), &manifest, &document).unwrap();
         assert_eq!(resolved["node"].scope.package_version, "1.0.0");
         assert_eq!(
-            gate_workflow_document("t1", APPLICATION, &manifest, &document).unwrap(),
+            gate_workflow_document("t1", &packages(), &manifest, &document).unwrap(),
             document.wiring_hash()
         );
     }
@@ -250,7 +271,7 @@ mod tests {
     fn a_platform_node_resolves_in_another_package() {
         let manifest = manifest(vec![component("palette", "jsonata", "map", false)]);
         let resolved =
-            resolve_workflow_components("t1", APPLICATION, &manifest, &document("jsonata", "map"))
+            resolve_workflow_components("t1", &packages(), &manifest, &document("jsonata", "map"))
                 .unwrap();
         assert_eq!(resolved["node"].scope.package_id, "palette");
     }
@@ -260,7 +281,7 @@ mod tests {
         let manifest = manifest(vec![component("palette", "data", PALETTE_GET, true)]);
         let resolved = resolve_workflow_components(
             "t1",
-            APPLICATION,
+            &packages(),
             &manifest,
             &document("data", PALETTE_GET),
         )
@@ -272,10 +293,29 @@ mod tests {
     fn a_node_the_release_does_not_carry_refuses() {
         let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
         for document in [document("data", "put"), document("other", ORDERS_GET)] {
-            gate_workflow_document("t1", APPLICATION, &manifest, &document)
+            gate_workflow_document("t1", &packages(), &manifest, &document)
                 .expect_err("a node absent from the release refuses");
         }
-        gate_workflow_document("t1", "absent", &manifest, &document("data", ORDERS_GET))
-            .expect_err("an application absent from the release refuses");
+        gate_workflow_document(
+            "t1",
+            &BTreeSet::from(["absent".to_owned()]),
+            &manifest,
+            &document("data", ORDERS_GET),
+        )
+        .expect_err("a declared package absent from the release refuses");
+    }
+
+    /// The application's packages win over another package that serves the
+    /// same node with another digest.
+    #[test]
+    fn a_node_resolves_within_the_application_packages_first() {
+        let other = component_with_digest("palette", "jsonata", "map", false, '2');
+        let manifest = manifest(vec![component(APPLICATION, "jsonata", "map", false), other]);
+        let document = document("jsonata", "map");
+        let resolved =
+            resolve_workflow_components("t1", &packages(), &manifest, &document).unwrap();
+        assert_eq!(resolved["node"].scope.package_id, APPLICATION);
+        resolve_workflow_components("t1", &BTreeSet::new(), &manifest, &document)
+            .expect_err("without the application's packages the node is ambiguous");
     }
 }

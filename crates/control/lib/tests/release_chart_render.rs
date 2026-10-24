@@ -104,6 +104,13 @@ fn input(env: &str) -> ValuesInput {
         manifest_digest: DIGEST.into(),
         artifact_base: "registry.example/releases".into(),
         route_host: "wms.acme.example".into(),
+        applications: [(
+            "wms".to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: ["wamn_wms".to_owned()].into(),
+            },
+        )]
+        .into(),
         roles: vec![
             Role {
                 name: RoleName::Http,

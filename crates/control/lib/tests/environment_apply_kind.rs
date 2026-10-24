@@ -1067,6 +1067,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         release: DeclaredRelease::Digest(digest.clone()),
         route_host: route_host.to_owned(),
         policy: POLICY.to_owned(),
+        applications: std::collections::BTreeMap::from([(
+            PACKAGE.to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: std::collections::BTreeSet::from([PACKAGE.to_owned()]),
+            },
+        )]),
         connections: std::collections::BTreeMap::new(),
         floors: std::collections::BTreeMap::new(),
     };
@@ -1462,6 +1468,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             scope: &http.triple(),
             tenant: &http_tenant,
             digest: &http_digest,
+            applications: &environment::show::serving_applications(&platform, &http.triple())
+                .await?,
         },
         &http_name,
         &http.route_host,

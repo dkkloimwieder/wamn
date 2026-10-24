@@ -446,6 +446,18 @@ async fn install_release(
             manifest_digest: carrier.manifest_digest.to_string(),
             artifact_base: carrier.artifact_base.clone(),
             route_host: cluster.inputs.route_host.clone(),
+            applications: [(
+                "receiving".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: manifest
+                        .release
+                        .packages
+                        .iter()
+                        .map(|package| package.package_id().to_owned())
+                        .collect(),
+                },
+            )]
+            .into(),
             roles: release_chart::roles(manifest, org, project, env),
             drain_bound_seconds: DRAIN_BOUND_SECONDS,
             actor: "receiving cluster case".to_owned(),

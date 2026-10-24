@@ -164,6 +164,26 @@ pub async fn workflow_host(
     ))))
 }
 
+/// The applications an integration environment declares: `application`, with
+/// every package of the release.
+pub fn declared(
+    application: &str,
+    manifest: &wamn_catalog::ServingManifest,
+) -> wamn_catalog::EnvironmentApplications {
+    [(
+        application.to_owned(),
+        wamn_catalog::ApplicationDefinition {
+            packages: manifest
+                .release
+                .packages
+                .iter()
+                .map(|package| package.package_id().to_owned())
+                .collect(),
+        },
+    )]
+    .into()
+}
+
 /// Author `document` as a minutely schedule workflow of `application` and
 /// enable it, as an environment admin does with
 /// `wamn-ctl workflow author --schedule '* * * * *'` and `enable`, then admit
@@ -206,6 +226,7 @@ pub async fn schedule_run(
         &[&TENANT, &document.wiring_hash().as_str()],
     )
     .await?;
+    let declared = declared(application, manifest);
     author_workflow_in_databases(
         database.url(),
         control.url(),
@@ -213,6 +234,7 @@ pub async fn schedule_run(
             tenant_id: TENANT,
             environment: "test",
             application,
+            declared: &declared,
             document,
             trigger: WorkflowTrigger::Schedule("* * * * *"),
             execution: WorkflowExecution::Role(role),
@@ -234,6 +256,7 @@ pub async fn schedule_run(
         },
         ENABLER,
         digest.as_str(),
+        &declared,
     )
     .await?;
     match host
@@ -243,6 +266,7 @@ pub async fn schedule_run(
             &ScheduleRunAdmission {
                 environment: "test",
                 application,
+                application_packages: &declared[application].packages,
                 workflow_id: &document.wiring_id,
                 manifest_digest: digest.as_str(),
                 due: chrono::DateTime::parse_from_rfc3339(due)?.with_timezone(&chrono::Utc),

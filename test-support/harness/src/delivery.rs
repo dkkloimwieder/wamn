@@ -399,6 +399,25 @@ async fn apply(app: &Application<'_>, platform: &Platform) -> anyhow::Result<Str
     let mut document = wamn_control::environment::show::show(platform, &app.triple).await?;
     document.release = DeclaredRelease::Digest(app.release_digest.to_owned());
     app.route_host.clone_into(&mut document.route_host);
+    // `env show` keeps no applications before the first release. The
+    // fixture's environment declares one application, named after its
+    // project, with every package of the release (docs/plan/platform-config.md).
+    if document.applications.is_empty() {
+        let manifest =
+            wamn_control::environment::analyse::pull_release_manifest(platform, app.release_digest)
+                .await?;
+        document.applications.insert(
+            app.triple.project.clone(),
+            wamn_catalog::ApplicationDefinition {
+                packages: manifest
+                    .release
+                    .packages
+                    .iter()
+                    .map(|package| package.package_id().to_owned())
+                    .collect(),
+            },
+        );
+    }
     let file = app.evidence.join("environment.k");
     fs::write(&file, document.to_kcl())?;
     let mut command = Command::new(app.ctl());

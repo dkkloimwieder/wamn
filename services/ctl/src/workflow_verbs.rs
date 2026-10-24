@@ -85,7 +85,7 @@ pub struct AuthorArgs {
     /// Owner URL to the CONTROL database holding `wamn_run.gate_reports`.
     #[arg(long)]
     pub control_database_url: String,
-    /// The application package id of the release.
+    /// The application of the workflow, as the environment declares it.
     #[arg(long)]
     pub application: String,
     /// The wiring document. Its `wiring-id` and `version` name the workflow version.
@@ -150,6 +150,9 @@ pub struct StartArgs {
     /// A bearer token of the caller: a session token or a PAT.
     #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]
     pub token: String,
+    /// The application of the workflow, as the environment declares it.
+    #[arg(long)]
+    pub application: String,
     #[arg(long)]
     pub workflow_id: String,
     /// A repeated start with the same key and input answers the first run.
@@ -228,6 +231,8 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let triple = parse_coordinate(&args.coordinate)?;
             let digest =
                 wamn_control::environment::show::serving_release(&platform, &triple).await?;
+            let declared =
+                wamn_control::environment::show::serving_applications(&platform, &triple).await?;
             let hash = wamn_control::author_workflow::author_workflow_in_databases(
                 &args.scope.admin_database_url,
                 &args.control_database_url,
@@ -235,6 +240,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                     tenant_id: &args.scope.tenant,
                     environment: &args.scope.environment,
                     application: &args.application,
+                    declared: &declared,
                     document: &document,
                     trigger: args
                         .schedule
@@ -253,6 +259,8 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let triple = parse_coordinate(&args.version.coordinate)?;
             let digest =
                 wamn_control::environment::show::serving_release(&platform, &triple).await?;
+            let declared =
+                wamn_control::environment::show::serving_applications(&platform, &triple).await?;
             let mut client = project(&args.version.scope).await?;
             wamn_control::workflow_lifecycle::enable_workflow(
                 &platform.system_database_url,
@@ -261,6 +269,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 &args.version.workflow(),
                 &args.principal_id,
                 &digest,
+                &declared,
             )
             .await?;
             println!(
@@ -389,6 +398,7 @@ fn start_request(args: &StartArgs, input: &serde_json::Value) -> serde_json::Val
     serde_json::json!([{
         "request_id": args.idempotency_key,
         "value": {
+            "application": args.application,
             "workflow_id": args.workflow_id,
             "input_json": input,
             "idempotency_key": args.idempotency_key,
@@ -444,6 +454,7 @@ mod tests {
         let args = StartArgs {
             host_url: "https://acme.example".to_owned(),
             token: "token".to_owned(),
+            application: "orders".to_owned(),
             workflow_id: "nightly".to_owned(),
             idempotency_key: "batch-42".to_owned(),
             input: PathBuf::from("input.json"),
@@ -453,6 +464,7 @@ mod tests {
             serde_json::json!([{
                 "request_id": "batch-42",
                 "value": {
+                    "application": "orders",
                     "workflow_id": "nightly",
                     "input_json": {"day": 1},
                     "idempotency_key": "batch-42",

@@ -43,7 +43,7 @@ mod tests {
     fn document() -> EnvironmentDocument {
         serde_json::from_value(serde_json::json!({
             "org": "test", "project": "wms", "env": "dev", "release": "none",
-            "route_host": "wms.example.com", "policy": "dev"
+            "route_host": "wms.example.com", "policy": "dev", "applications": {}
         }))
         .unwrap()
     }

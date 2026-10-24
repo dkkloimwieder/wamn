@@ -130,26 +130,41 @@ pub struct CarriedRelease {
     pub manifest_digest: ManifestDigest,
 }
 
-/// The tenant and environment a host serves, from the host configuration.
+/// The tenant, environment and declared applications a host serves, from the
+/// host configuration.
 ///
-/// The serving manifest carries neither (R1). The host derives the tenant from
-/// its `(org, project, environment)` coordinate and every reader takes both
-/// values from here.
+/// The serving manifest carries none of them (R1). The host derives the
+/// tenant from its `(org, project, environment)` coordinate, takes the
+/// applications that `environment.k` declares, and every reader takes them
+/// from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseScope {
     /// The tenant of the project environment.
     pub tenant_id: String,
     /// The environment name.
     pub environment: String,
+    /// Application name to its packages (docs/plan/platform-config.md).
+    pub applications: wamn_catalog::EnvironmentApplications,
 }
 
 impl ReleaseScope {
-    /// A scope of one tenant and environment.
+    /// A scope of one tenant and environment that declares no application.
     pub fn new(tenant_id: impl Into<String>, environment: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
             environment: environment.into(),
+            applications: wamn_catalog::EnvironmentApplications::new(),
         }
+    }
+
+    /// This scope with the applications its environment declares.
+    #[must_use]
+    pub fn with_applications(
+        mut self,
+        applications: wamn_catalog::EnvironmentApplications,
+    ) -> Self {
+        self.applications = applications;
+        self
     }
 }
 

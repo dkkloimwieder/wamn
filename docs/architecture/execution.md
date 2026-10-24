@@ -465,9 +465,17 @@ A package declares no schedule (docs/plan/workflows.md R9).
 A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and a five-field cron in UTC, parsed by `croner`.
 A release published before this change may carry `workflow.schedules` in its manifest; the host reads it with the field ignored.
 
+The environment document declares its applications: each name with the packages of the release that belong to it.
+`env apply` refuses a release package that belongs to no application or to two, and a declared package that the release does not carry.
+The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn-ctl workflow author` read it.
+A host that serves a release from the registry refuses to start without `--applications`. A local candidate host takes the map when it is given and otherwise declares none.
+A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
+An application is a name, never a package. The workflow gate resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue claims the release's packages and the declared application names, and the executor resolves the run's nodes within that application's packages.
+
 Every application host runs one schedule task, which wakes at each minute boundary.
 Its first tick is strictly after startup.
-At each tick it reads the enabled schedule rows of its application with one `SELECT`, and calls `WamnPostgres::admit_schedule_run` for each row whose cron names that minute.
+At each tick it reads the enabled schedule rows of every declared application with one `SELECT` (`application = ANY(...)`), and calls `WamnPostgres::admit_schedule_run` for each row whose cron names that minute.
+A host whose environment declares no application runs no schedule task.
 An enable or a disable between ticks takes effect at the next tick.
 The task polls the rows; it does not reload on an enable or disable message over event NATS, which would cost one more subject and a stale window when the broker is lost.
 The run has input `{"due":"<due RFC 3339>"}` and key `schedule:<application>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.

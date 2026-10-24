@@ -98,6 +98,10 @@ release:
 # `org/project/env`.
 environment: ""
 routeHost: ""
+# Application name to `{packages: [...]}`, as `environment.k` declares it. It
+# renders nothing: the host takes it in `--applications`, and `env show` reads
+# it back.
+applications: {}
 # Host to client package id; env apply resolves the package from its declaration.
 webClients: {}
 # The control release serves the platform UI at the chart version.

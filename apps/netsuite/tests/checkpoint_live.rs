@@ -103,11 +103,13 @@ pub async fn invoke(
     // exactly the operation of the graph that needs a grant: the consumer
     // command of another package of the release.
     let workflow_host = super::consumer_live::workflow_host(&admin, &database, manifest).await?;
+    // The application `erp` holds the three packages of the release. Its name
+    // is no package (docs/plan/platform-config.md).
     let run = super::consumer_live::schedule_run(
         &database,
         &workflow_host,
         manifest,
-        "netsuite",
+        "erp",
         &wiring,
         "netsuite-pull",
         &["rest-consumer-fixture:item/record"],
@@ -124,11 +126,15 @@ pub async fn invoke(
     // operation against the grants the run's role holds now. A role without
     // the consumer command refuses the node.
     let record = &wiring.nodes["record"];
-    let registered =
-        wamn_catalog::resolve_workflow_components(TENANT, "netsuite", manifest, &wiring)?["record"]
-            .operations[&record.operation]
-            .registered_operation
-            .clone();
+    let registered = wamn_catalog::resolve_workflow_components(
+        TENANT,
+        &super::consumer_live::declared("erp", manifest)["erp"].packages,
+        manifest,
+        &wiring,
+    )?["record"]
+        .operations[&record.operation]
+        .registered_operation
+        .clone();
     assert_eq!(
         registered.as_deref(),
         Some("rest-consumer-fixture:item/record@0.1.0")

@@ -153,6 +153,13 @@ pub struct HostArgs {
     #[arg(long = "environment", overrides_with = "environment")]
     pub environment: Option<String>,
 
+    /// The applications `environment.k` declares, as canonical JSON:
+    /// application name to `{"packages": [...]}`. A release passes it in its
+    /// `extraArgs` beside `--environment`. A host that serves a release from
+    /// the registry refuses to start without it.
+    #[arg(long = "applications")]
+    pub applications: Option<String>,
+
     /// Address for the workload HTTP server
     #[arg(long = "http-addr")]
     pub http_addr: Option<SocketAddr>,
@@ -561,9 +568,10 @@ async fn load_release(
     Ok(Some(Arc::new(loaded_release)))
 }
 
-/// The tenant and environment this host serves (R1). The manifest names
-/// neither, so both come from `--org`, `--project` and `--environment`, and the
-/// tenant is [`project_env_tenant`] of the three.
+/// The tenant, environment and declared applications this host serves (R1).
+/// The manifest names none of them, so they come from `--org`, `--project`,
+/// `--environment` and `--applications`, and the tenant is
+/// [`project_env_tenant`] of the first three.
 fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
     let org = args
         .org
@@ -579,10 +587,27 @@ fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
         .as_deref()
         .filter(|environment| !environment.is_empty())
         .context("a host that serves a release requires --environment")?;
+    let applications = match args.applications.as_deref() {
+        None => wamn_catalog::EnvironmentApplications::new(),
+        Some(applications) => serde_json::from_str(applications)
+            .context("--applications is not the JSON of the declared applications")?,
+    };
     Ok(ReleaseScope::new(
         project_env_tenant(org, &args.project, environment),
         environment,
-    ))
+    )
+    .with_applications(applications))
+}
+
+/// The scope of a host that serves a release from the registry. Env apply
+/// renders `--applications` for every such host, and a host without it
+/// refuses to start.
+fn served_release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
+    anyhow::ensure!(
+        args.applications.is_some(),
+        "a host that serves a release requires --applications"
+    );
+    release_scope(args)
 }
 
 /// Declare the platform binding through the native host configuration policy.
@@ -972,7 +997,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             args.registry_auth_file.as_deref(),
             args.registry_token_metadata,
             &args.oci_ca_paths,
-            release_scope(&args),
+            served_release_scope(&args),
         )
         .await?
     };
@@ -1526,23 +1551,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut schedule_tasks = tokio::task::JoinSet::new();
-    // Every application host serves the enabled schedule workflows of its
-    // application, read from `catalog.workflows` at each tick
-    // (docs/plan/workflows.md epic 2).
-    let schedule_application = application.and_then(|release| {
-        let served = wamn_execution_host::release_application(release.manifest());
-        if served.is_none() {
-            tracing::warn!(
-                "the serving release names no application package; no workflow schedule task"
-            );
+    // Every application host serves the enabled schedule workflows of the
+    // applications its environment declares, read from `catalog.workflows`
+    // at each tick (docs/plan/workflows.md epic 2).
+    let schedule_release = application.filter(|release| {
+        let declared = !release.scope().applications.is_empty();
+        if !declared {
+            tracing::warn!("the environment declares no application; no workflow schedule task");
         }
-        served.map(|application| (release, application.to_owned()))
+        declared
     });
-    if let Some((release, schedule_application)) = schedule_application {
+    if let Some(release) = schedule_release {
         let url = executor_platform_url
             .clone()
             .context("workflow schedules require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
-        let scope = release_scope(&args)?;
+        let scope = release.scope().clone();
         let digest = release.release().manifest_digest.as_str().to_owned();
         let schedule_postgres = Arc::clone(&postgres);
         let schedule_project = args.project.clone();
@@ -1564,7 +1587,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                             &schedule_project,
                             &scope.tenant_id,
                             &scope.environment,
-                            &schedule_application,
+                            scope.applications.clone(),
                             &digest,
                         );
                         task_connected.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -2340,6 +2363,46 @@ mod tests {
         .unwrap()
         .args;
         assert_eq!(args.environment.as_deref(), Some("dev"));
+    }
+
+    /// A host that serves a release takes the declared applications beside
+    /// its environment, and refuses to start without them.
+    #[test]
+    fn a_served_release_scope_requires_the_declared_applications() {
+        let scope = |extra: &[&str]| {
+            let mut arguments = vec![
+                "wamn-host",
+                "--org=acme",
+                "--project=wms",
+                "--environment=dev",
+            ];
+            arguments.extend_from_slice(extra);
+            served_release_scope(&parse(arguments).unwrap().args)
+        };
+        let error = scope(&[]).expect_err("no map refuses");
+        assert!(error.to_string().contains("--applications"), "{error}");
+        let scope = scope(&[r#"--applications={"wms":{"packages":["wamn_wms"]}}"#])
+            .expect("the map parses");
+        assert_eq!(
+            scope.applications["wms"].packages,
+            ["wamn_wms".to_owned()].into()
+        );
+        assert_eq!(scope.environment, "dev");
+        assert!(
+            release_scope(
+                &parse([
+                    "wamn-host",
+                    "--org=acme",
+                    "--project=wms",
+                    "--environment=dev",
+                    "--applications=[]"
+                ])
+                .unwrap()
+                .args
+            )
+            .is_err(),
+            "a map that is not the declared applications refuses"
+        );
     }
 
     #[test]

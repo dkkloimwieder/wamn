@@ -124,6 +124,9 @@ environment.Environment {
     release = "sha256:<release digest>"
     route_host = "orders.example.com"
     policy = "dev"
+    applications = {
+        orders = {packages = ["orders"]}
+    }
     connections = {
         upstream = {
             type = "http"
@@ -137,6 +140,10 @@ environment.Environment {
 ```
 
 Replace the release placeholder with the published digest.
+`applications` is required. It names each application of the environment and the packages of the release that belong to it ([platform configuration](../plan/platform-config.md)).
+With a release, `env apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
+It also refuses an empty application name, an application with no packages, and an empty package id.
+Workflows belong to an application by its name.
 Run `wamn-ctl env apply environment.k`.
 The host reads the credential and adds its headers to the outgoing request.
 The guest receives the response and never receives the credential.

@@ -13,7 +13,7 @@
 //! by a released wiring of a package, and a workflow is not one, so it is not
 //! used here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
 use wamn_catalog::{
@@ -65,8 +65,11 @@ pub struct EnabledWorkflow {
 pub struct WorkflowRunKey<'a> {
     pub tenant_id: &'a str,
     pub environment: &'a str,
-    /// The application package of the release, the run's package.
+    /// The application, by the name the environment declares: the run's
+    /// package id.
     pub application: &'a str,
+    /// The packages the environment declares for `application`.
+    pub application_packages: &'a BTreeSet<String>,
     pub workflow_id: &'a str,
     pub version: u32,
     /// The release the run pins.
@@ -145,7 +148,9 @@ impl std::error::Error for WorkflowResolutionError {
 /// interface version and operation.
 ///
 /// The stored hash must be the run's hash, and the graph must hash to it. A
-/// node resolves to the application's component first, then to any package's.
+/// node resolves to a component of the application's packages first, then to
+/// any package's. A workflow belongs to an application, not to a package
+/// version (docs/plan/workflows.md R8), so the resolved wiring names none.
 pub fn resolve_workflow_in_release(
     run: &WorkflowRunKey<'_>,
     manifest: &ServingManifest,
@@ -224,7 +229,7 @@ pub fn resolve_workflow_in_release(
             .collect();
         let chosen = serving
             .iter()
-            .find(|component| component.package_id == run.application)
+            .find(|component| run.application_packages.contains(&component.package_id))
             .or_else(|| serving.first())
             .ok_or_else(|| {
                 WorkflowResolutionError::new(
@@ -248,23 +253,11 @@ pub fn resolve_workflow_in_release(
             error,
         )
     })?;
-    let package_version = versions
-        .get(run.application)
-        .ok_or_else(|| {
-            WorkflowResolutionError::new(
-                WorkflowResolutionErrorType::Definition,
-                format!(
-                    "release {} carries no application {:?}",
-                    run.manifest_digest, run.application
-                ),
-            )
-        })?
-        .to_string();
     let components = manifest.components.iter().map(admitted).collect();
     resolved_wiring(
         DecodedWiring {
             version: run.version,
-            package_version,
+            package_version: String::new(),
             graph_hash: stored_hash.to_owned(),
             document,
         },
@@ -438,8 +431,6 @@ impl WamnPostgres {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use wamn_catalog::{
         AdmittedComponentOperation, PackageCoordinate, ServingComponent, ServingRelease,
         WiringNode, WiringTerminal,
@@ -517,10 +508,13 @@ mod tests {
     }
 
     fn run<'a>(hash: &'a str, node_digests: &'a BTreeMap<String, String>) -> WorkflowRunKey<'a> {
+        static PACKAGES: std::sync::LazyLock<BTreeSet<String>> =
+            std::sync::LazyLock::new(|| BTreeSet::from([APPLICATION.to_owned()]));
         WorkflowRunKey {
             tenant_id: "t1",
             environment: "dev",
-            application: APPLICATION,
+            application: "erp",
+            application_packages: &PACKAGES,
             workflow_id: "nightly",
             version: 1,
             manifest_digest: RELEASE,
@@ -539,7 +533,7 @@ mod tests {
                 .expect("the frozen digest is a component of the release");
         assert_eq!(resolved.node_components["node"].component_digest, DIGEST);
         assert_eq!(resolved.manifest_digest, RELEASE);
-        assert_eq!(resolved.package_version, "1.0.0");
+        assert_eq!(resolved.package_version, "");
         assert_eq!(resolved.graph_hash.as_ref(), hash);
     }
 

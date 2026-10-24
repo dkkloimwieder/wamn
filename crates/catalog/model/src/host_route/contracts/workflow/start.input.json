@@ -7,6 +7,13 @@
       "values": []
     },
     {
+      "path": "value.application",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Application"
+    },
+    {
       "path": "value.workflow_id",
       "type": "text",
       "nullable": false,

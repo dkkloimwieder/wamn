@@ -182,7 +182,8 @@ impl WamnPostgres {
 /// component digest of every node.
 #[derive(Debug, Clone, Copy)]
 pub struct ManualRunAdmission<'a> {
-    /// The application package of the release.
+    /// The application, by the name the environment declares: the run's
+    /// package id.
     pub package_id: &'a str,
     /// The release the host serves, as its manifest digest.
     pub manifest_digest: &'a str,
@@ -332,8 +333,10 @@ SELECT version, graph_json::text, wiring_hash, execution_role \
 #[derive(Debug, Clone, Copy)]
 pub struct ScheduleRunAdmission<'a> {
     pub environment: &'a str,
-    /// The application package of the release.
+    /// The application, by the name the environment declares.
     pub application: &'a str,
+    /// The packages the environment declares for `application`.
+    pub application_packages: &'a std::collections::BTreeSet<String>,
     pub workflow_id: &'a str,
     /// The release the host serves, as its manifest digest.
     pub manifest_digest: &'a str,
@@ -453,14 +456,14 @@ impl WamnPostgres {
                 .get(0);
             let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)
                 .map_err(|error| contract("read the serving release", error.to_string()))?;
-            let served = gate_workflow_document(tenant, admission.application, &manifest, &graph)
+            let packages = admission.application_packages;
+            let served = gate_workflow_document(tenant, packages, &manifest, &graph)
                 .is_ok_and(|hash| hash.as_str() == wiring_hash);
-            let components =
-                match resolve_workflow_components(tenant, admission.application, &manifest, &graph)
-                {
-                    Ok(components) if served => components,
-                    _ => return Ok(ScheduleRunAdmitted::NotServed),
-                };
+            let components = match resolve_workflow_components(tenant, packages, &manifest, &graph)
+            {
+                Ok(components) if served => components,
+                _ => return Ok(ScheduleRunAdmitted::NotServed),
+            };
             let node_digests = serde_json::Value::Object(
                 components
                     .into_iter()
