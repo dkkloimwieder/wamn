@@ -15,9 +15,11 @@
 //!   (R2/R16). Guest SQL that tries to set or reset a session variable or
 //!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
 //!   `SET app.tenant = 'other'` that would override the BEGIN-time claim) is
-//!   rejected on the query/execute/cursor surface (see
+//!   rejected on the raw query/execute/cursor surface (see
 //!   `reject_claim_mutation`, wamn-cjv.2), closing the reachable
-//!   transaction-API override. The TENANT axis no longer rests on that
+//!   transaction-API override. A verified statement (`statements.run`,
+//!   `run-stream`, `transaction.run`) passes the same guard, and admission
+//!   also refuses these and the other unsafe constructs on its parse tree. The TENANT axis no longer rests on that
 //!   blocklist: the `wamn-0h0g.22.6` lineage re-keyed guest tenant authority
 //!   onto `current_user` plus per-tenant guest LOGIN generations — a
 //!   non-settable identity — so a session that rewrites `app.tenant` no longer

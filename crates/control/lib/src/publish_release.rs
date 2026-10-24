@@ -1670,6 +1670,16 @@ fn descriptor_components(
                     package.package_version()
                 )
             })?;
+            crate::component_admission::check_admitted_statements(&facts.component).with_context(
+                || {
+                    format!(
+                        "component {:?} of package {}@{} carries refused SQL",
+                        facts.component.component,
+                        package.package_id(),
+                        package.package_version()
+                    )
+                },
+            )?;
             components.insert(
                 facts.component,
                 facts.connections,

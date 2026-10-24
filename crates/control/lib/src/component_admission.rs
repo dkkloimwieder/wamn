@@ -33,6 +33,8 @@ use wamn_runtime::component_artifact_source::{
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_schema_control::plan_package_migrations;
 
+mod declared_sql;
+
 /// Bound each registry connect/read phase without adding a second deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -48,6 +50,7 @@ pub enum ComponentProjectionErrorType {
     StatementComponentMismatch,
     StatementPathInvalid,
     StatementCorpusMismatch,
+    StatementRefused,
 }
 
 impl ComponentProjectionErrorType {
@@ -59,6 +62,7 @@ impl ComponentProjectionErrorType {
             Self::StatementComponentMismatch => "statement-component-mismatch",
             Self::StatementPathInvalid => "statement-path-invalid",
             Self::StatementCorpusMismatch => "statement-corpus-mismatch",
+            Self::StatementRefused => "statement-refused",
         }
     }
 }
@@ -673,6 +677,7 @@ fn load_operation_statements(
                     ),
                 )
             })?;
+        check_statement_sql(operation, &statement.name, &sql)?;
         let fact = ComponentSqlStatement {
             name: statement.name,
             path: statement.path.clone(),
@@ -697,6 +702,36 @@ fn load_operation_statements(
         }
     }
     Ok(admitted)
+}
+
+/// Refuse a declared statement that the parsed check refuses
+/// ([`declared_sql`]).
+fn check_statement_sql(
+    operation: &str,
+    statement: &str,
+    sql: &str,
+) -> Result<(), ComponentProjectionError> {
+    declared_sql::check_declared_statement(sql).map_err(|refusal| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorType::StatementRefused,
+            format!("operation {operation:?} statement {statement:?} is refused: {refusal}"),
+        )
+    })
+}
+
+/// Refuse a stored component whose declared SQL the parsed check refuses.
+///
+/// Publish reads the statements from the pushed descriptor, not from the
+/// package files, so it checks them again here.
+pub(crate) fn check_admitted_statements(
+    component: &AdmittedComponent,
+) -> Result<(), ComponentProjectionError> {
+    for (operation, admitted) in &component.operations {
+        for statement in admitted.statements.values() {
+            check_statement_sql(operation, &statement.name, &statement.sql)?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_generated_statement_shape(
@@ -1101,6 +1136,94 @@ mod tests {
             path_error.error_type(),
             ComponentProjectionErrorType::StatementPathInvalid
         );
+    }
+
+    #[test]
+    fn declared_sql_that_calls_a_counter_function_is_refused_at_admission() {
+        let package_root = std::env::temp_dir().join(format!(
+            "wamn-declared-sql-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&package_root).expect("create the package root");
+        let canonical_root = package_root.canonicalize().expect("package root resolves");
+        for (sql, refused) in [
+            ("SELECT id FROM item WHERE id = $1", false),
+            ("SELECT platform.bump_counter($1::uuid, 'po', '')", true),
+            (
+                "SELECT \"platform\".\"assign_counter\"($1::uuid, 'po', '')",
+                true,
+            ),
+            (
+                "WITH n AS (SELECT set_counter($1::uuid, 'po', '', 1)) SELECT 1",
+                true,
+            ),
+            ("UPDATE platform.setting SET value = $1", true),
+            ("DO $$ BEGIN EXECUTE 'SELECT 1'; END $$", true),
+        ] {
+            std::fs::write(package_root.join("q.sql"), sql).expect("write the statement");
+            let statement = GeneratedStatementContract {
+                name: "q".to_owned(),
+                path: "q.sql".to_owned(),
+                binds: Vec::new(),
+                columns: Vec::new(),
+                transactional: false,
+            };
+            let result = load_operation_statements(
+                &package_root,
+                &canonical_root,
+                "source-fixture:item/get@1.0.0",
+                vec![statement],
+                &mut BTreeMap::new(),
+            );
+            if refused {
+                assert_eq!(
+                    result.expect_err(sql).error_type(),
+                    ComponentProjectionErrorType::StatementRefused,
+                    "{sql:?}"
+                );
+            } else {
+                result.unwrap_or_else(|error| panic!("{sql:?} is refused: {error}"));
+            }
+        }
+        std::fs::remove_dir_all(&package_root).expect("remove the package root");
+    }
+
+    /// Every statement the shipped packages declare passes the parsed check.
+    /// It reads the build output of `wamn build` (`tools/lane-start`).
+    #[test]
+    fn shipped_package_statements_pass_the_parsed_check() {
+        let apps = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps");
+        let mut roots = Vec::new();
+        for parent in [apps.clone(), apps.join("platform")] {
+            for entry in std::fs::read_dir(&parent).expect("read the apps directory") {
+                let root = entry.expect("read an apps entry").path();
+                if root
+                    .join(wamn_schema_generator::AUTHORED_MANIFEST)
+                    .is_file()
+                {
+                    roots.push(root);
+                }
+            }
+        }
+        roots.sort();
+        let mut statements = 0;
+        for root in &roots {
+            let manifest_path = wamn_schema_generator::package_manifest_path(root);
+            let bytes = std::fs::read(&manifest_path).unwrap_or_else(|error| {
+                panic!(
+                    "read {}: {error}; build every package first",
+                    manifest_path.display()
+                )
+            });
+            let manifest = wamn_schema_generator::PackageManifest::from_slice(&bytes)
+                .expect("the built manifest parses");
+            let facts = load_package_statement_facts(root, &manifest)
+                .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
+            statements += facts.values().map(BTreeMap::len).sum::<usize>();
+        }
+        assert!(roots.len() >= 10, "found only {roots:?}");
+        assert!(statements > 50, "found only {statements} statements");
     }
 
     #[test]

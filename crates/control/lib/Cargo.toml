@@ -47,6 +47,8 @@ hex = { workspace = true }
 oci-client = { workspace = true }
 # build-platform copies role manifests with the Docker credential.
 docker_credential = "=1.4.0"
+# Admission parses declared guest SQL with PostgreSQL's own grammar.
+pg_query = "=6.2.1"
 # `wamn web upload` writes web client files
 # through the workspace S3 client.
 object_store = { workspace = true, features = ["gcp"] }

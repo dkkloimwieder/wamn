@@ -145,6 +145,7 @@ pub(super) async fn open_stream(
     binds: Vec<SqlValue>,
     want_wal: bool,
 ) -> Result<OpenedStream, StatementError> {
+    // See run_verified_query: admission parses, and this text guard stays.
     reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
     let tenant = plugin
         .require_tenant(component_id)

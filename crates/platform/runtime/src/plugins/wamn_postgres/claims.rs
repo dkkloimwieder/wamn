@@ -684,6 +684,11 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
 /// chaining, so a claim override can only arrive as a *standalone* `SET` /
 /// `RESET` / `set_config(…)` statement — which this catches.
 ///
+/// It runs on the raw `wamn:postgres/client` surface, which only platform
+/// components import, and on every verified statement. Admission also parses
+/// declared SQL and refuses these constructs on the parse tree; this guard
+/// still covers a release admitted before that check, or a forged descriptor.
+///
 /// # The TENANT axis is structurally closed, and this is no longer what holds it
 ///
 /// The `wamn-0h0g.22.6` lineage re-keyed guest tenant authority onto a
@@ -755,8 +760,8 @@ pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
 
 /// The platform functions that write `number_counter`. Only the numbering
 /// renderer of this plugin calls them, on its own connection access, which
-/// does not pass this guest surface (`docs/plan/platform-config.md`,
-/// Numbering).
+/// does not pass this raw surface (`docs/plan/platform-config.md`,
+/// Numbering). Admission also refuses declared statements that name them.
 const COUNTER_FUNCTIONS: [&str; 3] = ["bump_counter", "assign_counter", "set_counter"];
 
 /// True if `sql` names a platform counter function. Each function runs as

@@ -3651,3 +3651,106 @@ fn session_and_pat_callers_act_with_their_single_role() {
     inactive.active = false;
     assert_eq!(held_grants(&inactive, None).active_role(), None);
 }
+
+/// Statements a release carries that admission never parsed: SQL admitted
+/// before the parsed check, or a forged descriptor. The host still refuses
+/// them when it runs them (`wamn-83eth.13`).
+const UNCHECKED_DECLARED_SQL: [&str; 5] = [
+    "SELECT platform.bump_counter($1::uuid, 'po', '')",
+    "SELECT \"platform\".\"set_counter\"($1::uuid, 'po', '', 1)",
+    "UPDATE platform.number_counter SET value = 1",
+    "SELECT set_config('app.application', 'other', true)",
+    "SELECT pg_logical_emit_message(true, 'wamn.causation', '{}')",
+];
+
+fn unchecked_statement(sql: &str) -> VerifiedStatement {
+    VerifiedStatement {
+        exact_sql: sql.into(),
+        binds: Box::new([]),
+        columns: Box::new([]),
+        transactional: false,
+    }
+}
+
+fn refused_in_band(error: &StatementError) -> bool {
+    matches!(error, StatementError::Postgres(PgError::QueryError((code, _))) if code == "WAMN0")
+}
+
+#[tokio::test]
+async fn an_unchecked_declared_statement_is_refused_before_a_stream_opens() {
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+    for sql in UNCHECKED_DECLARED_SQL {
+        let opened = super::super::run_stream::open_stream(
+            &pg,
+            "component",
+            DEFAULT_PROJECT,
+            "sql/forged.sql".to_owned(),
+            Arc::new(unchecked_statement(sql)),
+            Vec::new(),
+            false,
+        )
+        .await;
+        match opened {
+            Err(error) => assert!(refused_in_band(&error), "{sql:?}: {error:?}"),
+            Ok(_) => panic!("run-stream opened {sql:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn live_an_unchecked_declared_statement_is_refused_when_it_runs() {
+    use super::super::resources::run_verified_query;
+
+    const TENANT: &str = "unchecked-sql";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
+    );
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    let admin = connect_raw(admin_url).await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let (connection, _policy) = pg
+        .checkout_guest(DEFAULT_PROJECT, TENANT)
+        .await
+        .expect("check out a guest connection");
+    // CONTROL: a declared statement runs on this connection, so each refusal
+    // below is the guard and not a broken fixture.
+    run_verified_query(
+        &connection,
+        "sql/control.sql",
+        &unchecked_statement("SELECT FROM pg_catalog.pg_class WHERE false"),
+        &[],
+        1_000,
+    )
+    .await
+    .expect("an ordinary declared statement runs");
+    for sql in UNCHECKED_DECLARED_SQL {
+        let refused = run_verified_query(
+            &connection,
+            "sql/forged.sql",
+            &unchecked_statement(sql),
+            &[],
+            1_000,
+        )
+        .await
+        .expect_err(sql);
+        assert!(refused_in_band(&refused), "{sql:?}: {refused:?}");
+    }
+    drop(connection);
+    drop(pg);
+    admin
+        .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
+        .await
+        .expect("drop the guest generation");
+}
