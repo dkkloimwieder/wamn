@@ -45,7 +45,7 @@ async fn read(
 ) -> Result<read_contract::ReadResult, super::NodeError> {
     let row = read_sql::read_setting(connection, request.key)
         .await
-        .map_err(super::statement_error)?;
+        .map_err(|error| super::statement_error(&error))?;
     Ok(read_value(row, request.carry))
 }
 
@@ -56,7 +56,7 @@ async fn write(
     write_sql::write_setting(transaction, request.key, Json(request.value))
         .await
         .map(|row| write_contract::WriteResult { key: row.key })
-        .map_err(super::statement_error)
+        .map_err(|error| super::statement_error(&error))
 }
 
 export_operation!(
@@ -104,7 +104,7 @@ export_operation!(
     WriteError,
     wamn_postgres_statements::operation_transaction()
         .await
-        .map_err(super::statement_error)?,
+        .map_err(|error| super::statement_error(&error))?,
     write
 );
 

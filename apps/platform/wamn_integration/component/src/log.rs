@@ -8,6 +8,10 @@ mod codec {
         "/../../../target/wamn/wamn_integration/wit/log_append_codec.rs"
     ));
 }
+#[expect(
+    dead_code,
+    reason = "an append reads only the record_id its insert returns; the statement also returns delivery_id and outcome"
+)]
 mod sql {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -33,7 +37,7 @@ async fn append(
         request.detail.map(Json),
     )
     .await
-    .map_err(super::statement_error)?;
+    .map_err(|error| super::statement_error(&error))?;
     Ok(appended(request.record_id, row))
 }
 export_operation!(
@@ -44,7 +48,7 @@ export_operation!(
     AppendError,
     wamn_postgres_statements::operation_transaction()
         .await
-        .map_err(super::statement_error)?,
+        .map_err(|error| super::statement_error(&error))?,
     append
 );
 
@@ -70,15 +74,15 @@ mod tests {
 
     #[test]
     fn only_declared_outcomes_are_accepted() {
+        use std::future::Future as _;
+        use std::task::{Context, Poll, Waker};
         for outcome in ["pushed", "refused", "vendor_refused"] {
             let input = serde_json::json!([{"request_id":"r", "value":{"idempotency_key":"r", "delivery_id":"d", "record_id":"i", "outcome":outcome, "detail":null}}]);
-            use std::future::Future as _;
-            use std::task::{Context, Poll, Waker};
             let mut state = ();
             let future = codec::run(
                 codec::decode(&input.to_string()).unwrap(),
                 &mut state,
-                async |_, request| {
+                async |(), request| {
                     Ok(contract::AppendResult {
                         record_id: request.record_id,
                     })

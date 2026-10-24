@@ -43,16 +43,16 @@ mod pushed_codec {
     ));
 }
 
-fn invalid(message: impl ToString) -> NodeError {
+fn invalid(message: &str) -> NodeError {
     NodeError::InvalidInput(ErrorDetail {
-        message: message.to_string(),
+        message: message.to_owned(),
         code: Some("invalid_input".into()),
     })
 }
 
-fn base_failure(message: impl ToString) -> NodeError {
+fn base_failure(message: &str) -> NodeError {
     NodeError::Terminal(ErrorDetail {
-        message: message.to_string(),
+        message: message.to_owned(),
         code: Some("internal_error".into()),
     })
 }
@@ -83,12 +83,13 @@ fn checkpoint(value: Option<String>) -> Result<Option<Value>, NodeError> {
 
 impl exports::wamn::node::async_handler::Guest for Component {
     async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input: Value = serde_json::from_str(&input).map_err(invalid)?;
+        let input: Value =
+            serde_json::from_str(&input).map_err(|error| invalid(&error.to_string()))?;
         let due = input
             .get("due")
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("schedule input requires due"))?;
-        chrono::DateTime::parse_from_rfc3339(due).map_err(invalid)?;
+        chrono::DateTime::parse_from_rfc3339(due).map_err(|error| invalid(&error.to_string()))?;
         let rows = read::run(
             context,
             vec![read::ReadItem {
@@ -110,7 +111,7 @@ impl exports::wamn::node::async_handler::Guest for Component {
                     code: Some("retry".into()),
                 })
             }
-            _ => base_failure(format!("checkpoint read failed: {error:?}")),
+            _ => base_failure(&format!("checkpoint read failed: {error:?}")),
         })?;
         Ok(Emission {
             payload: json!({"due": due, "last_synced_at": checkpoint(value.value)?}).to_string(),
@@ -126,7 +127,8 @@ fn completed_due(input: &[finish::FinishItem]) -> Result<String, NodeError> {
     if item.input.is_err() {
         return Err(invalid("consumer batch did not succeed"));
     }
-    chrono::DateTime::parse_from_rfc3339(&item.request_id).map_err(invalid)?;
+    chrono::DateTime::parse_from_rfc3339(&item.request_id)
+        .map_err(|error| invalid(&error.to_string()))?;
     Ok(item.request_id.clone())
 }
 
@@ -135,7 +137,7 @@ impl finish::Guest for Component {
         context: NodeContext,
         input: Vec<finish::FinishItem>,
     ) -> Result<Vec<finish::FinishOutcome>, NodeError> {
-        finish_codec::validate(&input).map_err(invalid)?;
+        finish_codec::validate(&input).map_err(|error| invalid(error.context()))?;
         let due = completed_due(&input)?;
         let mut failure = None;
         let rows = finish_codec::run(input, &mut failure, async |failure, _request| {
@@ -173,7 +175,7 @@ impl finish::Guest for Component {
     }
 
     async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = finish_codec::decode(&input).map_err(invalid)?;
+        let input = finish_codec::decode(&input).map_err(|error| invalid(error.context()))?;
         let rows = <Self as finish::Guest>::run(context, input).await?;
         Ok(Emission {
             payload: finish_codec::encode(&rows),
@@ -187,8 +189,8 @@ impl pushed::Guest for Component {
         context: NodeContext,
         input: Vec<pushed::PushedItem>,
     ) -> Result<Vec<pushed::PushedOutcome>, NodeError> {
-        pushed_codec::validate(&input).map_err(invalid)?;
-        Ok(pushed_codec::run(input, &mut (), async |_, request| {
+        pushed_codec::validate(&input).map_err(|error| invalid(error.context()))?;
+        Ok(pushed_codec::run(input, &mut (), async |(), request| {
             let rows = append::run(
                 context.clone(),
                 vec![append::AppendItem {
@@ -220,7 +222,7 @@ impl pushed::Guest for Component {
     }
 
     async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = pushed_codec::decode(&input).map_err(invalid)?;
+        let input = pushed_codec::decode(&input).map_err(|error| invalid(error.context()))?;
         let rows = <Self as pushed::Guest>::run(context, input).await?;
         Ok(Emission {
             payload: pushed_codec::encode(&rows),

@@ -106,7 +106,7 @@ async fn execute(
         }
         operation::authorize(caller, operation_id.clone())
             .await
-            .map_err(|error| boundary(error, operation_id))?;
+            .map_err(|error| boundary(&error, operation_id))?;
         let result = read_call(
             operation_id,
             context(request, String::new(), remaining_ms(deadline)),
@@ -119,7 +119,7 @@ async fn execute(
                 *etag = list_etag(route, wal_position);
                 operation::finish_read()
                     .await
-                    .map_err(|error| boundary(error, operation_id))?;
+                    .map_err(|error| boundary(&error, operation_id))?;
                 if let Some(inputs) = &route.etag_inputs
                     && let EtagKind::Get(field) = &inputs.kind
                     && let Some(items) = result.as_array()
@@ -132,7 +132,7 @@ async fn execute(
                         tag_digest(&json!(["get", inputs.release, revision]))
                     ));
                 }
-                if matches_tag(request, etag) {
+                if matches_tag(request, etag.as_deref()) {
                     return Ok(DeliveryOutcome::NotModified);
                 }
                 return Ok(DeliveryOutcome::Respond(result.to_string()));
@@ -140,7 +140,7 @@ async fn execute(
             Err(error) => {
                 operation::finish_read()
                     .await
-                    .map_err(|error| boundary(error, operation_id))?;
+                    .map_err(|error| boundary(&error, operation_id))?;
                 return Ok(node_failure(error));
             }
         }
@@ -198,12 +198,12 @@ async fn execute(
             }
             Err(operation::Refusal::Conflict) => refusal(
                 "idempotency_conflict",
-                format!("the key {key} repeats with another input"),
-                json!({"field": key_field, "intent": intent}),
+                &format!("the key {key} repeats with another input"),
+                &json!({"field": key_field, "intent": intent}),
             ),
             Err(operation::Refusal::Uncertain) => uncertain(&intent),
             Err(operation::Refusal::Resolved(basis)) => resolved(&intent, &basis),
-            Err(error) => return Err(boundary(error, operation_id)),
+            Err(error) => return Err(boundary(&error, operation_id)),
             Ok(operation::Begun::New(delivery_id)) => {
                 let result = call(
                     operation_id,
@@ -225,7 +225,7 @@ async fn execute(
                     Ok(_) => {
                         operation::rollback()
                             .await
-                            .map_err(|error| boundary(error, operation_id))?;
+                            .map_err(|error| boundary(&error, operation_id))?;
                         answers.push(json!({"request_id": request_id, "error": {
                             "code": "internal_error",
                             "message": format!("the export answered nothing for item {request_id}"),
@@ -236,7 +236,7 @@ async fn execute(
                     Err(error) => {
                         operation::rollback()
                             .await
-                            .map_err(|error| boundary(error, operation_id))?;
+                            .map_err(|error| boundary(&error, operation_id))?;
                         if items.len() == 1 {
                             return Ok(node_failure(error));
                         }
@@ -260,7 +260,7 @@ async fn execute(
                 } else {
                     operation::rollback()
                         .await
-                        .map_err(|error| boundary(error, operation_id))?;
+                        .map_err(|error| boundary(&error, operation_id))?;
                     result
                 }
             }
@@ -351,7 +351,7 @@ async fn read_call(
     decode(&dispatch::run(id.to_owned(), context, input).await?.payload).map(|value| (value, None))
 }
 
-fn boundary(error: operation::Refusal, id: &str) -> DeliveryError {
+fn boundary(error: &operation::Refusal, id: &str) -> DeliveryError {
     match error {
         operation::Refusal::GrantDenied | operation::Refusal::InvalidCaller => {
             DeliveryError::PermissionDenied {
@@ -390,7 +390,7 @@ fn tag_digest(value: &Value) -> String {
     wamn_execution_contract::canonical_json_sha256(value)[7..39].to_owned()
 }
 
-fn matches_tag(request: &DeliveryRequest<AuthenticatedCaller>, tag: &Option<String>) -> bool {
+fn matches_tag(request: &DeliveryRequest<AuthenticatedCaller>, tag: Option<&str>) -> bool {
     let (Some(value), Some(tag)) = (&request.if_none_match, tag) else {
         return false;
     };

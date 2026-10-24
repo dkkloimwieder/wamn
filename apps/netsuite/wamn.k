@@ -7,7 +7,7 @@ manifest.Package {
         integration = {
             package = "wamn_integration"
             version = "0.1.0"
-            digest = "sha256:7afa4b314b1d72fa35b5ec94f0ea81272bf3af7e4ba87baa49e86fefe3317cf2"
+            digest = "sha256:756b13e0d861b4f2ad2cbe88de45eb45121e54d654cf04fc0e09411a0cab9c1d"
             operations = ["setting.read", "setting.write"]
         }
         consumer = {

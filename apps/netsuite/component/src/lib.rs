@@ -49,9 +49,9 @@ mod finish_codec {
     ));
 }
 
-fn invalid_input(message: impl ToString) -> NodeError {
+fn invalid_input(message: &str) -> NodeError {
     NodeError::InvalidInput(ErrorDetail {
-        message: message.to_string(),
+        message: message.to_owned(),
         code: Some("invalid_input".into()),
     })
 }
@@ -61,10 +61,11 @@ impl finish::Guest for Component {
         context: NodeContext,
         input: Vec<finish::FinishItem>,
     ) -> Result<Vec<finish::FinishOutcome>, NodeError> {
-        finish_codec::validate(&input).map_err(invalid_input)?;
+        finish_codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
         for item in &input {
             if let Ok(request) = &item.input {
-                chrono::DateTime::parse_from_rfc3339(&request.due).map_err(invalid_input)?;
+                chrono::DateTime::parse_from_rfc3339(&request.due)
+                    .map_err(|error| invalid_input(&error.to_string()))?;
             }
         }
         let mut failure = None;
@@ -103,7 +104,7 @@ impl finish::Guest for Component {
     }
 
     async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
-        let input = finish_codec::decode(&input).map_err(invalid_input)?;
+        let input = finish_codec::decode(&input).map_err(|error| invalid_input(error.context()))?;
         let rows = <Self as finish::Guest>::run(context, input).await?;
         Ok(Emission {
             payload: finish_codec::encode(&rows),

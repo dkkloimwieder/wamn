@@ -4,23 +4,23 @@ use serde_json::{Value, json};
 
 use crate::DeliveryError;
 
-pub(crate) fn refusal(code: &str, message: String, detail: Value) -> Value {
+pub(crate) fn refusal(code: &str, message: &str, detail: &Value) -> Value {
     json!({"error": {"code": code, "message": message, "detail": detail}})
 }
 
 pub(crate) fn resolved(intent: &str, basis: &str) -> Value {
     refusal(
         "intent-resolved",
-        format!("an operator resolved intent {intent} by {basis}; send a new key"),
-        json!({"intent": intent, "basis": basis}),
+        &format!("an operator resolved intent {intent} by {basis}; send a new key"),
+        &json!({"intent": intent, "basis": basis}),
     )
 }
 
 pub(crate) fn uncertain(intent: &str) -> Value {
     refusal(
         "intent-uncertain",
-        format!("intent {intent} began and never finished; an operator resolves it"),
-        json!({"intent": intent}),
+        &format!("intent {intent} began and never finished; an operator resolves it"),
+        &json!({"intent": intent}),
     )
 }
 

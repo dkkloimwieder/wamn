@@ -21,14 +21,14 @@ export!(Component);
 
 use wamn::node::types::{ErrorDetail, NodeError};
 
-fn invalid(error: impl ToString) -> NodeError {
+fn invalid(message: &str) -> NodeError {
     NodeError::InvalidInput(ErrorDetail {
-        message: error.to_string(),
+        message: message.to_owned(),
         code: Some("invalid_input".into()),
     })
 }
 
-fn statement_error(error: wamn_postgres_statements::StatementError) -> NodeError {
+fn statement_error(error: &wamn_postgres_statements::StatementError) -> NodeError {
     use wamn_postgres_statements::StatementErrorType;
     let code = match error.type_() {
         StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => {

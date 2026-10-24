@@ -140,10 +140,10 @@ impl Backend for GuestBackend {
     }
 
     fn new_delivery_id(&mut self) -> String {
+        const RANDOM_BYTES: u64 = 16;
         if self.base_route {
             return String::new();
         }
-        const RANDOM_BYTES: u64 = 16;
         hex(&bindings::wasi::random::random::get_random_bytes(
             RANDOM_BYTES,
         ))
