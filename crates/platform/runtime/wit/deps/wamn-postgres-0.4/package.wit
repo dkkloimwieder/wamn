@@ -201,21 +201,26 @@ interface statements {
   /// Render the next number of sequence `name` of the composing application,
   /// and advance its counters in the operation transaction.
   ///
-  /// `record` is a JSON object document that carries exactly the fields the
-  /// sequence's pattern names, each as the text of its value or null. The
-  /// application is the `app.application` claim, never an argument. Outside
-  /// an open operation transaction the host refuses. Added to 0.4.0 in place,
+  /// `keys` maps each value that the sequence's pattern names (`per=`,
+  /// `reset=` and `{field:}`) to its text, or to none for a null. A bare
+  /// `{seq}` or `{date:}` pattern takes no keys. The renderer reads only the
+  /// keys that the pattern names; a key given twice is refused. The keys are
+  /// not a record: any command can call this, with values of its choice.
+  /// The application comes from host state: the operation transaction holds
+  /// the application it was begun for. It is never an argument and never
+  /// the `app.application` claim, which guest SQL can rewrite. Outside an
+  /// open operation transaction the host refuses. Added to 0.4.0 in place,
   /// with no version bump (docs/plan/platform-config.md, "Issues for C2").
-  next-number: async func(name: string, %record: string) -> result<string, statement-error>;
+  next-number: async func(name: string, keys: list<tuple<string, option<string>>>) -> result<string, statement-error>;
 
   /// Render the current number of sequence `name` of the composing
-  /// application: the last number issued for the counters `record` keys,
+  /// application: the last number issued for the counters `keys` names,
   /// with no lock and no advance. Never for assignment.
   ///
-  /// `record` and the refusals are those of `next-number`. When no number
-  /// was issued yet for a counter of the pattern, the host answers
-  /// `postgres(query-error)` with SQLSTATE `P0002` (`no_data_found`).
-  peek-number: async func(name: string, %record: string) -> result<string, statement-error>;
+  /// `keys`, the application and the refusals are those of `next-number`.
+  /// When no number was issued yet for a counter of the pattern, the host
+  /// answers `postgres(query-error)` with SQLSTATE `P0002` (`no_data_found`).
+  peek-number: async func(name: string, keys: list<tuple<string, option<string>>>) -> result<string, statement-error>;
 }
 
 /// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).

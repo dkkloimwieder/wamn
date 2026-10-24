@@ -1301,17 +1301,17 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
     async fn next_number(
         accessor: &Accessor<T, Self>,
         name: String,
-        record: String,
+        keys: Vec<(String, Option<String>)>,
     ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, record, NumberCall::Next).await
+        statement_number(accessor, name, keys, NumberCall::Next).await
     }
 
     async fn peek_number(
         accessor: &Accessor<T, Self>,
         name: String,
-        record: String,
+        keys: Vec<(String, Option<String>)>,
     ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, record, NumberCall::Peek).await
+        statement_number(accessor, name, keys, NumberCall::Peek).await
     }
 }
 
@@ -1754,18 +1754,18 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
         name: String,
-        record: String,
+        keys: Vec<(String, Option<String>)>,
     ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, record, NumberCall::Next).await
+        statement_number(accessor, name, keys, NumberCall::Next).await
     }
 
     async fn peek_number(
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
         name: String,
-        record: String,
+        keys: Vec<(String, Option<String>)>,
     ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
-        statement_number(accessor, name, record, NumberCall::Peek).await
+        statement_number(accessor, name, keys, NumberCall::Peek).await
     }
 }
 

@@ -292,17 +292,18 @@ fn emit_create(
         .map(|field| field_name(field))
         .collect::<Vec<_>>();
     let refuse = statement_error(CrudAction::Create, &constraints(CrudAction::Create));
-    // The first of two statements: the host renders the number from exactly
-    // the fields the pattern names, and the insert writes the text.
+    // The first of two statements: the host renders the number from the
+    // model's fields that the pattern names, passed as the keys, and the
+    // insert writes the text.
     if let Some((field, sequence, pattern)) = number {
-        let record = pattern
+        let keys = pattern
             .fields()
             .into_iter()
             .map(|name| {
                 let column = column(table, name).expect("validation resolved the pattern field");
                 format!(
                     "({name:?}, {})",
-                    record_text(column.column_type(), &field_name(name), column.nullable())
+                    key_text(column.column_type(), &field_name(name), column.nullable())
                 )
             })
             .collect::<Vec<_>>()
@@ -310,7 +311,7 @@ fn emit_create(
         let target = field_name(field);
         writeln!(
             body,
-            "let {target} = wamn_postgres_statements::next_number({sequence:?}, &[{record}]).await.map_err({refuse})?;"
+            "let {target} = wamn_postgres_statements::next_number({sequence:?}, &[{keys}]).await.map_err({refuse})?;"
         )
         .expect("writing to a String cannot fail");
         arguments.push(target);
@@ -330,9 +331,9 @@ fn emit_create(
     .expect("writing to a String cannot fail");
 }
 
-/// The record value `next-number` takes for one parsed statement value, the
+/// The key value `next-number` takes for one parsed statement value, the
 /// text of its one spelling, or `None` for a null.
-fn record_text(ty: ColumnType, value: &str, nullable: bool) -> String {
+fn key_text(ty: ColumnType, value: &str, nullable: bool) -> String {
     let text = |value: &str| match ty {
         ColumnType::Text => format!("{value}.clone()"),
         ColumnType::Uuid | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Json => {
@@ -769,12 +770,8 @@ pub(super) fn emit_package_data(
         .iter()
         .filter(|(_, model)| !model.operations.is_empty())
         .collect::<Vec<_>>();
-    let callable = manifest
-        .sequences
-        .iter()
-        .filter(|(_, sequence)| sequence.callable)
-        .collect::<Vec<_>>();
-    if models.is_empty() && callable.is_empty() {
+    let sequences = manifest.sequences.iter().collect::<Vec<_>>();
+    if models.is_empty() && sequences.is_empty() {
         return Ok(());
     }
     // The refusal is the closed vocabulary, so every package spells it the
@@ -813,26 +810,28 @@ pub(super) fn emit_package_data(
         )
         .expect("writing to a String cannot fail");
     }
-    if !callable.is_empty() {
+    if !sequences.is_empty() {
         source.push_str(
-            "\n/// The package's callable sequences.\npub mod sequences {\n    include!(\"sequences.rs\");\n}\n",
+            "\n/// The package's sequences.\npub mod sequences {\n    include!(\"sequences.rs\");\n}\n",
         );
         insert_bytes(
             files,
             "generated/data/sequences.rs",
-            emit_sequences(&callable).into_bytes(),
+            emit_sequences(&sequences).into_bytes(),
         )?;
     }
     insert_bytes(files, "generated/data/mod.rs", source.into_bytes())
 }
 
 /// `generated/data/sequences.rs`: `sequences::<name>::next(<Name>Key)` and
-/// `sequences::<name>::peek(<Name>Key)` for each callable sequence. The key carries exactly the fields the pattern
-/// names, as the text of their one spelling.
-fn emit_sequences(callable: &[(&String, &crate::manifest::SequenceDeclaration)]) -> String {
+/// `sequences::<name>::peek(<Name>Key)` for each sequence of the package. The
+/// key carries exactly the values the default pattern names (`per=`,
+/// `reset=` and `{field:}`), as text; it is not a record. A pattern that
+/// names none takes no key: `next()` and `peek()`.
+fn emit_sequences(sequences: &[(&String, &crate::manifest::SequenceDeclaration)]) -> String {
     let mut source = String::from(HEADER);
-    source.push_str("// The callable sequences of the package.\n");
-    for (name, sequence) in callable {
+    source.push_str("// The sequences of the package.\n");
+    for (name, sequence) in sequences {
         let pattern = wamn_number_pattern::parse(&sequence.pattern)
             .expect("validation parsed every sequence pattern");
         let fields = pattern
@@ -840,44 +839,55 @@ fn emit_sequences(callable: &[(&String, &crate::manifest::SequenceDeclaration)])
             .into_iter()
             .map(field_name)
             .collect::<Vec<_>>();
-        let key = format!("{}Key", rust_type_identifier(name));
-        let members = fields.iter().fold(String::new(), |mut members, field| {
-            writeln!(members, "    pub {field}: String,").expect("writing to a String cannot fail");
-            members
-        });
-        let record = pattern
+        let keys = pattern
             .fields()
             .into_iter()
             .zip(&fields)
             .map(|(name, field)| format!("({name:?}, Some({field}))"))
             .collect::<Vec<_>>()
             .join(", ");
+        // A pattern that names no key takes no argument.
+        let (key_type, parameter, bind) = if fields.is_empty() {
+            (String::new(), String::new(), String::new())
+        } else {
+            let key = format!("{}Key", rust_type_identifier(name));
+            let members = fields.iter().fold(String::new(), |mut members, field| {
+                writeln!(members, "    pub {field}: String,")
+                    .expect("writing to a String cannot fail");
+                members
+            });
+            (
+                format!(
+                    "/// The values the pattern names, as text.\n\
+                     #[derive(Clone, Debug, Default, Eq, PartialEq)]\n\
+                     pub struct {key} {{\n{members}}}\n\n"
+                ),
+                format!("key: {key}"),
+                format!("let {key} {{ {} }} = key;\n", fields.join(", ")),
+            )
+        };
         writeln!(
             source,
             "\n/// The `{name}` sequence, pattern `{}` by default.\n\
              pub mod {} {{\n\
-             /// The fields the pattern names.\n\
-             #[derive(Clone, Debug, Default, Eq, PartialEq)]\n\
-             pub struct {key} {{\n{members}}}\n\n\
+             {key_type}\
              /// The next number, which advances the counter in the operation\n\
              /// transaction: consumed on commit, never on rollback.\n\
              ///\n/// # Errors\n///\n/// The host's refusal.\n\
-             pub async fn next(key: {key}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
-             let {key} {{ {} }} = key;\n\
-             wamn_postgres_statements::next_number({name:?}, &[{record}]).await\n\
+             pub async fn next({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
+             {bind}\
+             wamn_postgres_statements::next_number({name:?}, &[{keys}]).await\n\
              }}\n\n\
              /// The current number, the last one issued for the key, with no\n\
              /// lock and no advance. Never for assignment.\n\
              ///\n/// # Errors\n///\n/// The host's refusal, and SQLSTATE `P0002` when no number was\n/// issued yet.\n\
-             pub async fn peek(key: {key}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
-             let {key} {{ {} }} = key;\n\
-             wamn_postgres_statements::peek_number({name:?}, &[{record}]).await\n\
+             pub async fn peek({parameter}) -> Result<String, wamn_postgres_statements::StatementError> {{\n\
+             {bind}\
+             wamn_postgres_statements::peek_number({name:?}, &[{keys}]).await\n\
              }}\n\
              }}",
             sequence.pattern.escape_debug(),
             field_name(name),
-            fields.join(", "),
-            fields.join(", "),
         )
         .expect("writing to a String cannot fail");
     }

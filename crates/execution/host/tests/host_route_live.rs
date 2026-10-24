@@ -652,7 +652,7 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         call(&member_claims, set, "set-7", request("po", 7))
             .await
             .expect("the set answers"),
-        json!({"request_id": "set-7", "value": {"next_number": "P-7"}})
+        json!({"request_id": "set-7", "value": {"value": 7}})
     );
     let row = admin
         .query_one(
@@ -674,7 +674,7 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         logged.get::<_, Option<String>>(0).as_deref(),
-        Some(r#"{"next_number":"P-7"}"#)
+        Some(r#"{"value":7}"#)
     );
     assert_eq!(
         call(&member_claims, set, "nope", request("nope", 7))

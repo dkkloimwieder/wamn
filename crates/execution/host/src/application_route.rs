@@ -138,12 +138,6 @@ fn counter_set_refusal(refusal: &CounterSetRefusal) -> Refusal {
         CounterSetRefusal::SequenceNotFound => ("sequence_not_found", "sequence"),
         CounterSetRefusal::CounterNotFound => ("counter_not_found", "counter"),
         CounterSetRefusal::AssignedPerKey => ("counter_assigned_per_key", "counter"),
-        CounterSetRefusal::NumberLive { number } => {
-            return Refusal::Declared {
-                code: "number_live",
-                detail: json!({ "field": "value", "number": number }),
-            };
-        }
         CounterSetRefusal::IdempotencyConflict => ("idempotency_conflict", "request_id"),
     };
     Refusal::Declared {
@@ -447,8 +441,7 @@ impl ApplicationRoutes<'_> {
     /// operation transaction of the guest authority, logged in the write log
     /// under the route's operation and the request id
     /// (docs/plan/platform-config.md, Numbering, Administration). The
-    /// application is a composing application of the release, and its
-    /// records are in the schemas of its components.
+    /// application is a composing application of the release.
     async fn set_counter(
         &self,
         attachment: &HostAttachment,
@@ -457,22 +450,15 @@ impl ApplicationRoutes<'_> {
         request: CounterSetRequest,
     ) -> Result<Value, Refusal> {
         let manifest = self.release.manifest();
-        let components = manifest
+        if !manifest
             .components
             .iter()
-            .filter(|component| manifest.composing_application(component) == request.application)
-            .collect::<Vec<_>>();
-        if components.is_empty() {
+            .any(|component| manifest.composing_application(component) == request.application)
+        {
             return Err(counter_set_refusal(&CounterSetRefusal::InvalidInput {
                 field: "application",
             }));
         }
-        let schemas = components
-            .iter()
-            .filter_map(|component| component.runtime_schema.clone())
-            .collect::<BTreeSet<String>>()
-            .into_iter()
-            .collect::<Vec<_>>();
         let set = CounterSet {
             application: request.application,
             sequence: request.sequence,
@@ -480,7 +466,7 @@ impl ApplicationRoutes<'_> {
             key: request.key,
             value: request.value,
         };
-        let number = self
+        let value = self
             .postgres
             .set_number_counter(
                 self.project,
@@ -489,14 +475,13 @@ impl ApplicationRoutes<'_> {
                 &attachment.operation,
                 request_id.unwrap_or_default(),
                 &set,
-                &schemas,
             )
             .await
             .map_err(|error| match error {
                 CounterSetError::Refused(refusal) => counter_set_refusal(&refusal),
                 CounterSetError::Failed(error) => Refusal::Failed(error),
             })?;
-        Ok(json!({ "next_number": number }))
+        Ok(json!({ "value": value }))
     }
 
     /// The identity reader of the host. `project-admin`, which `org-admin`

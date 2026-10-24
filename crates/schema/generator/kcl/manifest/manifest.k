@@ -351,10 +351,9 @@ schema Model[name: str, schema_name: str]:
         }, "${name} states a stamp column as server-owned; the generator reads each stamp from the table, so remove it"
 
 schema Sequence:
-    """A number sequence and its default pattern. callable = True when the
-    package's commands call it through sequences::<name>::next."""
+    """A number sequence and its default pattern. Any command of the package
+    calls it through sequences::<name>::next."""
     pattern: str
-    callable?: bool
 
 schema InternalRelation:
     $schema: str

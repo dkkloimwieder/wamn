@@ -12,6 +12,10 @@
 //! counter that `next-number` advances is consumed on commit and given back
 //! on rollback.
 //!
+//! The keys of a call are the values that the pattern names, not a record:
+//! any command can call either function, and the generated insert of a
+//! numbered field passes the model's fields that the pattern names.
+//!
 //! Counters advance only through the two platform functions, which take the
 //! sequence id that the plugin resolved. Statement admission refuses guest SQL
 //! that names them or writes a `platform.*` relation, so only the plugin
@@ -59,10 +63,10 @@ pub(super) const NO_NUMBER_ISSUED: &str = "P0002";
 /// A sequence that the composing application does not own:
 /// `undefined_object`.
 const UNKNOWN_SEQUENCE: &str = "42704";
-/// A record or a stored pattern that the renderer cannot use:
+/// Keys or a stored pattern that the renderer cannot use:
 /// `invalid_parameter_value`.
 const INVALID_INPUT: &str = "22023";
-/// A pattern field that the record carries as null:
+/// A key that the pattern names and the call gives as null:
 /// `null_value_not_allowed`.
 const NULL_FIELD: &str = "22004";
 
@@ -91,7 +95,7 @@ const COUNTER_SQL: &str = "SELECT value FROM platform.number_counter \
 pub(super) async fn statement_number<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
     name: String,
-    record: String,
+    keys: Vec<(String, Option<String>)>,
     call: NumberCall,
 ) -> wash_runtime::wasmtime::Result<Result<String, StatementError>> {
     let (plugin, component_id, trace) = accessor.with(|mut access| {
@@ -104,27 +108,27 @@ pub(super) async fn statement_number<T: 'static>(
         ))
     })?;
     trace
-        .run(async move { Ok(render_number(&plugin, &component_id, name, record, call).await) })
+        .run(async move { Ok(render_number(&plugin, &component_id, name, keys, call).await) })
         .await
 }
 
-/// Render the next or the current number of sequence `name` for `record`,
-/// a JSON object of strings and nulls, in the operation transaction of
+/// Render the next or the current number of sequence `name` for `keys`, the
+/// values the pattern names, in the operation transaction of
 /// `component_id`.
 ///
 /// # Errors
 ///
 /// `postgres(permission-denied)` outside an open operation transaction or
 /// when host state holds no application for it; `query-error` with SQLSTATE `42704` for a
-/// sequence the application does not own, `22023` for a record or a stored
-/// pattern the renderer cannot use, `22004` for a null pattern field, and
+/// sequence the application does not own, `22023` for keys or a stored
+/// pattern the renderer cannot use, `22004` for a null key, and
 /// [`NO_NUMBER_ISSUED`] for a `peek-number` before any number; and the error
 /// of any statement.
 async fn render_number(
     plugin: &WamnPostgres,
     component_id: &str,
     name: String,
-    record: String,
+    keys: Vec<(String, Option<String>)>,
     call: NumberCall,
 ) -> Result<String, StatementError> {
     let Some(transaction) = plugin.operation_transaction_for(component_id) else {
@@ -133,19 +137,13 @@ async fn render_number(
     let Some(application) = transaction.application.clone() else {
         return Err(StatementError::Postgres(PgError::PermissionDenied));
     };
-    let record =
-        serde_json::from_str::<BTreeMap<String, Option<String>>>(&record).map_err(|error| {
-            refusal(
-                INVALID_INPUT,
-                format!("the record is not one JSON object of strings and nulls: {error}"),
-            )
-        })?;
+    let keys = key_map(keys)?;
     let project = plugin.project_for(component_id);
     let span = db_span_for_project(plugin, component_id, &project, call.operation());
     let rendered = transaction
         .with_host_connection(|connection| async move {
             let result =
-                match render(connection.connection(), &application, &name, &record, call).await {
+                match render(connection.connection(), &application, &name, &keys, call).await {
                     Ok(number) => Ok(Ok(number)),
                     Err(Failure::Refused(refused)) => Ok(Err(refused)),
                     Err(Failure::Postgres(error)) => Err(error),
@@ -188,7 +186,7 @@ async fn render(
     connection: &Object,
     application: &str,
     name: &str,
-    record: &BTreeMap<String, Option<String>>,
+    keys: &BTreeMap<String, Option<String>>,
     call: NumberCall,
 ) -> Result<String, Failure> {
     let statement = connection.prepare_cached(SEQUENCE_SQL).await?;
@@ -214,7 +212,7 @@ async fn render(
             format!("the pattern of number sequence {name} does not parse: {error}"),
         )
     })?;
-    let fields = record_fields(&pattern, record)?;
+    let fields = key_values(&pattern, keys)?;
     let dates = if uses_date(&pattern) {
         let statement = connection.prepare_cached(DATE_SQL).await?;
         let text: String = connection.query_one(&statement, &[&timezone]).await?.get(0);
@@ -310,21 +308,33 @@ async fn counter_value(
     })
 }
 
-/// The text of each record field the pattern names.
-fn record_fields<'a>(
+/// The keys of one call as a map. A key given twice is refused.
+fn key_map(
+    keys: Vec<(String, Option<String>)>,
+) -> Result<BTreeMap<String, Option<String>>, StatementError> {
+    let mut map = BTreeMap::new();
+    for (name, value) in keys {
+        if map.contains_key(&name) {
+            return Err(refusal(INVALID_INPUT, format!("key {name} is given twice")));
+        }
+        map.insert(name, value);
+    }
+    Ok(map)
+}
+
+/// The text of each key the pattern names. A key the pattern does not name
+/// is not read.
+fn key_values<'a>(
     pattern: &Pattern,
-    record: &'a BTreeMap<String, Option<String>>,
+    keys: &'a BTreeMap<String, Option<String>>,
 ) -> Result<BTreeMap<&'a str, &'a str>, StatementError> {
     pattern
         .fields()
         .into_iter()
-        .map(|field| match record.get_key_value(field) {
+        .map(|field| match keys.get_key_value(field) {
             Some((name, Some(value))) => Ok((name.as_str(), value.as_str())),
-            Some((_, None)) => Err(refusal(NULL_FIELD, format!("record field {field} is null"))),
-            None => Err(refusal(
-                INVALID_INPUT,
-                format!("the record has no field {field}"),
-            )),
+            Some((_, None)) => Err(refusal(NULL_FIELD, format!("key {field} is null"))),
+            None => Err(refusal(INVALID_INPUT, format!("no key {field} is given"))),
         })
         .collect()
 }

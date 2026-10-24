@@ -44,36 +44,45 @@ fn counters_take_name_order_after_the_counter_their_key_names() {
 }
 
 #[test]
-fn the_record_carries_every_pattern_field_as_text() {
+fn the_keys_carry_every_value_the_pattern_names_as_text() {
     let pattern = wamn_number_pattern::parse("{field:facility}-{seq:n,reset=year}").unwrap();
-    let record = |pairs: &[(&str, Option<&str>)]| {
-        pairs
-            .iter()
-            .map(|(name, value)| ((*name).to_owned(), value.map(str::to_owned)))
-            .collect::<BTreeMap<_, _>>()
+    let keys = |pairs: &[(&str, Option<&str>)]| {
+        key_map(
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), value.map(str::to_owned)))
+                .collect(),
+        )
     };
-    let full = record(&[
+    let full = keys(&[
         ("facility", Some("DAY")),
         ("year", Some("26")),
         ("extra", None),
-    ]);
-    let fields = record_fields(&pattern, &full).unwrap();
-    assert_eq!(fields["facility"], "DAY");
-    assert_eq!(fields["year"], "26");
+    ])
+    .unwrap();
+    let values = key_values(&pattern, &full).unwrap();
+    assert_eq!(values["facility"], "DAY");
+    assert_eq!(values["year"], "26");
+    assert!(
+        !values.contains_key("extra"),
+        "a key the pattern does not name is not read"
+    );
     let code = |error: StatementError| match error {
         StatementError::Postgres(PgError::QueryError((code, _))) => code,
         other => panic!("a query error: {other:?}"),
     };
-    let null = record(&[("facility", None), ("year", Some("26"))]);
+    let null = keys(&[("facility", None), ("year", Some("26"))]).unwrap();
+    assert_eq!(code(key_values(&pattern, &null).unwrap_err()), NULL_FIELD);
+    let missing = keys(&[("facility", Some("DAY"))]).unwrap();
     assert_eq!(
-        code(record_fields(&pattern, &null).unwrap_err()),
-        NULL_FIELD
-    );
-    let missing = record(&[("facility", Some("DAY"))]);
-    assert_eq!(
-        code(record_fields(&pattern, &missing).unwrap_err()),
+        code(key_values(&pattern, &missing).unwrap_err()),
         INVALID_INPUT
     );
+    let twice = keys(&[("facility", Some("DAY")), ("facility", Some("CIN"))]).unwrap_err();
+    assert_eq!(code(twice), INVALID_INPUT);
+    // A bare pattern takes no keys.
+    let bare = wamn_number_pattern::parse("P-{seq:po}").unwrap();
+    assert!(key_values(&bare, &keys(&[]).unwrap()).unwrap().is_empty());
 }
 
 mod live;

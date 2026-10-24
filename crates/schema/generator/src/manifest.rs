@@ -2611,11 +2611,6 @@ pub struct SequenceDeclaration {
     /// The default pattern. Env apply writes it once; an edited row keeps its
     /// own.
     pub pattern: String,
-    /// Whether the package's commands call the sequence, through the
-    /// generated `sequences::<name>::next`. Only a callable sequence gets the
-    /// binding.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub callable: bool,
 }
 
 /// What fills one column of a model.

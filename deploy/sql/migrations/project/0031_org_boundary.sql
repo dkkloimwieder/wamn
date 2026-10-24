@@ -126,8 +126,8 @@ ALTER TABLE platform.setting ADD CONSTRAINT setting_pkey PRIMARY KEY (scope_type
 -- row's lock, it inserts the row of (counter, key) with the value, or sets
 -- the value of the row that exists. The value is the next value to render. A
 -- value below 1 is refused with invalid_parameter_value. The route refuses a
--- per= counter and a set below a live number with the renderer before it
--- commits.
+-- per= counter. Neither reads an application table: a set that gives a
+-- number a record already carries is caught by that model's UQ.
 --
 -- The database is the org boundary, so no function checks a tenant. No
 -- function reads the app.application claim, which guest SQL can rewrite.

@@ -416,67 +416,37 @@ pub async fn operation_transaction() -> Result<Transaction, StatementError> {
         .map_err(StatementError::from_wire)
 }
 
-/// The next number of sequence `name`, rendered by the host from `record`:
-/// exactly the fields its pattern names, each as the text of its value or
-/// `None` for a null. The counter advances in the operation transaction, so
-/// a rollback leaves the number unconsumed.
+/// The next number of sequence `name`, rendered by the host from `keys`:
+/// the values its pattern names (`per=`, `reset=` and `{field:}`), each as
+/// its text or `None` for a null. A bare `{seq}` or `{date:}` pattern takes
+/// no keys. The counter advances in the operation transaction, so a rollback
+/// leaves the number unconsumed.
 pub async fn next_number(
     name: &str,
-    record: &[(&str, Option<String>)],
+    keys: &[(&str, Option<String>)],
 ) -> Result<String, StatementError> {
-    host::next_number(name.to_string(), record_json(record))
+    host::next_number(name.to_string(), key_list(keys))
         .await
         .map_err(StatementError::from_wire)
 }
 
-/// The current number of sequence `name` for `record`: the last number
+/// The current number of sequence `name` for `keys`: the last number
 /// issued, rendered by the host with no lock and no advance. Never for
-/// assignment. `record` is as for [`next_number`]. The host answers SQLSTATE
+/// assignment. `keys` is as for [`next_number`]. The host answers SQLSTATE
 /// `P0002` when no number was issued yet.
 pub async fn peek_number(
     name: &str,
-    record: &[(&str, Option<String>)],
+    keys: &[(&str, Option<String>)],
 ) -> Result<String, StatementError> {
-    host::peek_number(name.to_string(), record_json(record))
+    host::peek_number(name.to_string(), key_list(keys))
         .await
         .map_err(StatementError::from_wire)
 }
 
-/// The record as one JSON object document of strings and nulls.
-fn record_json(record: &[(&str, Option<String>)]) -> String {
-    let mut json = String::from("{");
-    for (index, (field, value)) in record.iter().enumerate() {
-        if index > 0 {
-            json.push(',');
-        }
-        push_json_string(&mut json, field);
-        json.push(':');
-        match value {
-            Some(value) => push_json_string(&mut json, value),
-            None => json.push_str("null"),
-        }
-    }
-    json.push('}');
-    json
-}
-
-fn push_json_string(json: &mut String, text: &str) {
-    use fmt::Write as _;
-    json.push('"');
-    for character in text.chars() {
-        match character {
-            '"' => json.push_str("\\\""),
-            '\\' => json.push_str("\\\\"),
-            '\n' => json.push_str("\\n"),
-            '\r' => json.push_str("\\r"),
-            '\t' => json.push_str("\\t"),
-            control if control < ' ' => {
-                write!(json, "\\u{:04x}", u32::from(control)).expect("writing to a String");
-            }
-            other => json.push(other),
-        }
-    }
-    json.push('"');
+fn key_list(keys: &[(&str, Option<String>)]) -> Vec<(String, Option<String>)> {
+    keys.iter()
+        .map(|(name, value)| ((*name).to_owned(), value.clone()))
+        .collect()
 }
 
 /// Run one callback in exactly one transaction, with no automatic retry.
@@ -713,18 +683,6 @@ fn decode_row<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_record_is_one_json_object_of_strings_and_nulls() {
-        assert_eq!(record_json(&[]), "{}");
-        assert_eq!(
-            record_json(&[
-                ("facility", Some("D\"A\\Y\n\u{1}".to_owned())),
-                ("batch_id", None),
-            ]),
-            r#"{"facility":"D\"A\\Y\n\u0001","batch_id":null}"#
-        );
-    }
 
     #[test]
     fn query_errors_keep_the_sqlstate_and_database_message() {

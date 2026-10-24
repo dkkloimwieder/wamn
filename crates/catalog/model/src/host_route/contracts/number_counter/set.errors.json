@@ -42,16 +42,6 @@
       "text": "A per= counter gives each key one number for good, so it is never set."
     },
     {
-      "literal": "number_live",
-      "from": "transaction_invariant",
-      "detail": {
-        "required": [
-          "field"
-        ]
-      },
-      "text": "A record already carries the number that this value gives, so the set is refused."
-    },
-    {
       "literal": "idempotency_conflict",
       "from": "transaction_invariant",
       "detail": {

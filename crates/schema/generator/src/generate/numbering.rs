@@ -3,10 +3,10 @@
 //!
 //! A sequence's pattern parses with the one parser, [`wamn_number_pattern`].
 //! A `number` field and an `actor` field are filled by generated SQL, so no
-//! write may supply either. A sequence is used when a model field numbers from
-//! it or when it is declared `callable`, which gives the package's commands
-//! the generated `sequences::<name>::next`; a sequence with neither is a
-//! refusal. A package with models runs on `cloud` only.
+//! write may supply either. A sequence is independent of the records: any
+//! command can call it through the generated `sequences::<name>::next`, and a
+//! numbered field is one caller, whose model must have a field for each key
+//! the pattern names. A package with models runs on `cloud` only.
 
 use wamn_number_pattern::{Key, Pattern, Scope};
 
@@ -47,21 +47,6 @@ pub(super) fn validate_numbering(
                 sequence,
                 &patterns[sequence],
             )?;
-        }
-    }
-    for (sequence, declaration) in &manifest.sequences {
-        let bound = manifest.models.values().any(|model| {
-            model
-                .number_field()
-                .is_some_and(|(_, used)| used == sequence)
-        });
-        if !bound && !declaration.callable {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidManifest,
-                format!(
-                    "sequence {sequence} numbers no field and no command calls it: bind it with number = \"{sequence}\" on a model field, set callable = True, or remove it"
-                ),
-            ));
         }
     }
     refuse_supplied_fields(manifest)
@@ -167,10 +152,12 @@ fn validate_numbered_field(
         .operations
         .get(&CrudAction::Create)
         .map(|create| create.writable_fields.as_slice());
+    // The generated insert passes the model's fields as the keys, so the
+    // model needs a field for each key the pattern names.
     for name in pattern.fields() {
         let Some(named) = column(table, name) else {
             return Err(invalid(format!(
-                "sequence {sequence} names {name}, which is not a field of {model_name}, another counter of its pattern, or date:FMT; it must be a field of every model that uses the sequence"
+                "{model_name}.{field} numbers from sequence {sequence}, whose pattern names key {name}, but {model_name} has no field {name}: the generated insert passes the model's fields as the keys"
             )));
         };
         if matches!(named.column_type(), ColumnType::Bytes | ColumnType::Json) {

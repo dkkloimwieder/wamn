@@ -72,29 +72,38 @@ A package declares each platform thing it uses by name. The declaration is the o
 
 ```kcl
 # wamn.k
-package = {
-    targets   = ["cloud"]
-    relations = { user = "platform.user", connection = "platform.connection", external_system = "platform.external_system" }
+import manifest
+
+manifest.Package {
+    package = {id = "purchasing", version = "1.0.0"}
+    required_platform_policy_contract = {id = "purchasing_data_access", state = "satisfied"}
+    targets = ["cloud"]
     sequences = {
-        purchase_order = { pattern = "P-{seq:po,width=8}" }
-        pick_label     = { pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}" }
-    }
-    connections = {
-        documents = { integration = "s3",     mode = "write" }
-        line3     = { integration = "modbus", mode = "read" }
-        mes       = { integration = "wamn",   mode = "write" }
+        purchase_order = {pattern = "P-{seq:po,width=8}"}
+        pick_label = {pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"}
     }
     models = {
-        purchase_order = {
+        purchase_order = manifest.Model("purchase_order", "purchasing") {
+            table = "purchase_order"
+            owner = "purchasing"
+            server_owned_fields = ["id", "number"]
             fields = {
-                id         = { type = "uuid", role = "key" }
-                number     = { type = "text", number = "purchase_order" }
-                updated_by = { type = "uuid", role = "actor" }
+                number = {number = "purchase_order"}
+                created_by = {role = "actor"}
+                updated_by = {role = "actor"}
+            }
+            operations: {
+                create: {writable_fields = ["supplier_id"], result = "one"}
             }
         }
     }
+    connections = ["postgres"]
+    components = {purchasing = {connections = ["postgres"]}}
 }
 ```
+
+The example is the KCL that the build reads (`crates/schema/generator/kcl/manifest/manifest.k`). A column's type and key come from the table's SQL, not from `fields`, and `fields` states only `number` and `role = "actor"`. `pick_label` numbers no field: commands call it. Two declarations below are not in that schema yet: `relations`, and `connections` as a map of names to `integration` and `mode` (C3). Today `connections` is the list of connection names the components use.
+
 
 ```kcl
 # environment.k — one per project environment; names the target, lists applications and their packages,
@@ -113,22 +122,25 @@ environment = {
 
 - `targets`: the target types a package may run on, `cloud` by default. A package with models is `cloud` only; env apply refuses a package not allowed on its environment's target type.
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
-- `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern. A key named by `per=` or `reset=` must be a field of every model that uses the sequence, or a counter in the same pattern, or `date:FMT`; otherwise a build refusal.
-- `number = "<sequence>"` on a field: the generator fills it by calling `next_number` on insert with exactly the fields the pattern names; a write statement that supplies the field is a build refusal. On the key field: allowed, with the limits under Numbering.
+- `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern; after that the admin owns the pattern. A sequence is independent of the records: it needs no model field and no declared caller, and its keys need not be fields of any model (owner ruling 2026-10-24).
+- `number = "<sequence>"` on a field: one caller of the sequence. The generated insert calls `next_number` and passes the model's fields that the pattern names as the keys; a write statement that supplies the field is a build refusal. The model must have a field for each key the default pattern names (`per=`, `reset=` and `{field:}`); otherwise a build refusal. On the key field: allowed, with the limits under Numbering.
 - `role = "actor"` on a field: the host fills it from the operation caller. The generated insert fills every actor field from `app.user_id`. The generated update fills `updated_by` from `app.user_id` and never touches `created_by`. An update that changes no field leaves `updated_by` as it leaves the revision. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `connections`: the names a package binds, each with the integration it expects and `mode = read | write`. A file store is one of them. `environment.k` maps each name to a connection name; apply refuses an unbound name, a connection the project has not enabled, an integration that differs from the declared one, or an integration not allowed at the environment.
 - `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` capability. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
 - A `wamn` connection's external system is the peer environment; its `parameters` carry `project/environment/application`. The connection adds transport and exchange only.
-- A sequence declared by a package is also callable from its commands (`sequences::<name>::next`); a sequence with no field and no caller is a build refusal: nothing would use it.
+- Every sequence a package declares is callable from any of its commands (`sequences::<name>::next` and `peek`). No build refusal depends on whether a field or a command uses it.
 
 ## Numbering
 
 Document numbers are gapless, rendered once in the host, and advanced inside the operation transaction through counters the application cannot write. Every counter is keyed by a value; the key decides when it resets or whether a key gets the same number again.
 
+`keys` maps each value the pattern names (`per=`, `reset=` and `{field:}`) to its text. A bare `{seq}` or `{date:}` pattern takes none. The keys are not a record: any command can call either function with values of its choice, and the generated insert of a numbered field is one such caller. The renderer reads only the keys the pattern names, and refuses a key given twice.
+
 The renderer is Rust in the `wamn:postgres` plugin, not a SQL function: the plugin already owns the session, admits every statement and will run on SQLite for local targets, so one implementation serves both engines with no second parser and no custom Postgres image. `next_number` is a plugin call inside the operation transaction:
 
 ```
-next_number(name, record) -> text        // plugin call; application from host state, never from a claim
+next_number(name, keys) -> text          // plugin call; application from host state, never from a claim
+peek_number(name, keys) -> text          // plugin call; the last number issued, no lock, no advance
 platform.bump_counter(sequence, counter, key) -> bigint   // Postgres only: SECURITY DEFINER, lock-insert-increment, no pattern, no parsing
 platform.assign_counter(sequence, counter, key) -> bigint // Postgres only: SECURITY DEFINER, per= mapping: return it, or allocate from '' and insert it
 platform.set_counter(sequence, counter, key, value)       // Postgres only: SECURITY DEFINER, the set_counter route's write, under the row lock
@@ -148,10 +160,10 @@ Literal text plus tokens. Options are comma-separated, order free.
 | `width=8` or `08` shorthand | zero-padded to width; longer values are not truncated | `00000017` |
 | `pad=_` | pad character other than `0` | `____17` |
 | `hex` | render in hex | `11` |
-| `{field:<name>}` | a field of the record, as text | `DAY` |
+| `{field:<name>}` | the key `<name>`, as text | `DAY` |
 | `{date:FMT}` | the renderer's own set, on the transaction time in the environment's `timezone` setting: `YYYY`, `YY`, `MM`, `DD`, `WW` (ISO week), `Q`; anything else is a pattern refusal | `26`, `2610` |
 
-`<key>` is a field of the record being inserted, another counter's name in the same pattern, or `date:FMT`.
+`<key>` is a key the caller passes, another counter's name in the same pattern, or `date:FMT`.
 
 ```
 P-{seq:po,width=8}                                       P-00000017
@@ -163,28 +175,29 @@ B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}
 
 ### Function
 
-1. Tokenize the pattern; resolve each key from `record`, from an already-rendered counter, or from the transaction time.
+1. Tokenize the pattern; resolve each key from `keys`, from an already-rendered counter, or from the transaction time.
 2. For each counter in lock order: a counter keyed by another counter comes after that counter, and independent counters go in name order. The order is fixed for each pattern, so concurrent callers cannot deadlock.
    - `reset=`: `bump_counter(sequence, counter, key_value)` locks the row, inserts at 1 if absent, returns the value and increments.
    - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
 3. Render and return the text. A hex counter renders in upper case (255 is `FF`).
 
-- Rendering, preview, validation and `set_counter` all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere.
+- Rendering, preview and validation all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere. `set_counter` renders nothing.
 - Name-order locking within one call means two patterns on one sequence cannot deadlock each other. Two operations that insert into two models in opposite order can still deadlock on two sequences; Postgres detects it and one retries. The plugin guarantees no more than that.
-- A null key field is a refusal. `per=` on a model's key field is a build refusal (same key would mean same id).
+- A null key is a refusal. `per=` on a model's key field is a build refusal (same key would mean same id).
 - Uniqueness of the rendered number is the model's `UQ` on `number`; a pattern with no per-record counter fails there on the second insert, never silently.
 - Cost: locks hold until commit, so creates of one document type (or one key) serialize for the SQL of one operation. There are no outbound calls inside a transaction, so that is milliseconds. Acceptable at document rates. A Postgres sequence was rejected: non-blocking but gaps on rollback.
 
 ### Host-filled and application-filled
 
-- Host-filled: `number = "<sequence>"` on a field. The generated insert calls `next_number` with exactly the fields the pattern names; the generated insert type has no such field, so supplying it is a compile error in the guest and a build refusal in SQL.
+- Host-filled: `number = "<sequence>"` on a field. The generated insert calls `next_number` and passes the model's fields that the pattern names as the keys; the generated insert type has no such field, so supplying it is a compile error in the guest and a build refusal in SQL.
 - Application-filled: a command calls the sequence itself and writes the result to a plain `text` field with `UQ`. For a label printed before the record exists, a number handed to an external system first, or a batch counter assigned once and written to many records.
 - A field is one or the other, never both.
 
 ```rust
 // generated from sequences.pick_label
-let n = sequences::pick_label::next(PickLabelKey { batch_id })?;   // "B0001-003"
-sequences::pick_label::peek(PickLabelKey { batch_id })             // current value, no lock, never for assignment
+let n = sequences::pick_label::next(PickLabelKey { batch_id }).await?;   // "B0001-003"
+sequences::pick_label::peek(PickLabelKey { batch_id }).await             // current value, no lock, never for assignment
+sequences::purchase_order::next().await?                                // a bare pattern takes no key
 ```
 
 - A fetched number advances the counter in the operation transaction: rolled back → never consumed; committed with no record → gone. Gapless means no gap from failure, not every number on a row.
@@ -193,19 +206,24 @@ sequences::pick_label::peek(PickLabelKey { batch_id })             // current va
 
 ```kcl
 sequences = {
-    purchase_order = { pattern = "P-{seq:po,width=8}" }
-    pick_label     = { pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}" }
+    purchase_order = {pattern = "P-{seq:po,width=8}"}
+    pick_label = {pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"}
 }
-models.pick.fields = {
-    id       = { type = "uuid", role = "key" }
-    batch_id = { type = "uuid" }
-    number   = { type = "text", number = "pick_label" }
+models = {
+    # The table pick has id uuid PRIMARY KEY, batch_id uuid, number text UNIQUE.
+    pick = manifest.Model("pick", "wms") {
+        table = "pick"
+        owner = "wms"
+        server_owned_fields = ["id", "number"]
+        fields = {number = {number = "pick_label"}}
+        operations: {create: {writable_fields = ["batch_id"], result = "one"}}
+    }
 }
 ```
 
 ```sql
 -- generated pick.insert: two statements in one transaction
--- 1. plugin call: next_number('pick_label', {"batch_id": $2}) -> $number
+-- 1. plugin call: next_number('pick_label', [("batch_id", $2)]) -> $number
 -- 2.
 insert into pick (id, batch_id, number)
 values ($1, $2, $number)
@@ -228,11 +246,11 @@ Allowed, not default: `number = "<sequence>"` on the key field; the insert fills
 
 ### Administration
 
-One platform route, `set_counter(application, sequence, counter, key_value, value)`:
+One platform route, `set_counter(application, sequence, counter, key_value, value)`. It answers the value the counter renders next:
 
 - advance: set higher (go-live at `P-00100000`, skip a block). The next call renders `value` and increments.
 - reset: set 1 on that `(counter, key_value)` row; for `per=` the `''` allocator row.
-- downward is allowed, with one check: the route renders the next value in a rolled-back transaction and refuses when that number already exists in the model. A reset to 1 on a new period key passes; a set below live records is refused before an operator ever hits it. No flag.
+- downward is allowed. The set reads and writes counter rows only: it renders no number and reads no application table. A set that gives a number a record already carries is caught by that model's `UQ` on the insert that renders it (owner ruling 2026-10-24). No flag.
 - `per=` mappings are never edited or deleted: that would rewrite history on records that carry them. Correct the records instead.
 - a set goes through `bump_counter`'s lock, so it serializes with concurrent inserts; it is a platform-route write and lands in the write log with the actor.
 - not provided: renumbering existing records (an application command if wanted); scheduled resets (`reset=date:…` covers calendars; anything else is a workflow).
@@ -402,12 +420,14 @@ Each rule has one check that runs in the platform test set.
 | numbers are unique and gapless per counter and key | `UQ` on the model's `number`; N concurrent creates on one key yield N consecutive values, none repeated |
 | `reset=` starts at 1 per distinct key | two keys interleaved give 1, 2 on each independently |
 | `per=` assigns once per key, under concurrency | N concurrent first inserts with one batch id all carry one batch number |
-| a key field must be present | insert with the key field null is refused |
+| a key must be present | a call with a key the pattern names null or absent is refused |
+| a sequence is independent of the records | a sequence no field numbers builds; a command calls `next` with no keys on a bare pattern and with a key map on a keyed one |
+| a numbered field's model has a field for each key its pattern names | build refusal |
 | `per=` on a key field, or `reset=`/`per=` on a sequence bound to a key field | build refusal |
 | a fetched number is consumed only on commit | `next` then rollback → the next call renders the same value |
 | `set_counter` serializes with inserts | set during a concurrent insert → the insert sees the set value or the one before, never a torn one |
 | `set_counter` never touches a `per=` mapping | set on a keyed `per=` row → route refuses |
-| `set_counter` never sets below a live number | records to 17; set 10 → refused; set 1 on a new period key → allowed |
+| a set below a live number is caught by the model's `UQ` | records to 17; set 10 → allowed; the insert that renders 10 is refused by the `UQ`; `set_counter` reads no application table |
 | `next_number` cannot be aimed at another application | a statement under application A calling `next_number` for a sequence of B → refused; the application in host state decides, not a claim or the SQL text; guest SQL that calls a counter function or writes `platform.*` → refused by statement admission |
 | a binding names an enabled connection of the declared integration | apply with a name the project has not enabled, or whose integration differs → refused; disabling a connection while an applied environment binds it → refused |
 | a connector not allowed at the environment is refused | `integration_allow` lacks `modbus` for the environment; apply of a package binding a modbus connection → refused; allow it → applied |
@@ -546,13 +566,13 @@ The owner's review of C2 (2026-10-24) opened C2.4, `wamn-83eth.7` to `.27`. C2 c
 
 Rulings for C2 as filed:
 
-- `next-number(name, record) -> text` and `peek-number(name, record) -> text` are two added functions on `wamn:postgres/statements`, with no version bump. `peek` is generated from `peek-number` (owner ruling 2026-10-23). It renders the current value with no lock and no advance. The host refuses both outside an open operation transaction. The renderer lives in the plugin. The three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter` (owner rulings 2026-10-23).
+- `next-number(name, keys) -> text` and `peek-number(name, keys) -> text` are two added functions on `wamn:postgres/statements`, with no version bump. `peek` is generated from `peek-number` (owner ruling 2026-10-23). It renders the current value with no lock and no advance. The host refuses both outside an open operation transaction. The renderer lives in the plugin. The three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter` (owner rulings 2026-10-23).
 - The application is the composing application that runs the operation (C1.2 ruling). The plugin reads it from host state, not from the `app.application` claim, which guest SQL can rewrite. `next_number` refuses a sequence of another application because the plugin resolves the sequence by that application and the name, never by SQL text (wamn-9e4ks).
 - `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
 - `role = "actor"` fills from `app.user_id`. An insert fills every actor field. An update fills `updated_by` and never touches `created_by` (owner ruling 2026-10-23). A payload that supplies an actor field is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
-- Build refusals: a write that supplies a `number` or `actor` field; a sequence with no field and no caller; `per=` on a key field; `reset=` or `per=` on a sequence bound to a key field; an `int32` key with anything but a bare `{seq}`; a key named by `per=` or `reset=` that is not a field of every model using the sequence, another counter, or `date:`.
-- `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `EXECUTE` for the application role; the route resolves the sequence by the application it checked against the release and the sequence name) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It refuses a set below a live number by the dry render, and never touches a `per=` mapping.
+- Build refusals: a write that supplies a `number` or `actor` field; `per=` on a key field; `reset=` or `per=` on a sequence bound to a key field; an `int32` key with anything but a bare `{seq}`; a numbered field whose model has no field for a key its pattern names. C2.4 removed the refusals of a sequence with no field and no caller and of a key that is not a field of every model using the sequence (owner ruling 2026-10-24).
+- `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `EXECUTE` for the application role; the route resolves the sequence by the application it checked against the release and the sequence name) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It never touches a `per=` mapping. C2.4 removed the dry render: the set reads and writes counter rows only, and a model's `UQ` catches a live number (owner ruling 2026-10-24).
 - Env apply creates `number_sequence` rows from package defaults and never overwrites an existing pattern.
 - Receiving conformance only: `purchase_order.create {writable_fields = ["supplier_id"]}` with `purchase_order_number` numbered by `PO-{seq:po,width=6}`, and `role = "actor"` on `created_by` and `updated_by`. Receiving moves to 2.2.6, and Acme moves only its Receiving pin and its `record-receipt` import to 2.2.6. WMS does not change (owner ruling 2026-10-23).
 - The kind case checks the `number_sequence` row after apply. A local live test covers the numbered create, because the kind suite has no token issuer.

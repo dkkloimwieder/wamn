@@ -2,8 +2,8 @@
   "class": "one",
   "fields": [
     {
-      "path": "next_number",
-      "type": "text",
+      "path": "value",
+      "type": "int64",
       "nullable": false,
       "values": []
     }

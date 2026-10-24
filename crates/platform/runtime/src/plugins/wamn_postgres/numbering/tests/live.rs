@@ -39,6 +39,17 @@ const PLATFORM_ROLES_SQL: &str = "DO $roles$ DECLARE role_name text; BEGIN \
      END $roles$; \
      CREATE SCHEMA IF NOT EXISTS wamn_run;";
 
+/// The keys of one call: the values the pattern names.
+type Keys<'a> = &'a [(&'a str, Option<&'a str>)];
+/// The keys of a bare pattern, which takes none.
+const NO_KEYS: Keys<'static> = &[];
+
+fn owned(keys: Keys<'_>) -> Vec<(String, Option<String>)> {
+    keys.iter()
+        .map(|(name, value)| ((*name).to_owned(), value.map(str::to_owned)))
+        .collect()
+}
+
 /// How a call leaves its operation transaction.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Finish {
@@ -155,7 +166,7 @@ impl Live {
         &self,
         application: &str,
         name: &str,
-        record: &str,
+        keys: Keys<'_>,
         call: NumberCall,
         finish: Finish,
     ) -> Result<String, StatementError> {
@@ -173,14 +184,7 @@ impl Live {
             .await
             .expect("the claims bind");
         if finish == Finish::Outside {
-            return render_number(
-                &self.plugin,
-                &scope,
-                name.to_owned(),
-                record.to_owned(),
-                call,
-            )
-            .await;
+            return render_number(&self.plugin, &scope, name.to_owned(), owned(keys), call).await;
         }
         let transaction = self
             .plugin
@@ -190,14 +194,7 @@ impl Live {
         self.plugin
             .bind_operation_transaction(&scope, &transaction)
             .expect("the transaction binds");
-        let result = render_number(
-            &self.plugin,
-            &scope,
-            name.to_owned(),
-            record.to_owned(),
-            call,
-        )
-        .await;
+        let result = render_number(&self.plugin, &scope, name.to_owned(), owned(keys), call).await;
         self.plugin.revoke_operation_transaction(&scope);
         if finish == Finish::Commit && result.is_ok() {
             transaction.commit().await.expect("the transaction commits");
@@ -210,14 +207,14 @@ impl Live {
         result
     }
 
-    async fn next(&self, name: &str, record: &str) -> String {
-        self.call(APPLICATION, name, record, NumberCall::Next, Finish::Commit)
+    async fn next(&self, name: &str, keys: Keys<'_>) -> String {
+        self.call(APPLICATION, name, keys, NumberCall::Next, Finish::Commit)
             .await
-            .unwrap_or_else(|error| panic!("next-number {name} {record}: {error:?}"))
+            .unwrap_or_else(|error| panic!("next-number {name} {keys:?}: {error:?}"))
     }
 
-    async fn peek(&self, name: &str, record: &str) -> Result<String, StatementError> {
-        self.call(APPLICATION, name, record, NumberCall::Peek, Finish::Commit)
+    async fn peek(&self, name: &str, keys: Keys<'_>) -> Result<String, StatementError> {
+        self.call(APPLICATION, name, keys, NumberCall::Peek, Finish::Commit)
             .await
     }
 }
@@ -237,16 +234,19 @@ async fn live_numbers_are_gapless_and_consecutive_under_concurrent_creates() {
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po,width=4}")
         .await;
     assert_eq!(
-        sqlstate(&live.peek("purchase_order", "{}").await.unwrap_err()),
+        sqlstate(&live.peek("purchase_order", NO_KEYS).await.unwrap_err()),
         NO_NUMBER_ISSUED,
         "peek before any number"
     );
     let mut numbers =
-        futures_util::future::join_all((0..8).map(|_| live.next("purchase_order", "{}"))).await;
+        futures_util::future::join_all((0..8).map(|_| live.next("purchase_order", NO_KEYS))).await;
     numbers.sort();
     let expected = (1..=8).map(|n| format!("P-{n:04}")).collect::<Vec<_>>();
     assert_eq!(numbers, expected);
-    assert_eq!(live.peek("purchase_order", "{}").await.unwrap(), "P-0008");
+    assert_eq!(
+        live.peek("purchase_order", NO_KEYS).await.unwrap(),
+        "P-0008"
+    );
 }
 
 /// A number fetched in a transaction that rolls back is never consumed.
@@ -255,20 +255,23 @@ async fn live_a_rollback_gives_the_number_back() {
     let live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po,width=4}")
         .await;
-    assert_eq!(live.next("purchase_order", "{}").await, "P-0001");
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-0001");
     let rolled_back = live
         .call(
             APPLICATION,
             "purchase_order",
-            "{}",
+            NO_KEYS,
             NumberCall::Next,
             Finish::Rollback,
         )
         .await
         .unwrap();
     assert_eq!(rolled_back, "P-0002");
-    assert_eq!(live.next("purchase_order", "{}").await, "P-0002");
-    assert_eq!(live.peek("purchase_order", "{}").await.unwrap(), "P-0002");
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-0002");
+    assert_eq!(
+        live.peek("purchase_order", NO_KEYS).await.unwrap(),
+        "P-0002"
+    );
 }
 
 /// `reset=` starts at 1 for each distinct key, and two keys interleaved count
@@ -282,8 +285,8 @@ async fn live_reset_starts_at_one_per_key() {
         "{field:facility}-PO-{seq:po,reset=facility,width=3}",
     )
     .await;
-    let day = r#"{"facility":"DAY"}"#;
-    let cin = r#"{"facility":"CIN"}"#;
+    let day = &[("facility", Some("DAY"))];
+    let cin = &[("facility", Some("CIN"))];
     assert_eq!(live.next("purchase_order", day).await, "DAY-PO-001");
     assert_eq!(live.next("purchase_order", cin).await, "CIN-PO-001");
     assert_eq!(live.next("purchase_order", day).await, "DAY-PO-002");
@@ -296,7 +299,7 @@ async fn live_reset_starts_at_one_per_key() {
         .call(
             APPLICATION,
             "purchase_order",
-            r#"{"facility":null}"#,
+            &[("facility", None)],
             NumberCall::Next,
             Finish::Rollback,
         )
@@ -317,20 +320,20 @@ async fn live_per_assigns_once_per_key_under_concurrency() {
         "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}",
     )
     .await;
-    let abc = r#"{"batch_id":"abc"}"#;
+    let abc = &[("batch_id", Some("abc"))];
     let mut labels =
         futures_util::future::join_all((0..6).map(|_| live.next("pick_label", abc))).await;
     labels.sort();
     let expected = (1..=6).map(|n| format!("B0001-{n:03}")).collect::<Vec<_>>();
     assert_eq!(labels, expected);
     assert_eq!(
-        live.next("pick_label", r#"{"batch_id":"def"}"#).await,
+        live.next("pick_label", &[("batch_id", Some("def"))]).await,
         "B0002-001"
     );
     assert_eq!(live.next("pick_label", abc).await, "B0001-007");
     assert_eq!(live.peek("pick_label", abc).await.unwrap(), "B0001-007");
     let unseen = live
-        .peek("pick_label", r#"{"batch_id":"ghi"}"#)
+        .peek("pick_label", &[("batch_id", Some("ghi"))])
         .await
         .unwrap_err();
     assert_eq!(
@@ -338,6 +341,52 @@ async fn live_per_assigns_once_per_key_under_concurrency() {
         NO_NUMBER_ISSUED,
         "peek of a key with no number"
     );
+}
+
+/// A sequence is not tied to a record: a caller with no record takes a
+/// number of a bare pattern with no keys, and a number of a keyed pattern
+/// with a key map of the values the pattern names. A key the pattern does not
+/// name is not read, and a key given twice is refused.
+#[tokio::test]
+async fn live_a_caller_numbers_with_no_record_and_with_a_key_map() {
+    let live = Live::new().await;
+    live.sequence(APPLICATION, "label", "L-{seq:n}").await;
+    live.sequence(
+        APPLICATION,
+        "dock_label",
+        "{field:dock}-{seq:n,reset=dock,width=2}",
+    )
+    .await;
+    assert_eq!(live.next("label", NO_KEYS).await, "L-1");
+    assert_eq!(live.next("label", NO_KEYS).await, "L-2");
+    assert_eq!(live.peek("label", NO_KEYS).await.unwrap(), "L-2");
+    assert_eq!(
+        live.next("dock_label", &[("dock", Some("D1"))]).await,
+        "D1-01"
+    );
+    assert_eq!(
+        live.next("dock_label", &[("dock", Some("D1")), ("shift", Some("A"))])
+            .await,
+        "D1-02",
+        "a key the pattern does not name is not read"
+    );
+    assert_eq!(
+        live.next("dock_label", &[("dock", Some("D2"))]).await,
+        "D2-01"
+    );
+    for keys in [NO_KEYS, &[("dock", Some("D1")), ("dock", Some("D2"))]] {
+        let refused = live
+            .call(
+                APPLICATION,
+                "dock_label",
+                keys,
+                NumberCall::Next,
+                Finish::Rollback,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(sqlstate(&refused), "22023", "{keys:?}");
+    }
 }
 
 /// A first `per=` sight that rolls back gives the value back: the next key
@@ -351,15 +400,15 @@ async fn live_a_rolled_back_per_assignment_is_not_consumed() {
         .call(
             APPLICATION,
             "batch",
-            r#"{"batch_id":"abc"}"#,
+            &[("batch_id", Some("abc"))],
             NumberCall::Next,
             Finish::Rollback,
         )
         .await
         .unwrap();
     assert_eq!(rolled_back, "B1");
-    assert_eq!(live.next("batch", r#"{"batch_id":"def"}"#).await, "B1");
-    assert_eq!(live.next("batch", r#"{"batch_id":"abc"}"#).await, "B2");
+    assert_eq!(live.next("batch", &[("batch_id", Some("def"))]).await, "B1");
+    assert_eq!(live.next("batch", &[("batch_id", Some("abc"))]).await, "B2");
 }
 
 /// A sequence of another application is refused by the application in host
@@ -372,7 +421,7 @@ async fn live_a_sequence_of_another_application_is_refused() {
         .await;
     for call in [NumberCall::Next, NumberCall::Peek] {
         let refused = live
-            .call(APPLICATION, "shipment", "{}", call, Finish::Rollback)
+            .call(APPLICATION, "shipment", NO_KEYS, call, Finish::Rollback)
             .await
             .unwrap_err();
         assert_eq!(sqlstate(&refused), "42704", "{call:?}");
@@ -381,7 +430,7 @@ async fn live_a_sequence_of_another_application_is_refused() {
         .call(
             OTHER_APPLICATION,
             "shipment",
-            "{}",
+            NO_KEYS,
             NumberCall::Next,
             Finish::Commit,
         )
@@ -439,7 +488,7 @@ async fn live_a_rewritten_application_claim_reaches_no_other_sequence() {
             &live.plugin,
             scope,
             name.to_owned(),
-            "{}".to_owned(),
+            Vec::new(),
             NumberCall::Next,
         )
     };
@@ -485,7 +534,7 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
             &live.plugin,
             scope,
             "purchase_order".to_owned(),
-            "{}".to_owned(),
+            Vec::new(),
             call,
         )
         .await
@@ -500,7 +549,7 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
         .rollback()
         .await
         .expect("the transaction rolls back");
-    assert_eq!(live.next("purchase_order", "{}").await, "P-1");
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-1");
 }
 
 /// Outside an open operation transaction both calls are refused and no
@@ -512,7 +561,13 @@ async fn live_a_call_outside_an_operation_transaction_is_refused() {
         .await;
     for call in [NumberCall::Next, NumberCall::Peek] {
         let refused = live
-            .call(APPLICATION, "purchase_order", "{}", call, Finish::Outside)
+            .call(
+                APPLICATION,
+                "purchase_order",
+                NO_KEYS,
+                call,
+                Finish::Outside,
+            )
             .await
             .unwrap_err();
         assert!(
@@ -520,7 +575,7 @@ async fn live_a_call_outside_an_operation_transaction_is_refused() {
             "{call:?}: {refused:?}"
         );
     }
-    assert_eq!(live.next("purchase_order", "{}").await, "P-1");
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-1");
 }
 
 /// `{date:FMT}` renders the transaction date in the `timezone` setting of the
@@ -545,7 +600,13 @@ async fn live_the_date_uses_the_application_timezone_else_utc() {
     for (application, offset) in [(APPLICATION, 14), (OTHER_APPLICATION, 0)] {
         let before = date(offset);
         let number = live
-            .call(application, "stamp", "{}", NumberCall::Next, Finish::Commit)
+            .call(
+                application,
+                "stamp",
+                NO_KEYS,
+                NumberCall::Next,
+                Finish::Commit,
+            )
             .await
             .unwrap();
         let after = date(offset);
@@ -584,7 +645,7 @@ impl Live {
         counter: &str,
         key: &str,
         value: i64,
-    ) -> Result<String, CounterSetError> {
+    ) -> Result<i64, CounterSetError> {
         self.plugin
             .set_number_counter(
                 crate::plugins::wamn_postgres::DEFAULT_PROJECT,
@@ -599,7 +660,6 @@ impl Live {
                     key: key.to_owned(),
                     value,
                 },
-                &["numbered".to_owned()],
             )
             .await
     }
@@ -619,46 +679,50 @@ impl Live {
     }
 }
 
-/// An advance renders the set value next; a set lower than the counter is
-/// allowed when no record carries the number it gives, and refused when one
-/// does, which leaves the counter as it was.
+/// An advance renders the set value next, and a set lower than the counter
+/// is allowed. The set reads no record: a set that gives a number a record
+/// already carries is caught by the model's `UQ` on the insert.
 #[tokio::test]
-async fn live_set_counter_advances_resets_and_refuses_a_live_number() {
+async fn live_set_counter_advances_resets_and_the_model_uq_catches_a_live_number() {
     let live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "PO-{seq:po,width=6}")
         .await;
     let superuser = live.records().await;
-    for _ in 0..3 {
-        let number = live.next("purchase_order", "{}").await;
+    let record = async |number: &str| {
         superuser
             .execute(
                 "INSERT INTO numbered.purchase_order (number) VALUES ($1)",
                 &[&number],
             )
             .await
-            .expect("record the number");
+    };
+    for _ in 0..3 {
+        let number = live.next("purchase_order", NO_KEYS).await;
+        record(&number).await.expect("record the number");
     }
     assert_eq!(
         live.set("advance", "purchase_order", "po", "", 100)
             .await
             .unwrap(),
-        "PO-000100"
+        100
     );
-    assert_eq!(live.next("purchase_order", "{}").await, "PO-000100");
-    // PO-000100 was issued but no record carries it, and PO-000004 is free.
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "PO-000100");
     assert_eq!(
-        live.set("reset", "purchase_order", "po", "", 4)
+        live.set("reset", "purchase_order", "po", "", 2)
             .await
             .unwrap(),
-        "PO-000004"
+        2,
+        "a set below a live number is not refused"
     );
+    let live_number = live.next("purchase_order", NO_KEYS).await;
+    assert_eq!(live_number, "PO-000002");
+    let collision = record(&live_number)
+        .await
+        .expect_err("the model's UQ refuses the live number");
     assert_eq!(
-        live.refused("purchase_order", "po", "", 2).await,
-        CounterSetRefusal::NumberLive {
-            number: "PO-000002".to_owned()
-        }
+        collision.code(),
+        Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
     );
-    assert_eq!(live.next("purchase_order", "{}").await, "PO-000004");
     assert_eq!(
         live.refused("purchase_order", "po", "", 0).await,
         CounterSetRefusal::InvalidInput { field: "value" }
@@ -690,8 +754,7 @@ async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
     .await;
     live.sequence(APPLICATION, "yearly", "{date:YY}-{seq:n,reset=date:YY}")
         .await;
-    let _superuser = live.records().await;
-    let abc = r#"{"batch_id":"abc"}"#;
+    let abc = &[("batch_id", Some("abc"))];
     assert_eq!(live.next("pick_label", abc).await, "B0001-001");
     assert_eq!(
         live.refused("pick_label", "batch", "abc", 7).await,
@@ -701,18 +764,15 @@ async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
         live.set("line", "pick_label", "line", "0001", 5)
             .await
             .unwrap(),
-        "B0001-005"
+        5
     );
     assert_eq!(live.next("pick_label", abc).await, "B0001-005");
     assert_eq!(
-        live.next("pick_label", r#"{"batch_id":"def"}"#).await,
+        live.next("pick_label", &[("batch_id", Some("def"))]).await,
         "B0002-001",
         "the per= allocator did not move"
     );
-    assert_eq!(
-        live.set("period", "yearly", "n", "99", 1).await.unwrap(),
-        "99-1"
-    );
+    assert_eq!(live.set("period", "yearly", "n", "99", 1).await.unwrap(), 1);
 }
 
 /// A set waits for a concurrent next number that holds the counter row, and
@@ -722,8 +782,7 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
     let live = Live::new().await;
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
-    let _superuser = live.records().await;
-    assert_eq!(live.next("purchase_order", "{}").await, "P-1");
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-1");
     let scope = "numbering-held";
     live.plugin
         .bind_session_claims(
@@ -749,7 +808,7 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
         &live.plugin,
         scope,
         "purchase_order".to_owned(),
-        "{}".to_owned(),
+        Vec::new(),
         NumberCall::Next,
     )
     .await
@@ -765,12 +824,12 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
     );
     live.plugin.revoke_operation_transaction(scope);
     held.commit().await.expect("the held call commits");
-    assert_eq!(set.await.unwrap(), "P-50");
-    assert_eq!(live.next("purchase_order", "{}").await, "P-50");
+    assert_eq!(set.await.unwrap(), 50);
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-50");
 }
 
 /// A set is one write log row under the route's operation and the request
-/// id, with the next number as its result; a retry answers it and changes
+/// id, with the set value as its result; a retry answers it and changes
 /// nothing, a different set under the same id is refused, and the counter
 /// row names the caller.
 #[tokio::test]
@@ -783,7 +842,7 @@ async fn live_set_counter_is_logged_by_its_request_id() {
         live.set("logged", "purchase_order", "po", "", 10)
             .await
             .unwrap(),
-        "P-10"
+        10
     );
     let row = superuser
         .query_one(
@@ -795,17 +854,17 @@ async fn live_set_counter_is_logged_by_its_request_id() {
         .expect("the set has its write log row");
     assert_eq!(
         row.get::<_, Option<String>>(0).as_deref(),
-        Some(r#"{"next_number":"P-10"}"#)
+        Some(r#"{"value":10}"#)
     );
-    assert_eq!(live.next("purchase_order", "{}").await, "P-10");
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-10");
     assert_eq!(
         live.set("logged", "purchase_order", "po", "", 10)
             .await
             .unwrap(),
-        "P-10",
+        10,
         "a retry answers the stored result"
     );
-    assert_eq!(live.next("purchase_order", "{}").await, "P-11");
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-11");
     assert!(matches!(
         live.set("logged", "purchase_order", "po", "", 30).await,
         Err(CounterSetError::Refused(

@@ -166,18 +166,20 @@ fn the_generated_insert_numbers_from_the_host_and_reads_the_actor_claim() {
         model["insert_fields"],
         json!(["checked_by", "part_code", "stock_id"])
     );
-    // A package that declares no callable sequence gets no binding.
-    assert!(package.file("generated/data/sequences.rs").is_none());
+    // The numbered field is one caller: commands can call the sequence too.
+    assert!(
+        squashed(&text(&package, "generated/data/sequences.rs")).contains("pubmodgadget_number{")
+    );
 }
 
 #[test]
-fn a_callable_sequence_gets_next_with_a_key_of_its_pattern_fields() {
+fn every_sequence_gets_next_with_a_key_of_the_values_its_pattern_names() {
     let mut manifest = manifest();
     manifest["sequences"] = json!({
         "pick_label": {
-            "pattern": "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}",
-            "callable": true
-        }
+            "pattern": "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"
+        },
+        "label": {"pattern": "L-{seq:n}"}
     });
     let package = run(&catalog(false), &manifest, &QUERY_SOURCES).unwrap();
     let sequences = squashed(&text(&package, "generated/data/sequences.rs"));
@@ -195,6 +197,19 @@ fn a_callable_sequence_gets_next_with_a_key_of_its_pattern_fields() {
             "{expected} in\n{sequences}"
         );
     }
+    // A bare pattern takes no key.
+    for expected in [
+        "pub mod label {",
+        "pub async fn next() -> Result<String, wamn_postgres_statements::StatementError>",
+        r#"wamn_postgres_statements::next_number("label", &[])"#,
+        "pub async fn peek() -> Result<String, wamn_postgres_statements::StatementError>",
+    ] {
+        assert!(
+            sequences.contains(&squashed(expected)),
+            "{expected} in\n{sequences}"
+        );
+    }
+    assert!(!sequences.contains("structLabelKey"), "{sequences}");
     assert!(text(&package, "generated/data/mod.rs").contains("pub mod sequences {"));
 }
 
@@ -280,16 +295,28 @@ fn a_command_that_writes_an_actor_field_is_refused() {
     );
 }
 
+/// A sequence is independent of the records (owner ruling 2026-10-24): one
+/// that numbers no field builds, and so does one whose pattern names a key
+/// that no model has. Commands pass the keys.
 #[test]
-fn a_sequence_with_no_field_and_no_caller_is_refused() {
+fn a_sequence_that_numbers_no_field_builds() {
     let mut manifest = manifest();
-    manifest["sequences"] = json!({"unused": {"pattern": "U{seq:n}"}});
-    let (kind, message) = refusal(&catalog(false), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidManifest);
-    assert!(
-        message.contains("sequence unused numbers no field"),
-        "{message}"
-    );
+    manifest["sequences"] = json!({
+        "unused": {"pattern": "U{seq:n}"},
+        "dock_label": {"pattern": "{field:dock}-{seq:n,reset=dock}"}
+    });
+    let package = run(&catalog(false), &manifest, &QUERY_SOURCES).unwrap();
+    let sequences = squashed(&text(&package, "generated/data/sequences.rs"));
+    for expected in [
+        "pub mod unused {",
+        "pub mod dock_label {",
+        "pub dock: String,",
+    ] {
+        assert!(
+            sequences.contains(&squashed(expected)),
+            "{expected} in\n{sequences}"
+        );
+    }
 }
 
 #[test]
@@ -340,14 +367,17 @@ fn an_integer_key_takes_only_a_bare_counter() {
     );
 }
 
+/// A model's numbered field needs a field of the model for each key its
+/// pattern names, because the generated insert passes the model's fields as
+/// the keys.
 #[test]
-fn a_key_that_is_no_field_counter_or_date_is_refused() {
+fn a_numbered_field_whose_model_lacks_a_key_of_the_pattern_is_refused() {
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n,reset=facility}");
     let (kind, message) = refusal(&catalog(false), &manifest);
     assert_eq!(kind, GenerateErrorType::InvalidModel);
     assert!(
-        message.contains("names facility, which is not a field of gadget"),
+        message.contains("whose pattern names key facility, but gadget has no field facility"),
         "{message}"
     );
     // Another counter and a date are keys without a field.
