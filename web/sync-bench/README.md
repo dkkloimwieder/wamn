@@ -25,7 +25,7 @@ The summed column is `row_version`, a stand-in, because packaging has no other n
 The apply button sends one batch of 100 changes (70 updates, 20 inserts, 10 deletes) to shape A through `applyChanges` and to shape B through its setter.
 
 [`bench/run.mjs`](bench/run.mjs) drives the page in headless Chrome and prints the median of 5 runs per shape, size and metric.
-Each run mounts one shape on a new page. The shapes alternate their order in each repeat, and the table records the load average.
+Each run mounts one shape on a new page. The shapes alternate their order in each repeat, and the table shows the load average.
 
 ```bash
 cd web/sync-bench

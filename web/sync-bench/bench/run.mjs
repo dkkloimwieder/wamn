@@ -3,7 +3,7 @@
  *
  * Each cell is one shape at one size. A cell runs 5 times, each time on a new
  * page with one shape mounted. Within a repeat, the shapes alternate their
- * order, so a change in machine load falls on both. Each run records:
+ * order, so a change in machine load falls on both. Each run measures:
  * - fill: `list` resolving to the first painted row
  * - update: each of 10 batches of 100 changes, apply to the next painted frame
  * - heap after fill and after the 10 batches (performance.memory, after gc)

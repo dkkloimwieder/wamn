@@ -48,7 +48,7 @@ const scope: PackagingScope = {};
 
 const frame = () => new Promise<number>((resolve) => requestAnimationFrame(() => resolve(performance.now())));
 
-/** A feed that records when its `list` answers. */
+/** A feed that notes when its `list` answers. */
 function timedFeed(rows: PackagingRow[]): { feed: Feed<PackagingRow, PackagingScope>; listed: Promise<number> } {
   const inner = fakeFeed(() => rows);
   let mark!: (time: number) => void;
