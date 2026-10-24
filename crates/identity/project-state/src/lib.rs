@@ -211,6 +211,17 @@ impl PlatformComponent {
     }
 }
 
+/// The name of the one `service` user that every environment holds for
+/// workflow runs (docs/plan/workflows.md R3). Admins grant it roles like any
+/// user. The platform grants it none.
+pub const WORKFLOW_USER_NAME: &str = "workflow";
+
+/// The `platform.users` id of the workflow user: the UUIDv5 of
+/// [`WORKFLOW_USER_NAME`] under [`WAMN_NAMESPACE`].
+pub fn workflow_user_id() -> uuid::Uuid {
+    uuid::Uuid::new_v5(&WAMN_NAMESPACE, WORKFLOW_USER_NAME.as_bytes())
+}
+
 /// A table in the system schema and the load-bearing columns the DDL drift guard
 /// pins. `columns` is a curated set (PK / FK / claim-target / enum columns), not
 /// the exhaustive DDL — pinning every column would make the guard brittle
@@ -412,6 +423,15 @@ mod tests {
         assert_eq!(
             WAMN_NAMESPACE,
             uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, b"wamn.dev")
+        );
+    }
+
+    #[test]
+    fn the_workflow_user_id_is_pinned() {
+        // Computed independently with Python `uuid.uuid5`.
+        assert_eq!(
+            workflow_user_id().to_string(),
+            "42b638ce-4892-52a4-95a9-316c4c0e820d"
         );
     }
 

@@ -37,21 +37,21 @@ Nested calls retain the service principal.
 Operations that require a fresh PAT refuse queued automation.
 The service principal owns application writes, while the `wamn:executor` credential class owns queue maintenance.
 
-## Park, release, and list
+## Park, release, and list runs
 
 Use the same `--tenant` and `--environment` flags for each command.
 
 ```bash
 wamn-ctl workflow park --tenant acme --environment dev --run-id "$RUN_ID"
 wamn-ctl workflow release --tenant acme --environment dev --run-id "$RUN_ID"
-wamn-ctl workflow list --tenant acme --environment dev --limit 20
+wamn-ctl workflow runs --tenant acme --environment dev --limit 20
 ```
 
 A park holds a queued run that no worker holds, so no worker claims it.
 The run keeps the status `dispatched`, and a park of a parked run changes nothing.
 A running or finished run refuses the park.
 A release returns a parked run to the queue, and a run that is not parked refuses it.
-The list prints one JSON object per run, newest first, with its status and its `queued` and `parked` flags.
+`runs` prints one JSON object per run, newest first, with its status and its `queued` and `parked` flags.
 
 ## Declared workflows
 
@@ -62,7 +62,7 @@ wamn-ctl workflow declared --tenant acme --environment dev --release-digest "$RE
 ```
 
 The command prints each declared workflow with its schedule or event registration.
-`workflow list` continues to print runs.
+`workflow runs` prints runs, and `workflow list` prints the workflow versions authored in the environment.
 Author schedules in `wamn.k` under `workflows.<id>.schedule`, then run `wamn build` for the package.
 Use five-field cron in UTC and omit `registration` for that workflow.
 Apply the package and publish the release before the host loads it.

@@ -346,9 +346,16 @@ async fn tenant_identity_leg(su: &Client) {
                 "wamn-management-author-acme--billing--dev@example.invalid".to_string(),
                 provisioning.to_string(),
             ),
+            (
+                wamn_project_state::workflow_user_id().to_string(),
+                "service".to_string(),
+                "workflow@example.invalid".to_string(),
+                provisioning.to_string(),
+            ),
         ],
-        "the tenant carries its five platform rows, one service row and one user row, each \
-         stamped by wamn:provisioning, and no row for the member of another environment",
+        "the tenant carries its five platform rows, the workflow user, one service row and one \
+         user row, each stamped by wamn:provisioning, and no row for the member of another \
+         environment",
     );
     let user_display_name: String = su
         .query_one(
@@ -420,7 +427,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .collect();
     assert_eq!(
         rows,
-        [("platform".to_owned(), 5), ("service".to_owned(), 1)],
+        [("platform".to_owned(), 5), ("service".to_owned(), 2)],
         "the user row goes, and the platform and service rows stay"
     );
     let roles: i64 = su

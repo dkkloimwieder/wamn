@@ -161,10 +161,13 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         )
         .await?;
     }
+    // The workflow user is the other service row (docs/plan/workflows.md R3).
+    let workflow_user = wamn_project_state::workflow_user_id().to_string();
     let row = admin
         .query_one(
-            "SELECT count(*), min(id::text) FROM platform.\"user\" WHERE type='service'",
-            &[],
+            "SELECT count(*), min(id::text) FROM platform.\"user\" \
+             WHERE type='service' AND id::text <> $1",
+            &[&workflow_user],
         )
         .await?;
     assert_eq!(row.get::<_, i64>(0), 1);

@@ -106,7 +106,7 @@ enum Command {
     ReconcileReplicaIdentity(package_verbs::ReconcileReplicaIdentityArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
-    /// Start, park, release, and list workflow runs.
+    /// Author, enable, disable and list workflows, and start, park, release and list runs.
     #[command(subcommand)]
     Workflow(workflow_verbs::WorkflowCommand),
     /// Apply, show and dry-run one environment document.
@@ -353,5 +353,39 @@ mod tests {
         assert_eq!(args.scope.environment, "dev");
         assert_eq!(args.scope.schema, "wamn_run");
         assert_eq!(args.run_id, "run-1");
+    }
+
+    #[test]
+    fn workflow_enable_names_one_version_under_a_coordinate() {
+        let cli = Cli::try_parse_from([
+            "wamn-ctl",
+            "workflow",
+            "enable",
+            "--admin-database-url",
+            "postgres://admin:secret@localhost/project",
+            "--tenant",
+            "acme",
+            "--environment",
+            "dev",
+            "--coordinate",
+            "acme/wms/dev",
+            "--application",
+            "wamn_wms",
+            "--workflow-id",
+            "label",
+            "--version",
+            "2",
+            "--principal-id",
+            "42b638ce-4892-52a4-95a9-316c4c0e820d",
+        ])
+        .unwrap();
+        let Command::Workflow(wamn_ctl::workflow_verbs::WorkflowCommand::Enable(args)) =
+            cli.command
+        else {
+            panic!("expected workflow enable");
+        };
+        assert_eq!(args.version.coordinate, "acme/wms/dev");
+        assert_eq!(args.version.workflow_id, "label");
+        assert_eq!(args.version.version, 2);
     }
 }

@@ -16,7 +16,10 @@ use std::fmt::Write as _;
 use std::fmt;
 
 use wamn_pg_core::quote_literal;
-use wamn_project_state::{OPERATION_CLAIM, PlatformComponent, USER_ID_CLAIM, USERS, UserType};
+use wamn_project_state::{
+    OPERATION_CLAIM, PlatformComponent, USER_ID_CLAIM, USERS, UserType, WORKFLOW_USER_NAME,
+    workflow_user_id,
+};
 
 /// The longest domain name in text form, in bytes.
 const MAX_DOMAIN_LEN: usize = 253;
@@ -74,6 +77,10 @@ pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
 /// carries no transaction control, so the caller runs it inside one
 /// transaction. The binding ends with that transaction.
 ///
+/// The last row is the `workflow` user of type `service`
+/// (docs/plan/workflows.md R3), with the email `workflow@<platform-domain>`.
+/// The platform grants it no role.
+///
 /// Each insert keeps a row that is already there. Running the SQL twice, or
 /// running it against a tenant that holds part of the list, writes the rest
 /// and changes nothing else (`wamn-0h0g.9.15`).
@@ -102,6 +109,16 @@ pub fn platform_principals_sql(platform_domain: &str) -> Result<String, Platform
         )
         .expect("writing to a String cannot fail");
     }
+    writeln!(
+        sql,
+        "INSERT INTO {} (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
+        USERS.qualified(),
+        quote_literal(&workflow_user_id().to_string()),
+        quote_literal(UserType::Service.as_str()),
+        quote_literal(&format!("{WORKFLOW_USER_NAME}@{platform_domain}")),
+        quote_literal(WORKFLOW_USER_NAME),
+    )
+    .expect("writing to a String cannot fail");
     Ok(sql)
 }
 
@@ -165,10 +182,23 @@ mod tests {
         let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
         assert_eq!(
             sql.matches("ON CONFLICT (id) DO NOTHING").count(),
-            PlatformComponent::ALL.len(),
+            PlatformComponent::ALL.len() + 1,
             "every insert keeps a row that is already there, so a tenant holding part of the \
              list converges to the whole list"
         );
+    }
+
+    #[test]
+    fn the_workflow_user_row_is_rendered_once_as_a_service() {
+        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
+        let row = format!(
+            "INSERT INTO platform.\"user\" (id, type, email, display_name) VALUES \
+             ('{}', 'service', 'workflow@example.invalid', 'workflow') ON CONFLICT (id) \
+             DO NOTHING;\n",
+            workflow_user_id()
+        );
+        assert_eq!(sql.matches(&row).count(), 1, "{sql}");
+        assert_eq!(sql.matches(&workflow_user_id().to_string()).count(), 1);
     }
 
     #[test]
