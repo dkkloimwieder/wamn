@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
 import { applicationConfig } from "../shell/vite";
@@ -13,6 +14,13 @@ export default defineConfig(() => {
   });
   return {
     ...application,
+    // The measurement page, and the packaging screen on a live host.
+    build: {
+      ...application.build,
+      rollupOptions: {
+        input: { main: fileURLToPath(new URL("index.html", import.meta.url)), live: fileURLToPath(new URL("live.html", import.meta.url)) },
+      },
+    },
     plugins: [solid({ performanceTracks: false }), ...application.plugins],
     resolve: {
       conditions: ["wfe-source", "browser", "development|production"],
