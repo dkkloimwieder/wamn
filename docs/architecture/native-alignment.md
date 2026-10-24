@@ -10,7 +10,7 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.11.0` source at `bc5acfb8e15f7d6d199ca940354d82e590c2d5ff`.
 The resolved Wasmtime family is `48.0.7`.
 There are no carried wasmCloud patches, and upstream default providers remain disabled.
-The existing owner rule forbids restoring the retired fork patches.
+The platform restores no retired fork patch.
 
 Native loading and dispatch own compilation, linking, fresh and warm stores, epoch interruption, and guest cancellation.
 WAMN uses public `GuestCall`, `InstancePolicy::Ephemeral`, `InstancePolicy::Warm`, `ProbeState`, `Liveness`, and bounded flush operations.
@@ -22,14 +22,14 @@ These choices make no general performance claim.
 
 | Owner | Reason retained | Condition for replacement |
 | --- | --- | --- |
-| [`wamn:postgres`](data-access.md) | Commands need one exclusive session through admitted SQL and transaction finalization. | `wamn-0ct2.5` retains this owner. Native availability alone does not authorize a second database path. |
+| [`wamn:postgres`](data-access.md) | Commands need one exclusive session through admitted SQL and transaction finalization. | Native availability alone does not authorize a second database path. |
 | [Import admission](capabilities.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the tenant contract when considering any native replacement. |
 | [Immutable wiring releases](overview.md#release-identity) | Tenant-owned declarations need admission, rollback identity, and exact provenance. | Reconsider when native links supply equivalent tenant and per-link authorization. |
 | [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
 | [Guest normalization](components.md#guest-build-identity) | Standard-library imports must satisfy the closed tenant capability set. | A replacement build must preserve that actual import boundary. |
 | [`wamn build`](../operations/building.md#native-programs-and-app-components) | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
 | Operator Event permissions | Chart `2.11.0` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the scoped `create,patch` Role only when the pinned chart grants it. |
-| [Count mode](execution.md#native-dispatch) | Chart `2.11.0` defaults guest memory and raw-socket egress to enforce. The owner ruling of 2026-10-21 (`wamn-upgrade-2.11`) runs both in count. Count records what enforce would refuse and allows it. | Return to enforce when the owner rules on the measured `guest_memory.would_refuse` and `socket_policy.would_deny` counters. The host flags and chart values already accept enforce. |
+| [Count mode](execution.md#native-dispatch) | Chart `2.11.0` defaults guest memory and raw-socket egress to enforce. The host runs both in count. Count records what enforce would refuse and allows it. | Return to enforce when the owner rules on the measured `guest_memory.would_refuse` and `socket_policy.would_deny` counters. The host flags and chart values accept enforce. |
 | [Object storage](capabilities.md#object-storage) | Binding ownership requires bucket and prefix confinement plus complete-body writes. | Adopt stable `wasi:blobstore` when upstream supplies the required binding behavior by default. |
 | Platform extensions | Extension installation changes the whole database and needs administrator authority. | A package-scoped mechanism must prevent effects on neighboring packages. |
 | [HTTP transport](capabilities.md#outbound-http) | Native connector access does not preserve pinned peers and the required client identity and limits. | Public native APIs must preserve peer pinning, credential generations, aggregate bounds, and exact outcomes. |
@@ -48,28 +48,20 @@ Build shape serves admission policy and cannot weaken it.
 The OCI readers preserve WAMN configuration blobs and media types.
 They require registry-scoped `HttpsExcept`, connect and read timeouts, and `ManifestUnknown` discrimination for exact republishing.
 A generic upstream component transfer cannot replace them by dropping those facts.
-`wamn-kdhw` owns the remaining certificate and explicit-credential integration conditions.
 
 ## Current limits
 
 The [routing contract](execution.md#routing-and-availability) retains the native 404 and readiness limitations.
 
 The native operator can exit after an initial scheduler NATS dial timeout.
-Through a scheduler outage, Kubernetes restarts the operator with a backoff of at most 5 minutes, and the operator recovers when NATS returns. The owner accepted this window on 2026-10-13 (`wamn-ifh7`).
-`wamn-10yt.76` retains the retry-gap work and the unresolved fault-time liveness delay.
-Accepted supervised restarts do not establish the cause or removal of that delay.
-A successful recovery without a startup refusal cannot establish recovery after that refusal.
+Through a scheduler outage, Kubernetes restarts the operator with a backoff of at most 5 minutes, and the operator recovers when NATS returns.
+A fault-time liveness delay remains. Supervised restarts do not remove it.
 
 The [lifecycle contract](execution.md#process-lifecycle) covers the combined host shutdown path.
 
-Tenant raw-socket admission remains refused.
-`wamn-d0w4` must be resolved before admitting a raw-socket guest.
+Tenant raw-socket admission is refused.
 The [HTTP capability](capabilities.md#outbound-http) has a separate policy owner.
 A change to its external address-enforcement boundary requires its own security decision.
-
-Former 2.8 patches and detailed run observations remain in the [prior source record](https://github.com/dkkloimwieder/wamn/blob/8f38861387debc392b4b57c92f4cc052974f4f02/docs/architecture/native-alignment-ledger.md).
-The old private P2 phase spans and missing-handle 503 patch are not present in current upstream code.
-Historical measurements do not establish current diagnostic coverage or close unresolved behavior.
 
 ## PostgreSQL replication dependency
 
@@ -77,5 +69,4 @@ The root manifest uses the released `pg_walstream` 0.9.0 crate from `vendor/pg-w
 The local patch returns typed keepalive events so idle readers can report acknowledged progress.
 The raw event API retains its upstream behavior.
 Upstream 0.9.0 includes the FAILOVER slot syntax fix.
-Remove the local patch when upstream returns typed keepalive events with the same position semantics.
 See [the patch record](../../vendor/pg-walstream/WAMN-PATCH.md).

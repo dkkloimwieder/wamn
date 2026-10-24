@@ -15,12 +15,17 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/client_acme_receiving](apps/client_acme_receiving/README.md) | Acme Receiving overlay and its tests |
 | [apps/edge_device](apps/edge_device/README.md) | The application with no SQL that an edge box runs on each device frame |
 | [apps/edge_samples](apps/edge_samples/README.md) | The platform application that receives edge samples |
+| [apps/netsuite](apps/netsuite/README.md) | NetSuite integration that composes `wamn_integration` with JSONata wirings and platform HTTP nodes |
+| [apps/platform_ui](apps/platform_ui/README.md) | The shared Solid 2 operator shell |
+| [apps/platform_fixture](apps/platform_fixture/) | The application that platform tests use in place of a real one |
+| [apps/platform_fixture_overlay](apps/platform_fixture_overlay/) | The minimal overlay above the platform fixture |
 | [apps/rest_connector](apps/rest_connector/README.md) | Scheduled REST integration and consumer event workflow |
 | [apps/rest_consumer_fixture](apps/rest_consumer_fixture/README.md) | Domain items consumed from the REST integration |
 | [apps/platform](apps/platform/) | Shared platform guests and guest libraries |
 | [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |
 | [crates](crates/) | Platform libraries, grouped by responsibility |
 | [web](web/README.md) | Browser runtime, wfe packages, and shared Vite tooling |
+| [tools](tools/) | Repository scripts, lint, benchmark and journey runners, and installers |
 | [tests](tests/) | Conformance, integration, system, and orchestration test owners |
 | [test-support](test-support/) | Shared test functions, fixtures, and infrastructure |
 | [deploy](deploy/) | Infrastructure, platform manifests, test Jobs, and SQL |
@@ -36,4 +41,4 @@ Select the relevant instructions:
 - [Development loop](docs/operations/development-loop.md): Developer sessions, operator interfaces, and the authoring pilot.
 - [Running tests](docs/operations/running-tests.md): Test selection, database isolation, generation, SQLx preparation, and live inputs.
 - [Cluster tests](docs/operations/cluster-tests.md): Owned Receiving, WMS, and native test fixtures.
-- [Deployment](docs/operations/deployment.md): Release qualification, publication, and selection.
+- [Deployment](docs/operations/deployment.md): Provisioning, release carriers, and deployed environments.

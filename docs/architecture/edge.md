@@ -2,7 +2,7 @@
 
 ## Status
 
-Epic `wamn-1bd2` added the status of a running edge ([its specification](../history/edge-diagnostics-spec.md)).
+A running edge reports its status on a local socket.
 
 - The edge serves `GET /status` on the Unix socket `status.sock` in the directory of the run-state file. It binds the socket before the host takes work and removes it when it stops. A socket file that a killed edge left is removed at the next start, because the start holds the run-state file.
 - The socket has no port and no configuration key, so nothing off the box reaches it. It checks no credential, as the host's probe listener checks none. Its own accept loop keeps it apart from the release routes.

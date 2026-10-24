@@ -9,6 +9,7 @@ The guest names its requirement and logical input. The host owns endpoints, cred
 The code-owned [capability declaration](../../crates/platform/component-policy/src/lib.rs) defines the closed tenant import set.
 It admits exact package and version pairs.
 An absent pair refuses, without version ranges, normalization, or namespace guesses.
+An application component cannot import `wamn:postgres/client`, even with a grant, because it runs raw SQL outside the admitted statements.
 The platform's own native workloads use their separate publication authority.
 
 | Package | Version | Security class |

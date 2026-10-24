@@ -35,7 +35,7 @@ One token names an operation's export, dispatch selection, and authorization:
 Source underscores become single hyphens in this external spelling.
 For `wamn_receiving`, `purchase_order.get` at `2.0.0` becomes `wamn-receiving:purchase-order/get@2.0.0`.
 The package version is the only operation-version coordinate.
-It is authored once, in `wamn.json`, and an authored publication file names the token without it, as [operation references](data-access.md#operation-references) states.
+It is authored once, in `wamn.k`, and an authored publication file names the token without it, as [operation references](data-access.md#operation-references) states.
 
 The token keys the component's operation declaration and names its exported handler instance.
 The `registered-operation` field repeats that exact token for authorization.
@@ -68,7 +68,12 @@ The row names the component, never the invocation.
 The closed component list is `provisioning`, `apply-package`, `materializer`, `executor`, and `audit-retention`.
 A tenant or application cannot create a `wamn:` name.
 
+Every environment also holds one `service` user named `workflow`, which runs workflows.
+Its name is not in the `wamn:` namespace, and the platform grants it no role.
+Admins grant it roles like any user.
+
 The id of a platform row is `uuid5(WAMN_NAMESPACE, "wamn:<component>")`.
 `WAMN_NAMESPACE` is `uuid5(NAMESPACE_DNS, "wamn.dev")`, which is `0df299cf-7085-537d-919b-1145b5ef00f8`.
 Every tenant and deployment derives the same id, so no configuration carries it.
+The id of the `workflow` user is `uuid5(WAMN_NAMESPACE, "workflow")`.
 [`wamn-project-state`](../../crates/identity/project-state/src/lib.rs) defines the namespace, the component list, and the derivation.

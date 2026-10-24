@@ -51,7 +51,7 @@ Each member that imports `wamn:postgres/statements` gets its own outer import, n
 Each import is labelled as an instance of the one statements interface, so policy admits it by that interface.
 The composer emits a separate instance type for each import, so resource ownership remains distinct when the route layer wraps an overlay.
 A custom section of the composed component, `wamn:statement-instances`, records the digest of the member that each import was made for.
-Admission reads the instantiation graph and refuses the component unless each import reaches exactly that member ([per-member import instances](../plan/trx-pkg-plan.md#per-member-import-instances)).
+Admission reads the instantiation graph and refuses the component unless each import reaches exactly that member.
 Admission copies that record into the admitted descriptor as `statement-instances`, and the imports fingerprint covers it.
 Publish writes each member's own statement set into the served component, keyed by import name: the overlay's from the component's own operations, and each base's from its admitted descriptor.
 The host binds each import from that served set only, and it refuses to load a composition whose release has no set for it.
@@ -67,7 +67,7 @@ A generic component pull cannot discard that configuration and still satisfy the
 `publish_release::compose_application` builds an HTTP component from an admitted application and pinned platform route bytes.
 The application can already contain its admitted bases.
 The function refuses route bytes that differ from the supplied digest.
-Package admission refuses any member that imports the `wamn:operation` package, with any interface or version.
+The composer refuses any member that imports the `wamn:operation` package, with any interface or version.
 It also refuses any member that exports `wasi:http/handler`.
 Both rules include nested members and labelled imports.
 Only the platform route layer supplies the HTTP handler.
@@ -78,10 +78,18 @@ It preserves each named SQL import and its original member digest.
 An application with one direct statements import receives a named instance of its own.
 The result's SHA-256 digest covers both inputs, and two compositions of identical inputs produce identical bytes.
 
-This API builds an artifact without changing the served release manifest or publishing it to a registry.
-The current `http-route` guest still calls host delivery when embedded.
-The host still serves the separate HTTP workload and original operation components.
-The serving work in `wamn-l5sus.3` owns selection and dispatch of the composed application.
+Publish composes the entry when the release has an HTTP attachment.
+It composes the largest released application that serves every release route.
+It pushes the entry to the `entries` repository under the component artifact base.
+It records `manifest.composed_entry` before it hashes the release.
+The record holds the entry reference, the route digest, and the member components that the entry embeds.
+The members keep their original digests for SQL and dependency authority.
+
+The host pulls the entry that the record names and loads it in place of the member components.
+The entry serves every route and runs each wiring node of its members.
+The workload that starts the entry must set `poolSize` to 0.
+The edge serves the same entry from its release bundle.
+A release with no composed entry loads each member component.
 
 ## Guest build identity
 
@@ -110,8 +118,8 @@ An unknown template refuses during declaration validation or rendering.
 
 The shared [label template library](../../apps/platform/no-std/label-template/src/lib.rs) emits `^PW812`, `^LL1218`, and `^MD0`.
 This means 812 by 1,218 dots for provisional 4-by-6-inch labels at 203 dpi.
-The geometry remains provisional until a real printer requirement replaces it.
-Template authoring is not an existing public interface.
+The geometry is provisional.
+There is no public interface for template authoring.
 
 The separate blob writer uses the [blobstore capability](capabilities.md#object-storage) after rendering.
 It preserves a caller's `request_id` and does not weaken object or binding authority.

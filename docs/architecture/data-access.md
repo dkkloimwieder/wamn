@@ -56,12 +56,11 @@ Reconciliation requires evidence that matches the complete installed package set
 It selects evidence by those identities, never by timestamp. Earlier qualifications remain immutable history.
 Release rollback retains committed migrations and admits only the exact immediate predecessor whose accepted evidence still matches the live database.
 The [package upgrade procedure](../operations/deployment.md#package-upgrades) defines prerequisites, command order, and recovery.
-Changed or removed operation contracts and migration-specific exceptions remain [deferred work](../history/upgrades.md).
 
 Package migrations cannot create roles, grants, extensions, routines, triggers, rules, or row policies.
 Managed schemas refuse foreign tables, authored views, materialized views, unsupported types, and unsupported generated properties.
 Nontransactional operations and mutations outside the selected schemas refuse.
-The platform alone installs its declared extension list, currently `btree_gist`, before application migration SQL.
+The platform alone installs its declared extension list, `btree_gist` and `pg_stat_statements`, before application migration SQL.
 
 The platform installs the record history triggers and the history tables, and the catalog reader skips them by name, as [record history](#record-history) describes.
 
@@ -92,8 +91,8 @@ KCL authors use a non-null cursor because the manifest compiler omits `None` val
 The explicit `whole_row_grants` exception belongs only to an expand stage.
 Stage declarations require a predecessor and a package that declares SQL.
 
-Qualification format 12 carries the stage declaration beside the package, root, and privilege identities. Formats 10 (plain) and 11 (overlay) carry none, and formats 1 to 9 no longer decode.
-Expand stages currently support the admitted column additions on package-owned relations.
+Qualification format 12 carries the stage declaration beside the package, root, and privilege identities. Formats 10 (plain) and 11 (overlay) carry none.
+Expand stages support the admitted column additions on package-owned relations.
 They run named conditions before and after their migration suffix in the same transaction.
 Application repeats the conditions against current data and records qualification evidence only after success.
 Each stage statement uses a five-second lock timeout. A lock failure aborts the transaction without an automatic retry.
@@ -123,20 +122,18 @@ The platform then runs postconditions and plans the selected release's serving S
 Schema changes, derived grants, and accepted qualification evidence commit together.
 If a condition or statement fails, the transaction rolls back all three.
 The exception does not admit package-authored grants or skip statement planning.
-Other staged DDL and contract execution remain unavailable.
-The [Epic 3 scope](../plan/package-upgrade.md#73-epic-3-changes-outside-the-predecessor-compatible-additive-subset) defines the remaining execution work.
+Other staged DDL and contract execution are unavailable.
 
-`wamn.json` declares application choices that another source cannot determine exactly.
-The generator supplies fixed protocol rules. It rejects their former authored fields.
+`wamn.k` declares application choices that another source cannot determine exactly.
+The generator supplies fixed protocol rules and rejects authored fields for them.
 Receiving, Acme, and WMS use the same declaration format.
 
 Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `tools/repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
 `wamn build` compiles it to `wamn.json` in the package's build output, and every reader reads that compiled file.
-The author states a fact once, in the place that owns it (R9 of the platform deployment plan).
+The author states a fact once, in the place that owns it.
 The schema module fills authoring defaults, and generation adds each member that the table below marks derived, so the compiled file states what an authored `wamn.json` states.
 The schema module and generation refuse a derived member that `wamn.k` states.
 An optional key that the author does not write stays absent. To leave out a key that has a default, such as `connection`, the author sets it to `None`.
-A package converts to `wamn.k` with its next version, because sealed bytes never change.
 
 The following map covers the Receiving manifest fields and their nested declarations.
 A schema fact describes the database. A permission or writable-field list selects authority over that database.
@@ -176,6 +173,9 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
 | `connections` aliases | Application database-capability selection. Retain alias names as an array. The PostgreSQL interface is fixed, so remove repeated interface records. |
 | `components` keys and `.connections` | Component grouping and declared capability selection before compilation. Retain. Cargo artifact names do not determine operation grouping. |
+| `targets` | The target types a package runs on: `cloud` or `local`. The default is `cloud`. Generation refuses a package with models that lists `local`. Retain. |
+| `sequences.*.pattern`, `.callable` | Application numbering choices: the default pattern of a number sequence, and whether the package's commands call it. Generation parses each pattern with the one pattern parser. Retain. |
+| `models.*.fields.*.number`, `.role` | Application choice of what fills a column. `number` names the sequence that numbers the field on insert. `role = "actor"` fills the field from the operation caller. Generated SQL fills both, so a write that supplies the field refuses. Retain. |
 
 Compiled component metadata owns actual WIT imports and exports for runtime admission.
 Those bytes exist after generation, so reading them to generate the same component creates a circular dependency.
@@ -219,6 +219,7 @@ Generation writes these files for each package. A path below is a logical path: 
 4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every operation of the package and imports what those operations call.
 5. `generated/publication/attachments.json` holds one route entry for each generated operation, with its definition hash.
 6. `generated/publication/component-operations.json` holds one declaration entry for each generated operation, keyed by component.
+7. `generated/data/sequences.rs` holds `sequences::<name>::next` and `sequences::<name>::peek` for each sequence that the package declares `callable`. The package has no such file without a callable sequence.
 
 The shared crate `wamn-data-access` holds the keyset cursor, the query page, and the scalar parsers that the data functions use.
 A data crate includes `data/mod.rs` of its build output as its public module `generated`, through a path relative to the crate. The generated files include each other by paths relative to themselves.
@@ -235,7 +236,7 @@ A copy of an authored document outside its package reads the generated file besi
 
 ### Operation references
 
-The package version is authored once, as `package.version` in `wamn.json`.
+The package version is authored once, as `package.version` in `wamn.k`.
 A sealed operation id is `<package>:<interface>/<operation>@<version>`, for example `wamn-receiving:location/list@2.0.0`.
 WIT packages, component worlds, contracts, the files under `generated/`, the clients, grants and the statement sets of the host carry the sealed id.
 
@@ -248,8 +249,8 @@ Every reader of an authored file resolves its references with `wamn_schema_gener
 The readers are the generator, publication, the declaration render, the author-wiring verb, the dev coordinator and the composer.
 An authored id that carries a version, or a template that authors `scope.package-version`, refuses.
 A web page keys `onOpen` and `onFill` by the reference, so one page shows one version of each package.
-A test gets the sealed id and the package version from `wamn.json` through `wamn_test_infrastructure::operations`.
-A new package version is one line in `wamn.json` and a regeneration.
+A test gets the sealed id and the package version from the compiled `wamn.json` through `wamn_test_infrastructure::operations`.
+A new package version is one line in `wamn.k` and a regeneration.
 
 The manifest member `routes` sets how a generated route is published:
 
@@ -262,12 +263,12 @@ A query that names an undeclared sort refuses with `invalid_input` on the field 
 Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
-Version 0.4.0 includes `run-stream`, `operation-transaction`, and the separate `operation` interface. It is the one version, and the host serves only it.
-The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000` ([host-owned transaction](../history/host-transaction.md)).
+Version 0.4.0 includes `run-stream`, `operation-transaction`, `next-number`, `peek-number`, and the separate `operation` interface. It is the one version, and the host serves only it.
+The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000`.
 An unnamed `statements` import runs the statement set of the active operation.
 In a composed component each member has its own named import, and the host links one instance per name.
 The host keys the active statement set by the component scope and the import name, so a member that names another member's statement gets `unknown-statement`, and so does a read (get, query or projection) that names a statement that writes or locks rows.
-Every instance lends the same host transaction; only the statement set differs ([per-member import instances](../plan/trx-pkg-plan.md#per-member-import-instances)).
+Every instance lends the same host transaction. Only the statement set differs.
 The host resolves those identities to admitted SQL bytes and the operation's allowed statements.
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
 SQLx metadata is compilation data, not the SQL or package contract.
@@ -325,7 +326,7 @@ The generated contracts carry ordinary typed values. Application code owns the t
 
 The released operation carries its own statements only.
 The host begins the item's transaction when the admitted operation declares one: a command with `transaction = explicit_per_input`, or a generated create, update or delete.
-A command without SQL of its own may declare `transaction = explicit_per_input`, so an overlay command that only calls a base command still runs in one host transaction.
+A command without SQL of its own can declare `transaction = explicit_per_input`, so an overlay command that only calls a base command still runs in one host transaction.
 The base reaches that transaction through `operation-transaction`. Each member binds its own statements through its own `statements` import.
 
 Acme's `acme.record_receipt` calls Receiving's `record_receipt` and then records its inspection in the same host transaction, under the existing purchase-order lock.
@@ -418,12 +419,17 @@ Member statement handles borrow the same transaction.
 The async `wal-position()` call returns `pg_current_wal_lsn()::text` on the open operation's connection.
 It leaves the operation open and returns `not-begun` when no operation is open.
 The call uses no separate connection or transaction.
-Read operations use a read-only snapshot and claim no write-log key.
-Their commit writes neither a stored result nor a causation message, so a read does not invalidate a list tag.
+A read operation calls `authorize` in place of `begin-operation`.
+`authorize` takes the caller handle and the sealed operation id, checks the caller and its grant, and binds the statement authority.
+It opens no transaction and claims no write-log key.
+`finish-read` ends the authorized read and records its delivery outcome without SQL.
+`begin-operation` on a read operation returns `reads-claim-nothing`.
+After `authorize`, `commit`, `rollback`, and `wal-position` return `not-begun`.
+A read writes no causation message, so it does not invalidate a list tag.
 
-This interface returns `uncertain`, `resolved(string)`, `conflict`, `unknown-operation`, `grant-denied`, `invalid-caller`, `not-begun`, `already-begun`, or `postgres(pg-error)`.
+This interface returns `uncertain`, `resolved(string)`, `conflict`, `unknown-operation`, `grant-denied`, `invalid-caller`, `not-begun`, `already-begun`, `postgres(pg-error)`, or `reads-claim-nothing`.
 The `resolved` payload carries the operator basis text for the existing `intent-resolved` response.
-The write log supports no operator resolution, so it does not currently produce `resolved`.
+The write log supports no operator resolution, so it produces no `resolved`.
 An unread commit answer returns `uncertain`.
 
 The request is the SHA-256 of the canonical item without `request_id`, with the key kept.
@@ -467,6 +473,104 @@ Each guest linear memory is capped at 256 MiB, and the statement timeout bounds 
 Unbounded JSON materialization is not a streaming or export interface.
 Arbitrary tenant SQL remains subject to runtime authority and execution limits.
 Compile-time checking for arbitrary tenant components remains demand-gated.
+
+## Numbering
+
+A document number is a rendered text, such as `P-00000017`.
+The `wamn:postgres` plugin renders each number in the operation transaction of the application.
+A rolled-back number is not consumed, so a failure leaves no gap.
+
+### Declaration
+
+The package declares numbering in `wamn.k`:
+
+- `sequences` names each number sequence and gives its default `pattern`. `callable = True` gives the package's commands the generated `sequences::<name>::next` and `peek`.
+- `number = "<sequence>"` on a model field makes the generated insert fill that field with the next number.
+- `role = "actor"` on a model field makes the generated insert fill it from `app.user_id`. The generated update fills a field named `updated_by` in the same way and never changes another actor field.
+
+Generation refuses these declarations:
+
+- A pattern that does not parse, and a sequence name that is not an identifier.
+- A field that names an undeclared sequence, a field that has both `number` and `role`, and a model with two numbered fields.
+- A sequence that no field numbers and that is not callable.
+- A pattern that names a record field which is not a column of every model that uses the sequence. The column cannot be `bytes` or `json`, and the `create` operation must write it.
+- A numbered key field whose pattern uses `reset=` or `per=`. A numbered integer key takes a bare `{seq:<counter>}` pattern only.
+- A counter with `per=` on the key field of its model.
+- A write that supplies a `number` or `actor` field, in a generated operation or in a custom operation statement.
+- A package with models that lists `local` in `targets`.
+
+### Pattern
+
+A pattern is literal text and tokens:
+
+| Token | Meaning |
+| --- | --- |
+| `{seq:<counter>}` | One counter that never resets. |
+| `{seq:<counter>,reset=<key>}` | The counter starts at 1 for each distinct key. |
+| `{seq:<counter>,per=<key>}` | One value for each distinct key. The first call assigns it and later calls reuse it. |
+| `width=N` or `0N` | The counter is padded to the width. A longer value is not cut. |
+| `pad=C` | The pad character. The default is `0`. |
+| `hex` | The counter renders in upper-case hex. |
+| `{field:<name>}` | A field of the record, as text. |
+| `{date:FMT}` | The transaction time as `YYYY`, `YY`, `MM`, `DD`, `WW` (ISO week), or `Q`. |
+
+A `<key>` is a field of the record, another counter of the same pattern, or `date:FMT`.
+Date parts use the `timezone` setting of the application scope, and UTC when no setting exists.
+For example, `B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}` gives `B0001-001` and `B0001-002` for the first batch.
+
+### Rendering
+
+The guest calls `next-number(name, record)` or `peek-number(name, record)` of `wamn:postgres` 0.4.0.
+`record` is one JSON object that holds the fields the pattern names, each as text or null.
+The plugin reads the application from host state and resolves the sequence by that application and the name.
+It never reads the `app.application` claim, because guest SQL can rewrite that claim.
+Both calls run only in an open operation transaction, and they return `permission-denied` outside one.
+
+`next-number` advances each counter of the pattern and renders the new values.
+The plugin takes the counters in name order, and a counter keyed by another counter comes after it.
+A `reset=` or unkeyed counter calls `platform.bump_counter`.
+A `per=` counter first reads its key row with no lock.
+If the row is absent, the plugin calls `platform.assign_counter`.
+`peek-number` renders the last values issued, with no lock and no write. It never serves an assignment.
+
+The calls refuse with a `query-error` and these SQLSTATE values:
+
+- `42704` for a sequence that the application does not own.
+- `22023` for a record that is not one JSON object of text and nulls, a missing record field, an empty `per=` key, and a stored pattern that does not parse.
+- `22004` for a null record field.
+- `P0002` for a `peek-number` of a counter that issued no number.
+
+The generated `sequences::<name>::next` and `peek` take a key struct that holds exactly the fields the pattern names.
+
+### Counters
+
+`platform.number_sequence` holds one row for each application and sequence name, with its pattern.
+`platform.number_counter` holds one row for each sequence, counter, and key value.
+Its `value` is the next value to render, and the key value `''` is the allocator row of a `per=` counter.
+The application role has no write on `number_counter`.
+Only the three counter functions of the platform schema write it.
+They are `SECURITY DEFINER`, and each takes a sequence id.
+The plugin resolves that id from host state.
+Its statement admission refuses guest SQL that names a counter function or writes a `platform.*` relation.
+
+Env apply creates the `platform.number_sequence` row of each sequence that a package declares.
+The row belongs to the application that runs the package's operations.
+A row that exists keeps its pattern, so an edited pattern survives every apply.
+
+### Setting a counter
+
+The application host route `number_counter.set` sets the next value of one counter.
+A holder of `admin` can call it, and so can a role that holds the operation as a permission row.
+The request names the application, the sequence, the counter, the key, and the value, and it carries a request id.
+The value is 1 or more.
+The route runs in one operation transaction under the caller, claims the request id in the write log, and writes through `platform.set_counter` under the row lock.
+A retry of a committed set answers the stored `next_number`.
+
+Before it commits, the route renders the number that the next call would give.
+It refuses when a record of the application already carries that number.
+The records are the single-column unique text columns of the application's schemas.
+It also refuses a `per=` counter, whose values never change.
+The route answers `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live`, or `idempotency_conflict`.
 
 ## Record history
 
@@ -539,9 +643,11 @@ Every stamp in one transaction carries the same instant, and that instant is not
 - A write with no bound actor raises SQLSTATE `55000` with the message `actor-required`, for every column selection.
 
 The function reads no user row, and no stamp column has a foreign key.
-Only the platform trigger functions read `app.user_id`, and no authorization or row policy reads it.
+The platform trigger functions read `app.user_id`.
+Generated statements read it too: a create fills each actor field, an update fills the `updated_by` actor field, and a tombstone delete sets `deleted_by`.
+No authorization or row policy reads it.
 The [claims lint](../../tests/conformance/src/repo_policy/session_claims.rs) admits those readers by name, and it admits `wamn_history.log_row_change` as the reader of `app.operation`.
-It also admits the two function templates of `apply_package/record_history.rs`, which generate the functions of the package relations.
+It also admits the two function templates of `apply_package/record_history.rs`, which generate the functions of the package relations, and the actor stamps of generated statements.
 
 After the migrations apply, apply-package installs one `wamn_record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
 The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes the generated function `wamn_history.<schema>__<relation>_stamp()`.
@@ -614,8 +720,8 @@ It spells each `timestamptz` column as the platform canonicalizer spells it: UTC
 Every other value keeps the `to_jsonb` spelling.
 The log function and the stamp function compare row values as JSONB text, so a change of numeric scale alone is a change.
 The generated functions of a package relation compare each column as text, with the same result.
-Their images keep the `to_jsonb` spelling, so a `timestamptz` value carries the session offset (`wamn-c8a5v.2`).
-The entries written before that change keep the canonical spelling, and the [history read](#history-read) canonicalizes both.
+Their images keep the `to_jsonb` spelling, so a `timestamptz` value carries the session offset.
+Earlier entries can hold the canonical spelling, and the [history read](#history-read) canonicalizes both.
 A primary key column of type `timestamptz` keeps the canonical spelling in `row_key`, so every entry of one row has one key.
 Such a change moves the stamps and writes an entry. A true no-op moves no stamp and writes no entry.
 
@@ -667,7 +773,7 @@ The generation database creates the history tables before `EXPLAIN` and SQLx pre
 ### Retention task
 
 A declared `"P<n>D"` retention is a minimum keep window.
-It promises nothing about removal time, backups, holds, or erasure, and Beads `wamn-0h0g.13` owns those promises.
+It promises nothing about removal time, backups, holds, or erasure.
 The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
 [`audit-retention.example.yaml`](../../deploy/platform/audit-retention.example.yaml) is an example daily CronJob.
 
@@ -720,7 +826,6 @@ Administrative SQL and test fixtures also bind `app.operation` as `admin:<kebab-
 
 `platform."user".type` is `user`, `service`, or `platform`, and it has no default.
 Users have `user` rows, stations and integrations have `service` rows, and platform components have `platform` rows.
-The migrations that renamed `person` and `human` to `user` bind `wamn:provisioning`, so each changed row records that principal and that run, and old history rows keep the old name in their JSON.
 The type does not change how a principal authenticates.
 A `platform` row carries its `wamn:<component>` name in `display_name` and its derived id.
 Its email is `<component>@<platform-domain>`.
@@ -733,34 +838,33 @@ It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
 
-The control host writes the platform configuration rows of one environment on the path of its application rows, through the [platform configuration writer](../../crates/identity/platform/src/configuration.rs).
-The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the route's sealed operation id, so each row write appends its history entry.
+The [platform configuration writer](../../crates/identity/platform/src/configuration.rs) writes the platform configuration rows of one environment.
+The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the operation, so each row write appends its history entry.
 The writer keeps a row that already holds the given values, and it removes no row.
-No route calls the writer yet. The connection and settings routes of C3 and C4 add the callers.
 
 Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
-These relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `environment`, and the platform configuration tables `external_system`, `connection`, `integration_allow`, `project_connection`, `number_sequence`, `number_counter`, and `setting` ([platform configuration](../plan/platform-config.md)).
+These relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `environment`, and the platform configuration tables `external_system`, `connection`, `integration_allow`, `project_connection`, `number_sequence`, `number_counter`, and `setting`.
 `environment` holds at most one row, the status of the environment that the host reads. No row means active.
 An integration is connector code, and `integration` columns hold its catalog code. A connection is a configured instance of an integration. An external system is the persistent identity that a group of connections reach.
 Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
 `number_counter` has no history table, because one entry per counter advance would double the writes of every create. The write log is its audit.
-The database is the org boundary (owner ruling of 2026-10-23 on `wamn-83eth.6`), so `user` and the seven platform configuration tables have no `tenant_id`, no row policy, and no tenant key index, and neither do their history tables. Their keys are the keys of [platform configuration](../plan/platform-config.md) without a tenant column.
+The database is the org boundary, so `user` and the seven platform configuration tables have no `tenant_id`, no row policy, and no tenant key index, and neither do their history tables.
 `role`, `user_role`, `permission`, `api_key`, and `environment` still carry `tenant_id`.
 The file creates the history table of each of these five with the tenant flag, so the table has a `tenant_id` column.
 Each of these history tables has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key`, on a history table, or on `schema_migrations`.
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. The plugin's statement admission refuses guest SQL that names a counter function or writes a `platform.*` relation, so only the plugin calls these functions.
-`platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`. Project migration `0029_number_assignment.sql` adds it to an installed database.
-`platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`. Project migration `0030_number_counter_set.sql` adds it to an installed database.
-Project migration `0031_org_boundary.sql` drops the tenant floor of `user` and the platform configuration tables in an installed database and replaces the three counter functions.
-Project migration `0025_platform_configuration.sql` adds the platform configuration tables to an installed database, removes `configurations` and its history table, and revokes the `api_keys` read.
+`platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
+`platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
+Project migrations 0024 to 0031 bring an installed database to the schema of `app-schema.sql`.
+They rename the schema `app_system` to `platform` and the account tables to their singular names.
+They add the platform configuration tables and the three counter functions, and they drop the tenant floor of `user` and the configuration tables.
+`upgrade-schema` applies each migration once in one transaction. A fresh install records them as applied.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `user`, `role`, `user_role`, `permission` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
 It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation. The entry columns include `tenant_id` only on the history tables of `role`, `user_role`, `permission`, and `environment`.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
-Project migration `0007` creates `environment` in an installed database, and `0008` gives the family its write.
-Project migration `0031` renders the current surface, and `0028`, `0027`, `0026`, `0024`, `0020`, `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
@@ -857,6 +961,7 @@ It writes a service row for each service principal of the project.
 The release stage also creates one service principal for each application with a scheduled workflow, scoped to that environment.
 The stage writes its tenant service row without assigning a role or permission.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
+It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
 It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
 It writes the `admin` row of each member who holds `project-admin` in the project.
 `wamn-ctl-ops create-user` creates that user in `identity.principals`, and it is the only path that creates one.
@@ -874,17 +979,14 @@ The caller sees `permission-denied`.
 The host's [auth memory](execution.md#auth-memory) answers the check, and a miss reads the row.
 A removed row stays accepted until a change message clears the memory or 60 seconds pass.
 There is still no foreign key on a stamp column.
-Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution and `app.operation`.
+Modified application SQL can forge actor attribution and `app.operation`.
 Record history gives no tamper resistance against modified application code or administrative SQL.
 
 A very large `"P<n>D"` day count stops the retention verb at that relation, and the verb prunes no later relation of that database.
-Deferred Beads `wamn-emtx.27` records that defect.
 
 The statement check of one package runs under the grants of that package alone.
 If an overlay adds a column that no installed operation reads, a whole-row read of that relation fails at run time with permission denied.
 No current statement reaches that case.
-Beads `wamn-emtx.29` is the closed record of this limit.
-Its reopen trigger is a package statement that reads a relation whole while another package extends that relation.
 
 The history read has two more limits:
 
@@ -893,8 +995,8 @@ The history read has two more limits:
 
 The system database has two more limits:
 
-- The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a user caller.
-- The system database keeps stamps only. A delete gets no stamp, so role, membership, and PAT removals stay unattributed. Beads `wamn-emtx.24` is the closed record of the system database log. Its reopen trigger is a need to attribute those removals beyond the stamps, for example a security review that asks for revoke history.
+- The issuer and the revoker of a token bind `wamn:provisioning`.
+- The system database keeps stamps only. A delete gets no stamp, so role, membership, and PAT removals stay unattributed.
 
 ## Event capture
 
