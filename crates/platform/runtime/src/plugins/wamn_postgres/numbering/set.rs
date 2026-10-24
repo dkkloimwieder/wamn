@@ -4,9 +4,12 @@
 //! A set runs in an operation transaction of the guest authority, under the
 //! caller, the route's operation and the application as claims, so the
 //! engine write log records it by its request id and the counter row's
-//! `updated_by` names the caller. `platform.set_counter` writes the value
-//! under the counter row's lock, so a set waits for a concurrent next number
-//! and a next number waits for the set.
+//! `updated_by` names the caller. The set resolves the sequence by the
+//! application that the host route checked against the release and the
+//! sequence name, never by the `app.application` claim, and passes its id to
+//! `platform.set_counter`. That function writes the value under the counter
+//! row's lock, so a set waits for a concurrent next number and a next number
+//! waits for the set.
 //!
 //! Before the commit, the set renders the number that the next call would
 //! give, with the one renderer of this plugin, and refuses when a record of
@@ -240,15 +243,17 @@ async fn set_and_render(
     schemas: &[String],
 ) -> Result<Result<String, CounterSetRefusal>, tokio_postgres::Error> {
     let statement = connection.prepare_cached(SEQUENCE_SQL).await?;
-    let row = connection.query_one(&statement, &[&set.sequence]).await?;
+    let row = connection
+        .query_one(&statement, &[&set.application, &set.sequence])
+        .await?;
     let (Some(sequence), Some(pattern)) = (
+        row.get::<_, Option<String>>(0),
         row.get::<_, Option<String>>(1),
-        row.get::<_, Option<String>>(2),
     ) else {
         return Ok(Err(CounterSetRefusal::SequenceNotFound));
     };
     let timezone = row
-        .get::<_, Option<String>>(3)
+        .get::<_, Option<String>>(2)
         .unwrap_or_else(|| "UTC".to_owned());
     // A stored pattern that does not parse has no counter to set.
     let Ok(pattern) = wamn_number_pattern::parse(&pattern) else {

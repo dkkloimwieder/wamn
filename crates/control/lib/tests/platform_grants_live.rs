@@ -239,8 +239,8 @@ async fn the_migration_grants_the_application_role_invariant_one() {
 
 /// Project migration 0031 on a database with rows in the old shape: each row
 /// stays, loses its tenant, and keeps its history under its new key. The
-/// single-column keys hold, and the counter functions run on the sequence and
-/// the application claim alone (wamn-83eth.6).
+/// single-column keys hold, and the counter functions run on the sequence id
+/// alone (wamn-83eth.6, wamn-9e4ks).
 #[tokio::test]
 async fn the_org_boundary_migration_keeps_the_rows_of_the_old_shape() {
     const USER: &str = "00000000-0000-4000-8000-000000000031";
@@ -341,25 +341,23 @@ async fn the_org_boundary_migration_keeps_the_rows_of_the_old_shape() {
     }
     assert_eq!(surface(&client).await, invariant_one());
 
+    // The function reads no claim: the plugin resolves the sequence id from
+    // the application in host state (wamn-9e4ks).
     let bumped: i64 = client
         .query_one(
-            &format!(
-                "SELECT platform.bump_counter('{SEQUENCE}', 'po', '') \
-                   FROM (SELECT set_config('app.application', 'receiving', false)) AS claim"
-            ),
+            &format!("SELECT platform.bump_counter('{SEQUENCE}', 'po', '')"),
             &[],
         )
         .await
-        .expect("bump the counter of the claimed application")
+        .expect("bump the counter of the sequence")
         .get(0);
     assert_eq!(bumped, 7);
     let refused = client
-        .batch_execute(&format!(
-            "SELECT set_config('app.application', 'wms', false); \
-             SELECT platform.bump_counter('{SEQUENCE}', 'po', '')"
-        ))
+        .batch_execute(
+            "SELECT platform.bump_counter('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'po', '')",
+        )
         .await
-        .expect_err("a sequence of another application is refused");
+        .expect_err("an id that is not a sequence is refused");
     assert_eq!(
         refused.code(),
         Some(&tokio_postgres::error::SqlState::UNDEFINED_OBJECT),

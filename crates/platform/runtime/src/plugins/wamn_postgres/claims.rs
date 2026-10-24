@@ -210,9 +210,10 @@ pub struct WamnPostgres {
     /// application SQL can forge it, as it can forge `app.user_id`.
     operations: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the `app.application` claim: the composing application
-    /// that runs the operation, named by its package id. Numbering keys its sequences on
-    /// it (`docs/plan/platform-config.md`). Absent (the default) binds the
-    /// empty string.
+    /// that runs the operation, named by its package id. Numbering keys its
+    /// sequences on this host state, which the operation transaction keeps,
+    /// never on the claim (`docs/plan/platform-config.md`). Absent (the
+    /// default) binds the empty string.
     applications: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the release digest this pod carries.
     /// Absent (the default) ⇒ the production claim verifies nothing, so every
@@ -729,7 +730,117 @@ pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
             "emitting a wamn.* logical message is not permitted".to_string(),
         )));
     }
+    if statement_calls_counter_function(sql) {
+        tracing::warn!(
+            target: "wamn::security",
+            "rejected a guest call of a platform counter function on the guest SQL surface"
+        );
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "calling a platform counter function is not permitted".to_string(),
+        )));
+    }
+    if statement_writes_platform(sql) {
+        tracing::warn!(
+            target: "wamn::security",
+            "rejected a guest platform.* write on the guest SQL surface"
+        );
+        return Err(PgError::QueryError((
+            "WAMN0".to_string(),
+            "writing a platform.* relation is not permitted".to_string(),
+        )));
+    }
     Ok(())
+}
+
+/// The platform functions that write `number_counter`. Only the numbering
+/// renderer of this plugin calls them, on its own connection access, which
+/// does not pass this guest surface (`docs/plan/platform-config.md`,
+/// Numbering).
+const COUNTER_FUNCTIONS: [&str; 3] = ["bump_counter", "assign_counter", "set_counter"];
+
+/// True if `sql` names a platform counter function. Each function runs as
+/// its owner on a sequence id alone, so a guest that reached one could
+/// advance or set a counter of any application in the database. Matching is
+/// on the bare function name as a whole identifier, so a quoted or
+/// unqualified call is caught too, and `reset_counter` is not. Like
+/// [`statement_forges_causation`], this is a text-level blocklist: it
+/// over-rejects a statement that merely names one in a literal, which is
+/// fail-closed.
+fn statement_calls_counter_function(sql: &str) -> bool {
+    let identifier = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    normalized_sql(sql).iter().any(|text| {
+        COUNTER_FUNCTIONS.iter().any(|function| {
+            text.match_indices(function).any(|(start, _)| {
+                let before = text[..start].chars().next_back();
+                let after = text[start + function.len()..].chars().next();
+                !before.is_some_and(identifier) && !after.is_some_and(identifier)
+            })
+        })
+    })
+}
+
+/// True if `sql` inserts, updates, deletes, merges, truncates or copies into
+/// a `platform.*` relation. The platform writes these rows; the guest only
+/// reads them. On SQLite, which has no roles, this is the only thing that
+/// keeps the guest out of them. A text-level blocklist like
+/// [`statement_forges_causation`].
+fn statement_writes_platform(sql: &str) -> bool {
+    const WRITES: [&str; 12] = [
+        "insert into platform.",
+        "update platform.",
+        "update only platform.",
+        "delete from platform.",
+        "delete from only platform.",
+        "merge into platform.",
+        "merge into only platform.",
+        "truncate platform.",
+        "truncate only platform.",
+        "truncate table platform.",
+        "truncate table only platform.",
+        "copy platform.",
+    ];
+    normalized_sql(sql)
+        .iter()
+        .any(|text| WRITES.iter().any(|write| text.contains(write)))
+}
+
+/// `sql` in two forms to match a blocklist against: lowercased, with
+/// double quotes removed, each run of whitespace made one space, and no space
+/// around a `.`. The first form also replaces each comment with a space, so
+/// `UPDATE /* x */ "platform" . "setting"` reads as `update platform.setting`.
+/// The second keeps the text of comments and blanks only their markers, so a
+/// write hidden between a `/*` and a `*/` inside string literals is still
+/// seen. A statement is refused when either form matches.
+fn normalized_sql(sql: &str) -> [String; 2] {
+    let lower = sql.to_ascii_lowercase();
+    let mut uncommented = String::with_capacity(lower.len());
+    let mut rest = lower.as_str();
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("--") {
+            rest = after.find('\n').map_or("", |end| &after[end..]);
+            uncommented.push(' ');
+        } else if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.find("*/").map_or("", |end| &after[end + 2..]);
+            uncommented.push(' ');
+        } else {
+            let next = rest.chars().next().expect("rest is not empty");
+            uncommented.push(next);
+            rest = &rest[next.len_utf8()..];
+        }
+    }
+    let marked = lower
+        .replace("--", " ")
+        .replace("/*", " ")
+        .replace("*/", " ");
+    [uncommented, marked].map(|text| {
+        text.replace('"', "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace(" .", ".")
+            .replace(". ", ".")
+    })
 }
 
 /// Refuse a transactional statement that has no executing principal.

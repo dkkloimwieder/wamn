@@ -185,7 +185,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
 /// creates give PO-000001 and PO-000002, each created and updated by the
 /// caller. The local runtime runs no env apply, so the test writes the
 /// sequence row that env apply creates, for the composing application and
-/// for Receiving; the application claim selects one.
+/// for Receiving; the application in host state selects one.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyhow::Result<()> {

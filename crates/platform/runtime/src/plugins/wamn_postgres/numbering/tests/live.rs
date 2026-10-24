@@ -362,8 +362,9 @@ async fn live_a_rolled_back_per_assignment_is_not_consumed() {
     assert_eq!(live.next("batch", r#"{"batch_id":"abc"}"#).await, "B2");
 }
 
-/// A sequence of another application is refused by the claim, never by the
-/// name: the same call under the owning application renders.
+/// A sequence of another application is refused by the application in host
+/// state, never by the name: the same call under the owning application
+/// renders.
 #[tokio::test]
 async fn live_a_sequence_of_another_application_is_refused() {
     let live = Live::new().await;
@@ -387,6 +388,119 @@ async fn live_a_sequence_of_another_application_is_refused() {
         .await
         .unwrap();
     assert_eq!(owned, "S-1");
+}
+
+/// The plugin reads the application from host state, not from the
+/// `app.application` claim: a transaction whose claim is rewritten to another
+/// application still renders its own sequences and reaches none of the other
+/// application's (wamn-9e4ks).
+#[tokio::test]
+async fn live_a_rewritten_application_claim_reaches_no_other_sequence() {
+    let live = Live::new().await;
+    live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
+        .await;
+    live.sequence(OTHER_APPLICATION, "shipment", "S-{seq:n}")
+        .await;
+    let scope = "numbering-rewritten-claim";
+    live.plugin
+        .bind_session_claims(
+            scope,
+            &SessionClaims {
+                tenant: TENANT.to_owned(),
+                user_id: Some(LIVE_PRINCIPAL.to_owned()),
+                application: Some(APPLICATION.to_owned()),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .expect("the claims bind");
+    let transaction = live
+        .plugin
+        .begin_operation_transaction(scope)
+        .await
+        .expect("the operation transaction begins");
+    live.plugin
+        .bind_operation_transaction(scope, &transaction)
+        .expect("the transaction binds");
+    transaction
+        .with_host_connection(|connection| async move {
+            let result = connection
+                .connection()
+                .batch_execute(&format!(
+                    "SELECT set_config('app.application', '{OTHER_APPLICATION}', true)"
+                ))
+                .await;
+            (connection, result)
+        })
+        .await
+        .expect("the claim is rewritten");
+    let render = |name: &str| {
+        render_number(
+            &live.plugin,
+            scope,
+            name.to_owned(),
+            "{}".to_owned(),
+            NumberCall::Next,
+        )
+    };
+    let refused = render("shipment").await.unwrap_err();
+    assert_eq!(sqlstate(&refused), "42704", "{refused:?}");
+    assert_eq!(render("purchase_order").await.unwrap(), "P-1");
+    live.plugin.revoke_operation_transaction(scope);
+    transaction
+        .rollback()
+        .await
+        .expect("the transaction rolls back");
+}
+
+/// An operation transaction whose host state names no application renders
+/// nothing: both calls are refused and no counter moves.
+#[tokio::test]
+async fn live_a_call_with_no_application_in_host_state_is_refused() {
+    let live = Live::new().await;
+    live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
+        .await;
+    let scope = "numbering-no-application";
+    live.plugin
+        .bind_session_claims(
+            scope,
+            &SessionClaims {
+                tenant: TENANT.to_owned(),
+                user_id: Some(LIVE_PRINCIPAL.to_owned()),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .expect("the claims bind");
+    let transaction = live
+        .plugin
+        .begin_operation_transaction(scope)
+        .await
+        .expect("the operation transaction begins");
+    live.plugin
+        .bind_operation_transaction(scope, &transaction)
+        .expect("the transaction binds");
+    for call in [NumberCall::Next, NumberCall::Peek] {
+        let refused = render_number(
+            &live.plugin,
+            scope,
+            "purchase_order".to_owned(),
+            "{}".to_owned(),
+            call,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(refused, StatementError::Postgres(PgError::PermissionDenied)),
+            "{call:?}: {refused:?}"
+        );
+    }
+    live.plugin.revoke_operation_transaction(scope);
+    transaction
+        .rollback()
+        .await
+        .expect("the transaction rolls back");
+    assert_eq!(live.next("purchase_order", "{}").await, "P-1");
 }
 
 /// Outside an open operation transaction both calls are refused and no

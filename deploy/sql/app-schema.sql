@@ -767,11 +767,13 @@ END $platform_configuration_history$;
 -- per= counter and a set below a live number with the renderer before it
 -- commits.
 --
--- The database is the org boundary, so no function checks a tenant. The
--- app.application claim of the operation transaction decides which sequences
--- a caller reaches: a sequence of another application, or a caller with no
--- application claim, is refused with undefined_object, the refusal of the
--- renderer for a sequence that the claim does not own.
+-- The database is the org boundary, so no function checks a tenant. No
+-- function reads the app.application claim, which guest SQL can rewrite.
+-- Each takes a sequence id and refuses an id that is not a sequence with
+-- undefined_object. The renderer of the wamn:postgres plugin resolves the
+-- sequence id from the application in host state and the sequence name, and
+-- the plugin's statement admission refuses guest SQL that names these
+-- functions or writes a platform relation, so only the plugin calls them.
 --
 -- CREATE OR REPLACE, so that project migration 0031 replaces the functions
 -- of 0025, 0029 and 0030 in an installed database. 0031 carries this section
@@ -788,10 +790,8 @@ AS $$
 DECLARE
     allocated bigint;
 BEGIN
-    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s
-                    WHERE s.id = target_sequence
-                      AND s.application = NULLIF(current_setting('app.application', true), '')) THEN
-        RAISE EXCEPTION 'number sequence % is not a sequence of the claimed application', target_sequence
+    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s WHERE s.id = target_sequence) THEN
+        RAISE EXCEPTION 'number sequence % does not exist', target_sequence
             USING ERRCODE = 'undefined_object';
     END IF;
     INSERT INTO platform.number_counter AS c (sequence_id, counter, key_value, value)
@@ -815,10 +815,8 @@ AS $$
 DECLARE
     assigned bigint;
 BEGIN
-    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s
-                    WHERE s.id = target_sequence
-                      AND s.application = NULLIF(current_setting('app.application', true), '')) THEN
-        RAISE EXCEPTION 'number sequence % is not a sequence of the claimed application', target_sequence
+    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s WHERE s.id = target_sequence) THEN
+        RAISE EXCEPTION 'number sequence % does not exist', target_sequence
             USING ERRCODE = 'undefined_object';
     END IF;
     IF target_key = '' THEN
@@ -856,10 +854,8 @@ SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
 BEGIN
-    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s
-                    WHERE s.id = target_sequence
-                      AND s.application = NULLIF(current_setting('app.application', true), '')) THEN
-        RAISE EXCEPTION 'number sequence % is not a sequence of the claimed application', target_sequence
+    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s WHERE s.id = target_sequence) THEN
+        RAISE EXCEPTION 'number sequence % does not exist', target_sequence
             USING ERRCODE = 'undefined_object';
     END IF;
     IF target_value IS NULL OR target_value < 1 THEN

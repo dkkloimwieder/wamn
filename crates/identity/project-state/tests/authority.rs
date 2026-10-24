@@ -13,10 +13,12 @@
 //!   application cannot create a platform row or a `wamn:` name. `api_key`
 //!   takes no grant at all;
 //! - `number_counter` is written only through `platform.bump_counter`,
-//!   `platform.assign_counter` and `platform.set_counter`, which reach only a
-//!   sequence of the application that the `app.application` claim names — the
-//!   control proving the other test fails for the revoked privilege rather
-//!   than for an over-broad narrowing;
+//!   `platform.assign_counter` and `platform.set_counter`, which refuse an id
+//!   that is not a sequence — the control proving the other test fails for
+//!   the revoked privilege rather than for an over-broad narrowing. Which
+//!   application's sequence a caller reaches is decided by the `wamn:postgres`
+//!   plugin from host state, and its statement admission keeps guest SQL away
+//!   from these functions; the plugin's tests cover both;
 //! - the history tables take no read and no direct write from an App
 //!   generation.
 //!
@@ -40,11 +42,12 @@ const U1: &str = "11111111-1111-1111-1111-111111111111";
 const U2: &str = "22222222-2222-2222-2222-222222222222";
 /// A number sequence of [`APPLICATION`].
 const SEQUENCE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-/// The application that the probes claim as `app.application`.
+/// The application that owns [`SEQUENCE`].
 const APPLICATION: &str = "receiving";
-/// A number sequence of another application, which a caller claiming
-/// [`APPLICATION`] must not reach.
+/// A number sequence of another application.
 const OTHER_SEQUENCE: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+/// An id that is not a number sequence.
+const UNKNOWN_SEQUENCE: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 /// The pinned `wamn:provisioning` id, the row a tenant must not create.
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
@@ -269,11 +272,12 @@ ROLLBACK;"#
 /// `number_counter` advances only through `platform.bump_counter`
 /// (docs/plan/platform-config.md, Numbering). The App generation holds
 /// EXECUTE on it and no write on the table. The function runs as its owner
-/// and reaches only a sequence of the application that the `app.application`
-/// claim names: it returns 1 for a new counter row and then counts up, starts
-/// each key at 1, and refuses with `undefined_object` a sequence of another
-/// application and a caller with no application claim. `number_counter` has
-/// no history table.
+/// on a sequence id and reads no claim: it returns 1 for a new counter row
+/// and then counts up, starts each key at 1, and refuses with
+/// `undefined_object` an id that is not a sequence. The `wamn:postgres`
+/// plugin resolves the id from the application in host state, and its
+/// statement admission refuses guest SQL that names the function.
+/// `number_counter` has no history table.
 #[test]
 fn the_application_advances_a_counter_only_through_bump_counter() {
     let _serialized = wamn_test_postgres::lock();
@@ -297,7 +301,6 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE {app_generation};
-SET LOCAL app.application = '{APPLICATION}';
 
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
@@ -318,25 +321,19 @@ END $$;
 
 DO $$ BEGIN
   BEGIN
-    PERFORM platform.bump_counter('{OTHER_SEQUENCE}', 'po', '');
-    RAISE EXCEPTION 'bump_counter advanced a sequence of another application';
+    PERFORM platform.bump_counter('{UNKNOWN_SEQUENCE}', 'po', '');
+    RAISE EXCEPTION 'bump_counter advanced an id that is not a sequence';
   EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
 RESET ROLE;
-SET LOCAL app.application = '';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
-    'the refused call wrote no counter of the other application';
+    'no call wrote a counter of the other application';
   ASSERT (SELECT created_by FROM platform.number_counter
            WHERE counter = 'po' AND key_value = '') = '{U1}',
     'the counter row stamps the bound actor';
-  BEGIN
-    PERFORM platform.bump_counter('{SEQUENCE}', 'po', '');
-    RAISE EXCEPTION 'bump_counter advanced a counter for a caller with no application claim';
-  EXCEPTION WHEN undefined_object THEN NULL;
-  END;
 END $$;
 
 ROLLBACK;"
@@ -350,8 +347,8 @@ ROLLBACK;"
 /// `platform.assign_counter` (docs/plan/platform-config.md, Numbering; owner
 /// ruling of wamn-83eth.2). The App generation holds EXECUTE on it. A key gets
 /// the next value of the `''` allocator once, and the same value after; the
-/// `''` key is refused, and a sequence of another application and a caller
-/// with no application claim are refused with `undefined_object`.
+/// `''` key is refused, and an id that is not a sequence is refused with
+/// `undefined_object`. The function reads no claim.
 #[test]
 fn the_application_assigns_a_keyed_counter_only_through_assign_counter() {
     let _serialized = wamn_test_postgres::lock();
@@ -373,7 +370,6 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE {app_generation};
-SET LOCAL app.application = '{APPLICATION}';
 
 DO $$ BEGIN
   ASSERT platform.assign_counter('{SEQUENCE}', 'batch', 'batch-a') = 1, 'a new key takes 1';
@@ -388,22 +384,16 @@ DO $$ BEGIN
   EXCEPTION WHEN invalid_parameter_value THEN NULL;
   END;
   BEGIN
-    PERFORM platform.assign_counter('{OTHER_SEQUENCE}', 'batch', 'batch-a');
-    RAISE EXCEPTION 'assign_counter assigned a key of another application';
+    PERFORM platform.assign_counter('{UNKNOWN_SEQUENCE}', 'batch', 'batch-a');
+    RAISE EXCEPTION 'assign_counter assigned a key of an id that is not a sequence';
   EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
 RESET ROLE;
-SET LOCAL app.application = '';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
-    'the refused call wrote no counter of the other application';
-  BEGIN
-    PERFORM platform.assign_counter('{SEQUENCE}', 'batch', 'batch-c');
-    RAISE EXCEPTION 'assign_counter assigned a key for a caller with no application claim';
-  EXCEPTION WHEN undefined_object THEN NULL;
-  END;
+    'no call wrote a counter of the other application';
 END $$;
 
 ROLLBACK;"
@@ -417,8 +407,8 @@ ROLLBACK;"
 /// of the set_counter host route (docs/plan/platform-config.md, Numbering;
 /// owner ruling of wamn-83eth.3). The App generation holds EXECUTE on it. It
 /// inserts a counter row or sets its value; it refuses a value below 1, and
-/// refuses with `undefined_object` a sequence of another application and a
-/// caller with no application claim.
+/// refuses with `undefined_object` an id that is not a sequence. It reads no
+/// claim: the route resolves the sequence by the application it checked.
 #[test]
 fn the_application_sets_a_counter_only_through_set_counter() {
     let _serialized = wamn_test_postgres::lock();
@@ -440,7 +430,6 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE {app_generation};
-SET LOCAL app.application = '{APPLICATION}';
 
 DO $$ BEGIN
   PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 100);
@@ -453,22 +442,16 @@ DO $$ BEGIN
   EXCEPTION WHEN invalid_parameter_value THEN NULL;
   END;
   BEGIN
-    PERFORM platform.set_counter('{OTHER_SEQUENCE}', 'po', '', 5);
-    RAISE EXCEPTION 'set_counter set a counter of another application';
+    PERFORM platform.set_counter('{UNKNOWN_SEQUENCE}', 'po', '', 5);
+    RAISE EXCEPTION 'set_counter set a counter of an id that is not a sequence';
   EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
 RESET ROLE;
-SET LOCAL app.application = '';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
-    'the refused call wrote no counter of the other application';
-  BEGIN
-    PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 5);
-    RAISE EXCEPTION 'set_counter set a counter for a caller with no application claim';
-  EXCEPTION WHEN undefined_object THEN NULL;
-  END;
+    'no call wrote a counter of the other application';
 END $$;
 
 ROLLBACK;"

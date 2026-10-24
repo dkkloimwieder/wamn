@@ -35,6 +35,10 @@ pub struct OperationTransaction {
     pub(super) claims: Arc<Mutex<Option<super::claims::transactions::BoundClaims>>>,
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
     causation: Option<wamn_event_wire::Causation>,
+    /// The composing application that the transaction binds as
+    /// `app.application`, read from host state at begin. Numbering resolves
+    /// its sequences by it, never by the claim.
+    pub(super) application: Option<String>,
 }
 
 /// Why a commit of an [`OperationTransaction`] did not succeed.
@@ -309,6 +313,7 @@ impl WamnPostgres {
             } else {
                 self.current_run_for(scope)
             },
+            application: self.application_for(scope),
         })
     }
 

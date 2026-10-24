@@ -2,13 +2,20 @@
 //! (`docs/plan/platform-config.md`, "Numbering").
 //!
 //! `next-number` and `peek-number` render the pattern of one sequence of the
-//! composing application, the `app.application` claim of the operation
-//! transaction, never an argument. A sequence of another application is not
-//! found under the claim. Both run only in an open operation transaction, on
-//! its connection and under its claims, so a counter that `next-number`
-//! advances is consumed on commit and given back on rollback.
+//! composing application, never an argument and never a claim. The plugin
+//! reads the application from host state: the operation transaction holds
+//! the application it was begun for. The plugin resolves (application,
+//! sequence name) to the sequence id, so a sequence of another application is
+//! not found. The `app.application` claim stays set for logging only; guest
+//! SQL can rewrite it, so it decides nothing here. Both calls run only in an
+//! open operation transaction, on its connection and under its claims, so a
+//! counter that `next-number` advances is consumed on commit and given back
+//! on rollback.
 //!
-//! Counters advance only through the two platform functions:
+//! Counters advance only through the two platform functions, which take the
+//! sequence id that the plugin resolved. Statement admission refuses guest SQL
+//! that names them or writes a `platform.*` relation, so only the plugin
+//! reaches them:
 //! `platform.bump_counter` for a counter with no key or a `reset=` key, and
 //! `platform.assign_counter` for a `per=` key that has no value yet. A `per=`
 //! key that has one is read with no lock. The counters of one pattern are
@@ -49,7 +56,7 @@ impl NumberCall {
 /// The SQLSTATE of a `peek-number` for a counter that has issued no number
 /// yet: `no_data_found`.
 pub(super) const NO_NUMBER_ISSUED: &str = "P0002";
-/// A sequence that the application of the claim does not own:
+/// A sequence that the composing application does not own:
 /// `undefined_object`.
 const UNKNOWN_SEQUENCE: &str = "42704";
 /// A record or a stored pattern that the renderer cannot use:
@@ -59,16 +66,16 @@ const INVALID_INPUT: &str = "22023";
 /// `null_value_not_allowed`.
 const NULL_FIELD: &str = "22004";
 
-/// The application claim, its sequence and pattern, and the `timezone`
-/// setting at application scope. A missing claim reads as null, and so does a
-/// sequence that the claim's application does not own.
-const SEQUENCE_SQL: &str = "SELECT c.application, s.id::text, s.pattern, \
+/// The sequence id and pattern of sequence `$2` of application `$1`, and the
+/// `timezone` setting at the scope of `$1`. The host binds `$1` from host
+/// state. A sequence that `$1` does not own reads as null.
+const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, \
     (SELECT t.value #>> '{}' FROM platform.setting AS t \
       WHERE t.scope_type = 'application' AND t.scope_id = c.application \
         AND t.key = 'timezone') \
-    FROM (SELECT NULLIF(current_setting('app.application', true), '') AS application) AS c \
+    FROM (SELECT $1::text AS application) AS c \
     LEFT JOIN platform.number_sequence AS s \
-      ON s.application = c.application AND s.name = $1";
+      ON s.application = c.application AND s.name = $2";
 /// The transaction time in one time zone, in every format of the renderer,
 /// in the order of [`DateFormat::ALL`].
 const DATE_SQL: &str =
@@ -80,7 +87,7 @@ const COUNTER_SQL: &str = "SELECT value FROM platform.number_counter \
 
 /// Render one number of the composing application in the operation
 /// transaction of the invocation. A member's named import renders in the
-/// same transaction, under the same application claim.
+/// same transaction, for the same application.
 pub(super) async fn statement_number<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
     name: String,
@@ -108,7 +115,7 @@ pub(super) async fn statement_number<T: 'static>(
 /// # Errors
 ///
 /// `postgres(permission-denied)` outside an open operation transaction or
-/// without an application claim; `query-error` with SQLSTATE `42704` for a
+/// when host state holds no application for it; `query-error` with SQLSTATE `42704` for a
 /// sequence the application does not own, `22023` for a record or a stored
 /// pattern the renderer cannot use, `22004` for a null pattern field, and
 /// [`NO_NUMBER_ISSUED`] for a `peek-number` before any number; and the error
@@ -123,6 +130,9 @@ async fn render_number(
     let Some(transaction) = plugin.operation_transaction_for(component_id) else {
         return Err(StatementError::Postgres(PgError::PermissionDenied));
     };
+    let Some(application) = transaction.application.clone() else {
+        return Err(StatementError::Postgres(PgError::PermissionDenied));
+    };
     let record =
         serde_json::from_str::<BTreeMap<String, Option<String>>>(&record).map_err(|error| {
             refusal(
@@ -134,11 +144,12 @@ async fn render_number(
     let span = db_span_for_project(plugin, component_id, &project, call.operation());
     let rendered = transaction
         .with_host_connection(|connection| async move {
-            let result = match render(connection.connection(), &name, &record, call).await {
-                Ok(number) => Ok(Ok(number)),
-                Err(Failure::Refused(refused)) => Ok(Err(refused)),
-                Err(Failure::Postgres(error)) => Err(error),
-            };
+            let result =
+                match render(connection.connection(), &application, &name, &record, call).await {
+                    Ok(number) => Ok(Ok(number)),
+                    Err(Failure::Refused(refused)) => Ok(Err(refused)),
+                    Err(Failure::Postgres(error)) => Err(error),
+                };
             (connection, result)
         })
         .instrument(span)
@@ -175,18 +186,18 @@ fn refusal(code: &str, message: String) -> StatementError {
 
 async fn render(
     connection: &Object,
+    application: &str,
     name: &str,
     record: &BTreeMap<String, Option<String>>,
     call: NumberCall,
 ) -> Result<String, Failure> {
     let statement = connection.prepare_cached(SEQUENCE_SQL).await?;
-    let row = connection.query_one(&statement, &[&name]).await?;
-    let Some(application) = row.get::<_, Option<String>>(0) else {
-        return Err(StatementError::Postgres(PgError::PermissionDenied).into());
-    };
+    let row = connection
+        .query_one(&statement, &[&application, &name])
+        .await?;
     let (Some(sequence), Some(pattern)) = (
+        row.get::<_, Option<String>>(0),
         row.get::<_, Option<String>>(1),
-        row.get::<_, Option<String>>(2),
     ) else {
         return Err(refusal(
             UNKNOWN_SEQUENCE,
@@ -195,7 +206,7 @@ async fn render(
         .into());
     };
     let timezone = row
-        .get::<_, Option<String>>(3)
+        .get::<_, Option<String>>(2)
         .unwrap_or_else(|| "UTC".to_owned());
     let pattern = wamn_number_pattern::parse(&pattern).map_err(|error| {
         refusal(
