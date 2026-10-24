@@ -10,8 +10,11 @@ Before a test run, prepare the checkout once from its repository root:
 eval "$(tools/lane-start "$PWD")"
 ```
 
-The script prepares submodules, native tools, every package, and the checkout caches.
-It needs Docker and the [build prerequisites](building.md), including installed web dependencies.
+The script prepares submodules, native tools, and every package.
+It exports `CARGO_TARGET_DIR` and `WAMN_CHECKOUT_KEY`.
+Cargo output lies in `$CARGO_TARGET_DIR`, so the commands below use that path and not `target/` or `apps/target`.
+`wamn build` still writes package output to `apps/target/wamn`.
+The script needs Docker and the [build prerequisites](building.md), including installed web dependencies.
 
 ## Select the relevant tests
 
@@ -37,7 +40,7 @@ Use [`wamn build`](building.md#wamn-build) or `tools/repo-lint` to compile guest
 A passing workspace test result does not establish compilation of those guest targets.
 If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)"`.
 These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
-The stage checks the router pin, as the guest build of `wamn build` does, because the two builds diverged once (`wamn-lt7y`).
+The stage checks the router pin, as the guest build of `wamn build` does.
 Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
 `tools/test-changes --cluster` runs no guest build.
 Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
@@ -111,21 +114,19 @@ Deployment tests retain startup, restart, queue, CDC/materializer, and label del
 Build the packages that these tests use, with a PostgreSQL server URL in `DATABASE_URL` ([building](building.md#wamn-build)), and the route guest:
 
 ```bash
-target/debug/wamn build apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
+"$CARGO_TARGET_DIR/debug/wamn" build apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
 RUSTFLAGS="$(tools/guest-rustflags)" cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 --release -p http-route
 ```
 
 The build composes Acme with the Receiving base into one component.
-It writes the virtualized application components to `apps/target/virtualized/std-empty-environment`.
-These paths use the default Cargo target directories.
-If you set `CARGO_TARGET_DIR`, use that directory for both workspace build outputs.
+It writes the virtualized application components to `$CARGO_TARGET_DIR/virtualized/std-empty-environment`.
 
 Run the local business assertions:
 
 ```bash
-WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
-WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/release/http_route.wasm" \
+WAMN_APPLICATION_COMPONENTS="$CARGO_TARGET_DIR/virtualized/std-empty-environment" \
+WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
 WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
   cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
     --lib local_business:: -- --ignored --test-threads=1
@@ -143,7 +144,7 @@ The generated clients of the host routes run against the same HTTP shell.
 `control_client_live` serves each set and runs `apps/platform_ui/test/control-client.live.test.ts` and `control-org-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
 
 ```bash
-WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
   cargo test --locked --offline -p wamn-integration-tests --lib control_client_live -- --ignored
 ```
 
@@ -183,7 +184,7 @@ Run the local SQLx transaction case with its component:
 ```bash
 cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p sqlx-command
-WAMN_SQLX_TRANSACTION_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/sqlx_command.wasm" \
+WAMN_SQLX_TRANSACTION_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/sqlx_command.wasm" \
   cargo test --locked --offline -p wamn-runtime --test sqlx_transaction_live \
     sqlx_command_commits_rolls_back_and_obeys_current_user_rls -- --ignored --exact
 ```
@@ -237,13 +238,13 @@ It stops the command's process group and removes its server on completion, failu
 ## Ignored tests
 
 An ignored test needs built components, Docker, a cluster, a broker, or a registry.
-Its ignore reason declares its prerequisites in one form, `#[ignore = "requires: <name>, <name>"]`.
+Its ignore reason starts with `requires:` and lists the prerequisites, as in `#[ignore = "requires: <name>, <name>"]`.
 A name in upper case is an environment variable that must be set and not empty.
 Any other name is a program that must be on `PATH`.
-The first statement of the test calls `wamn_test_postgres::require_prerequisites` with the same names in the same order.
+The first statement of the test calls `wamn_test_postgres::require_prerequisites` with the names of the upper case and program entries.
 When a prerequisite is missing, the test fails before it does any work, and the message names every missing prerequisite.
-Some inputs do not fit this form, such as a binary beside the test executable or one of two inputs.
-The test checks such an input directly after the declaration, and a failed check names the input.
+Some inputs do not fit this form, such as a binary beside the test executable, one of two inputs, or a built component.
+The reason describes such an input in words, and the test checks it directly.
 An ignored test does not return early or skip.
 
 To run the ignored tests of the selected packages, use `tools/test-changes --cluster`.
@@ -322,12 +323,12 @@ The cluster stage command is:
 ```bash
 cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
   --features wamn-receiving-tests/cluster,wamn-wms-tests/cluster --lib cluster:: \
-  -- --include-ignored --skip stages:: --nocapture --test-threads=1 \
+  -- --include-ignored --nocapture --test-threads=1 \
   > "$WAMN_RESULTS/cluster.log" 2>&1
 ```
 
 The filter `cluster::` selects the cluster journeys and the plain tests of the cluster modules, which also compile only with the feature.
-`--skip stages::` leaves out the five [staged Receiving tests](cluster-tests.md#receiving-cluster-journey-receiving-application-tests), because their setup stage keeps its cluster for a person to remove.
+[Cluster tests](cluster-tests.md) describes the cases.
 
 Record the start and end time of each run, and time its build apart from its tests.
 
@@ -460,11 +461,11 @@ cargo build --locked --offline --manifest-path apps/Cargo.toml \
   --target wasm32-wasip2 -p http-route
 RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
   --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p materializer
-target/debug/wamn build apps/wamn_receiving apps/client_acme_receiving
+"$CARGO_TARGET_DIR/debug/wamn" build apps/wamn_receiving apps/client_acme_receiving
 cargo test --locked --offline -p wamn-receiving-tests --lib --no-run
 ```
 
-Set `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` to the absolute path of that `materializer.wasm`, `apps/target/wasm32-wasip2/release/materializer.wasm`.
+Set `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` to the absolute path of that `materializer.wasm`, `$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm`.
 
 Set `WAMN_LOCAL_TEST_BINARY` to the absolute executable path printed by the last command.
 Set `WAMN_LOCAL_RESULTS` to an unused private directory outside the worktree.
@@ -522,7 +523,7 @@ These cases test connection reuse and authority isolation without measuring thro
 The platform test needs Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, OpenSSL, and the gcloud credential helper on PATH.
 It needs network access to the GCP registry and public registries.
 It also needs the [package build tools and workspace dependencies](building.md#wamn-build), but no image build tools.
-It reads the debug binaries `wamn` and `wamn-ctl` from `CARGO_TARGET_DIR/debug`, or `target/debug` when that variable is unset.
+It reads the debug binaries `wamn` and `wamn-ctl` from `$CARGO_TARGET_DIR/debug`.
 The local platform UI bundle must exist before the registry stamp.
 It needs no existing database, bucket or DNS.
 It writes files under `/var/tmp` and deletes only its own cluster and registry containers after success or failure.
@@ -591,7 +592,7 @@ pnpm --filter @wamn/platform-ui build
 cargo test -p wamn-control --test platform_apply_kind -- --ignored --nocapture
 ```
 
-The version in `deploy/platform/release/Chart.yaml` must have all seven images in the registry from `deploy/gcp/cluster.k`.
+The version in `deploy/platform/release/Chart.yaml` must have its five images and two role components in the registry from `deploy/gcp/cluster.k`.
 For each new platform version, a lane runs this explicit build once before the test, with the agent identity and Docker configuration above.
 The package outputs required by [building](building.md) must exist first.
 Use the `registry` value from `deploy/gcp/cluster.k` for `<registry>` and a new directory for `<dir>`:
@@ -604,7 +605,7 @@ Before creating a registry or cluster, the test runs `build-platform --stamp-onl
 If this fails, the error names the platform version.
 The fixture then starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
 Docker selects a free loopback port, and `cluster.k` names the registry as `localhost:<port>`.
-The fixture copies four images and two role components from GCP, then stamps their local digests.
+The fixture copies five images and two role components from GCP, then stamps their local digests.
 The environment JSON gets its gates image from this local stamp.
 Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container and stamps the local registry images.
 The test never builds platform images.
@@ -707,7 +708,7 @@ The command emits the fixture bindings into a temporary directory, writes a stri
 Strict here means `strict`, `noImplicitAny`, `strictNullChecks`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, and `noUnusedLocals`.
 Pass a directory as the one argument to keep the emitted source for reading.
 The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and names it.
-It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
+It needs TypeScript 5.5 or later.
 The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
 
 The clients of the host routes are build output, and Git does not hold them.
@@ -846,13 +847,12 @@ TMPDIR=/var/tmp cargo test --offline -p wamn-ctl --test platform_ui_live --no-ru
 
 The fixture needs Docker and its local service images, PostgreSQL 18 binaries, and Chrome.
 It uses the Playwright installation in `web/shell`, so run `pnpm install` at the repository root first.
-Set `CARGO_TARGET_DIR` to the absolute directory of the built native programs.
+`CARGO_TARGET_DIR` must name the directory of the built native programs.
 Set the two component variables to the corresponding built component files.
 Run this command from the repository root:
 
 ```bash
 export TMPDIR=/var/tmp
-export CARGO_TARGET_DIR="$(readlink -f target)"
 export WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm"
 export WAMN_DEV_ENV_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm"
 results="$(mktemp -d /var/tmp/wamn-platform-ui-XXXXXX)/run"
@@ -865,7 +865,6 @@ The test uses a fixed fixture password and sends no email.
 Its PostgreSQL server and the fixture's containers stop after the test.
 `dev down` stops the owned web server, control host, and identity service.
 The results directory keeps `platform-ui-env/control-web.log` for failure diagnosis.
-A local pass is required before this flow goes to GCP.
 
 ### Local Receiving screens
 
@@ -880,15 +879,13 @@ The browser requires table-header actions, full-panel tables, literal uppercase 
 Build the test without starting services:
 
 ```bash
-CARGO_TARGET_DIR="$(readlink -f target)" TMPDIR=/var/tmp \
-  cargo test --offline -p wamn-ctl --test receiving_ui_live --no-run
+TMPDIR=/var/tmp cargo test --offline -p wamn-ctl --test receiving_ui_live --no-run
 ```
 
 After you set the component variables from Local platform sign-in, run from the repository root:
 
 ```bash
 export TMPDIR=/var/tmp
-export CARGO_TARGET_DIR="$(readlink -f target)"
 results="$(mktemp -d /var/tmp/wamn-receiving-ui-XXXXXX)/run"
 "$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
   cargo test --offline -p wamn-ctl --test receiving_ui_live \
@@ -964,7 +961,6 @@ Remove only that worktree and its owned target after no process uses them.
 
 ## Retained benchmark commands
 
-Performance runs remain paused until the owner approves a measured need or an upstream trigger.
 The `wamn-gates` binary exposes these retained commands:
 
 - `cdcbench` measures database change capture drain rate, lag, and logging cost.
@@ -994,10 +990,12 @@ Run the combined host's lifecycle tests:
 cargo test --locked --offline -p wamn-host --bin wamn-host host::tests::
 ```
 
-The shared queue tests retain real admission, active-work cancellation, lease recovery, and authority cleanup:
+The shared queue tests run real admission, active-work cancellation, lease recovery, and authority cleanup.
+They start a disposable PostgreSQL server.
+The ignored cases of the module need more inputs and do not run here.
 
 ```bash
-cargo test --locked --offline -p wamn-execution-host --lib queue::automation_live:: -- --nocapture
+cargo test --locked --offline -p wamn-workflow --lib queue::automation_live:: -- --nocapture
 ```
 
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).

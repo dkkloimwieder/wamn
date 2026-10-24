@@ -89,7 +89,6 @@ Nothing points at the restored cluster until you change a target yourself.
 ## Recover one database or one table
 
 CloudNativePG restores a whole cluster, so there is no command that restores one database.
-The retired dump path restored one database, and this path does not.
 To recover one database or one table, restore the cluster and then copy the rows out.
 
 1. Render and apply the recovery with `--at` set to the instant before the loss.

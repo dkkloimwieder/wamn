@@ -5,7 +5,7 @@
 For a package successor with application migrations, first follow [package upgrades](deployment.md#package-upgrades).
 `qualify-upgrade` proves the database transition before application. It does not qualify a release or replace the release qualification below.
 
-Publish the release first with `publish-release`, as [deployment](deployment.md#publish-and-select-a-release) shows.
+Publish the release first with `publish-release`, as [deployment](deployment.md#publish-a-release) shows.
 It pushes the release manifest to the repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the release digest.
 Then qualify that release:
 

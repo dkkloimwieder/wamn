@@ -1,6 +1,6 @@
 # Edge box
 
-These commands operate `wamn-edge` on its box. [Building](building.md#the-edge-box-binary) builds the binary, and [the edge specification](../history/edge.md) holds its behavior.
+These commands operate `wamn-edge` on its box. [Building](building.md#the-edge-box-binary) builds the binary, and [the edge architecture](../architecture/edge.md) holds its behavior.
 
 ## Serve
 
@@ -44,3 +44,14 @@ wamn-edge --config <path> intents resolve <id> <basis>
 ```
 
 `<basis>` is `external-evidence`, `counterparty-confirmation` or `operator-judgment`.
+
+## Serve the cluster web edge
+
+The `edge-web` image builds `wamn-edge` with the `web` feature. The box binary does not have these two subcommands. Both require `--config`, a JSON file of the web edge.
+
+```bash
+wamn-edge --config <path> web
+wamn-edge --config <path> web-check
+```
+
+`web` serves the bucket files of the releases that the file names. `web-check` requests `/` and `/config.json` from `wamn-edge-web.edge.svc.cluster.local` for each host in the file. It fails if one response is not 200.

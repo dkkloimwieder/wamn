@@ -53,7 +53,7 @@ For another bucket or prefix, pass `--bucket`:
 wamn web upload --platform-ui --org dkk --bucket gs://example-web/clients
 ```
 
-The uploader requires the chart version to equal the version compiled into `wamn`.
+The uploader requires the chart version to equal the version in `deploy/platform/release/Chart.yaml`, which it reads at run time.
 It also requires the local file digest to match `PlatformBuildReceipt.platform_ui` before it writes any object.
 [platform_ui_source](../../crates/control/lib/src/web_upload.rs) applies these rules.
 [platform_ui_digest](../../crates/control/lib/src/platform_build.rs) includes each relative file path and file digest, and requires `index.html`.
@@ -102,7 +102,7 @@ wamn web upload acme/receiving/dev --release "$WAMN_UPLOAD_RELEASE" --bucket gs:
 [deployed_release](../../crates/control/lib/src/environment/analyse.rs) reads Helm history and values for the environment.
 The uploader refuses a different release digest, then pulls the release manifest and each named package artifact.
 The web layer of each artifact supplies its built files, as [package_artifact.rs](../../crates/control/lib/src/package_artifact.rs) defines.
-It skips packages without `client_package.name`.
+It skips a package without `client_package.name` and a package without a web build.
 For each client, it requires a name of the form `@wamn/<project>-client` and built files that include `index.html`.
 The upload does not read or build application files from the working tree.
 
@@ -111,7 +111,7 @@ Its `config.json` contains the coordinate's organization and the project from th
 For example, `@wamn/receiving-client` produces `{"org":"acme","project":"receiving"}` for the coordinate above.
 The command prints one line per client: `<package id> <bucket URL>/<upload path>/ written`.
 If the destination already has `index.html`, it skips that client and prints `present` instead of `written`.
-It prints no line for a package without a client.
+It prints no line for a skipped package.
 
 ## Object writes and errors
 
@@ -131,7 +131,7 @@ The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crate
 | --- | --- |
 | `set WAMN_RELEASE_CHART to the stamped platform chart` | Set the variable before a platform upload. |
 | ``read <path>; run `wamn-ctl build-platform` `` | The platform build record is absent or unreadable. Use the matching stamped chart. |
-| `the stamped chart version <version> differs from platform <version>` | Use a `wamn` binary that matches the chart. |
+| `the stamped chart version <version> differs from platform <version>` | Use a stamped chart that matches `deploy/platform/release/Chart.yaml`. |
 | `the platform UI build <path> differs from the platform build receipt <path>` | Restore the matching local build before upload. |
 | `set <variable> for wamn-ctl env` | Supply the required environment configuration for a package upload. |
 | `coordinate <value> is not org/project/env` | Pass exactly three slash-separated parts. The coordinate also must pass the platform naming rules. |

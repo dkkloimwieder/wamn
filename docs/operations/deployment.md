@@ -2,10 +2,9 @@
 
 Deployment has one path: `wamn-ctl env apply` of one environment document.
 The document names the environment and its release.
-The verb creates the environment and installs the release chart of the release ([platform deploy plan §10.1](../plan/platform-deploy.md#101-the-environment-document-and-apply)).
+The verb creates the environment and installs the release chart of the release.
 [Google Cloud install](gcp.md#4-install) is the runbook of a full install.
 The [repository delivery commands](delivery.md) qualify, publish, select, and deploy exact releases without a CI-provider API.
-CI-provider configuration remains [delivery work](../plan/delivery.md).
 [Components](../architecture/components.md) defines the artifact boundary.
 
 ## Prerequisites
@@ -160,15 +159,15 @@ The verb installs the record history, the system schema and the portable store a
 It refuses a database that already has the schema `registry`.
 Then run these steps in this order:
 
-1. `provision-org --admin EMAIL`.
-2. `provision-identity-issuer`.
+1. `provision-org --org <org> --template trials|standard|dedicated --system-database-url "$SYSTEM_ADMIN_URL" --admin EMAIL`.
+2. `provision-identity-issuer --issuer <issuer URL>`.
 3. Write one environment document. Run `wamn-ctl env apply` of it.
 
 `provision-org --admin EMAIL` makes that user the org's admin. When the identity store has no user, it creates the user in the same transaction as the org, so a new install needs no other verb for its first user. When users exist, the email must name one of them, or the verb refuses and writes nothing.
 
 `env apply` creates the environment row, its `Database`, its roles, its run plane, and its credential Secrets.
 The first apply names `release = "none"`, because `publish-release` needs the environment's database.
-A later apply names the release digest and installs the release chart ([platform deploy plan §9.2](../plan/platform-deploy.md#92-chart-release)).
+A later apply names the release digest and installs the release chart.
 The verb reads its platform inputs from environment variables ([Google Cloud platform file](gcp.md#410-platform-file)):
 
 ```bash
@@ -208,7 +207,7 @@ The example below selects Receiving.
 Push the package with `wamn-ctl push-package` first.
 It admits each component, pushes it under its digest, and then pushes the package artifact with the component descriptors.
 Before it pushes anything, it reads the tag `<package_id>-<version>`.
-If the tag holds another digest, it refuses, names both digests and pushes nothing; tags are immutable.
+If the tag holds another digest, it refuses, names both digests, and pushes nothing. Tags are immutable.
 If the tag holds the same digest, it reports `already present` and pushes nothing again.
 No database records the package: the artifact in the registry is the proof of its checks.
 Each `--package ID@VERSION` is the artifact under the tag `ID-VERSION` in `--artifact-base`, read from the registry only.
@@ -233,15 +232,15 @@ wamn-ctl qualify-release \
 ```
 
 `publish-release` records the release by its canonical manifest digest.
-Publication composes the pinned route guest with the application.
+If the release has an HTTP attachment, publication composes the pinned route guest with the application.
+Set `WAMN_COMPONENT_ARTIFACT_BASE` for this step. `WAMN_FLOW_HTTP_COMPONENT` can name another route guest file.
 It pushes the entry to `<component-artifact-base>/entries`, beside the members.
-Format 11 records the entry as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
-Format 11 also records the member byte digests.
+The tag of the entry is its content digest. If that tag is already present with the same bytes, publication reuses it and pushes nothing.
+The manifest records the entry as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
+It also records the member byte digests.
 Each host joins the entry path with its own `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
 The manifest names no registry, so a release copied with its components and entry starts in the new registry.
-Publish every release again before you use the format-11 host.
 The release chart starts that entry with `poolSize: 0`.
-Receiving no longer declares a trusted warm digest or native pool override.
 It pushes the manifest to the release repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the digest.
 The credential of `--registry-auth-file` must pull the packages and push to the release repository.
 Each component of the release carries its admitted descriptor from the package artifact.
@@ -249,7 +248,7 @@ Set `RELEASE_DIGEST` to it.
 The manifest names no tenant and no environment, so one release has one digest in every environment.
 The tenant of an environment is `<org>--<project>--<environment>`.
 The release also names no route host.
-The route host is only the `host` of the http workload config; the router matches routes under it.
+The route host is only the `host` of the http workload config. The router matches routes under it.
 `publish-release` takes the same `--oci-ca-path` input as `push-package`.
 [Qualify the release](delivery.md#release-qualification) before deployment.
 `qualify-release` pushes the qualification artifact beside the release only when every case passes, and `env apply` reads it from the registry.
@@ -284,15 +283,15 @@ Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `
 
 ## Google Cloud edge
 
-On Google Cloud, a global load balancer sends `/api/` and `/password/` to the edge and serves every other path from a Cloud CDN backend bucket, as the [web deployment plan](../plan/web-deployment.md) describes.
+On Google Cloud, a global load balancer sends `/api/` and `/password/` to the edge and serves every other path from a Cloud CDN backend bucket.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create a network endpoint group, and the chart needs no `bucket.endpoint`, because the load balancer serves the bucket.
-The chart renders no Google Cloud resource. [Google Cloud install history](../history/gcp-install-history.md) sections 4.3 and 4.6 create the bucket access, the load balancer and the DNS record with `gcloud`, and delete them.
+The chart renders no Google Cloud resource. [Google Cloud section 4.20](gcp.md#420-edge-and-load-balancer) creates the load balancer.
 The edge itself still removes `/api` and checks the identity certificate, as it does in kind.
 
 ## Identity password configuration
 
 `wamn-identity` loads `.env` from its working directory before it starts the runtime.
-Existing environment variables take precedence over `.env`; explicit command flags take precedence over both.
+Existing environment variables take precedence over `.env`. Explicit command flags take precedence over both.
 A missing `.env` is allowed. An unreadable or malformed file stops startup without printing its contents.
 The root `.env.example` documents `RESEND_API_KEY` and `RESEND_FROM`.
 The private `.env` is ignored by Git and needs owner-only read and write permissions (`0600`).
@@ -301,7 +300,7 @@ No home-directory path is required.
 For local email configuration, copy `.env.example` to `.env` before adding the key and verified sender.
 Keep the existing issuer, database, TLS, operator CA, and session target configuration.
 Both Resend values are required to enable the password routes.
-The CLI also accepts `--resend-api-key` and `--resend-from`; prefer environment input for the secret.
+The CLI also accepts `--resend-api-key` and `--resend-from`. Prefer environment input for the secret.
 
 For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
 Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
@@ -317,7 +316,7 @@ The command runs three steps:
 2. One system database transaction, as `wamn_system` stamped `wamn:provisioning`, writes the active org membership and the requested grants.
 3. Identity mails the invitation only when the user has no password. The command prints only identity's reply.
 
-`--org-admin` and each `--project-admin` write the rows that `org_admin.grant` and `project_admin.grant` write (docs/plan/platform-ui.md §4.4).
+`--org-admin` and each `--project-admin` write the rows that `org_admin.grant` and `project_admin.grant` write.
 Each `--membership <project>/<env>` writes one environment membership.
 All three flags are optional, and `--project-admin` and `--membership` can repeat:
 
@@ -338,7 +337,7 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 
 `apply-package` writes the built-in role `admin` in each tenant.
 `admin` has no permission rows and holds every operation that the serving release serves.
-Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it (docs/plan/platform-ui.md §2.3).
+Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it.
 A user or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
@@ -442,8 +441,7 @@ Use the environment's identity Deployment and require its readiness before issui
 ## Platform schema upgrades
 
 `wamn-ctl upgrade-schema` applies a platform schema change to an installed database.
-A platform schema change is a numbered file under `deploy/sql/migrations/system/` or `deploy/sql/migrations/project/`, which lands in the commit of its full-file change.
-The design is in [schema upgrade](../history/schema-upgrade.md).
+A platform schema change is a numbered file under `deploy/sql/migrations/system/` or `deploy/sql/migrations/project/`.
 Package migrations of an application are not platform migrations.
 
 Upgrade the system database before you apply an environment on a new platform version:
@@ -474,7 +472,7 @@ The successor names the installed version as `predecessor_version` and preserves
 An installed overlay that pins the base requires a coordinated upgrade with every affected overlay successor.
 An overlay is a package that consumes a pinned base.
 Each overlay successor changes only its package coordinate and exact base version/digest pin.
-Every consumed operation contract stays unchanged. Changed or removed contracts remain named Epic 3 work.
+Every consumed operation contract stays unchanged.
 
 Use a patch version for an internal correction without an application migration suffix.
 Use a minor version for predecessor-compatible additive schema or operation changes.
@@ -483,7 +481,6 @@ A nonempty application migration suffix requires at least a minor version, such 
 
 The ordinary upgrade policy permits new ordinary tables, nullable modeled columns without defaults, and two non-null constant defaults: `boolean DEFAULT false` and `text DEFAULT 'not_required'`.
 It refuses new constraints on existing relations, type changes, backfills, and destructive changes.
-Migration-specific exceptions, including a whole-row query that loses access to an added column, remain in Epic 3 of [package upgrade](../plan/package-upgrade.md).
 
 `qualify-upgrade` proves the database transition before production mutation.
 It copies the installed predecessor database, preserves object ownership, restores predecessor grants, and applies the candidate suffix on that copy.
@@ -504,7 +501,6 @@ Qualification reads no Kubernetes resource.
 Each SQL-bearing package must declare one application schema. Predecessor SQL plans with that schema as its exact `search_path`.
 A schema change makes predecessor SQL fail to plan and refuses qualification.
 Packages with no SQL need no application schema.
-Schema relocation or multiple-schema support requires a future persisted deployment fact outside the additive upgrade path.
 
 Apply pending [platform schema migrations](#platform-schema-upgrades) before application upgrade, including the `catalog.package_upgrade_qualifications` carrier.
 Keep the exact predecessor release available for recovery.
@@ -524,7 +520,6 @@ An additive base upgrade and all affected overlay successors apply in one transa
 A retry requires the saved qualification to match the exact environment, complete package roots, and selected base component bytes.
 The verb refuses multiple independent base transitions in one run.
 Prepare the complete candidate root set, including generated artifacts. Ordinary release qualification must support the environment's candidate shape.
-The completed Epic 1 WMS proof is recorded in [Google Cloud install history](../history/gcp-install-history.md).
 
 Run qualification on a machine authorized to hold copied production data, with PostgreSQL 18 tools and enough temporary storage.
 The command owns its temporary PostgreSQL server and private dump directory and removes them after use.
@@ -534,7 +529,6 @@ Keep database credentials outside committed files. Retain the qualification resu
 ### Upgrade order
 
 Run `wamn-ctl upgrade-environment` as [Google Cloud operations](gcp.md#56-upgrade-an-environment) shows.
-The package stage of `env apply` is in [platform deploy plan §10.2](../plan/platform-deploy.md#102-the-package-stage).
 
 ### Upgrade failures
 

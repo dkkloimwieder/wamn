@@ -16,7 +16,6 @@ The results stay on this machine.
 
 The app tests own decisions, provisioning calls, assertions, results, and cleanup.
 The `tools/receiving-cluster-journey-run` and `tools/wms-cluster-journey-run` scripts perform only requested lifecycle actions.
-Do not call their retired `--apply` interface.
 Run one installation at a time when cases share fixed management ports.
 
 ### Receiving and WMS application cases
@@ -45,8 +44,7 @@ Receiving retains its invocation identity, PostgreSQL ancestry, and scoped metri
 
 ### Environment apply on kind
 
-`environment_apply_kind` is the one kind suite of the platform. No epic runs it.
-It runs once, from scratch, as part of the cutover acceptance (wamn-k8127), after every other epic closes.
+`environment_apply_kind` is the kind suite of the platform.
 It creates its own kind cluster `wamn-apply-<pid>` with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password.
 It runs `env apply`, rollback, release none and delete on two environments, and it checks the host heartbeat labels, placement by `hostSelector`, route host isolation and the operator release.
 It removes the cluster and the registry at the end.
@@ -63,14 +61,14 @@ The test prints its work directory. `report.json` in that directory records each
 
 ### Delivery on `env apply`
 
-The Receiving and WMS delivery cases deliver each application's release with `wamn-ctl env apply` (docs/plan/platform-deploy.md §17.2 Epic 6).
+The Receiving and WMS delivery cases deliver each application's release with `wamn-ctl env apply`.
 Both run on one kept kind cluster that `WAMN_DELIVERY_CLUSTER` names, `wamn-delivery-<suffix>`.
 The first case creates the cluster with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password. The second case attaches to it.
 Each case publishes its release with its fixture, and `publish-release` pushes the release manifest.
-The images come from the release chart that `WAMN_RELEASE_CHART` names, which `wamn-ctl build-platform` stamped; no case builds an image.
+The images come from the release chart that `WAMN_RELEASE_CHART` names, which `wamn-ctl build-platform` stamped. No case builds an image.
 The case then runs `qualify-release` on the release digest and that chart, which pushes the qualification beside the release when all of its qualifying cases pass.
 Then the case copies the role images by digest to the kept registry, writes `environment.k` and runs `env apply`, which reads that qualification from the registry.
-It then checks the hosts, the role placement and the A1 probe. The second case also checks A12 with the two applications in `wamn-system`.
+It then checks the hosts and the role placement. The second case also checks the two applications together in `wamn-system`.
 Run Receiving first, then WMS, then remove the cluster:
 
 ```bash
@@ -100,7 +98,8 @@ Local unit tests do not replace these deployed checks.
 
 ### Deployed queue recovery on wamn-dev
 
-This case records what the durable queue does when a host crashes during a run. It ran on the deployed wamn-dev environment, not on a kind cluster. [Section 5.8 of the Google Cloud install history](../history/gcp-install-history.md#58-wms-host-crash-during-a-queued-run) holds the commands. The run is the published WMS wiring `inventory_move_and_label` version 2. It runs no SQL. It shapes one pallet `update` event, renders a label and stores it in Cloud Storage. So nothing holds the run, and the kill must land while the run shows `running`.
+This case shows what the durable queue does when a host crashes during a run. It runs on the deployed wamn-dev environment, not on a kind cluster.
+The run is the published WMS wiring `inventory_move_and_label` version 2. It runs no SQL. It shapes one pallet `update` event, renders a label and stores it in Cloud Storage. So nothing holds the run, and the kill must land while the run shows `running`.
 
 The kill is a SIGKILL of the `wamn-host` process of the WMS pod, sent from a node debug pod. A forced pod delete is an operator action, so the case does not use it. This query reads the run and its queue row once a second:
 
@@ -111,16 +110,7 @@ SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.
  WHERE r.run_id = '<run id>';
 ```
 
-On 2026-09-30, at commit `5a2a0064d` with host image `wamn-host:src-91f318b6c6fe387c`, the first of up to five attempts landed inside the window. All times are UTC. The node clock and the database clock can differ by less than one second.
-
-| Time | Event |
-| --- | --- |
-| 21:10:56.924 | `workflow start` writes run `3e11ecc7-68d7-41d8-b31f-45b13bb3b53b`. |
-| 21:10:57.829 | The WMS host claims it: lease generation 1, lease until 21:11:27.829. |
-| 21:10:58.060 | SIGKILL of the host process. The container exits with code 137. |
-| 21:10:59 | The container starts again in the same pod, restart count 1. |
-| 21:11:13 | The pod is `Ready`. The host was down for 15 seconds. |
-| 21:11:27.870 | The restarted host claims the run again: lease generation 2, attempts 1. |
-| 21:11:28.365 | The run is `completed`. Its queue row is gone. |
-
-The run waited for its old lease to expire. The lease lasts 30 seconds (`DEFAULT_QUEUE_LEASE_TTL_MS`), and the restarted host claimed the run 41 milliseconds after the old lease expired. The run completed 30.3 seconds after the kill and 31.4 seconds after it was written. The same run without a crash took 1.2 seconds on 2026-09-29. The bucket holds one label object for the run, `gs://wamn-dev-labels/wms/82b2ffa1-142a-20e7-bc58-93751f88bd7d/1`, written at 21:11:28 by the second attempt. The bucket keeps a replaced generation for 7 days as soft-deleted, and `gcloud storage ls --soft-deleted` lists none for this object. So the killed attempt wrote no label, and the label was written once. The run is `completed` with no failure kind, and it needed no operator action.
+The container restarts in the same pod. The run waits for its old lease to expire. The lease lasts 30 seconds (`DEFAULT_QUEUE_LEASE_TTL_MS`).
+The restarted host then claims the run again with the next lease generation, and the run completes. Its queue row is gone.
+The bucket holds one label object for the run, because the killed attempt wrote no label.
+The run is `completed` with no failure kind, and it needs no operator action.

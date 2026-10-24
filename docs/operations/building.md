@@ -14,8 +14,25 @@ Before a lane or test run, prepare the checkout once from its repository root:
 eval "$(tools/lane-start "$PWD")"
 ```
 
-The script initializes submodules, sets the checkout caches, builds the native tools, installs the web dependencies, and runs `wamn build` for every package.
+The script initializes submodules, builds the native tools, installs the web dependencies, and runs `wamn build` for every package.
 Docker supplies a private PostgreSQL 18 container that the script removes when it exits.
+The script prints two exports.
+`CARGO_TARGET_DIR` is `$HOME/.cache/wamn-target/<key>`, and `WAMN_CHECKOUT_KEY` is the key.
+Cargo writes its output to `CARGO_TARGET_DIR`, so commands in this repository use `$CARGO_TARGET_DIR` and not `target/` or `apps/target`.
+`wamn build` still writes package output to `apps/target/wamn`.
+
+## Compile cache
+
+Cargo runs `rustc` through `kache`, because `~/.cargo/config.toml` sets `rustc-wrapper = "kache"`.
+The `.cargo/config.toml` of the repository sets no wrapper, so Docker builds need none.
+A session shell that does not load `~/.profile` must export these variables:
+
+```bash
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
+export PATH="$HOME/.local/lib/kache/shims:$PATH"
+```
+
+Do not set `RUSTC_WRAPPER=sccache`.
 
 ## Native programs and app components
 
@@ -33,22 +50,22 @@ cargo build --locked --offline -p wamn-ctl --features ops --bin wamn-ctl-ops
 `wamn-ctl-ops` owns database maintenance and retained event advisory commands.
 The local identity issuer needs `wamn-identity` beside the CLI or at the explicit `WAMN_IDENTITY_BINARY` path.
 
-[`wamn build`](#wamn-build) compiles the components of each package it builds (platform-deploy.md §7.1 step 7).
+[`wamn build`](#wamn-build) compiles the components of each package it builds.
 Each guest gets its own Cargo invocation, with the release profile, for `wasm32-wasip2`.
 Do not combine guests into one Cargo invocation.
 Cargo combines dependency features within each invocation, which can change artifact bytes.
 A package build compiles these guests:
 
-- each component that the package owns;
+- each component that the package owns.
 - each palette component that a wiring of the package names. The build finds it by the `component` of its `declaration.json.in` under `apps/platform/*/*/`, and builds the crate in that directory.
 
 A package outside a Cargo workspace, with no `../Cargo.toml`, has no component to compile.
-Cargo writes the guests to its target directory, `apps/target` unless `CARGO_TARGET_DIR` names another.
+Cargo writes the guests to `CARGO_TARGET_DIR`. If that variable is unset, it writes them to `apps/target`.
 
 [`tools/guest-rustflags`](../../tools/guest-rustflags) sets the RUSTFLAGS of every guest build.
 It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
 It also maps the toolchain's `rust-src` tree to `/rustc/<commit-hash>`, so a toolchain with and without `rust-src` gives one digest.
-`wamn build` and the Dockerfile `component-builder` stage call it. Nothing else sets guest RUSTFLAGS.
+`wamn build` and the Dockerfile `component-builder` stage call it.
 The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
 A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
 The build and the Dockerfile stage refuse a guest that does not match its pin.
@@ -154,7 +171,9 @@ The command reads them from `cargo metadata --all-features`, with normal and bui
 For each package, it hashes the whole package directory.
 It also hashes each path outside that directory that a source file names in a file-reading macro.
 These macros are `include_str!`, `include_bytes!`, `include!`, `#[path]`, `bindgen!`, and `generate!`.
-If a package has a build script or a procedural macro, the image hashes every file that the Dockerfile copies.
+If a package has a procedural macro, the image hashes every file that the Dockerfile copies.
+If a package has a build script, the image hashes the paths that the script names in `cargo:rerun-if-changed` lines.
+A build script without such lines gets the same treatment as a procedural macro.
 
 | Image | Packages | Other inputs |
 | --- | --- | --- |
@@ -262,7 +281,7 @@ At or above the cap, it refuses the cloud build and prints the spend and cap.
 The local path does not use the cloud cap.
 
 After a successful or failed cloud build, the command calculates elapsed minutes from its start and finish times, rounded up.
-Each minute adds USD 0.0156, the [e2-highcpu-8 default-pool rate for US regions](https://cloud.google.com/build/pricing), read on 2026-10-20.
+Each minute adds USD 0.0156, the [e2-highcpu-8 default-pool rate for US regions](https://cloud.google.com/build/pricing).
 The counter records `cloud_minutes` and `spend_usd` against the submission day, including builds that finish after midnight.
 A generation precondition requires the object version read by the writer.
 If another writer changes it, the command reads the new value and retries the addition.
@@ -287,7 +306,7 @@ The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generat
 
 ## wamn build
 
-`wamn build` builds packages in two passes ([platform-deploy.md §7.1](../plan/platform-deploy.md)).
+`wamn build` builds packages in two passes.
 It needs a PostgreSQL server, which it does not start.
 Give a superuser URL of the server in `DATABASE_URL` or `--database-url`.
 The build creates its own verification database on that server and drops it at the end.
@@ -317,7 +336,7 @@ The refusal names the operation, the statement, and the value.
 The build writes each package to `<output root>/<package id>/`.
 The default output root is `apps/target/wamn` for an application, and `--output-root` changes it.
 Below it, the layout keeps the logical `generated/` paths that contracts and releases name, without the `generated/` prefix, plus `build.json`.
-Git holds no build output (platform-deploy.md R10(1)), and the repository policy lint refuses a tracked `generated/` or `.sqlx` file under `apps/`.
+Git holds no build output, and the repository policy lint refuses a tracked `generated/` or `.sqlx` file under `apps/`.
 Generation removes obsolete output files and keeps SQLx metadata prepared after generation.
 Authored publication references use the current source manifest, even when an earlier build output exists.
 Build every package before you compile the apps workspace, the app test crates, or an app web: their sources include files from the build output.
@@ -328,7 +347,7 @@ A change in a platform tree makes every package stale.
 If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
 It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
-For a package that has a `web/` directory, the build then runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web` (platform-deploy.md §7.1 step 8).
+For a package that has a `web/` directory, the build then runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web`.
 Run `pnpm install` at the repository root first.
 `build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.
 Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.
@@ -346,7 +365,7 @@ wamn build --record-digest apps/<package>
 
 ## Pushing a package
 
-`wamn-ctl push-package --package <package root>` pushes one package artifact ([platform-deploy.md §7.2](../plan/platform-deploy.md)).
+`wamn-ctl push-package --package <package root>` pushes one package artifact.
 First it compares the `inputs.digest` of the package's `build.json` with the digest of the package tree.
 If they are equal, it pushes the build output as it is.
 If they differ, or the package has no `build.json`, `push-package` refuses and pushes nothing.
@@ -362,7 +381,7 @@ Each argument is the full package artifact digest that `push-package` prints, `s
 A digest prefix is refused.
 A line that starts with `-` shows the value in the first artifact, and a line that starts with `+` shows the value in the second.
 Identical documents print nothing.
-Both commands pull from the registry only, by full digest or tag; no database holds a package row.
+Both commands pull from the registry only, by full digest or tag, because no database holds a package row.
 They check each layer against its digest.
 They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
 
@@ -393,19 +412,22 @@ The edge box is an aarch64 Linux computer, for example a Raspberry Pi 3B.
 Build its release binary with the Dockerfile target `edge`:
 
 ```bash
-docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .
+docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest="$CARGO_TARGET_DIR/edge" .
 ```
 
-The result is one stripped file, `target/edge/wamn-edge`.
-The target compiles with the Debian trixie cross compiler, so the box needs glibc 2.38 or later.
-[The edge specification](../history/edge.md) section 4.9 records the measured size and dependency counts.
+The result is one stripped file, `$CARGO_TARGET_DIR/edge/wamn-edge`.
+The target compiles with the Debian trixie cross compiler.
+The cluster image `edge-web` is a different build.
+The Dockerfile stage `build-edge-web` builds `wamn-edge` with the `web` feature for linux/amd64.
 
 ## Isolated worktrees
 
 Keep one Cargo process per target directory.
 
 Each checkout keeps its own Docker target cache and its own host target directory.
-The six native images use one `build-native` stage, which compiles every native package in one `cargo build`, so features unify once.
+The native images `host`, `ctl`, `scenario-worker`, `cdc-reader`, `identity`, and `gates` use one `build-native` stage.
+It compiles every native package in one `cargo build`, so features unify once.
+The `edge-web` image has its own stage, `build-edge-web`. It shares the target cache of `build-native`.
 A second invocation in the same stage builds only `wamn-ctl-ops` with the `ops` feature, because that feature reaches shared code and the shipped `wamn-ctl` builds without it.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
 [`tools/lane-start`](../../tools/lane-start) sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` and exports the key as `WAMN_CHECKOUT_KEY`.
@@ -419,7 +441,7 @@ Keep large build targets off temporary memory filesystems.
 ## Host image cache
 
 The `host` image takes its binaries from the `build-native` stage.
-That stage compiles every native image, so the first image build of a platform build carries all of the native compile time.
+That stage compiles every native package except `wamn-edge`, so the first image build of a platform build carries that compile time.
 `build-native` and `build-edge-web` mount the target cache `wamn-root-target-native-<checkout key>`.
 They share the Cargo registry and Git caches with every checkout.
 The cache mounts are not in the image. The stage copies each binary out of the target cache to `/native-output`, and the image copies it from there.
@@ -435,24 +457,6 @@ These changes make Cargo rebuild more:
 - A change to a widely used workspace crate rebuilds every crate that depends on it, and links each native binary again.
 - A new checkout has a new key, so its first image build compiles everything.
 - BuildKit garbage collection can remove a cache. Read the caches with `docker buildx du --verbose`.
-
-Before wamn-gc3sl.1, every checkout used the one target cache `wamn-root-target-native`.
-An image build from another checkout at another commit then compiled its own workspace crates into the cache.
-The next bump compiled them again, and it waited while another build held the cache lock.
-
-Stage times from the `build-platform` stage lines.
-The 0.1.98 build on 2026-10-23 was the first build under its checkout key, so its target cache was empty.
-The next bump in the same checkout gives the times of a bump with a full cache.
-
-| Stage | 0.1.98, empty cache | Next bump |
-|---|---|---|
-| `input-lookups` | 306.3 s | not yet measured |
-| `image-build-host` | 3107.3 s | not yet measured |
-| `image-build-runner` | 147.9 s | not yet measured |
-| `image-build-gates` | 3.8 s | not yet measured |
-| `image-build-identity` | 1.2 s | not yet measured |
-| `image-build-edge-web` | 549.9 s | not yet measured |
-| Total | 4223 s | not yet measured |
 
 ## Guest artifact comparisons
 

@@ -6,6 +6,22 @@ The other `workflow` commands call the workflow contract in `wamn-workflow`, and
 The host's queue worker uses its existing database roles to claim and execute the run.
 
 Author and enable the workflow first with `wamn-ctl workflow author` and `wamn-ctl workflow enable`.
+Every `workflow` command except `start` needs `--tenant`, `--environment`, and the project-admin database URL.
+Pass the URL with `--admin-database-url` or `WAMN_PG_ADMIN_URL`.
+`--schema` selects the run-plane schema and defaults to `wamn_run`.
+`author` and `enable` also read the platform inputs of `wamn-ctl env`.
+`author` requires these flags:
+
+- `--coordinate <org>/<project>/<env>`
+- `--control-database-url`
+- `--application`
+- `--document`
+- `--execution-type role|invoker`
+- `--principal-id`
+
+`author` also requires `--execution-role` with `--execution-type role`, and refuses it with `invoker`.
+`enable` requires `--coordinate`, `--application`, `--workflow-id`, `--version`, and `--principal-id`.
+`disable` takes the same flags as `enable`, except `--principal-id`.
 A workflow of type `role` runs as the environment's `workflow` user with its execution role, so grant that role to the `workflow` user.
 A workflow of type `invoker` runs as the caller with its active role.
 A caller with `admin` acts as `admin`, and a caller with exactly one role acts with that role.
@@ -42,7 +58,8 @@ The executing principal owns application writes, while the `wamn:executor` crede
 
 ## Park, release, and list runs
 
-Use the same `--tenant` and `--environment` flags for each command.
+Each command needs `--tenant` and `--environment`. `park` and `release` also need `--run-id`.
+`runs` takes an optional `--limit`, which defaults to 50.
 
 ```bash
 wamn-ctl workflow park --tenant acme --environment dev --run-id "$RUN_ID"
@@ -58,7 +75,7 @@ A release returns a parked run to the queue, and a run that is not parked refuse
 
 ## Declared workflows
 
-Set `WAMN_PG_ADMIN_URL` as above, then select the installed release by its digest:
+Pass the database URL as above, then select the installed release with the required `--release-digest`:
 
 ```bash
 wamn-ctl workflow declared --tenant acme --environment dev --release-digest "$RELEASE_DIGEST"

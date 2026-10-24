@@ -53,4 +53,4 @@ WHERE p."name" = 'wamn.component.invoke'
 GROUP BY c."name" ORDER BY share DESC;
 ```
 
-To limit the queries to one run, add a condition on `start_ns`. The [benchmark](benchmark.md) shows the results of one hour.
+To limit the queries to one run, add a condition on `start_ns`.

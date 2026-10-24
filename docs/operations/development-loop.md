@@ -26,7 +26,8 @@ Read the current required arguments from the existing command:
 "$CARGO_TARGET_DIR/debug/wamn" dev up --help
 ```
 
-Supply an explicit environment directory, package roots, built binaries, and service endpoints.
+Supply these flags: `--system-database-url`, `--root`, `--nats-url`, `--event-nats-url`, `--route-host`, `--host-binary`, and one `--package` for each package root.
+Supply the other flags below as the session needs them.
 
 Render the local collector before starting the session:
 
@@ -107,7 +108,7 @@ The identity process keeps running across application builds.
 Startup creates its signing key once. Application rebuilds preserve that key and the identity database.
 The `session_identity` field supplies the issuer address, certificate authority file, and environment instance to each application host.
 
-`dev up` selects the local mail sender through `--local-mail` in `crates/control/lib/src/dev/pat_issuer.rs`.
+`dev up` starts identity with `--local-mail`, which selects the local mail sender.
 The sender records mail in `mail.jsonl` inside the private directory named by `identity-process.json`.
 Each line contains `to`, `subject`, and `text`. Invitation text includes `Invitation code: <principal>:<secret>`.
 
@@ -293,10 +294,11 @@ To compare two pushed versions, run `wamn diff` ([building](building.md#reading-
 
 ## Issuer connection
 
-`wamn dev` uses `--pat-issuer`, `--pat-client-cert`, and `--pat-client-key` for the identity issuer.
-`--pat-server-ca` supplies an explicit issuer CA.
-Their environment names are `WAMN_PAT_ISSUER`, `WAMN_PAT_CLIENT_CERT`, `WAMN_PAT_CLIENT_KEY`, and `WAMN_PAT_SERVER_CA`.
-The identity process uses `--operator-ca` or `WAMN_IDENTITY_OPERATOR_CA` for client certificates.
+`wamn dev` and `wamn dev up` take no PAT flags.
+`dev up` starts its own identity process with `--operator-ca` set to a local operator CA.
+It gives the control host the variables `WAMN_PAT_ISSUER`, `WAMN_PAT_CLIENT_CERT`, `WAMN_PAT_CLIENT_KEY`, and `WAMN_PAT_SERVER_CA`.
+The `wamn-ctl` verbs that mint PATs take the flags `--pat-issuer`, `--pat-client-cert`, `--pat-client-key`, and `--pat-server-ca` with the same variable names.
+A deployed identity service uses `--operator-ca` or `WAMN_IDENTITY_OPERATOR_CA` for client certificates.
 Keep certificate keys and issued tokens out of committed files and published logs.
 [Execution](../architecture/execution.md) explains session authority.
 

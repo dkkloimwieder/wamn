@@ -1,6 +1,6 @@
 # Google Cloud
 
-This page installs the platform and the environments `dkk/receiving/dev` and `dkk/wms/dev` on project `wamn-dev`. It starts at an empty project with no cluster and ends with two qualified releases that serve on `receiving.wamn.dev` and `wms.wamn.dev`. Run the sections in order. The [plan](../history/gcp-deployment.md) gives the reasons and the costs. [Install history](../history/gcp-install-history.md) holds the earlier hand procedure and the records of each run.
+This page installs the platform and the environments `dkk/receiving/dev` and `dkk/wms/dev` on project `wamn-dev`. It starts at an empty project with no cluster and ends with two qualified releases that serve on `receiving.wamn.dev` and `wms.wamn.dev`. Run the sections in order.
 
 Every command on this page runs in a shell with these two variables and nothing else:
 
@@ -42,7 +42,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
    ```
 
-5. The telemetry bucket and its writer (`docs/plan/observability.md` R1, R7). The bucket `wamn-dev-otel` deletes an object 30 days after it lands. The Google service account `wamn-otel` writes to it and reads its metadata, because the collector exporter reads the bucket at start (`storage.buckets.get`). The Kubernetes service account `platform/otel-collector` acts as `wamn-otel`. A teardown keeps all three, because they are a bucket and IAM:
+5. The telemetry bucket and its writer. The bucket `wamn-dev-otel` deletes an object 30 days after it lands. The Google service account `wamn-otel` writes to it and reads its metadata, because the collector exporter reads the bucket at start (`storage.buckets.get`). The Kubernetes service account `platform/otel-collector` acts as `wamn-otel`. A teardown keeps all three, because they are a bucket and IAM:
 
    ```bash
    echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > /tmp/otel-lifecycle.json
@@ -123,8 +123,6 @@ The owner supplies these inputs. The install stops at the first step that reads 
     For another project, replace `wamn-dev` with `project_id` and the bucket with `buckets.web`.
     The installer creates the Kubernetes account and its annotation, but the owner supplies these IAM grants.
 
-`build-platform` uses these owner inputs and never creates their grants or budget. Missing access causes the cloud operation to fail.
-
 14. The edge NEG zone in `deploy/gcp/project.k`, currently `us-central1-a`, must match the zone reported by step 4.20.
     The fixed NEG name is `wamn-edge`.
     DNS for every route host must point to the global address that OpenTofu creates.
@@ -139,12 +137,14 @@ The owner supplies these inputs. The install stops at the first step that reads 
       --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectCreator
     ```
 
+`build-platform` and the install use these owner inputs and never create their grants or budget. If an input is missing, the cloud operation fails.
+
 ## 2. Project resources
 
 The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:
 
 - The APIs, the quotas and the daily guard that sets every pool to 0 nodes at 03:00 New York time (07:00 UTC).
-- The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself (owner ruling 2026-10-23).
+- The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself.
 - The Google service account `wamn-edge`, its `roles/storage.objectViewer` binding on `gs://wamn-dev-web`, and the Workload Identity binding of `edge/wamn-edge-web` (section 4.20).
 - The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
 - The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases.
@@ -192,7 +192,7 @@ gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --p
 
 If the backend service names no group, `remove-backend` refuses, and the agent runs only the delete.
 
-The work directory of section 4.1 holds the files of the deleted cluster. These are the event NATS users, the gate logins, the release digests, the stamped chart and the platform file. Section 4 makes them again, and it refuses a directory that exists. Stop the port-forwards of the old cluster and remove the work directory:
+The work directory of section 4.1 holds the files of the deleted cluster. These are the event NATS users, the gate logins, the release digests, the stamped chart and the platform file. Remove them so that section 4 makes them again. Stop the port-forwards of the old cluster and remove the work directory:
 
 ```bash
 pkill -f '^kubectl -n platform port-forward'
@@ -203,17 +203,20 @@ rm -rf $HOME/.cache/wamn-install
 
 ### 4.1 Work directory and binaries
 
-The install keeps its files in the private work directory `$HOME/.cache/wamn-install`. Each step that uses it sets `W` to it, or reads the platform file of section 4.10, which sets `W`. Run every step from a checkout of `main`:
+The install keeps its files in the private work directory `$HOME/.cache/wamn-install`. `platform apply` creates it if it is missing and reuses it if it exists. Each step that uses it sets `W` to it, or reads the platform file of section 4.10, which sets `W`. Run every step from a checkout of `main`:
 
 ```bash
 W=$HOME/.cache/wamn-install
 mkdir -p -m 700 $W
 eval "$(tools/lane-start "$PWD")"
+cargo build --locked -p wamn-ctl --bin wamn-ctl --bin wamn -p wamn-scenario-worker
 ```
+
+`tools/lane-start` sets `CARGO_TARGET_DIR`, so the binaries are in `$CARGO_TARGET_DIR/debug`.
 
 ### 4.2 Cluster
 
-The agent runs this procedure as `wamn-agent@wamn-dev` with the agent's `CLOUDSDK_CONFIG` (P12 of [platform-install.md](../plan/platform-install.md)). The agent posts the saved plan, and it applies that plan only after the owner approves it. The state bucket of section 1 and the project resources of section 2 must exist first.
+The agent runs this procedure as `wamn-agent@wamn-dev` with the agent's `CLOUDSDK_CONFIG`. The agent posts the saved plan, and it applies that plan only after the owner approves it. The state bucket of section 1 and the project resources of section 2 must exist first.
 
 [deploy/gcp/project.k](../../deploy/gcp/project.k) declares the cluster and the pools `main`, `pg` and `bench`. The pool `main` holds one Spot node. A taint restricts which pods can use a node. The pool `pg` holds one node for PostgreSQL alone. Its taint keeps every other pod off, and the `Cluster` selects it (section 4.5).
 
@@ -224,7 +227,7 @@ From the checkout used in section 4.1, render the document into a private direct
 ```bash
 W=$HOME/.cache/wamn-install
 mkdir -p -m 700 "$W/project"
-target/debug/wamn-ctl project render deploy/gcp/project.k \
+$CARGO_TARGET_DIR/debug/wamn-ctl project render deploy/gcp/project.k \
   --state-bucket wamn-dev-tofu-state --state-prefix project "$W/project"
 ```
 
@@ -285,7 +288,7 @@ After the apply, make sure that the plan shows no changes:
 )
 ```
 
-Write the cluster credentials to the agent's kubeconfig, the file that selects its cluster. Use the agent's `CLOUDSDK_CONFIG` and `KUBECONFIG` for this command (rule 7):
+Write the cluster credentials to the agent's kubeconfig, the file that selects its cluster. Use the agent's `CLOUDSDK_CONFIG` and `KUBECONFIG` for this command:
 
 ```bash
 CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent \
@@ -297,10 +300,11 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 
 ### 4.3 cert-manager and the edge certificate
 
-Set `WAMN_REGISTRY_AUTH_FILE` to the credentials file prepared in section 4.10.
-From the repository root, run `wamn-ctl platform apply <cluster.k>`.
-The verb runs sections 4.3 through 4.14 in order, then resumes at 4.17 after the owner commits release digests.
-It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
+Run sections 4.1 and 4.2 by hand first. Then set `WAMN_REGISTRY_AUTH_FILE` to the credentials file that `registry_token` writes (section 4.10).
+From the repository root, run `$CARGO_TARGET_DIR/debug/wamn-ctl platform apply <cluster.k>`.
+The verb runs sections 4.3 through 4.9 and 4.11 through 4.14 in order. It skips 4.10.
+If a release line is not yet committed, it stops after 4.14. Otherwise it goes on to 4.17.
+It holds one install lock in its work directory. It writes its kubeconfig, stamped chart, and Job logs there.
 Each done or skipped progress line includes elapsed seconds.
 On GCP, it requests the production certificate directly.
 It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
@@ -315,7 +319,6 @@ Before `platform apply`, build each new platform version once with `build-platfo
 Step 4.11 runs `env apply` for each environment as a Job, with `release = "none"`.
 The Job mounts a private document copy, database credentials, and the scheduler NATS certificate.
 It uses the runner's pinned KCL compiler and its own Kubernetes account.
-Step 4.10 needs no file because the verb supplies the existing environment variables directly.
 An unchanged completed Job skips when its input digest matches.
 Step 4.12 reads the key from the Secret Manager secret `identity-resend` and writes the Secret `identity/identity-resend`. It refuses a missing, empty, or whitespace-bearing key with the section 1 item.
 It prepares session targets as Jobs, then installs the identity chart with values derived from the document and stamped images.
@@ -325,9 +328,9 @@ Step 4.13 pushes missing packages and applies them as Jobs.
 Step 4.14 publishes each release through a Job.
 For a wired release, one pod runs the gate, authorship, and publication with an in-memory PAT.
 The verb prints release lines for the owner to commit, then resumes at 4.17 on a rerun.
-Qualification stays on the build machine in section 4.15.
-The verb also runs sections 4.18 through 4.19.1.
-Run section 4.20 onward by hand with the commands below.
+It prints 4.15 and 4.16 as skipped. Qualification stays on the build machine in section 4.15.
+The verb then runs sections 4.17 through 4.21.
+The manual commands of each section follow the verb's description.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 
@@ -377,7 +380,7 @@ The namespace `identity` exists now. Step 4.12 writes its Secret `identity-resen
 
 ### 4.4.1 Collector
 
-[deploy/platform/otel-collector.yaml](../../deploy/platform/otel-collector.yaml) is the one OpenTelemetry Collector of the cluster (`docs/plan/observability.md` section 4). [deploy/gcp/otel-collector-values.yaml](../../deploy/gcp/otel-collector-values.yaml) gives it the bucket and the cluster name. It writes traces and logs to the bucket of section 1 as gzip OTLP JSON, below `traces/` and `logs/` with hour partitions. It drops metrics. Apply it, then let it act as `wamn-otel`:
+[deploy/platform/otel-collector.yaml](../../deploy/platform/otel-collector.yaml) is the one OpenTelemetry Collector of the cluster. [deploy/gcp/otel-collector-values.yaml](../../deploy/gcp/otel-collector-values.yaml) gives it the bucket and the cluster name. It writes traces and logs to the bucket of section 1 as gzip OTLP JSON, below `traces/` and `logs/` with hour partitions. It drops metrics. Apply it, then let it act as `wamn-otel`:
 
 ```bash
 kubectl -n platform apply -f deploy/platform/otel-collector.yaml -f deploy/gcp/otel-collector-values.yaml
@@ -419,14 +422,17 @@ The Cluster sets `pg_stat_statements.max` and `pg_stat_statements.track`. From t
 docker run -d --name wamn-install-build-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:0:5432 postgres:18
 PORT=$(docker port wamn-install-build-pg 5432/tcp | head -1 | sed 's/.*://')
 until docker exec wamn-install-build-pg pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do sleep 1; done
-DATABASE_URL=postgres://postgres@127.0.0.1:$PORT/postgres target/debug/wamn build \
+DATABASE_URL=postgres://postgres@127.0.0.1:$PORT/postgres $CARGO_TARGET_DIR/debug/wamn build \
   apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
 docker rm -f wamn-install-build-pg
 ```
 
-`wamn-ctl build-platform` builds the host, runner, gates and identity images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The repository `wamn` has immutable tags, so a version that is already in the registry cannot be built again. A reinstall at an unchanged version uses the registry (`docs/plan/platform-deploy.md` R15). With `--stamp-only`, the command builds nothing. It reads the registry digests of the six images of the version and stamps them into the release chart. It refuses if one of them is missing. Both modes record the local platform UI digest beside the stamped chart ([building](building.md#platform-ui)).
+`$CARGO_TARGET_DIR/debug/wamn-ctl build-platform` builds the host, runner, gates, identity and edge-web images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The output directory must not exist. The repository `wamn` has immutable tags, so a version that is already in the registry cannot be built again. A reinstall at an unchanged version uses the registry. With `--stamp-only`, the command builds nothing. It reads the registry digests of the five images and two role components of the version and stamps them into the release chart. It refuses if one of them is missing. Both modes record the local platform UI digest beside the stamped chart ([building](building.md#platform-ui)).
 
-`platform apply` builds the environment packages and the local UI, then always runs `build-platform --stamp-only`.
+If another `build-platform` runs on this machine, or if you pass `--cloud`, the command builds in Cloud Build. In that case, pass `--cluster deploy/gcp/cluster.k`, which names the project and the daily spend cap ([building](building.md#cloud-platform-builds)).
+
+`platform apply` skips this step when the stamped chart in its work directory already matches the version and registry.
+Otherwise it builds the environment packages and the local UI, then runs `build-platform --stamp-only`.
 It never builds platform images.
 If registry images are missing, it stops with the version and the explicit build command.
 
@@ -441,7 +447,7 @@ export CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent
 W=$HOME/.cache/wamn-install
 mkdir -p -m 700 "$W/docker"
 echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > "$W/docker/config.json"
-DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform \
+DOCKER_CONFIG=$W/docker $CARGO_TARGET_DIR/debug/wamn-ctl build-platform \
   --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out "$W/release-chart"
 ```
 
@@ -449,7 +455,7 @@ For an existing version, build the local UI and stamp the registry images into a
 
 ```bash
 pnpm --filter @wamn/platform-ui build
-DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform --stamp-only \
+DOCKER_CONFIG=$W/docker $CARGO_TARGET_DIR/debug/wamn-ctl build-platform --stamp-only \
   --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out "$W/reinstall-chart"
 ```
 
@@ -473,9 +479,9 @@ git diff --stat
 W=$HOME/.cache/wamn-install
 PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
 export WAMN_SYSTEM_ADMIN_URL="postgresql://postgres:${PW}@127.0.0.1:15432/wamn_system"
-target/debug/wamn-ctl provision-system --platform-domain wamn.dev
-target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg --admin dkkloimwieder@gmail.com
-(umask 077; target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
+$CARGO_TARGET_DIR/debug/wamn-ctl provision-system --platform-domain wamn.dev
+$CARGO_TARGET_DIR/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg --admin dkkloimwieder@gmail.com
+(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
   --prepare-generation a --namespace identity --emit-secret $W/identity-db.json \
   --db-host wamn-pg-rw.platform.svc.cluster.local)
 kubectl apply -f $W/identity-db.json
@@ -494,7 +500,7 @@ for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file
 
 ### 4.8 Event NATS
 
-`platform apply` now runs this step.
+`platform apply` runs this step.
 The following commands describe the manual procedure.
 
 One event NATS serves both environments. Write the users of each environment into its own private directory. The tenant is `<org>--<project>--<env>`, the tenant that `env apply` gives the environment:
@@ -646,7 +652,7 @@ Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.i
 
 ### 4.11 First apply
 
-`platform apply` now runs this step with private document copies.
+`platform apply` runs this step with private document copies.
 It does not edit the committed host group files.
 The following commands describe the manual procedure.
 
@@ -657,8 +663,8 @@ The following commands describe the manual procedure.
 for project in receiving wms; do
   use_env $project
   sed 's/^    release = .*/    release = "none"/' deploy/gcp/environments/dkk--$project--dev.k > $W/dkk--$project--dev.k
-  target/debug/wamn-ctl env apply $W/dkk--$project--dev.k --dry-run
-  target/debug/wamn-ctl env apply $W/dkk--$project--dev.k
+  $CARGO_TARGET_DIR/debug/wamn-ctl env apply $W/dkk--$project--dev.k --dry-run
+  $CARGO_TARGET_DIR/debug/wamn-ctl env apply $W/dkk--$project--dev.k
   echo "$project $(suffix $project)"
 done
 ```
@@ -683,7 +689,7 @@ Prepare the session target of each environment in namespace `identity`. [values-
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 for project in receiving wms; do
-  (umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev --tenant dkk--$project--dev \
+  (umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev --tenant dkk--$project--dev \
     --namespace identity --target-admin-database-url "$(db_url $project)" --db-host wamn-pg-rw.platform.svc.cluster.local \
     --prepare-session-role-reader-generation a --emit-session-role-reader-secret $W/session-target-$project.json)
   kubectl apply -f $W/session-target-$project.json
@@ -728,15 +734,15 @@ It runs `apply-package` and `reconcile-package-data-access` as Jobs, then runs `
 The Jobs skip when their completed input digests match.
 The commands below describe the manual equivalent.
 
-The package artifacts `wamn_receiving-2.2.5` and `wamn_wms-2.1.3` are in the registry. If a tag is missing, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
+The packages are `wamn_receiving` 2.2.6 and `wamn_wms` 2.1.3. If a tag is missing from the registry, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
-declare -A V=([receiving]=2.2.5 [wms]=2.1.3)
+declare -A V=([receiving]=2.2.6 [wms]=2.1.3)
 for project in receiving wms; do
   gcloud artifacts docker images describe $WAMN_PACKAGE_ARTIFACT_BASE:wamn_$project-${V[$project]} --format="value(image_summary.digest)" \
-  || target/debug/wamn-ctl push-package --package apps/wamn_$project --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE \
+  || $CARGO_TARGET_DIR/debug/wamn-ctl push-package --package apps/wamn_$project --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE \
        --component-artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
 done
 ```
@@ -746,14 +752,14 @@ Install each package into its environment. `reconcile-replica-identity` runs for
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 R="--artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE"
-declare -A V=([receiving]=2.2.5 [wms]=2.1.3)
+declare -A V=([receiving]=2.2.6 [wms]=2.1.3)
 for project in receiving wms; do
-  target/debug/wamn-ctl apply-package --package-artifact wamn_$project-${V[$project]} $R \
+  $CARGO_TARGET_DIR/debug/wamn-ctl apply-package --package-artifact wamn_$project-${V[$project]} $R \
     --database-url "$(db_url $project)" --tenant dkk--$project--dev
-  target/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_$project-${V[$project]} $R \
+  $CARGO_TARGET_DIR/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_$project-${V[$project]} $R \
     --database-url "$(db_url $project)" --tenant dkk--$project--dev
 done
-target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url wms)" --package apps/wamn_wms
+$CARGO_TARGET_DIR/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url wms)" --package apps/wamn_wms
 ```
 
 ### 4.14 Releases
@@ -778,10 +784,10 @@ The manual commands below remain an alternative to `platform apply`.
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
-RELEASE_receiving=$(target/debug/wamn-ctl publish-release --database-url "$(db_url receiving)" \
+RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url receiving)" \
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--receiving--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--receiving--dev \
-  --run-schema wamn_run --package wamn_receiving@2.2.5 \
+  --run-schema wamn_run --package wamn_receiving@2.2.6 \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
 echo "$RELEASE_receiving" > $W/release-receiving
 ```
@@ -791,10 +797,10 @@ The WMS release has the wiring `inventory_move_and_label`. The authoring gate mu
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 mkdir -m 700 $G
-(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
+(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
   --namespace hosts --target-admin-database-url "$(db_url wms)" --db-host 127.0.0.1 --db-port 15432 \
   --prepare-management-admitter-generation a --emit-management-admitter-secret $G/management-admitter.json)
-(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
+(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
   --namespace hosts --db-host 127.0.0.1 --db-port 15432 \
   --prepare-control-author-generation a --emit-control-author-secret $G/control-author.json)
 (umask 077; kubectl -n hosts get secret wamn-identity-reader-dkk--wms--dev -o jsonpath='{.data.url}' | base64 -d \
@@ -837,7 +843,7 @@ Run the gate on this machine, and post the gate request with the PAT as a bearer
 WAMN_SYSTEM_URL="$(cat $G/identity-reader.url)" WAMN_CONTROL_AUTHORING_PG_URL="$(url $G/control-author.json)" \
 WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
 WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=dkk--wms--dev \
-  setsid target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $G/gate.log 2>&1 < /dev/null &
+  setsid $CARGO_TARGET_DIR/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $G/gate.log 2>&1 < /dev/null &
 cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.3 wms dev \
   apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $G/gate-request.json
 for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:18090/ && break; sleep 1; done
@@ -846,7 +852,7 @@ for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:18090/ && break; sl
 curl -sS -H @$G/auth-header -H 'content-type: application/json' --data-binary @$G/gate-request.json \
   http://127.0.0.1:18090/authoring > $G/gate-reply.json
 rm -f $G/auth-header
-pkill -f '^target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090'
+pkill -f 'wamn-scenario-worker serve --bind 127.0.0.1:18090'
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(json.dumps(d.get("body",d).get("outcome",d))[:600])' $G/gate-reply.json
 ```
 
@@ -855,11 +861,11 @@ The outcome has `status` `completed`. Record the wiring and publish WMS:
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
-target/debug/wamn-ctl author-wiring --database-url "$(db_url wms)" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
+$CARGO_TARGET_DIR/debug/wamn-ctl author-wiring --database-url "$(db_url wms)" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
   --tenant dkk--wms--dev --package-id wamn_wms --package-version 2.1.3 \
   --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
-RELEASE_wms=$(target/debug/wamn-ctl publish-release --database-url "$(db_url wms)" \
+RELEASE_wms=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url wms)" \
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--wms--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--wms--dev \
   --run-schema wamn_run --package wamn_wms@2.1.3 --wiring "wamn_wms@2.1.3::inventory_move_and_label=2" \
@@ -879,7 +885,7 @@ Step 4.15 reports a skip and never starts a qualification Job.
 . $HOME/.cache/wamn-install/platform.sh
 for project in receiving wms; do
   registry_token
-  target/debug/wamn-ctl qualify-release --release-digest "$(cat $W/release-$project)" \
+  $CARGO_TARGET_DIR/debug/wamn-ctl qualify-release --release-digest "$(cat $W/release-$project)" \
     --release-chart $WAMN_RELEASE_CHART --artifact-base $WAMN_RELEASE_ARTIFACT_BASE \
     --registry-auth-file $WAMN_REGISTRY_AUTH_FILE || break
 done
@@ -893,7 +899,7 @@ Prepare the bench VM and its binary as described in section 5.8.
 Keep the PostgreSQL forward on local port 15432 open.
 
 The script reads the platform version, `version` in `deploy/platform/release/Chart.yaml`, and sources the platform file from section 4.10.
-That file supplies `db_url receiving` and `$G/operator-pat.json`, the operator token file.
+That file supplies `db_url receiving` and `$G`. The script reads the operator token file `$G/operator-pat.json`. No step on this page writes that file. Mint it as section 4.14 mints the management-author PAT, with `--emit-operator-pat-secret` in place of `--emit-management-author-pat-secret`. Use the Receiving coordinates.
 The script uses `CLOUDSDK_CONFIG` and `KUBECONFIG` from this page's opening commands.
 It refuses an existing result for the current version.
 Commit the result from the repository root:
@@ -914,7 +920,7 @@ The verb never edits a committed file.
 
 The Rust edge reads each live release row. No edge values or URL map contains a copied release digest.
 
-Commit every change of `deploy/gcp` from sections 4.6, 4.11 and 4.16 in one commit, and push it.
+Commit the release lines. If you ran the manual commands of sections 4.6 and 4.11, commit their changes to `deploy/gcp` in the same commit. Push the commit.
 
 ### 4.17 Apply with the release
 
@@ -935,11 +941,11 @@ The apply installs the release chart of each environment in `hosts`. `WAMN_RELEA
 for project in receiving wms; do
   use_env $project
   export WAMN_RELEASE_HOST_GROUP=deploy/gcp/host-group-$project.yaml
-  target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k --dry-run
-  target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k
+  $CARGO_TARGET_DIR/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k --dry-run
+  $CARGO_TARGET_DIR/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k
 done
-target/debug/wamn-ctl env show dkk/receiving/dev
-target/debug/wamn-ctl env show dkk/wms/dev
+$CARGO_TARGET_DIR/debug/wamn-ctl env show dkk/receiving/dev
+$CARGO_TARGET_DIR/debug/wamn-ctl env show dkk/wms/dev
 ```
 
 ### 4.18 CDC readers
@@ -1012,14 +1018,14 @@ They send `/api/` to `c-dkk-http`, `/password/` to identity, and every shell pag
 `platform apply` installs the Rust edge Deployment and Service as `edge/wamn-edge-web` and waits for rollout.
 It reads the image digest from `platform.edge.image` in the stamped release chart.
 `build-platform` builds the `edge-web` Docker target for `linux/amd64` and stamps that image.
-The `edge` target still exports the aarch64 edge-box binary.
+The `edge` target exports the aarch64 edge-box binary.
 The installer compares rendered objects with live objects and skips an unchanged installation.
 It grants the edge only `get` on the named release ConfigMaps in `hosts`, without Secret access.
 
 The edge reads `gs://wamn-dev-web` as the Google service account `wamn-edge` through Workload Identity on `edge/wamn-edge-web`.
 The service account and its two bindings outlive a teardown, because they are IAM.
 If they are missing, the agent runs these three commands as `wamn-agent@wamn-dev`.
-The agent posts each command and runs it only after the owner approves it, the same approval as a cluster resize (owner ruling 2026-10-23):
+The agent posts each command and runs it only after the owner approves it, the same approval as a cluster resize:
 
 ```bash
 gcloud iam service-accounts create wamn-edge --project wamn-dev
@@ -1065,7 +1071,7 @@ The connection target is 1,000 concurrent connections per endpoint.
 The order is platform apply, OpenTofu apply, then platform apply again.
 The first run creates the NEG before the load balancer can use it.
 The agent renders `deploy/gcp/project.k` as in section 4.2 and runs `tofu plan` on that rendered directory as `wamn-agent@wamn-dev`.
-The agent posts the plan, and it runs `tofu apply` of the saved plan only after the owner approves it, the same approval as a cluster resize (owner ruling 2026-10-23).
+The agent posts the plan, and it runs `tofu apply` of the saved plan only after the owner approves it, the same approval as a cluster resize.
 The diagnostic `tofu apply deploy/gcp` names this step.
 The next platform apply skips unchanged resources and runs the final HTTPS checks.
 The verb never runs OpenTofu or `gcloud compute`.
@@ -1105,7 +1111,7 @@ The verb retains Job logs under the work directory's `jobs` directory, including
 The guard sets every pool to 0 nodes at 03:00 New York time (07:00 UTC) every day. Run the wake verb to set every pool back to the size that `deploy/gcp/project.k` declares:
 
 ```bash
-wamn-ctl platform wake deploy/gcp/cluster.k
+$CARGO_TARGET_DIR/debug/wamn-ctl platform wake deploy/gcp/cluster.k
 ```
 
 The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `evt-nats` to roll out.
@@ -1117,7 +1123,7 @@ The port-forwards end with their pods, so start them again (sections 4.5 and 4.8
 Run the sleep verb to set every pool to 0 nodes. The PostgreSQL volume keeps the data:
 
 ```bash
-wamn-ctl platform sleep deploy/gcp/cluster.k
+$CARGO_TARGET_DIR/debug/wamn-ctl platform sleep deploy/gcp/cluster.k
 ```
 
 The verb prints one line for each pool, and then the names of the pools that it set to 0. Run section 5.1 to start the cluster again.
@@ -1154,26 +1160,26 @@ Send one recovery mail to an enrolled address to prove delivery. Then the owner 
 
 ### 5.5 Delete an environment
 
-`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document makes a new suffix (`docs/plan/platform-deploy.md` §12.3). It uninstalls the release chart, revokes the PATs, deletes the credential Secrets, the streams, the slot, the `Database` and the registry rows. With `--data` it also drops the database and its roles, and asks for the coordinate again at a terminal. Every step is "if present", so run it again after a failure:
+`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document makes a new suffix. It uninstalls the release chart, revokes the PATs, deletes the credential Secrets, the streams, the slot, the `Database` and the registry rows. With `--data` it also drops the database and its roles, and asks for the coordinate again at a terminal. Every step is "if present", so run it again after a failure:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 use_env receiving
-target/debug/wamn-ctl env delete dkk/receiving/dev
+$CARGO_TARGET_DIR/debug/wamn-ctl env delete dkk/receiving/dev
 ```
 
 ### 5.6 Upgrade an environment
 
-`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/history/upgrade-environment.md`). An upgrade of an installed package also needs `--predecessor-release <digest>`, the release that the environment serves. The qualify stage starts kind clusters on this machine. No live run of the verb exists yet, and its first live run waits for the word of the owner (`wamn-m511.7`):
+`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit. An upgrade of an installed package also needs `--predecessor-release <digest>`, the release that the environment serves. The qualify stage starts kind clusters on this machine:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
-target/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>
+$CARGO_TARGET_DIR/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>
 ```
 
 ### 5.7 CDC slot lost
 
-If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader stays running and stopped, and logs `CDC_CAPTURE_GAP` once (`docs/plan/cdc-reader-slot.md` §4.3). Look at the slots:
+If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader stays running and stopped, and logs `CDC_CAPTURE_GAP` once. Look at the slots:
 
 ```bash
 kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
@@ -1184,7 +1190,7 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
-WAMN_PG_ADMIN_URL="$(db_url wms)" target/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev \
+WAMN_PG_ADMIN_URL="$(db_url wms)" $CARGO_TARGET_DIR/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev \
   --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $W/evt-wms/event-nats/observer-username)" \
   --nats-password-file $W/evt-wms/event-nats/observer-password
 ```
@@ -1193,7 +1199,7 @@ After the resync, or on the owner's word while no resync exists, run `close-capt
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
-target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
+$CARGO_TARGET_DIR/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 ```
 
 ### 5.8 Benchmark
@@ -1205,7 +1211,7 @@ The Receiving host runs alone on pool `bench`, and PostgreSQL runs alone on pool
 Every other pod runs on pool `main`.
 Prepare the VM and its `~/wamn/target/release/wamn-bench` binary with [install history](../history/gcp-install-history.md#64-bench-client-and-pat), section 6.4.
 Use the 1000-order Receiving seed from [install history](../history/gcp-install-history.md#61-morning-start-and-the-1000-seed), section 6.1.
-Use the operator PAT from section 4.14 and the platform file from section 4.10.
+Use the platform file from section 4.10. Section 4.15.1 says how to make the operator PAT file.
 Install Python 3 on the repository machine.
 Keep the PostgreSQL forward on local port 15432 open for the VM's reverse SSH tunnel.
 Use section 4.15.1 to run and commit the benchmark.
@@ -1216,7 +1222,7 @@ Each call records throughput, p50, p95, p99, calls, errors, and `pg_stat_stateme
 The script resets database statement counts before each call.
 It divides each statement count by the request count, rounds each ratio, and sums the ratios.
 This excludes setup queries and background polling from the per-request count.
-The [benchmark page](benchmark.md) holds earlier measurements and the span breakdown.
+The [benchmark page](benchmark.md) holds the measurements and the span breakdown.
 
 The conformance test `benchmark::platform_benchmark_gate` compares the newest two result files in semantic version order.
 It fails if get or update `throughput_per_sec` drops more than 20% at c16.
