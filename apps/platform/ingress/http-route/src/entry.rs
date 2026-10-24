@@ -107,16 +107,23 @@ async fn execute(
         operation::authorize(caller, operation_id.clone())
             .await
             .map_err(|error| boundary(&error, operation_id))?;
+        // A change feed read takes its tag from the cursor it returns
+        // (docs/plan/wamn-sync.md), so it needs no WAL position.
+        let feed = crate::is_feed_read(&input);
         let result = read_call(
             operation_id,
             context(request, String::new(), remaining_ms(deadline)),
             input.to_string(),
-            wants_list_etag(route),
+            wants_list_etag(route) && !feed,
         )
         .await;
         match result {
             Ok((result, wal_position)) => {
-                *etag = list_etag(route, wal_position);
+                *etag = if feed {
+                    changes_etag(route, &result)
+                } else {
+                    list_etag(route, wal_position)
+                };
                 operation::finish_read()
                     .await
                     .map_err(|error| boundary(&error, operation_id))?;
@@ -321,6 +328,20 @@ async fn call(id: &str, context: NodeContext, input: String) -> Result<Value, No
     read_call(id, context, input, false)
         .await
         .map(|(value, _)| value)
+}
+
+/// The weak ETag of a change feed read, from the cursor it returns. An
+/// unchanged feed returns the cursor it was given, so its tag holds.
+fn changes_etag(route: &RouteDefinition, result: &Value) -> Option<String> {
+    let inputs = route.etag_inputs.as_ref()?;
+    let [outcome] = result.as_array()?.as_slice() else {
+        return None;
+    };
+    let cursor = outcome.get("value")?.get("next_cursor")?.as_str()?;
+    Some(format!(
+        "W/\"{}\"",
+        tag_digest(&json!(["changes", inputs.release, cursor]))
+    ))
 }
 
 fn wants_list_etag(route: &RouteDefinition) -> bool {

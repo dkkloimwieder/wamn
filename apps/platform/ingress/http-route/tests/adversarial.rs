@@ -978,6 +978,40 @@ fn a_query_read_answers_its_page_as_one_body() {
 }
 
 #[test]
+fn a_feed_read_is_revalidated_every_time_under_the_scope_of_its_list() {
+    let mut read = route();
+    read.method = "GET".to_string();
+    read.path = "/packaging/query".to_string();
+    read.mappings = Vec::new();
+    read.cache_control = Some("private, max-age=10, stale-while-revalidate=60".to_string());
+    let item = json!({"filter": {"status": ["held"]}, "feed": {"cursor": "Y3Vyc29y"}});
+    let query = wamn_execution_contract::encode_read_query(item.as_object().unwrap());
+    let mut get = head();
+    get.method = "get".to_string();
+    get.target = format!("/packaging/query?{query}");
+
+    let changes = r#"[{"value":{"rows":[],"next_cursor":"Y3Vyc29y","complete":true}}]"#;
+    let mut backend = FakeBackend::new(read);
+    backend.delivery = Ok(DeliveryOutcome::Respond(changes.to_string()));
+    backend.etag = Some("W/\"changes\"".to_string());
+    let output = request(&mut backend, &get, b"");
+    assert_eq!(output.status, 200);
+    assert_eq!(
+        output.cache_headers(),
+        [
+            ("cache-control", "private, no-cache".to_string()),
+            ("vary", "Authorization, Cookie".to_string()),
+            ("etag", "W/\"changes\"".to_string()),
+        ]
+    );
+    // The query string decodes to the same request a body would carry.
+    assert_eq!(
+        serde_json::from_str::<Value>(&backend.deliveries[0].payload).unwrap(),
+        json!([item])
+    );
+}
+
+#[test]
 fn only_a_successful_read_without_the_csrf_header_carries_its_cache_control() {
     const READ: &str = "private, max-age=10, stale-while-revalidate=60";
     let mut read = route();

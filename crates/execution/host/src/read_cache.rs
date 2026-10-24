@@ -44,6 +44,30 @@ pub(crate) fn list_tag(release: &str, reads: &BTreeSet<ServingRelation>, version
     )
 }
 
+/// Whether a read carries the feed part of a list read, which reads the
+/// changes since a cursor in place of a page (`docs/plan/wamn-sync.md`).
+pub(crate) fn is_feed_read(payload: &Value) -> bool {
+    payload
+        .get(0)
+        .and_then(|item| item.get("feed"))
+        .is_some_and(Value::is_object)
+}
+
+/// The weak ETag of a change feed read, from the cursor it returns.
+///
+/// An unchanged feed returns the cursor it was given, so its tag holds and a
+/// conditional read answers not-modified.
+pub(crate) fn changes_tag(release: &str, result: &Value) -> Option<String> {
+    let [outcome] = result.as_array()?.as_slice() else {
+        return None;
+    };
+    let cursor = outcome.get("value")?.get("next_cursor")?.as_str()?;
+    Some(format!(
+        "W/\"{}\"",
+        digest(&json!(["changes", release, cursor]))
+    ))
+}
+
 /// Whether an If-None-Match value matches `tag`.
 ///
 /// If-None-Match uses the weak comparison: two tags match when their opaque
@@ -71,7 +95,7 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::ServingRelation;
 
-    use super::{get_tag, list_tag, matches};
+    use super::{changes_tag, get_tag, is_feed_read, list_tag, matches};
 
     fn relation(name: &str) -> ServingRelation {
         ServingRelation {
@@ -98,6 +122,27 @@ mod tests {
             Some(tag.clone())
         );
         assert_ne!(get_tag("sha256:b", &result, "row_version"), Some(tag));
+    }
+
+    #[test]
+    fn a_feed_read_has_a_weak_tag_on_the_cursor_it_returns() {
+        assert!(is_feed_read(&json!([{"filter": {}, "feed": {"cursor": "c"}}])));
+        assert!(!is_feed_read(&json!([{"filter": {}, "limit": 10}])));
+        assert!(!is_feed_read(&json!([{"feed": null}])));
+
+        let result = |cursor: &str| {
+            json!([{"value": {"rows": [], "next_cursor": cursor, "complete": true}}])
+        };
+        let tag = changes_tag("sha256:a", &result("c-1")).expect("a feed read has a tag");
+        assert!(tag.starts_with("W/\"") && tag.ends_with('"'), "{tag}");
+        assert_eq!(changes_tag("sha256:a", &result("c-1")), Some(tag.clone()));
+        assert!(matches(&tag, &tag));
+        assert_ne!(changes_tag("sha256:a", &result("c-2")), Some(tag.clone()));
+        assert_ne!(changes_tag("sha256:b", &result("c-1")), Some(tag));
+        assert_eq!(
+            changes_tag("sha256:a", &json!([{"error": {"code": "cursor_expired"}}])),
+            None
+        );
     }
 
     #[test]

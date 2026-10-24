@@ -316,6 +316,15 @@ function envelopeViolation(contract: ResponseContract, value: unknown): string |
   if (contract.resultClass === "one") {
     return object === null || Array.isArray(object) ? "the result violates its field contract" : null;
   }
+  if (contract.resultClass === "changes") {
+    // A list read with its feed part answers the changes since a cursor.
+    const valid =
+      object !== null &&
+      Array.isArray(object["rows"]) &&
+      typeof object["next_cursor"] === "string" &&
+      typeof object["complete"] === "boolean";
+    return valid ? null : "the changes have no rows, next_cursor or complete";
+  }
   if (contract.resultClass !== "bounded_list" && contract.resultClass !== "page") {
     return null;
   }

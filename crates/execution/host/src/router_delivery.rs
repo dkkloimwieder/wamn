@@ -19,7 +19,7 @@ use wamn_event_wire::Causation;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 
 use crate::operation::OperationHost;
-use crate::read_cache::{get_tag, list_tag, matches};
+use crate::read_cache::{changes_tag, get_tag, is_feed_read, list_tag, matches};
 use crate::route::{RouteCall, authorize_route, invoke_route};
 
 // The two series this bridge owns. Both are dashboard contracts that no grep
@@ -294,8 +294,11 @@ impl RouterDeliveryBridge {
             result: serde_json::Value::Null,
         };
         let mut tag = None;
-        if let Some(read) =
-            read.filter(|read| read.type_ != OperationType::Get && !read.reads.is_empty())
+        // A change feed read takes its tag from the cursor it returns, so it
+        // runs before the tag is known.
+        let feed = is_feed_read(call.payload);
+        if let Some(read) = read
+            .filter(|read| read.type_ != OperationType::Get && !read.reads.is_empty() && !feed)
         {
             authorize_route(&self.operations, &call).await?;
             match self.list_tag(read, &release).await {
@@ -313,7 +316,9 @@ impl RouterDeliveryBridge {
         if !matches!(settled.outcome, DeliveryOutcome::Respond(_)) {
             return Ok(settled);
         }
-        if let Some(revision) = read.and_then(|read| read.revision.as_deref()) {
+        if feed {
+            tag = changes_tag(&release, &settled.result);
+        } else if let Some(revision) = read.and_then(|read| read.revision.as_deref()) {
             tag = get_tag(&release, &settled.result, revision);
         }
         if let Some(tag) = &tag

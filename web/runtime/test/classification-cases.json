@@ -32,6 +32,14 @@
       "transaction": "implicit",
       "direct": true
     },
+    "changes": {
+      "result_class": "changes",
+      "partial_schema": null,
+      "errors": [],
+      "type": "query",
+      "transaction": "implicit",
+      "direct": true
+    },
     "bounded_list": {
       "result_class": "bounded_list",
       "partial_schema": null,
@@ -124,6 +132,25 @@
       "status": 200,
       "body": "[{\"request_id\":\"r1\",\"value\":{\"item\":[],\"next_cursor\":7}}]",
       "expect": { "outcome": "uncertain", "reason": "the page has no valid next_cursor" }
+    },
+    {
+      "name": "a completed changes read",
+      "contract": "changes",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"rows\":[{\"id\":\"a\",\"row_version\":2,\"deleted\":true}],\"next_cursor\":\"c2\",\"complete\":true}}]",
+      "expect": {
+        "outcome": "completed",
+        "value": { "rows": [{ "id": "a", "row_version": 2, "deleted": true }], "next_cursor": "c2", "complete": true }
+      }
+    },
+    {
+      "name": "a changes read with no next cursor",
+      "contract": "changes",
+      "request_id": "r1",
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"rows\":[],\"next_cursor\":null,\"complete\":true}}]",
+      "expect": { "outcome": "uncertain", "reason": "the changes have no rows, next_cursor or complete" }
     },
     {
       "name": "a record result that is not an object",

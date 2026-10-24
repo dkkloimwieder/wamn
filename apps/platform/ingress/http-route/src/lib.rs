@@ -415,7 +415,14 @@ async fn try_handle(
     let cache_control = matched
         .definition
         .cache_control
-        .filter(|_| header_values(&head.headers, CSRF_HEADER).is_empty());
+        .filter(|_| header_values(&head.headers, CSRF_HEADER).is_empty())
+        .map(|value| {
+            if is_feed_read(&mapped) {
+                feed_cache_control(&value)
+            } else {
+                value
+            }
+        });
     let attachment_id = matched.definition.attachment_id;
     let Some(_permit) = backend
         .try_acquire_route(&attachment_id)
@@ -449,6 +456,22 @@ async fn try_handle(
         }));
     }
     Ok(response)
+}
+
+/// Whether a read carries the feed part of a list read, which reads the
+/// changes since a cursor in place of a page (`docs/plan/wamn-sync.md`).
+pub(crate) fn is_feed_read(input: &Value) -> bool {
+    input
+        .get(0)
+        .and_then(|item| item.get("feed"))
+        .is_some_and(Value::is_object)
+}
+
+/// The Cache-Control of a change feed read: the list's scope, revalidated on
+/// every read. Its weak tag on the cursor makes an unchanged feed a 304.
+fn feed_cache_control(list: &str) -> String {
+    let scope = list.split(',').next().unwrap_or(list).trim();
+    format!("{scope}, no-cache")
 }
 
 /// The request header that repeats the readable CSRF cookie.

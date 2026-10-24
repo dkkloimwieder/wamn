@@ -57,7 +57,8 @@ The [read query codec](../../apps/platform/execution/contract/src/read_query.rs)
 
 The host derives the `Cache-Control` value of each read route from its operation kind and auth policy when it serves the route, and the router only writes it.
 A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
-Both are `private`, unless the auth policy of the route is `none`, and then they are `public`.
+A `query` with its feed part (the [change feed](#change-feed)) sends `no-cache`.
+Each is `private`, unless the auth policy of the route is `none`, and then it is `public`.
 A successful read also sends `Vary: Authorization, Cookie`.
 Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
 [`read_cache_control`](../../crates/platform/engine/src/flow_http_routing.rs) owns the values.
@@ -201,6 +202,7 @@ A `get` has a strong ETag from the manifest digest of the release and the revisi
 The generator writes the revision column of the model into each `get` contract. The model's operations name that one column as `revision_field`.
 A `get` of a model with no revision column has no strong ETag, and the generated client index names that model.
 A `query` or `projection` has a weak ETag from the manifest digest, declared relation names, and the current WAL position.
+A `query` with its feed part has a weak ETag from the manifest digest and the `next_cursor` it returns. It reads no WAL position, and it runs before the host compares the tag.
 The [model version source](data-access.md#model-versions) covers commits from every host and can also change after unrelated writes.
 Publish writes the relations and the revision field into the serving manifest route from the generated contract, and a history table stands for its model relation.
 The router forwards `If-None-Match` on a GET, and the host compares it with the weak comparison.
@@ -1051,3 +1053,12 @@ Operational logs use INFO. Hosts send request traces to the platform OpenTelemet
 
 The [deployment guide](../operations/deployment.md) owns probe ports, grace periods, and rollout commands.
 The [native alignment page](native-alignment.md#current-limits) retains the unresolved operator retry and liveness limits.
+
+## Change feed
+
+A generated `query` of a model with a history table and a revision column has a change feed ([wamn offline and sync](../plan/wamn-sync.md)).
+The feed is the `query` operation with its feed part, `feed: { cursor, limit }`, on the same GET route, so it has the list's grant and no permission row of its own.
+Its value is `{ rows, next_cursor, complete }`. Each row carries `id`, `row_version` and `deleted`, and a row that is not deleted carries `data`.
+The page of such a `query` also carries `cursor`, which starts the feed at the page's snapshot.
+The cursor is opaque: the URL-safe base64 of the model name and a snapshot xmin, which [`feed.rs`](../../apps/platform/data/access/src/feed.rs) encodes.
+A cursor of another model, or one that does not decode, refuses with `invalid_input` on `cursor`. A cursor older than the oldest entry a `P<n>D` retention keeps refuses with `cursor_expired`.
