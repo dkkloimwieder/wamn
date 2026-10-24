@@ -51,7 +51,7 @@ pub use router_driver::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
     CandidateWiringTarget, DEFAULT_WIRING_CACHE_CAPACITY, DeadlineAdjustments, RouterDelivery,
     RouterDriver, RouterDriverConfig, RouterDriverRequest, RouterDriverSnapshot,
-    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity, WorkflowIdentity, WorkflowRunRequest,
 };
 pub use wiring_lowering::{
     GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringError, WiringLoweringErrorType,

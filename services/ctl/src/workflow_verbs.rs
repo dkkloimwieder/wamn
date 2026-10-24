@@ -1,7 +1,7 @@
 //! Arguments and output of the `workflow` verbs: author, enable, disable and
-//! list environment workflows (docs/plan/workflows.md, epic 1), and start,
-//! park, release and list workflow runs through the workflow contract of
-//! `wamn-workflow`.
+//! list environment workflows (docs/plan/workflows.md, epic 1), start a run
+//! through the host route `workflow.start`, and park, release and list
+//! workflow runs through the workflow contract of `wamn-workflow`.
 //!
 //! `author` and `enable` gate the graph against the release the environment
 //! serves, derived as `env show` derives it. `enable` and `disable` take the
@@ -16,7 +16,7 @@ use tokio_postgres::NoTls;
 use wamn_control::author_workflow::{AuthorWorkflowRequest, WorkflowExecution};
 use wamn_control::environment::Platform;
 use wamn_control::workflow_lifecycle::WorkflowVersion;
-use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
+use wamn_workflow::{PostgresWorkflows, Workflows as _};
 
 use crate::env_verbs::parse_coordinate;
 
@@ -39,7 +39,7 @@ pub enum WorkflowCommand {
     Disable(VersionArgs),
     /// Print the workflow versions of the environment, one JSON object per line.
     List(WorkflowScope),
-    /// Queue one released wiring under a service principal, and print its run id.
+    /// Start the enabled version of a workflow through the host, and print its run id.
     Start(StartArgs),
     /// Hold a queued run, so no claim takes it.
     Park(RunArgs),
@@ -140,23 +140,18 @@ impl VersionArgs {
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
-    #[command(flatten)]
-    pub scope: WorkflowScope,
-    /// The installed release, as its manifest digest.
+    /// The base URL of the application host, such as `https://acme.example`.
     #[arg(long)]
-    pub release_digest: String,
+    pub host_url: String,
+    /// A bearer token of the caller: a session token or a PAT.
+    #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]
+    pub token: String,
     #[arg(long)]
-    pub package_id: String,
-    #[arg(long)]
-    pub wiring_id: String,
-    #[arg(long)]
-    pub wiring_version: u32,
-    /// Active projected service principal responsible for application writes.
-    #[arg(long)]
-    pub service_principal_id: String,
+    pub workflow_id: String,
+    /// A repeated start with the same key and input answers the first run.
     #[arg(long)]
     pub idempotency_key: String,
-    /// JSON input file passed to the wiring.
+    /// JSON input file passed to the workflow.
     #[arg(long)]
     pub input: PathBuf,
 }
@@ -349,24 +344,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             }
         }
         WorkflowCommand::Start(args) => {
-            let input =
-                serde_json::from_slice(&std::fs::read(&args.input).context("read the input file")?)
-                    .context("parse the input file")?;
-            let run_id = workflows(&args.scope)
-                .await?
-                .start(&StartRequest {
-                    manifest_digest: args.release_digest,
-                    package_id: args.package_id,
-                    wiring_id: args.wiring_id,
-                    wiring_version: args.wiring_version,
-                    idempotency_key: args.idempotency_key,
-                    input,
-                    trigger: Trigger::Automation {
-                        service_principal_id: args.service_principal_id,
-                    },
-                })
-                .await?;
-            println!("{run_id}");
+            println!("{}", start(&args).await?);
         }
         WorkflowCommand::Park(args) => {
             workflows(&args.scope).await?.park(&args.run_id).await?;
@@ -383,4 +361,97 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The path of the host route `workflow.start`.
+fn start_route_path() -> anyhow::Result<String> {
+    let (_, attachment) = wamn_catalog::HostRouteSet::Application
+        .attachments()
+        .find(|(_, attachment)| {
+            attachment.route.handler == wamn_catalog::HostHandler::WorkflowStart
+        })
+        .context("the application host routes serve workflow.start")?;
+    attachment.definition["route"]["path"]
+        .as_str()
+        .map(str::to_owned)
+        .context("workflow.start names its path")
+}
+
+/// The one request item of `workflow.start`, as a generated client sends a
+/// write: the request id and the input under `value`.
+fn start_request(args: &StartArgs, input: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!([{
+        "request_id": args.idempotency_key,
+        "value": {
+            "workflow_id": args.workflow_id,
+            "input_json": input,
+            "idempotency_key": args.idempotency_key,
+        },
+    }])
+}
+
+/// Call `workflow.start` on the host with the caller's token, and return the
+/// run id it answers.
+async fn start(args: &StartArgs) -> anyhow::Result<String> {
+    let input = serde_json::from_slice(&std::fs::read(&args.input).context("read the input file")?)
+        .context("parse the input file")?;
+    let url = format!(
+        "{}{}",
+        args.host_url.trim_end_matches('/'),
+        start_route_path()?
+    );
+    let response = reqwest::Client::new()
+        .post(&url)
+        .bearer_auth(&args.token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(start_request(args, &input).to_string())
+        .send()
+        .await
+        .with_context(|| format!("call workflow.start at {url}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("read the workflow.start answer")?;
+    anyhow::ensure!(
+        status.is_success(),
+        "workflow.start answered HTTP {status}: {body}"
+    );
+    let [item]: [serde_json::Value; 1] =
+        serde_json::from_str(&body).context("workflow.start answers one item")?;
+    if let Some(error) = item.get("error") {
+        anyhow::bail!("workflow.start refused: {error}");
+    }
+    item["value"]["run_id"]
+        .as_str()
+        .map(str::to_owned)
+        .context("workflow.start answers a run id")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_calls_the_host_route_with_no_user() {
+        assert_eq!(start_route_path().unwrap(), "/wamn_control/workflow/start");
+        let args = StartArgs {
+            host_url: "https://acme.example".to_owned(),
+            token: "token".to_owned(),
+            workflow_id: "nightly".to_owned(),
+            idempotency_key: "batch-42".to_owned(),
+            input: PathBuf::from("input.json"),
+        };
+        assert_eq!(
+            start_request(&args, &serde_json::json!({"day": 1})),
+            serde_json::json!([{
+                "request_id": "batch-42",
+                "value": {
+                    "workflow_id": "nightly",
+                    "input_json": {"day": 1},
+                    "idempotency_key": "batch-42",
+                },
+            }])
+        );
+    }
 }

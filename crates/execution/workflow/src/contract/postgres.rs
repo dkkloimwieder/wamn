@@ -9,7 +9,7 @@ use wamn_run_state::queue::{
     list_workflow_runs_sql, park_queued_run_sql, release_parked_run_sql, select_automation_run_sql,
     select_run_queue_state_sql, select_schedule_run_sql,
 };
-use wamn_runtime::plugins::route_authentication::queued_service_caller;
+use wamn_runtime::plugins::route_authentication::queued_run_caller;
 
 use super::{StartRequest, Trigger, WorkflowError, WorkflowErrorType, WorkflowRun, Workflows};
 
@@ -271,7 +271,7 @@ impl Workflows for PostgresWorkflows {
             }
         };
         if matches!(request.trigger, Trigger::Automation { .. }) {
-            queued_service_caller(&transaction, self.tenant(), &principal)
+            queued_run_caller(&transaction, self.tenant(), &principal, None)
                 .await
                 .map_err(|error| {
                     WorkflowError::with_source(

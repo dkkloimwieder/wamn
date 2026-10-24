@@ -97,6 +97,42 @@ pub fn select_schedule_run_sql() -> &'static str {
         AND input_json = $10::text::jsonb"
 }
 
+/// Admit one manual run of an environment workflow (docs/plan/workflows.md
+/// R3, epic 1): the host admits it against the release it serves, and the run
+/// carries its executing principal and active role, its caller and the
+/// component digest of every node. `ON CONFLICT DO NOTHING` on the
+/// idempotency key returns no row for a repeated key, and the caller then
+/// reads the first run with [`select_manual_run_sql`].
+///
+/// Binds: `$1` tenant, `$2` application package, `$3` release manifest
+/// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
+/// wiring hash, `$8` executing principal, `$9` execution role, `$10` the
+/// invoking user, `$11` node digests JSON text, `$12` idempotency key, `$13`
+/// input JSON text, `$14` durability class.
+pub fn insert_manual_run_sql() -> String {
+    format!(
+        "INSERT INTO runs (tenant_id, package_id, manifest_digest, environment, \
+             wiring_id, wiring_version, wiring_hash, trigger_source, \
+             execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
+             node_digests_json, idempotency_key, input_json, status, durability_class) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8::text::uuid, $9, 'manual', \
+                 $10::text::uuid, $11::text::jsonb, $12, $13::text::jsonb, '{dispatched}', $14) \
+         ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+         RETURNING run_id",
+        dispatched = RunStatus::Dispatched.as_sql(),
+    )
+}
+
+/// The run a repeated manual start admitted first: the same key and the
+/// same input. It returns no row when the key belongs to another input or
+/// another grain.
+///
+/// Binds: `$1` tenant, `$2` idempotency key, `$3` input JSON text.
+pub fn select_manual_run_sql() -> &'static str {
+    "SELECT run_id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2 \
+        AND trigger_source = 'manual' AND input_json = $3::text::jsonb"
+}
+
 /// Queue one admitted run. Binds: `$1` tenant, `$2` run id.
 pub fn insert_run_queue_sql() -> &'static str {
     "INSERT INTO run_queue (tenant_id, run_id) VALUES ($1, $2)"

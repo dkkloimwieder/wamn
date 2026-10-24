@@ -174,6 +174,27 @@ impl HostRouteDelivery {
                 Ok(answer)
             }
             (
+                HostHandler::WorkflowStart,
+                HostRouteHandlers::Application {
+                    postgres,
+                    project,
+                    identity,
+                    changes,
+                },
+            ) => {
+                ApplicationRoutes {
+                    postgres,
+                    project,
+                    changes,
+                    release: &self.release,
+                    identity: identity
+                        .as_ref()
+                        .map(|(client, org)| (client.as_ref(), org.as_str())),
+                }
+                .start_workflow(caller, payload)
+                .await
+            }
+            (
                 _,
                 HostRouteHandlers::Application {
                     postgres,

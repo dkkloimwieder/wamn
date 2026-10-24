@@ -174,6 +174,7 @@ impl GuestCall for Run {
                         } else {
                             HashSet::from(["base:widget/update".into(), "base:widget/get".into()])
                         },
+                        None,
                     ))?;
                     let caller = ResourceAny::try_from_resource(caller, &mut access)?;
                     let export = instance.get_export_index(&mut access, None, "run").unwrap();

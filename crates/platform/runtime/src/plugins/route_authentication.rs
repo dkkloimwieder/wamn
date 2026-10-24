@@ -10,6 +10,7 @@
 //! A signature policy verifies the raw body through the host's project
 //! credential store and returns no caller principal.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hmac::{Hmac, KeyInit as _, Mac as _};
@@ -28,43 +29,90 @@ use wamn_session::verifier::SessionVerifier;
 use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::session_keys::IssuerKeys;
 
-/// Resolve an admitted service against its current tenant status and role
-/// grants. Its permissions are the rows of its roles.
-pub async fn queued_service_caller(
+/// The users row of one active service or user principal, each role it
+/// holds and each permission of that role. A principal without roles yields
+/// one row with a null role.
+const QUEUED_RUN_CALLER_SQL: &str = "SELECT users.id::text, users.type, user_roles.role_name, \
+         permissions.permission \
+    FROM platform.\"user\" AS users \
+    LEFT JOIN platform.user_role AS user_roles \
+      ON user_roles.tenant_id = $1 AND user_roles.user_id = users.id \
+    LEFT JOIN platform.permission AS permissions \
+      ON permissions.tenant_id = user_roles.tenant_id \
+     AND permissions.role_name = user_roles.role_name \
+   WHERE users.id = $2::text::uuid \
+     AND users.type IN ('service', 'user') AND users.status = 'active'";
+
+/// Resolve the principal of a queued run against its current tenant status
+/// and role grants.
+///
+/// With `role`, the run executes with that one role active
+/// (docs/plan/workflows.md R3): the principal is an active service (the
+/// `workflow` user or an application principal) or user that holds `role`,
+/// its permissions are the rows of `role` only, and it is `admin` only when
+/// `role` is `admin`. A principal that does not hold `role` refuses.
+///
+/// Without `role`, the run is an operator-admitted automation or a schedule
+/// run: the principal is an active service, and its permissions are the rows
+/// of every role it holds.
+pub async fn queued_run_caller(
     client: &(impl tokio_postgres::GenericClient + Sync),
     tenant: &str,
     principal_id: &str,
+    role: Option<&str>,
 ) -> anyhow::Result<AuthenticatedCaller> {
     let rows = client
-        .query(
-            "SELECT users.id::text, user_roles.role_name, permissions.permission \
-             FROM platform.\"user\" AS users \
-             LEFT JOIN platform.user_role AS user_roles \
-               ON user_roles.tenant_id = $1 AND user_roles.user_id = users.id \
-             LEFT JOIN platform.permission AS permissions \
-               ON permissions.tenant_id = user_roles.tenant_id \
-              AND permissions.role_name = user_roles.role_name \
-             WHERE users.id = $2::text::uuid \
-               AND users.type = 'service' AND users.status = 'active'",
-            &[&tenant, &principal_id],
-        )
+        .query(QUEUED_RUN_CALLER_SQL, &[&tenant, &principal_id])
         .await?;
-    let principal = rows
+    let first = rows
         .first()
-        .ok_or_else(|| anyhow::anyhow!("queued service principal is absent or inactive"))?
-        .try_get::<_, String>(0)?;
-    let mut admin = false;
-    let mut permissions = std::collections::HashSet::new();
+        .ok_or_else(|| anyhow::anyhow!("queued principal is absent or inactive"))?;
+    let principal: String = first.try_get(0)?;
+    let principal_type: String = first.try_get(1)?;
+    let mut held: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for row in &rows {
-        admin |= row.try_get::<_, Option<String>>(1)?.as_deref() == Some(ADMIN_ROLE);
-        permissions.extend(row.try_get::<_, Option<String>>(2)?);
+        if let Some(role) = row.try_get::<_, Option<String>>(2)? {
+            held.entry(role)
+                .or_default()
+                .extend(row.try_get::<_, Option<String>>(3)?);
+        }
     }
+    if let Some(role) = role {
+        return role_caller(&principal, role, &held).ok_or_else(|| {
+            anyhow::anyhow!("queued principal does not hold the run's role {role:?}")
+        });
+    }
+    anyhow::ensure!(
+        principal_type == "service",
+        "queued service principal is absent or inactive"
+    );
     Ok(AuthenticatedCaller::new(
         "automation",
         principal,
         CredentialType::QueuedService,
-        admin,
-        permissions,
+        held.contains_key(ADMIN_ROLE),
+        held.into_values().flatten().collect(),
+        None,
+    ))
+}
+
+/// The caller of a run that executes as `principal_id` with `role` active,
+/// from the roles the principal `held` with their permissions: the
+/// permissions of `role` only, and `admin` only when `role` is `admin`. None
+/// when the principal does not hold `role`.
+pub fn role_caller(
+    principal_id: &str,
+    role: &str,
+    held: &BTreeMap<String, BTreeSet<String>>,
+) -> Option<AuthenticatedCaller> {
+    let permissions = held.get(role)?;
+    Some(AuthenticatedCaller::new(
+        "workflow",
+        principal_id,
+        CredentialType::QueuedService,
+        role == ADMIN_ROLE,
+        permissions.iter().cloned().collect(),
+        Some(role.into()),
     ))
 }
 
@@ -344,12 +392,14 @@ impl PlatformRouteAuthenticator {
                 .await
                 .map_err(|_| unauthorized())?;
         }
+        let active_role = permissions.active_role();
         Ok(AuthenticatedCaller::new(
             attachment_id,
             session.claims().sub.as_str(),
             CredentialType::Session,
             permissions.admin,
             permissions.references.into_iter().collect(),
+            active_role,
         ))
     }
 }
@@ -462,12 +512,14 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     tracing::warn!(error = %error, "route operation grants unavailable");
                     authentication_unavailable()
                 })?;
+            let active_role = permissions.active_role();
             Ok(Some(AuthenticatedCaller::new(
                 attachment_id,
                 principal.id().as_str(),
                 CredentialType::Pat,
                 permissions.admin,
                 permissions.references.into_iter().collect(),
+                active_role,
             )))
         }
         .instrument(span)
@@ -555,13 +607,13 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
             CredentialType::Session,
             false,
             std::collections::HashSet::new(),
+            None,
         )))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
 
     use serde_json::{Value, json};
     use wamn_catalog::{
@@ -689,5 +741,31 @@ mod tests {
                 .expect_err("an empty authenticator refuses");
             assert_eq!((rejection.0, rejection.1.as_str()), expected);
         }
+    }
+
+    /// A queued run executes with its one role active: a principal holding
+    /// roles `a` and `b`, queued with `a`, holds `a`'s operations only; it is
+    /// `admin` only when the role is `admin`; a role it does not hold refuses.
+    #[test]
+    fn a_queued_run_holds_the_operations_of_its_role_only() {
+        let held = BTreeMap::from([
+            ("a".to_owned(), BTreeSet::from(["app:order/get".to_owned()])),
+            ("b".to_owned(), BTreeSet::from(["app:order/put".to_owned()])),
+            (ADMIN_ROLE.to_owned(), BTreeSet::new()),
+        ]);
+        let caller = role_caller("principal", "a", &held).expect("the principal holds a");
+        assert!(caller.permits("app:order/get@1.0.0"));
+        assert!(!caller.permits("app:order/put@1.0.0"));
+        assert!(!caller.admin());
+        assert_eq!(caller.active_role(), Some("a"));
+
+        let admin = role_caller("principal", ADMIN_ROLE, &held).expect("the principal holds admin");
+        assert!(admin.admin());
+        assert!(admin.permits("app:order/put@1.0.0"));
+
+        assert!(role_caller("principal", "c", &held).is_none());
+        let without_admin =
+            BTreeMap::from([("a".to_owned(), BTreeSet::from(["app:order/get".to_owned()]))]);
+        assert!(role_caller("principal", ADMIN_ROLE, &without_admin).is_none());
     }
 }

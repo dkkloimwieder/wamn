@@ -10,6 +10,10 @@
 //! `wamn_platform_identity::application`, which `wamn-ctl` also calls, so no
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
+//!
+//! `workflow.start` is the one granted route here (docs/plan/workflows.md R3,
+//! epic 1): it admits a run of the enabled version of an environment workflow
+//! against the release the host serves, as the identity the workflow names.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,10 +21,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{
-    HostAttachment, HostHandler, HostRouteAuthority, is_granted_host_route_operation,
-    is_host_route_operation, sealed_operation_reference,
+    HostAttachment, HostHandler, HostRouteAuthority, ServingManifest, gate_workflow_document,
+    is_granted_host_route_operation, is_host_route_operation, resolve_workflow_components,
+    sealed_operation_reference,
 };
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::application::{
@@ -30,9 +36,10 @@ use wamn_platform_identity::application::{
 };
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::is_project_admin;
-use wamn_project_state::ADMIN_ROLE;
+use wamn_project_state::{ADMIN_ROLE, workflow_user_id};
 use wamn_runtime::plugins::wamn_postgres::{
-    CounterSet, CounterSetError, CounterSetRefusal, WamnPostgres,
+    CounterSet, CounterSetError, CounterSetRefusal, ManualRunAdmission, ManualRunAdmitted,
+    WamnPostgres,
 };
 
 use crate::control_route::{Refusal, parse};
@@ -64,6 +71,17 @@ struct RoleRequest {
 struct PermissionRequest {
     role: String,
     operation: String,
+}
+
+/// The input of `workflow.start`. It names no user, role or release: the
+/// caller is the authenticated one, and the release is the one the host
+/// serves (docs/plan/workflows.md R3).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkflowStartRequest {
+    workflow_id: String,
+    input_json: Value,
+    idempotency_key: String,
 }
 
 #[derive(Deserialize)]
@@ -134,7 +152,134 @@ fn counter_set_refusal(refusal: &CounterSetRefusal) -> Refusal {
     }
 }
 
+/// A refusal that the contract of `workflow.start` declares, about `field`.
+fn start_refusal(code: &'static str, field: &str) -> Refusal {
+    Refusal::Declared {
+        code,
+        detail: json!({ "field": field }),
+    }
+}
+
+/// The application package of a release: the member that composes its
+/// entry, or its one package when it has no composed entry.
+fn release_application(manifest: &ServingManifest) -> Option<&str> {
+    if let Some(composing) = manifest.composing_member() {
+        return Some(&composing.package_id);
+    }
+    let mut packages = manifest.release.packages.iter();
+    match (packages.next(), packages.next()) {
+        (Some(package), None) => Some(package.package_id()),
+        _ => None,
+    }
+}
+
 impl ApplicationRoutes<'_> {
+    /// Admit one run of the enabled version of a workflow of the release's
+    /// application (docs/plan/workflows.md R3, R8). The stored graph is gated
+    /// against the release the host serves, and the run freezes the
+    /// component digest of every node. A `role` workflow executes as the
+    /// `workflow` user with its role, an `invoker` workflow as the caller
+    /// with its active role. The caller is recorded as the invoker.
+    pub(crate) async fn start_workflow(
+        &self,
+        caller: &AuthenticatedCaller,
+        payload: &str,
+    ) -> Result<Value, Refusal> {
+        let request: WorkflowStartRequest = parse(payload)?;
+        if request.workflow_id.is_empty() {
+            return Err(start_refusal("invalid_input", "workflow_id"));
+        }
+        if request.idempotency_key.is_empty() {
+            return Err(start_refusal("invalid_input", "idempotency_key"));
+        }
+        let manifest = self.release.manifest();
+        let scope = self.release.scope();
+        let tenant = scope.tenant_id.as_str();
+        let application = release_application(manifest).ok_or_else(|| {
+            Refusal::Failed(anyhow::anyhow!(
+                "the serving release names no application package"
+            ))
+        })?;
+        let workflow = self
+            .postgres
+            .enabled_workflow(
+                self.project,
+                tenant,
+                &scope.environment,
+                application,
+                &request.workflow_id,
+            )
+            .await?
+            .ok_or_else(|| start_refusal("workflow_not_enabled", "workflow_id"))?;
+        let not_served = |_| start_refusal("workflow_not_served", "workflow_id");
+        let hash = gate_workflow_document(tenant, application, manifest, &workflow.graph)
+            .map_err(not_served)?;
+        if hash.as_str() != workflow.wiring_hash {
+            return Err(start_refusal("workflow_not_served", "workflow_id"));
+        }
+        let node_digests: serde_json::Map<String, Value> =
+            resolve_workflow_components(tenant, application, manifest, &workflow.graph)
+                .map_err(not_served)?
+                .into_iter()
+                .map(|(node, component)| (node, Value::String(component.component_digest)))
+                .collect();
+        let user = caller.principal_id();
+        let (principal, role) = match (
+            workflow.execution_type.as_str(),
+            workflow.execution_role.as_deref(),
+        ) {
+            ("role", Some(role)) => (workflow_user_id().to_string(), role.to_owned()),
+            ("invoker", None) => {
+                let role = caller
+                    .active_role()
+                    .or(caller.admin().then_some(ADMIN_ROLE))
+                    .ok_or_else(|| start_refusal("active_role_required", "workflow_id"))?;
+                (user.to_owned(), role.to_owned())
+            }
+            (execution_type, _) => {
+                return Err(Refusal::Failed(anyhow::anyhow!(
+                    "workflow {:?} stores the execution type {execution_type:?}",
+                    request.workflow_id
+                )));
+            }
+        };
+        // One key space per caller and workflow, apart from the keys of
+        // the other run grains.
+        let idempotency_key = format!(
+            "manual:{user}:{}:{}",
+            request.workflow_id, request.idempotency_key
+        );
+        let node_digests = Value::Object(node_digests);
+        let admitted = self
+            .postgres
+            .admit_manual_run(
+                self.project,
+                tenant,
+                &ManualRunAdmission {
+                    package_id: application,
+                    manifest_digest: self.release.release().manifest_digest.as_str(),
+                    environment: &scope.environment,
+                    workflow_id: &request.workflow_id,
+                    workflow_version: workflow.version,
+                    wiring_hash: &workflow.wiring_hash,
+                    execution_principal_id: &principal,
+                    execution_role: &role,
+                    invoked_by_user_id: user,
+                    node_digests: &node_digests,
+                    idempotency_key: &idempotency_key,
+                    input: &request.input_json,
+                },
+            )
+            .await
+            .map_err(|error| Refusal::Failed(anyhow::anyhow!(error.to_string())))?;
+        match admitted {
+            ManualRunAdmitted::Queued { run_id } => Ok(json!({ "run_id": run_id })),
+            ManualRunAdmitted::Conflict => {
+                Err(start_refusal("idempotency_conflict", "idempotency_key"))
+            }
+        }
+    }
+
     /// Serve one application route. `request_id` is the request id of a
     /// write, which `number_counter.set` logs in the write log.
     pub(crate) async fn handle(
@@ -434,5 +579,44 @@ impl ApplicationRoutes<'_> {
             "admin": role == ADMIN_ROLE,
             "operations": operations,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `workflow.start` takes no user id: the caller is the authenticated one
+    /// (docs/plan/workflows.md R3).
+    #[test]
+    fn a_start_refuses_a_user_id() {
+        let start = json!({
+            "workflow_id": "nightly",
+            "input_json": {"day": 1},
+            "idempotency_key": "first",
+        });
+        let parsed: WorkflowStartRequest =
+            parse(&start.to_string()).unwrap_or_else(|_| panic!("the contract input parses"));
+        assert_eq!(parsed.workflow_id, "nightly");
+        for (member, value) in [
+            ("user_id", json!("11111111-1111-4111-8111-111111111111")),
+            ("role", json!("clerk")),
+            (
+                "manifest_digest",
+                json!(format!("sha256:{}", "1".repeat(64))),
+            ),
+        ] {
+            let mut named = start.clone();
+            named[member] = value;
+            assert!(
+                matches!(
+                    parse::<WorkflowStartRequest>(&named.to_string()),
+                    Err(Refusal::Delivery(
+                        wamn_engine::router_delivery::DeliveryError::InvalidPayload
+                    ))
+                ),
+                "a start naming {member} refuses"
+            );
+        }
     }
 }

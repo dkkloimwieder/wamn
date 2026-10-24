@@ -394,13 +394,20 @@ fn expected_executor_grants() -> Vec<String> {
         rows.push(format!("column|wamn_run|run_queue.{column}|UPDATE"));
     }
     // The event run grain of `wamn_run_state::queue::insert_event_run_sql`
-    // (owner ruling on wamn-upl3.6): the host admits an event-started run.
+    // (owner ruling on wamn-upl3.6): the host admits an event-started run,
+    // and the manual grain of `insert_manual_run_sql` (docs/plan/workflows.md
+    // R3).
     for column in [
         "durability_class",
         "environment",
+        "execution_principal_id",
+        "execution_role",
         "idempotency_key",
         "input_json",
+        "invoked_by",
+        "invoked_by_user_id",
         "manifest_digest",
+        "node_digests_json",
         "package_id",
         "registration_id",
         "service_principal_id",
@@ -424,6 +431,7 @@ fn expected_executor_grants() -> Vec<String> {
         "connection_requirements",
         "releases",
         "wirings",
+        "workflows",
     ] {
         rows.push(format!("relation|catalog|{relation}|SELECT"));
     }

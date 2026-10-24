@@ -20,6 +20,7 @@ mod route_identity;
 mod serving_manifest;
 mod wiring;
 mod wiring_compatibility;
+mod workflow_gate;
 
 /// Test databases with the tenant catalog floor.
 #[cfg(feature = "test-util")]
@@ -79,6 +80,7 @@ pub use wiring_compatibility::{
     WiringCompatibilityError, WiringCompatibilityErrorType, validate_resolved_wiring_compatibility,
     validate_wiring_compatibility,
 };
+pub use workflow_gate::{WorkflowGateError, gate_workflow_document, resolve_workflow_components};
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

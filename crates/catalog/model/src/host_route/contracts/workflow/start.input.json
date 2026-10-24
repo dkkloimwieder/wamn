@@ -1,0 +1,31 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.workflow_id",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Workflow"
+    },
+    {
+      "path": "value.input_json",
+      "type": "json",
+      "nullable": false,
+      "values": [],
+      "label": "Input"
+    },
+    {
+      "path": "value.idempotency_key",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Idempotency key"
+    }
+  ]
+}

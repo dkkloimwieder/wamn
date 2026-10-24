@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "run_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

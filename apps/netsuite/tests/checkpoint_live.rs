@@ -98,8 +98,8 @@ pub async fn invoke(
         )
         .await?
         .get(0);
-    let caller = wamn_runtime::plugins::route_authentication::queued_service_caller(
-        &admin, TENANT, &principal,
+    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
+        &admin, TENANT, &principal, None,
     )
     .await?;
     let document = wamn_schema_generator::operation_reference::read_authored_document(

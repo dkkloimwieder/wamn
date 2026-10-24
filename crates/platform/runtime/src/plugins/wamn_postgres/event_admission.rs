@@ -7,8 +7,16 @@
 //! `run_queue` row, in one transaction. The executor's column-exact INSERT
 //! reaches no service principal, binding world, or legacy flow column, so the
 //! run-plane grain check admits event and schedule runs from these columns.
+//!
+//! A manual workflow run (docs/plan/workflows.md R3, epic 1) enters the queue
+//! the same way: the host admits it on `workflow.start` against the release it
+//! serves, with the same credential, in one transaction.
 
-use wamn_run_state::queue::{insert_event_run_sql, insert_run_queue_sql, select_event_run_sql};
+use wamn_project_state::PlatformComponent;
+use wamn_run_state::queue::{
+    insert_event_run_sql, insert_manual_run_sql, insert_run_queue_sql, select_event_run_sql,
+    select_manual_run_sql,
+};
 
 use super::WamnPostgres;
 use super::production_claim::{
@@ -158,5 +166,147 @@ impl WamnPostgres {
         }
         .await;
         finish_queue_transaction(self, connection, result, "commit the event admission").await
+    }
+}
+
+/// One manual workflow run to admit: the enabled workflow version, the
+/// release it gated against, who it executes as, who started it, and the
+/// component digest of every node.
+#[derive(Debug, Clone, Copy)]
+pub struct ManualRunAdmission<'a> {
+    /// The application package of the release.
+    pub package_id: &'a str,
+    /// The release the host serves, as its manifest digest.
+    pub manifest_digest: &'a str,
+    pub environment: &'a str,
+    pub workflow_id: &'a str,
+    pub workflow_version: i32,
+    pub wiring_hash: &'a str,
+    pub execution_principal_id: &'a str,
+    pub execution_role: &'a str,
+    /// The session or PAT user that started the run.
+    pub invoked_by_user_id: &'a str,
+    /// `{node id: component digest}`.
+    pub node_digests: &'a serde_json::Value,
+    /// A repeated key with the same input admits no second run.
+    pub idempotency_key: &'a str,
+    pub input: &'a serde_json::Value,
+}
+
+/// What a manual admission did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManualRunAdmitted {
+    /// The run is queued, newly or by an earlier start with the same key and
+    /// input.
+    Queued { run_id: String },
+    /// The key belongs to a run with another input.
+    Conflict,
+}
+
+impl WamnPostgres {
+    /// Admit one manual workflow run in `project` for `tenant`: one `runs`
+    /// row of the manual grain and one `run_queue` row, in one transaction
+    /// under the executor credential.
+    pub async fn admit_manual_run(
+        &self,
+        project: &str,
+        tenant: &str,
+        admission: &ManualRunAdmission<'_>,
+    ) -> Result<ManualRunAdmitted, ProductionClaimError> {
+        let (connection, policy) = self
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorType::Storage,
+                    "checkout manual admission connection",
+                    format!("{error:?}"),
+                )
+            })?;
+        let executor = PlatformComponent::Executor.principal_id().to_string();
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                AuthorityClass::ExecutorPlatform,
+                false,
+                tenant,
+                Some("wamn_run"),
+                None,
+                None,
+                Some(&executor),
+                Some(PlatformComponent::Executor.principal_name()),
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorType::Storage,
+                "begin manual admission transaction",
+                format!("{error:?}"),
+            ));
+        }
+        let result = async {
+            require_executor_authority(&connection).await?;
+            let durability: String = connection
+                .query_opt(SELECT_DURABILITY_SQL, &[&tenant, &admission.environment])
+                .await
+                .map_err(|error| storage("read the environment policy", &error))?
+                .ok_or_else(|| {
+                    ProductionClaimError::new(
+                        ProductionClaimErrorType::Contract,
+                        "read the environment policy",
+                        "the environment policy is absent",
+                    )
+                })?
+                .get(0);
+            let input = admission.input.to_string();
+            let node_digests = admission.node_digests.to_string();
+            let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 14] = [
+                &tenant,
+                &admission.package_id,
+                &admission.manifest_digest,
+                &admission.environment,
+                &admission.workflow_id,
+                &admission.workflow_version,
+                &admission.wiring_hash,
+                &admission.execution_principal_id,
+                &admission.execution_role,
+                &admission.invoked_by_user_id,
+                &node_digests,
+                &admission.idempotency_key,
+                &input,
+                &durability,
+            ];
+            let inserted = connection
+                .query_opt(&insert_manual_run_sql(), &binds)
+                .await
+                .map_err(|error| storage("admit the manual run", &error))?;
+            if let Some(row) = inserted {
+                let run_id: String = row.get(0);
+                connection
+                    .execute(insert_run_queue_sql(), &[&tenant, &run_id])
+                    .await
+                    .map_err(|error| storage("queue the manual run", &error))?;
+                return Ok(ManualRunAdmitted::Queued { run_id });
+            }
+            Ok(
+                match connection
+                    .query_opt(
+                        select_manual_run_sql(),
+                        &[&tenant, &admission.idempotency_key, &input],
+                    )
+                    .await
+                    .map_err(|error| storage("read the first manual run", &error))?
+                {
+                    Some(row) => ManualRunAdmitted::Queued { run_id: row.get(0) },
+                    None => ManualRunAdmitted::Conflict,
+                },
+            )
+        }
+        .await;
+        finish_queue_transaction(self, connection, result, "commit the manual admission").await
     }
 }

@@ -595,6 +595,7 @@ mod tests {
                 CredentialType::Session,
                 false,
                 HashSet::new(),
+                None,
             )
         };
         assert!(matches!(

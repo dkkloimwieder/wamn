@@ -44,6 +44,7 @@ pub enum ProductionClaimResult {
         durable_caller_attached: bool,
         candidate: Option<ProductionCandidate>,
         service_principal_id: Option<String>,
+        workflow: Option<Box<ProductionWorkflow>>,
     },
     /// Claim-time classification removed the row without execution.
     Terminalized {
@@ -61,6 +62,17 @@ pub enum ProductionClaimResult {
 pub struct ProductionCandidate {
     pub wiring_hash: String,
     pub binding_world: CandidateBindingWorld,
+}
+
+/// What a manual workflow run froze at admission (docs/plan/workflows.md R3,
+/// R2): the graph hash, the principal it executes as, its one active role,
+/// and the component digest of every node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductionWorkflow {
+    pub wiring_hash: String,
+    pub execution_principal_id: String,
+    pub execution_role: String,
+    pub node_digests: std::collections::BTreeMap<String, String>,
 }
 
 /// The composed outcome of one claim transaction, decided before COMMIT.
@@ -95,6 +107,7 @@ struct SelectedClaim {
     durable_caller_attached: bool,
     candidate: Option<ProductionCandidate>,
     service_principal_id: Option<String>,
+    workflow: Option<Box<ProductionWorkflow>>,
 }
 
 #[derive(Debug)]
@@ -1119,6 +1132,7 @@ async fn claim_in_transaction(
         durable_caller_attached: selected.durable_caller_attached,
         candidate: selected.candidate,
         service_principal_id: selected.service_principal_id,
+        workflow: selected.workflow,
     }))
 }
 
@@ -1397,6 +1411,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
     let service_principal_id: Option<String> = row_value(row, 14, "service principal")?;
+    let workflow_hash = wiring_hash.clone();
     let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
         // A released wiring: an automation run under its service principal,
         // or an event run with no caller. The grain check tells them apart.
@@ -1444,6 +1459,20 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             "candidate-caller-grain-corrupt",
         ));
     }
+    let workflow = decode_workflow(
+        workflow_hash,
+        row_value::<Option<String>>(row, 15, "trigger source")?.as_deref(),
+        row_value(row, 16, "execution principal")?,
+        row_value(row, 17, "execution role")?,
+        row_value(row, 18, "node digests")?,
+    )?;
+    if workflow.is_some() && (candidate.is_some() || service_principal_id.is_some()) {
+        return Err(ProductionClaimError::new(
+            ProductionClaimErrorType::Contract,
+            "decode production candidate",
+            "run-execution-grain-corrupt",
+        ));
+    }
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
         package_id: row_value(row, 13, "package id")?,
@@ -1457,7 +1486,51 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         durable_caller_attached,
         candidate,
         service_principal_id,
+        workflow,
     })
+}
+
+/// The frozen execution of a manual workflow run, or none for every other
+/// grain, which carries none of its columns.
+fn decode_workflow(
+    wiring_hash: Option<String>,
+    trigger_source: Option<&str>,
+    execution_principal_id: Option<String>,
+    execution_role: Option<String>,
+    node_digests: Option<String>,
+) -> Result<Option<Box<ProductionWorkflow>>, ProductionClaimError> {
+    let corrupt = || {
+        ProductionClaimError::new(
+            ProductionClaimErrorType::Contract,
+            "decode production candidate",
+            "run-workflow-execution-corrupt",
+        )
+    };
+    match (
+        trigger_source == Some("manual"),
+        wiring_hash,
+        execution_principal_id,
+        execution_role,
+        node_digests,
+    ) {
+        (false, _, None, None, None) => Ok(None),
+        (
+            true,
+            Some(wiring_hash),
+            Some(execution_principal_id),
+            Some(execution_role),
+            Some(node_digests),
+        ) if !execution_role.is_empty() => {
+            let node_digests = serde_json::from_str(&node_digests).map_err(|_| corrupt())?;
+            Ok(Some(Box::new(ProductionWorkflow {
+                wiring_hash,
+                execution_principal_id,
+                execution_role,
+                node_digests,
+            })))
+        }
+        _ => Err(corrupt()),
+    }
 }
 
 fn valid_package_scope(package_ids: &[String]) -> bool {

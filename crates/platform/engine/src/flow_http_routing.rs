@@ -397,6 +397,7 @@ pub struct AuthenticatedCaller {
     credential_type: CredentialType,
     admin: bool,
     permissions: Arc<HashSet<String>>,
+    active_role: Option<Box<str>>,
 }
 
 /// The credential that authenticated the original request, owned by the host.
@@ -418,6 +419,7 @@ impl std::fmt::Debug for AuthenticatedCaller {
             .field("principal_id", &self.principal_id)
             .field("credential_type", &self.credential_type)
             .field("admin", &self.admin)
+            .field("active_role", &self.active_role)
             .field("permission_count", &self.permissions.len())
             .finish_non_exhaustive()
     }
@@ -428,13 +430,15 @@ impl AuthenticatedCaller {
     ///
     /// `admin` is whether the caller currently holds the built-in `admin`
     /// role. `permissions` are the stable operation references of its other
-    /// roles.
+    /// roles. `active_role` is the one role the caller acts with, when it has
+    /// one (docs/plan/workflows.md R3).
     pub fn new(
         attachment_id: impl Into<Box<str>>,
         principal_id: impl Into<Box<str>>,
         credential_type: CredentialType,
         admin: bool,
         permissions: HashSet<String>,
+        active_role: Option<Box<str>>,
     ) -> Self {
         Self {
             attachment_id: attachment_id.into(),
@@ -442,6 +446,7 @@ impl AuthenticatedCaller {
             credential_type,
             admin,
             permissions: Arc::new(permissions),
+            active_role,
         }
     }
 
@@ -458,6 +463,18 @@ impl AuthenticatedCaller {
     /// Return the original credential kind, unchanged across nested calls.
     pub fn credential_type(&self) -> CredentialType {
         self.credential_type
+    }
+
+    /// Whether the caller holds the built-in `admin` role.
+    pub fn admin(&self) -> bool {
+        self.admin
+    }
+
+    /// The one role the caller acts with: `admin` for an admin, the single
+    /// role of a caller that holds exactly one, the run's role for a queued
+    /// run, and none otherwise.
+    pub fn active_role(&self) -> Option<&str> {
+        self.active_role.as_deref()
     }
 
     /// Check one sealed registered-operation token of the serving release.
@@ -2475,6 +2492,7 @@ mod tests {
             credential_type: CredentialType::Pat,
             admin: false,
             permissions: Arc::new(HashSet::from(["platform-fixture:widget/get".to_string()])),
+            active_role: None,
         };
         assert_eq!(caller.attachment_id(), "widget-http");
         assert_eq!(

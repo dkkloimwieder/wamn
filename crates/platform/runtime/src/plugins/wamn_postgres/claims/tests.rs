@@ -3435,3 +3435,72 @@ async fn live_stream_reads_once_and_scopes_claims() {
         assert_eq!(pg.destroyed.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 }
+
+/// A session (signed roles) and a PAT (every held role) act with one role
+/// when they hold exactly one, with `admin` when they hold `admin`, and with
+/// none when they hold no role or two (docs/plan/workflows.md R3).
+#[test]
+fn session_and_pat_callers_act_with_their_single_role() {
+    let grants = |roles: &[&str]| crate::auth_cache::PrincipalGrants {
+        present: true,
+        active: true,
+        roles: roles
+            .iter()
+            .map(|role| {
+                (
+                    (*role).to_owned(),
+                    BTreeSet::from([format!("app:{role}/get")]),
+                )
+            })
+            .collect(),
+    };
+    let signed = |roles: &[&str]| {
+        roles
+            .iter()
+            .map(|role| (*role).to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    // A PAT: every held role.
+    assert_eq!(
+        held_grants(&grants(&["clerk"]), None)
+            .active_role()
+            .as_deref(),
+        Some("clerk")
+    );
+    assert_eq!(held_grants(&grants(&[]), None).active_role(), None);
+    assert_eq!(
+        held_grants(&grants(&["clerk", "buyer"]), None).active_role(),
+        None
+    );
+    assert_eq!(
+        held_grants(&grants(&["clerk", "admin"]), None)
+            .active_role()
+            .as_deref(),
+        Some("admin")
+    );
+
+    // A session: the signed roles the user still holds.
+    let held = grants(&["clerk", "buyer"]);
+    assert_eq!(
+        held_grants(&held, Some(&signed(&["clerk"])))
+            .active_role()
+            .as_deref(),
+        Some("clerk")
+    );
+    assert_eq!(
+        held_grants(&held, Some(&signed(&["clerk", "buyer"]))).active_role(),
+        None
+    );
+    assert_eq!(held_grants(&held, Some(&signed(&[]))).active_role(), None);
+    assert_eq!(
+        held_grants(&grants(&["admin"]), Some(&signed(&["admin"])))
+            .active_role()
+            .as_deref(),
+        Some("admin")
+    );
+    // An inactive user acts with no role.
+    let mut inactive = grants(&["clerk"]);
+    inactive.active = false;
+    assert_eq!(held_grants(&inactive, None).active_role(), None);
+}
