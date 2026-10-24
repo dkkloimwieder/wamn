@@ -3,6 +3,7 @@
 packages:
   - web/runtime
   - web/shell
+  - web/sync-bench
   - apps/wamn_receiving/web
   - apps/platform_ui
   # wfe, the UI library, is the git submodule web/wfe pinned by commit (docs/plan/platform-ui-app.md D3).

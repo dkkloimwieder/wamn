@@ -8,6 +8,7 @@ The generator writes the bindings, and this directory holds what the bindings ca
 | [runtime](runtime/) | `@wamn/web-runtime`: the wire contract, and the transport that classifies one response |
 | [wfe](wfe/README.md) | The UI library used by the platform and Receiving applications |
 | [shell](shell/README.md) | Shared Vite configuration and Playwright for browser tests |
+| [sync-bench](sync-bench/README.md) | The WMS packaging screen on `@wfe/sync` and the read-shape measurement of Epic 1b |
 
 ## Runtime
 
