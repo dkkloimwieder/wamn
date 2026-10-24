@@ -1,0 +1,53 @@
+body {
+  margin: 0;
+}
+.bench-page {
+  min-height: 100dvh;
+  padding: var(--ui-gap, 6px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-gap, 6px);
+}
+.bench-page h1,
+.bench-page h2 {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+}
+.bench-controls,
+.bench-controls nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-gap, 6px);
+}
+.bench-shapes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 32rem), 1fr));
+  gap: var(--ui-gap, 6px);
+  min-width: 0;
+}
+.bench-column,
+.bench-shape {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-gap, 6px);
+  min-width: 0;
+}
+.bench-column p {
+  margin: 0;
+}
+.bench-scroll {
+  height: 50dvh;
+  overflow: auto;
+  border: 1px solid var(--ui-border, currentColor);
+}
+.bench-groups {
+  border-collapse: collapse;
+}
+.bench-groups th,
+.bench-groups td {
+  text-align: start;
+  padding: 2px 6px;
+}
