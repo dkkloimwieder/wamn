@@ -486,7 +486,13 @@ fn emit_operation(
         operation.operation
     )
     .expect("write");
-    write_result_field_map(source, &result_fields_const, result_class, feed, result_fields)?;
+    write_result_field_map(
+        source,
+        &result_fields_const,
+        result_class,
+        feed,
+        result_fields,
+    )?;
 
     let Some(route) = &operation.route else {
         // An unpublished operation has types but no HTTP route to invoke.

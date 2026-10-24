@@ -278,13 +278,15 @@ pub(crate) fn changes(
     let limit = after + 1;
     let history = history_table_name(table.name());
     let present = std::iter::once("model.id IS NOT NULL".to_owned())
-        .chain(predicates.iter().map(|predicate| predicate.trim().to_owned()))
+        .chain(
+            predicates
+                .iter()
+                .map(|predicate| predicate.trim().to_owned()),
+        )
         .collect::<Vec<_>>()
         .join("\n            AND ");
     let expired = if bounded_retention {
-        format!(
-            "${transaction}::int8 < (SELECT min(entry.transaction_id) FROM {history} AS entry)"
-        )
+        format!("${transaction}::int8 < (SELECT min(entry.transaction_id) FROM {history} AS entry)")
     } else {
         "false".to_owned()
     };

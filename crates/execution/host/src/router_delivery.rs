@@ -297,8 +297,8 @@ impl RouterDeliveryBridge {
         // A change feed read takes its tag from the cursor it returns, so it
         // runs before the tag is known.
         let feed = is_feed_read(call.payload);
-        if let Some(read) = read
-            .filter(|read| read.type_ != OperationType::Get && !read.reads.is_empty() && !feed)
+        if let Some(read) =
+            read.filter(|read| read.type_ != OperationType::Get && !read.reads.is_empty() && !feed)
         {
             authorize_route(&self.operations, &call).await?;
             match self.list_tag(read, &release).await {

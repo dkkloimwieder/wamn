@@ -126,13 +126,13 @@ mod tests {
 
     #[test]
     fn a_feed_read_has_a_weak_tag_on_the_cursor_it_returns() {
-        assert!(is_feed_read(&json!([{"filter": {}, "feed": {"cursor": "c"}}])));
+        assert!(is_feed_read(
+            &json!([{"filter": {}, "feed": {"cursor": "c"}}])
+        ));
         assert!(!is_feed_read(&json!([{"filter": {}, "limit": 10}])));
         assert!(!is_feed_read(&json!([{"feed": null}])));
 
-        let result = |cursor: &str| {
-            json!([{"value": {"rows": [], "next_cursor": cursor, "complete": true}}])
-        };
+        let result = |cursor: &str| json!([{"value": {"rows": [], "next_cursor": cursor, "complete": true}}]);
         let tag = changes_tag("sha256:a", &result("c-1")).expect("a feed read has a tag");
         assert!(tag.starts_with("W/\"") && tag.ends_with('"'), "{tag}");
         assert_eq!(changes_tag("sha256:a", &result("c-1")), Some(tag.clone()));

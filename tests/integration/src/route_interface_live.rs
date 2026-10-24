@@ -840,10 +840,16 @@ fn change_of<'a>(changes: &'a Value, id: &Value) -> anyhow::Result<&'a Value> {
     let rows = changes["rows"]
         .as_array()
         .with_context(|| format!("the changes carry rows: {changes}"))?;
-    let found = rows.iter().filter(|row| &row["id"] == id).collect::<Vec<_>>();
+    let found = rows
+        .iter()
+        .filter(|row| &row["id"] == id)
+        .collect::<Vec<_>>();
     match found.as_slice() {
         [change] => Ok(change),
-        _ => anyhow::bail!("{id} appears once in the changes, not {}: {changes}", found.len()),
+        _ => anyhow::bail!(
+            "{id} appears once in the changes, not {}: {changes}",
+            found.len()
+        ),
     }
 }
 
@@ -932,7 +938,10 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
 
         // FEED COLLAPSES. A row changed three times appears once, at its
         // latest revision.
-        let next = changes["next_cursor"].as_str().context("a next cursor")?.to_owned();
+        let next = changes["next_cursor"]
+            .as_str()
+            .context("a next cursor")?
+            .to_owned();
         let mut version = w1;
         for note in ["c1", "c2", "kept-c3"] {
             version = note_widget(&paths, &first, version, note).await?;
@@ -946,7 +955,10 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
 
         // UNCHANGED. A feed with nothing new returns its cursor unchanged, and
         // the same read with its tag answers 304.
-        let idle = collapsed["next_cursor"].as_str().context("a next cursor")?.to_owned();
+        let idle = collapsed["next_cursor"]
+            .as_str()
+            .context("a next cursor")?
+            .to_owned();
         let quiet = widget_changes(&paths, &all, &idle).await?;
         anyhow::ensure!(
             quiet["rows"] == json!([]) && quiet["next_cursor"] == json!(idle),
@@ -955,7 +967,9 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         let feed_path = format!(
             "/widget/query?{}",
             wamn_execution_contract::encode_read_query(
-                json!({"feed": {"cursor": idle}}).as_object().context("an item")?
+                json!({"feed": {"cursor": idle}})
+                    .as_object()
+                    .context("an item")?
             )
         );
         let (status, tag, _) = paths.conditional(&feed_path, None).await?;
@@ -973,7 +987,10 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         let scoped = paths
             .route("/widget/query", &json!([{"filter": kept}]))
             .await?;
-        let scoped_cursor = value(&scoped)?["cursor"].as_str().context("a cursor")?.to_owned();
+        let scoped_cursor = value(&scoped)?["cursor"]
+            .as_str()
+            .context("a cursor")?
+            .to_owned();
         let left = note_widget(&paths, &first, version, "gone").await?;
         let scope_changes = widget_changes(&paths, &kept, &scoped_cursor).await?;
         let gone = change_of(&scope_changes, &first)?;
@@ -986,7 +1003,10 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
 
         // DELETE. A deleted row arrives as deleted, with no data and the
         // revision it had.
-        let deleted_cursor = scope_changes["next_cursor"].as_str().context("a cursor")?.to_owned();
+        let deleted_cursor = scope_changes["next_cursor"]
+            .as_str()
+            .context("a cursor")?
+            .to_owned();
         value(
             &paths
                 .route(

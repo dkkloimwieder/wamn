@@ -5,9 +5,7 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_record_history::{
-    ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN, history_table_name,
-};
+use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN, history_table_name};
 use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::logged_history_tables;

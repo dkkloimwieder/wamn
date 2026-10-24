@@ -7,13 +7,13 @@ use super::rust::{
 use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, BTreeSet, CHANGES_STATEMENT, CREATE_KEY_FIELD,
-    CREATE_STATEMENT,
-    CURSOR_VERSION, CatalogIr, ColumnType, ConstraintType, ContractFieldDeclaration, CrudAction,
-    CustomOperationDeclaration, CustomOperationResultDeclaration, CustomOperationType, DeleteMode,
-    FieldText, GenerateError, GenerateErrorType, ModelDeclaration, OperationDeclaration,
-    OperationErrorDetailDeclaration, PackageManifest, Projection, ProjectionContents,
-    RequiredConstraint, RequiredField, RequiredSchemaContract, RequiredTable, ResultClass,
-    StatementContract, StatementTransactionality, StatementValueContract, Table, Value, WamnApi,
+    CREATE_STATEMENT, CURSOR_VERSION, CatalogIr, ColumnType, ConstraintType,
+    ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
+    CustomOperationResultDeclaration, CustomOperationType, DeleteMode, FieldText, GenerateError,
+    GenerateErrorType, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
+    PackageManifest, Projection, ProjectionContents, RequiredConstraint, RequiredField,
+    RequiredSchemaContract, RequiredTable, ResultClass, StatementContract,
+    StatementTransactionality, StatementValueContract, Table, Value, WamnApi,
     canonical_operation_identity, column, constraint_error, constraint_error_code,
     constraint_field, custom_artifact_stem, custom_operation_constraint_origin, insert_bytes,
     insert_json, insert_json_line, json, operation_constraints, operation_exclusions,
@@ -593,7 +593,14 @@ fn emit_operation_sql(
                     "generated/sql/{model_name}/query_{field}_{}.sql",
                     sql::direction_name(direction)
                 ),
-                sql::query(table, operation, field, direction, tombstoned, feed.is_some()),
+                sql::query(
+                    table,
+                    operation,
+                    field,
+                    direction,
+                    tombstoned,
+                    feed.is_some(),
+                ),
             ));
         }
         // The change feed is the last statement of the list read.

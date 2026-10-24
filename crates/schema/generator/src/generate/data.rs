@@ -644,7 +644,9 @@ fn emit_query(
     )
     .expect("writing to a String cannot fail");
     if let Some(revision) = feed {
-        emit_feed(source, model_name, model_type, table, revision, &binds, &arguments);
+        emit_feed(
+            source, model_name, model_type, table, revision, &binds, &arguments,
+        );
     }
 }
 

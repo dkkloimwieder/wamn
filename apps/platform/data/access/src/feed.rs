@@ -176,7 +176,18 @@ mod tests {
             assert_eq!(decode(&encoded, "packagin"), Err(Invalid));
         }
         assert_eq!(
-            URL_SAFE_NO_PAD.decode(encode("packaging", &Cursor { transaction: 812, after: None }).unwrap()).unwrap(),
+            URL_SAFE_NO_PAD
+                .decode(
+                    encode(
+                        "packaging",
+                        &Cursor {
+                            transaction: 812,
+                            after: None
+                        }
+                    )
+                    .unwrap()
+                )
+                .unwrap(),
             b"packaging:812"
         );
     }
@@ -201,7 +212,10 @@ mod tests {
         }
         assert_eq!(decode("not base64!", "packaging"), Err(Invalid));
         assert_eq!(
-            decode(&format!("{}=", URL_SAFE_NO_PAD.encode("packaging:812")), "packaging"),
+            decode(
+                &format!("{}=", URL_SAFE_NO_PAD.encode("packaging:812")),
+                "packaging"
+            ),
             Err(Invalid)
         );
     }
@@ -212,7 +226,10 @@ mod tests {
             "packaging",
             Some("old"),
             900,
-            vec![changed(800, ID), changed(800, "11111111-1111-7111-8111-111111111111")],
+            vec![
+                changed(800, ID),
+                changed(800, "11111111-1111-7111-8111-111111111111"),
+            ],
             1,
         )
         .unwrap();
