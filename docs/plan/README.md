@@ -5,6 +5,7 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [CDC reader slot](cdc-reader-slot.md): done, `wamn-59z6`.
 - [Component pull](component-pull.md): done, `wamn-i87m`.
 - [Delivery](delivery.md): deferred, no bead.
+- [Docs audit](docs-audit.md): live, no bead; the 2026-10-24 audit of the docs against the source, with the decisions it needs from the owner.
 - [Environment teardown](environment-teardown.md): done, `wamn-psss`.
 - [Generated operations](generated-operations.md): done, `wamn-iowb`.
 - [Identity](identity.md): deferred, `wamn-jpx2`.
