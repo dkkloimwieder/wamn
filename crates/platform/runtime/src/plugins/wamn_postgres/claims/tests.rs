@@ -382,6 +382,69 @@ fn guard_allows_non_wamn_logical_messages_and_normal_sql() {
     }
 }
 
+// wamn-9e4ks — the guest reaches no platform counter function and writes no
+// platform.* relation; only the numbering renderer of the plugin calls them.
+#[test]
+fn guard_rejects_guest_counter_function_calls() {
+    for s in [
+        "SELECT platform.bump_counter($1::text::uuid, 'po', '')",
+        "select PLATFORM.ASSIGN_COUNTER($1::uuid, 'batch', $2)",
+        "SELECT platform.set_counter($1::uuid, 'po', '', 1)",
+        "SELECT \"platform\".\"bump_counter\"($1::uuid, 'po', '')",
+        "SELECT platform . bump_counter($1::uuid, 'po', '')",
+        "SELECT bump_counter($1::uuid, 'po', '')",
+        "WITH n AS (SELECT platform./* x */bump_counter($1::uuid, 'po', '')) SELECT 1",
+        "SELECT '/*', platform.set_counter($1::uuid, 'po', '', 1), '*/'",
+    ] {
+        assert!(
+            statement_calls_counter_function(s),
+            "should detect a counter call: {s:?}"
+        );
+        assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+    }
+}
+
+#[test]
+fn guard_rejects_guest_platform_writes() {
+    for s in [
+        "INSERT INTO platform.number_counter (sequence_id, counter, key_value, value) VALUES ($1, 'po', '', 1)",
+        "UPDATE platform.number_counter SET value = 1",
+        "update only platform.setting set value = $1",
+        "DELETE FROM platform.write_log",
+        "delete from \"platform\".\"user\" where id = $1",
+        "MERGE INTO platform.setting AS t USING s ON true WHEN MATCHED THEN DELETE",
+        "TRUNCATE platform.number_counter",
+        "truncate table only platform.setting",
+        "COPY platform.setting FROM STDIN",
+        "INSERT /* x */ INTO\n  platform . number_sequence (application, name, pattern) VALUES ($1, $2, $3)",
+        "WITH w AS (UPDATE platform.setting SET value = $1 RETURNING 1) SELECT * FROM w",
+        "SELECT '/*'; WITH w AS (DELETE FROM platform.setting RETURNING 1) SELECT '*/'",
+    ] {
+        assert!(
+            statement_writes_platform(s),
+            "should detect a platform write: {s:?}"
+        );
+        assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
+    }
+}
+
+#[test]
+fn guard_allows_platform_reads_and_application_writes() {
+    for s in [
+        "SELECT value FROM platform.number_counter WHERE sequence_id = $1::text::uuid",
+        "SELECT s.id FROM platform.number_sequence AS s WHERE s.name = $1",
+        "SELECT * FROM platform.setting WHERE key = 'timezone'",
+        "INSERT INTO purchase_order (number) VALUES ($1)",
+        "UPDATE purchase_order SET reset_counter = 0 WHERE id = $1",
+        "UPDATE myplatform.setting SET value = 1",
+        "INSERT INTO receiving.platform_note (body) VALUES ($1)",
+    ] {
+        assert!(!statement_calls_counter_function(s), "should allow: {s:?}");
+        assert!(!statement_writes_platform(s), "should allow: {s:?}");
+        assert!(reject_claim_mutation(s).is_ok(), "should allow: {s:?}");
+    }
+}
+
 // l5i9.12.2 — the emit bytes are the load-bearing contract with the reader
 // (l5i9.12.1 parses `wamn.causation` via serde `deny_unknown_fields`), so pin
 // them exactly. A builder mutation that drops the message, flips

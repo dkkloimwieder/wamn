@@ -87,10 +87,10 @@ pub(in super::super) async fn finish_transaction(
 ///   pooled connection never carries the operation of an earlier request.
 /// - `$8` `app.application` is the composing application that runs the
 ///   operation, named by its package id. A base operation reached through a
-///   composed entry binds the composing application. Numbering keys its
-///   sequences on it, so a statement of one application cannot reach another's
-///   (`docs/plan/platform-config.md`, Numbering). It binds unconditionally like
-///   `$7`, and an absent application binds `''`.
+///   composed entry binds the composing application. It is for logging only:
+///   guest SQL can rewrite it, so numbering reads the application from host
+///   state instead (`docs/plan/platform-config.md`, Numbering). It binds
+///   unconditionally like `$7`, and an absent application binds `''`.
 ///
 /// The `wamn.causation` emit (l5i9.12.2) is NOT part of this statement — it is a
 /// separate prepared emit pipelined by [`begin_with_claims`]
@@ -120,8 +120,8 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 /// `app.role` and `app.user_id` STAY. They key the RESTRICTIVE per-role and
 /// per-user policies, a different claim class layered INSIDE the tenant floor
 /// and explicitly outside `wamn-0h0g.22.6`'s scope. `app.operation` stays with
-/// them: the record-history log records it. `app.application` stays too:
-/// numbering keys its sequences on it.
+/// them: the record-history log records it. `app.application` stays too,
+/// for logging only.
 /// The SESSION-scoped settings an autocommit read still needs.
 ///
 /// `search_path` and `statement_timeout` are not claims -- they are how the

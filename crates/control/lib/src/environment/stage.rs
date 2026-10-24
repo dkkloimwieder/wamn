@@ -291,7 +291,7 @@ pub async fn materialize_application_principals(
 }
 
 /// The sequence defaults of `packages`, each under the application that
-/// numbers from it: the `app.application` claim of the package's operations,
+/// numbers from it: the application that runs the package's operations,
 /// which is the composing application of its components in `manifest`, or
 /// the package itself when the release serves none of its components.
 pub fn sequence_defaults<'a>(
