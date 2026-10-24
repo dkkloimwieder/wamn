@@ -24,7 +24,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/platform](apps/platform/) | Shared platform guests and guest libraries |
 | [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |
 | [crates](crates/) | Platform libraries, grouped by responsibility |
-| [web](web/README.md) | Browser runtime, wfe packages, and shared Vite tooling |
+| [web](web/README.md) | Browser runtime, wfe packages, shared Vite tooling, and the sync read-shape bench |
 | [tools](tools/) | Repository scripts, lint, benchmark and journey runners, and installers |
 | [tests](tests/) | Conformance, integration, system, and orchestration test owners |
 | [test-support](test-support/) | Shared test functions, fixtures, and infrastructure |

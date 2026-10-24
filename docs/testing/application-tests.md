@@ -5,10 +5,9 @@ Selected public commands need tests through the real guest, capability, transact
 Private operations use their actual caller or ingress.
 See [database tests](database-tests.md) for state and authority observations.
 
-The [owned delivery tests](../operations/delivery.md#owned-application-acceptance) invoke the same application cases with supplied release artifacts.
-Those cases compare the freshly published manifest with the exact candidate before publication.
-They report success only after application assertions and owned resource cleanup pass.
-Receiving retains baseline overlay compatibility, while WMS retains composed label delivery and partial-completion cases.
+The [release qualification](../operations/delivery.md#release-qualification) invokes the same application cases against a published release.
+Receiving with Acme runs command histories and the baseline overlay with materializer progress.
+WMS runs its released routes, partial-label completion, and restart and cache cases.
 
 The [local saved-edit case](../operations/running-tests.md#local-saved-edit-acceptance) runs the existing Receiving developer command against owned services.
 It keeps an authenticated mutation through code and SQL edits, and it observes the changed application response.
@@ -56,7 +55,7 @@ The [postcommit case](../../apps/wamn_receiving/tests/route_authentication_live/
 The [Acme test owner](../../apps/client_acme_receiving/tests/overlay_compatibility.rs) then observes the schema requirements of the candidate's unchanged overlay package artifact in that installation.
 The evidence names the overlay component by the digest the release manifest carries.
 
-An additive base and a breaking combination need a second base that no candidate carries, so they are not cluster cases (docs/plan/platform-deploy.md §8.2).
+An additive base and a breaking combination need a second base that no candidate carries, so they are not cluster cases.
 
 This tests fresh-install compatibility, not an upgrade of an existing database.
 The separate [package upgrade tests](database-tests.md#package-upgrades) exercise migration suffixes on copied predecessor data and accepted production evidence.
@@ -89,9 +88,6 @@ The Receiving tests observe stamps and the log through real routes and commands:
 - The [data access test](../../apps/wamn_receiving/tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.
 - In the same test, an Acme overlay update logs a changed-column diff that folds to the effective base and overlay row. The Receiving history read returns only its base columns. An idempotent receipt replay appends no entry.
 
-`wamn dev up` with a logging package remains unexecuted.
-The [dev command test](../../services/ctl/tests/dev_command.rs) runs it with `apps/wamn_receiving`, but its refusal comes before standup.
-
 See [database tests](database-tests.md#record-history) for the fixture rules and limits.
 
 ## Operator outcomes
@@ -119,7 +115,7 @@ Retain these observations through generated and application-owned operator code:
 - Target replacement resets data-dependent state and blocks submissions even when generated contracts are unchanged.
 - An intact previous target remains usable after failed replacement, while an invalidated target remains unavailable until matching activation succeeds.
 - Old-session responses cannot enter a new session, and restarting a pending submission neither resubmits it nor claims server cancellation.
-- Receiving composition retains projection, line editing, location selection, and submission interaction parity before replacing hand-written screens.
+- Receiving composition retains projection, line editing, location selection, and submission interaction parity.
 - WMS renders the label key from the served response contract.
 - WMS displays a committed movement with label failure only from served completion evidence, and otherwise displays an unknown outcome.
 

@@ -19,7 +19,6 @@ An absent checkpoint means that no sync completed.
 Bind the `http-page` requirement `upstream` to the fixture API before deployment.
 Grant the integration principal a role with the consumer's `item.record` permission.
 The fixture uses `/pages?limit=2`.
-Vendor-specific window filters do not belong to this fixture.
 
 The second workflow starts on a consumer item insert.
 It calls the base's `log.append` with outcome `pushed`, the item key, and the node context's delivery ID.
@@ -28,4 +27,3 @@ Change data capture (CDC) includes only the consumer schema because its event re
 
 Run `cargo test -p wamn-control --test rest_connector_publication` after building all three packages.
 The test admits every component and resolves both workflows in one release.
-The kind deployment case belongs to the later test lane.

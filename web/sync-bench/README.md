@@ -1,12 +1,10 @@
 # Sync bench
 
-This package holds Epic 1b of [wamn offline and sync](../../docs/plan/wamn-sync.md).
-It renders the WMS packaging screen from a `@wfe/sync` collection and measures two read shapes.
+This package renders the WMS packaging screen from a `@wfe/sync` collection and measures two read shapes.
 
 [`src/packaging-feed.ts`](src/packaging-feed.ts) is the feed and the collection of the `packaging` model.
-It is the one file per model that the generator will emit later.
 `list` calls the generated `query` read with the screen's list arguments.
-`changes` returns no rows until the host serves the change feed (Epic 2b).
+`changes` always returns no rows, because the host has no change feed read.
 The collection key is `packaging:` and the list arguments as canonical JSON.
 
 ## Shapes

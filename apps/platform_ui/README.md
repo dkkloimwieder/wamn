@@ -9,11 +9,10 @@ The build refuses Solid 1 modules and imports from the old UI packages.
 
 The shell core owns addresses, permission filtering, navigation, and query values.
 Its tests cover the shell, Control screens, and application administration through generated clients.
-Receiving uses this shell with generated wfe descriptions. The WMS demo awaits a rebuild on wfe.
+Receiving uses this shell with generated wfe descriptions.
 The shell passes permitted route actions through `ScreenProps.actions`, with route parameters filled.
 Receiving renders those actions through the table `toolbarActions` binding.
 
-The scope, address, permission, and query implementations therefore exist in both shells during the migration.
 Session renewal and the cookie transport retain one owner in `web/runtime`.
 DashboardShell and DashboardPanel frame dashboard screens.
 Unknown addresses and missing details show one standalone EntryPanel with a heading, one sentence, and a return link.
@@ -79,8 +78,7 @@ Identity screens and audience choice omit breadcrumbs.
 An audience with no available screens shows a named empty-state card and a link to audience selection.
 One audience opens automatically.
 
-Each dashboard uses `Theme` from wfe v0.0.6 with its unchanged light defaults.
-Dependency pins remain at the v0.0.5 baseline.
+Each dashboard uses `Theme` from wfe with its unchanged light defaults.
 WFE owns the theme properties, styles, fonts, and licenses.
 This follows [Adopt the components](../../web/wfe/docs/adoption.md) and [Default theme](../../web/wfe/docs/theme.md).
 The application owns dashboard height. EntryPanel owns the centered identity form layout.

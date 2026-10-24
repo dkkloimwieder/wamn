@@ -24,10 +24,8 @@ This controls input bytes, not database or network scheduling.
 
 ## Replay limits
 
-Controlled run-state SQL scheduling and general guest record/replay adapters remain separate proposed work in [the delivery plan](../plan/delivery.md).
+The repository has no controlled run-state SQL scheduling and no general guest record and replay adapters.
 Existing narrow controls do not establish that complete facility.
-Expand a generated domain when a named defect exposes a gap.
-Add guest replay support only as far as a named guest test requires.
 
 Recording uses synthetic data in the test process, never production data or credentials.
 Replay must not reach a database or network.
@@ -41,6 +39,4 @@ Identify the relevant [reproduction inputs](evidence.md) when reporting a failur
 Simulation can replace a redundant sequential scenario only when it covers that scenario's actual guarantee.
 It does not automatically retire process-kill, connection-loss, or contention tests.
 
-Kani, Bolero, coverage-guided fuzzing, and production invariant tripwires remain deferred.
-There is no automatic numeric-bug trigger to reopen them.
-Do not add their dependencies or toolchain work without an owner decision.
+The repository does not use Kani, Bolero, coverage-guided fuzzing, or production invariant tripwires.

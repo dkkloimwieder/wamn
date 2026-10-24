@@ -4,7 +4,7 @@ These files supply infrastructure, platform workloads, test Jobs, and database s
 
 - [infra/](infra/): cluster operators, certificates, NATS, and telemetry infrastructure.
 - [platform/](platform/): platform workloads, environment overlays, and credential examples.
-- [gcp/](gcp/): the cost guard function of the Google Cloud project.
+- [gcp/](gcp/): the Google Cloud project and cluster definitions, environment definitions, workload manifests, Helm values, operator Jobs, and the cost guard function.
 - [gates/](gates/): application-independent test Jobs and their support workloads.
 - [sql/](sql/): control, catalog, run-state, and test database schema inputs.
 - [mvp/](mvp/): retained bootstrap scripts that run before the other deployment groups.
