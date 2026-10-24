@@ -2,10 +2,11 @@
 //!
 //! A plain wash-runtime host, with no cluster host and no NATS, holds the
 //! engine, the two route plugins over the edge authenticator and delivery, the
-//! edge's operation host, and an ingress. The route guest runs as its own workload, built from the bundle
-//! bytes. The application loads once as a native application. When the
-//! configuration names a device, the device loop calls the same delivery, and
-//! when it names a forward, the forward sends each stored sample on. The
+//! edge's operation host, and an ingress. The composed entry from the bundle
+//! runs as its own workload. The application loads once as a native
+//! application. When the configuration names a device, the device loop calls
+//! the same delivery, and when it names a forward, the forward sends each
+//! stored sample on. The
 //! status socket beside the run-state file answers what the edge holds.
 
 use std::collections::HashMap;
@@ -314,7 +315,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     })
 }
 
-/// The route guest's workload, with its bytes from the bundle.
+/// The composed entry's workload, with its bytes from the bundle.
 fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartRequest {
     let mut handler = WitInterface::from("wasi:http/handler@0.3.0");
     handler

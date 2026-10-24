@@ -150,6 +150,7 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
 The edge route, device and forward tests run in the workspace run.
 Each test binary builds the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once, when its first test starts.
 It reads the component from the build output of `wamn build apps/edge_device`, so run that build first. Cargo builds the `http-route` guest as the Dockerfile does. The guest must match its pin.
+The bundle writer composes the guest with the component into the entry that the edge serves.
 The dev loop's bundle writer admits the component and writes the bundle, with no session.
 The tests sign their own sessions.
 The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.

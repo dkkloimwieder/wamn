@@ -9,7 +9,9 @@
 //! - `components.json`: the admitted component facts of the release, which the
 //!   cloud host reads from its catalog.
 //! - `grants.json`: the permissions of each role ([`Grants`]).
-//! - `flow-http.wasm`: the http-route ingress guest that serves the routes.
+//! - `flow-http.wasm`: the composed entry that serves the routes, the
+//!   http-route guest composed with the application at publish. The box
+//!   composes nothing.
 //! - `<sha256>.wasm`: the bytes of each component.
 //!
 //! The edge configuration pins the bundle digest, as a pod template pins the
@@ -33,7 +35,7 @@ use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, validate_compon
 
 use crate::grants::Grants;
 
-/// A release, its component facts, its grants and its ingress guest, each
+/// A release, its component facts, its grants and its composed entry, each
 /// checked against the pinned bundle digest.
 pub struct EdgeRelease {
     bundle_digest: String,
@@ -149,7 +151,7 @@ impl EdgeRelease {
         &self.grants
     }
 
-    /// The bytes of the ingress guest.
+    /// The bytes of the composed entry.
     pub fn ingress(&self) -> &[u8] {
         &self.ingress
     }

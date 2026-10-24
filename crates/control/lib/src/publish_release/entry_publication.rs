@@ -42,13 +42,6 @@ pub(super) async fn publish(
     );
     let route =
         std::fs::read(&route_path).context("read the publisher's pinned HTTP route guest")?;
-    let pin = format!(
-        "sha256:{}",
-        include_str!("../../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
-            .split_whitespace()
-            .next()
-            .expect("route pin exists")
-    );
     let mut candidates = Vec::new();
     for application in components.facts.values().flatten() {
         if published.manifest.components.iter().any(|released| {
@@ -58,21 +51,14 @@ pub(super) async fn publish(
             candidates.push((application, source.pull_verified(application).await?));
         }
     }
-    candidates.sort_by_key(|(_, bytes)| std::cmp::Reverse(bytes.len()));
-    let mut selected = None;
-    for (application, bytes) in candidates {
-        if super::covers_routes(published, application, &bytes)? {
-            selected = Some(super::compose_verified_application(
-                application,
-                &bytes,
-                &route,
-                &pin,
-            )?);
-            break;
-        }
-    }
-    let entry =
-        selected.context("release routes have no composed application covering their members")?;
+    let entry = super::compose_covering_entry(
+        published,
+        candidates
+            .iter()
+            .map(|(application, bytes)| (*application, bytes.as_slice()))
+            .collect(),
+        &route,
+    )?;
     // The entry lives beside the members, under the component artifact base.
     let repository = format!(
         "{component_base}/{}",

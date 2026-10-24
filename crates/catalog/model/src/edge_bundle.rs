@@ -3,8 +3,9 @@
 //!
 //! The directory holds `edge-release.json`, the canonical serving manifest,
 //! `components.json`, `grants.json`, `flow-http.wasm`, and `<sha256>.wasm` for
-//! each component. The writer is `wamn dev edge-bundle`, and the reader is
-//! `wamn-edge`.
+//! each component. `flow-http.wasm` is the composed entry: the http-route guest
+//! composed with the release's application. The writer is `wamn dev
+//! edge-bundle`, and the reader is `wamn-edge`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -18,7 +19,7 @@ pub const BUNDLE_FILE_NAME: &str = "edge-release.json";
 pub const COMPONENTS_FILE_NAME: &str = "components.json";
 /// The grants file name inside a release bundle directory.
 pub const GRANTS_FILE_NAME: &str = "grants.json";
-/// The ingress guest file name inside a release bundle directory.
+/// The composed entry file name inside a release bundle directory.
 pub const INGRESS_FILE_NAME: &str = "flow-http.wasm";
 /// The one bundle format that the writer writes and the edge reads.
 pub const BUNDLE_FORMAT: u32 = 1;

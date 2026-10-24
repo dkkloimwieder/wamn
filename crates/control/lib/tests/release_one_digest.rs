@@ -47,6 +47,13 @@ fn device_component() -> PathBuf {
     repository().join("apps/target/wamn/edge_device/components/device.wasm")
 }
 
+/// The pinned http-route guest, built as the Dockerfile builds it. The edge
+/// tests build it, or run `cargo build --release --target wasm32-wasip2 -p
+/// http-route` in `apps/` with `tools/guest-rustflags`.
+fn route_guest() -> PathBuf {
+    repository().join("apps/target/wasm32-wasip2/release/http_route.wasm")
+}
+
 /// Admit the component and assemble the release of `apps/edge_device` for
 /// `environment`, as publish projects it, and return its manifest bytes and
 /// admitted component facts.
@@ -88,10 +95,9 @@ fn one_release_published_for_two_environments_has_one_digest() {
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("release-one-digest-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create the scratch directory");
-    // The bundle copies the ingress guest without reading it, and the manifest
+    // The bundle composes the route guest into its entry, and the manifest
     // does not depend on it.
-    let ingress = root.join("ingress.wasm");
-    std::fs::write(&ingress, b"ingress").expect("write the ingress stand-in");
+    let ingress = route_guest();
 
     let (dev, dev_facts) = publish("dev", &component, &ingress, &root);
     let (prod, prod_facts) = publish("prod", &component, &ingress, &root);

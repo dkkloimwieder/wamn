@@ -558,6 +558,23 @@ pub fn compose_release_entry(
     admissions: &[crate::component_admission::ComponentAdmission],
     route_bytes: &[u8],
 ) -> anyhow::Result<ComposedApplication> {
+    compose_covering_entry(
+        published,
+        admissions
+            .iter()
+            .map(|admission| (admission.facts(), admission.bytes()))
+            .collect(),
+        route_bytes,
+    )
+}
+
+/// Compose the largest released application that serves every release route
+/// with the pinned route layer. Each candidate carries its verified bytes.
+pub fn compose_covering_entry(
+    published: &PublishedRelease,
+    mut candidates: Vec<(&AdmittedComponent, &[u8])>,
+    route_bytes: &[u8],
+) -> anyhow::Result<ComposedApplication> {
     let pin = format!(
         "sha256:{}",
         include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
@@ -565,11 +582,10 @@ pub fn compose_release_entry(
             .next()
             .expect("route pin exists")
     );
-    let mut candidates = admissions.iter().collect::<Vec<_>>();
-    candidates.sort_by_key(|admission| std::cmp::Reverse(admission.bytes().len()));
-    for application in candidates {
-        if covers_routes(published, application.facts(), application.bytes())? {
-            return compose_application(application, route_bytes, &pin);
+    candidates.sort_by_key(|(_, bytes)| std::cmp::Reverse(bytes.len()));
+    for (application, bytes) in candidates {
+        if covers_routes(published, application, bytes)? {
+            return compose_verified_application(application, bytes, route_bytes, &pin);
         }
     }
     anyhow::bail!("release routes have no composed application covering their members")

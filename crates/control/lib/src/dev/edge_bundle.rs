@@ -2,8 +2,10 @@
 //!
 //! The loop's release stage publishes the serving manifest and admits each
 //! component into its local artifacts directory. This writer copies those exact
-//! bytes into a new directory, adds the grants and the ingress guest, and pins
-//! every file in `edge-release.json` (docs/history/edge.md section 4.6). The
+//! bytes into a new directory, adds the grants, composes the pinned http-route
+//! guest with the release's application into the entry as cloud publish does,
+//! and pins every file in `edge-release.json` (docs/history/edge.md section
+//! 4.6). The edge loads the entry and composes nothing. The
 //! grants give the built-in role `admin` the permissions of every operation
 //! that an attachment serves, as `admin` holds every served operation in the
 //! cloud.
@@ -29,7 +31,9 @@ use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 use super::coordinator::{NODE_CAPABILITY, PACKAGE_COMPONENTS, POSTGRES_CAPABILITY, TemporaryFile};
 use crate::component_admission::{AdmitComponentRequest, admit_component};
 use crate::component_declaration::{authored_base_digests, render_declaration_document};
-use crate::publish_release::{PublishReleaseRequest, assemble_local_release};
+use crate::publish_release::{
+    PublishReleaseRequest, PublishedRelease, assemble_local_release, compose_covering_entry,
+};
 
 /// The environment coordinate of the box: the edge configuration's `[scope]`.
 /// The tenant of the release is [`project_env_tenant`] of the three.
@@ -47,11 +51,13 @@ impl EdgeScope<'_> {
 }
 
 /// Write the bundle of the local release in `release` into the new directory
-/// `out`, with the ingress guest at `ingress`, and return the digest of
-/// `edge-release.json`. `scope` is the coordinate the edge configuration names.
+/// `out`, with the entry composed from the http-route guest at `ingress`, and
+/// return the digest of `edge-release.json`. `scope` is the coordinate the edge
+/// configuration names.
 ///
-/// Refuses an existing `out`, a release with a wiring, and component bytes
-/// that do not match their admitted digest.
+/// Refuses an existing `out`, a release with a wiring, component bytes that do
+/// not match their admitted digest, and a route guest that differs from its
+/// pin.
 pub fn write(
     release: &Path,
     ingress: &Path,
@@ -162,7 +168,7 @@ fn write_bundle(
     ingress: &Path,
     out: &Path,
 ) -> anyhow::Result<String> {
-    let (manifest, _) = ServingManifest::from_canonical_bytes(manifest_bytes)
+    let (manifest, digest) = ServingManifest::from_canonical_bytes(manifest_bytes)
         .context("the local release manifest is not canonical")?;
     ensure!(
         manifest.workflow.is_empty(),
@@ -188,9 +194,8 @@ fn write_bundle(
 
     let components = serde_json::to_vec(&facts.components).context("encode the facts")?;
     let grants = serde_json::to_vec(&grants).context("encode the grants")?;
-    let ingress_bytes = fs::read(ingress).with_context(|| format!("read {}", ingress.display()))?;
-
-    fs::create_dir(out).with_context(|| format!("create {}", out.display()))?;
+    let route = fs::read(ingress).with_context(|| format!("read {}", ingress.display()))?;
+    let mut bodies = Vec::with_capacity(facts.components.len());
     for component in &facts.components {
         let digest = &component.component_digest;
         let bytes = read_component(digest)?;
@@ -198,18 +203,43 @@ fn write_bundle(
             file_digest(&bytes) == *digest,
             "component {digest} changed after admission"
         );
-        fs::write(local_component_path(out, digest)?, bytes)?;
+        bodies.push(bytes);
+    }
+    let published = PublishedRelease {
+        manifest,
+        digest,
+        canonical_bytes: manifest_bytes.to_vec(),
+    };
+    let entry = compose_covering_entry(
+        &published,
+        facts
+            .components
+            .iter()
+            .zip(&bodies)
+            .map(|(fact, bytes)| (fact, bytes.as_slice()))
+            .collect(),
+        &route,
+    )
+    .context("compose the edge entry")?;
+    let ingress_bytes = entry.bytes();
+
+    fs::create_dir(out).with_context(|| format!("create {}", out.display()))?;
+    for (component, bytes) in facts.components.iter().zip(bodies) {
+        fs::write(
+            local_component_path(out, &component.component_digest)?,
+            bytes,
+        )?;
     }
     fs::write(out.join(RELEASE_MANIFEST_FILE_NAME), manifest_bytes)?;
     fs::write(out.join(COMPONENTS_FILE_NAME), &components)?;
     fs::write(out.join(GRANTS_FILE_NAME), &grants)?;
-    fs::write(out.join(INGRESS_FILE_NAME), &ingress_bytes)?;
+    fs::write(out.join(INGRESS_FILE_NAME), ingress_bytes)?;
     let bundle = serde_json::to_vec(&EdgeBundle {
         format: BUNDLE_FORMAT,
         manifest: file_digest(manifest_bytes),
         components: file_digest(&components),
         grants: file_digest(&grants),
-        ingress: file_digest(&ingress_bytes),
+        ingress: file_digest(ingress_bytes),
     })
     .context("encode the bundle")?;
     fs::write(out.join(BUNDLE_FILE_NAME), &bundle)?;
