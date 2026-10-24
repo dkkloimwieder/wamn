@@ -33,6 +33,8 @@ pnpm run build
 node bench/run.mjs --out <results.json>
 ```
 
+`bench/both.mjs` opens both shapes side by side at 100,000 rows and prints what each shows.
+
 ## Inputs
 
 The package reads the generated WMS client from `apps/target/wamn/wamn_wms/client-ts`.
