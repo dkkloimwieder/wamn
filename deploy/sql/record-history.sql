@@ -124,7 +124,8 @@ BEGIN
            ) AS c (ord, name, definition)
      WHERE tenant OR c.name <> 'tenant_id';
     derived := derived || ARRAY[history || '_pkey', history || '_type_check',
-                                history || '_operation_check', history || '_position_seq'];
+                                history || '_operation_check', history || '_position_seq',
+                                history || '_transaction_id_idx'];
     IF EXISTS (SELECT FROM unnest(derived) AS d (name) WHERE octet_length(d.name) >= 64) THEN
         RAISE EXCEPTION USING ERRCODE = '22023',
             MESSAGE = format('history-name-too-long: %s', relation);
@@ -139,6 +140,9 @@ BEGIN
         history || '_type_check',
         history || '_operation_check', operation_pattern,
         history || '_pkey');
+    -- The change feed reads the entries of a range of transactions.
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I.%I (transaction_id)',
+                   history || '_transaction_id_idx', schema, history);
 END
 $create_history_table$;
 REVOKE ALL ON FUNCTION wamn_history.create_history_table(text, text, boolean) FROM PUBLIC;

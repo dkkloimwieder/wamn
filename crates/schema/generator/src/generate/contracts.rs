@@ -6,7 +6,8 @@ use super::rust::{
 };
 use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
-    AccessOperationErrorLiteral, BTreeMap, BTreeSet, CREATE_KEY_FIELD, CREATE_STATEMENT,
+    AccessOperationErrorLiteral, BTreeMap, BTreeSet, CHANGES_STATEMENT, CREATE_KEY_FIELD,
+    CREATE_STATEMENT,
     CURSOR_VERSION, CatalogIr, ColumnType, ConstraintType, ContractFieldDeclaration, CrudAction,
     CustomOperationDeclaration, CustomOperationResultDeclaration, CustomOperationType, DeleteMode,
     FieldText, GenerateError, GenerateErrorType, ModelDeclaration, OperationDeclaration,
@@ -584,13 +585,31 @@ fn emit_operation_sql(
                 .collect());
         }
         let variants = query_variants(operation);
-        let mut paths = Vec::with_capacity(variants.len());
+        let feed = model.feed_revision();
+        let mut statements = Vec::with_capacity(variants.len() + 1);
         for (field, direction) in variants {
-            let path = format!(
-                "generated/sql/{model_name}/query_{field}_{}.sql",
-                sql::direction_name(direction)
-            );
-            let bytes = sql::query(table, operation, field, direction, tombstoned).into_bytes();
+            statements.push((
+                format!(
+                    "generated/sql/{model_name}/query_{field}_{}.sql",
+                    sql::direction_name(direction)
+                ),
+                sql::query(table, operation, field, direction, tombstoned, feed.is_some()),
+            ));
+        }
+        // The change feed is the last statement of the list read.
+        if let Some(revision) = feed {
+            // A retention of `P<n>D` prunes entries, so a cursor can expire.
+            let bounded = model
+                .log_retention()
+                .is_some_and(|retention| retention.starts_with('P'));
+            statements.push((
+                format!("generated/sql/{model_name}/{CHANGES_STATEMENT}.sql"),
+                sql::changes(table, operation, revision, tombstoned, bounded),
+            ));
+        }
+        let mut paths = Vec::with_capacity(statements.len());
+        for (path, sql) in statements {
+            let bytes = sql.into_bytes();
             insert_bytes(files, &path, bytes.clone())?;
             if sql_corpus.insert(path.clone(), bytes).is_some() {
                 return Err(GenerateError::for_path(
@@ -800,7 +819,29 @@ fn emit_operation_contracts(
         &format!("{root}.operation.json"),
         &Value::Object(operation_contract),
     )?;
-    let input = input_contract(manifest, model, table, action, operation);
+    let mut input = input_contract(manifest, model, table, action, operation);
+    // A list read with a change feed takes the feed part in place of a page
+    // request: the cursor a page or a previous feed read returned, and the
+    // limit of the page (docs/plan/wamn-sync.md).
+    if action == CrudAction::Query
+        && model.feed_revision().is_some()
+        && let Some(limit) = &operation.limit
+    {
+        input["feed"] = json!({
+            "cursor": {
+                "encoding": "base64url_unpadded",
+                "opaque": true,
+                "invalid": "invalid_input",
+                "expired": "cursor_expired",
+            },
+            "limit": {
+                "default": limit.default,
+                "minimum": limit.minimum,
+                "maximum": limit.maximum,
+                "invalid": "invalid_input",
+            },
+        });
+    }
     insert_json(files, &format!("{root}.input.json"), &input)?;
     insert_json(
         files,
@@ -1176,6 +1217,9 @@ fn error_contract(
             Code::ConcurrencyConflict,
             json!({"literal": "concurrency_conflict"}),
         ));
+    }
+    if action == CrudAction::Query && model.feed_revision().is_some() {
+        cases.push((Code::CursorExpired, json!({"literal": "cursor_expired"})));
     }
     if action == CrudAction::Create {
         cases.push((

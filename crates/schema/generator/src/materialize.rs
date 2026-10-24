@@ -29,7 +29,7 @@ use crate::{
     manifest::CONTROL_OWNED_RELATION_TABLES,
 };
 
-pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.5";
+pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.6";
 pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
 
 #[derive(Debug)]

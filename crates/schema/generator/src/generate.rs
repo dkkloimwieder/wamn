@@ -43,6 +43,8 @@ const CURSOR_VERSION: u8 = 1;
 pub(crate) const CREATE_KEY_FIELD: &str = "idempotency_key";
 /// Insert the row. Its defaults mint its identities, and `RETURNING` hands them back.
 const CREATE_STATEMENT: &str = "create";
+/// The change feed statement of a list read with a feed.
+const CHANGES_STATEMENT: &str = "changes";
 
 /// One package-owned authored SQL source supplied without filesystem access.
 #[derive(Debug, Clone, Copy)]
@@ -514,6 +516,9 @@ fn operation_error_details(
     }
     if action == CrudAction::Create {
         codes.insert(Code::IdempotencyConflict);
+    }
+    if action == CrudAction::Query && model.feed_revision().is_some() {
+        codes.insert(Code::CursorExpired);
     }
     codes.extend(
         operation_constraints(catalog, table, action, operation, model)

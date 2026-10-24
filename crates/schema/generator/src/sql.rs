@@ -1,5 +1,7 @@
 use wamn_schema_introspection::ir::{Column, ColumnType, Table};
 
+use wamn_record_history::history_table_name;
+
 use crate::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
 use crate::{CursorDirection, OperationDeclaration};
 
@@ -213,7 +215,131 @@ pub(crate) fn query(
     sort_field: &str,
     direction: CursorDirection,
     tombstoned: bool,
+    feed: bool,
 ) -> String {
+    let (mut predicates, next_bind) = scope_predicates(table, operation, tombstoned);
+    let cursor_value_bind = next_bind;
+    let cursor_id_bind = cursor_value_bind + 1;
+    let limit_bind = cursor_id_bind + 1;
+    let sort_type = postgres_type(column_type(table, sort_field));
+    let comparison = match direction {
+        CursorDirection::Ascending => ">",
+        CursorDirection::Descending => "<",
+    };
+    predicates.push(format!(
+        "    (${cursor_value_bind}::{sort_type} IS NULL OR (model.{sort_field}, model.id) {comparison} (${cursor_value_bind}::{sort_type}, ${cursor_id_bind}::uuid))"
+    ));
+    let page = format!(
+        "SELECT\n    {}\nFROM {} AS model\nWHERE\n{}\nORDER BY model.{sort_field} {direction}, model.id {direction}\nLIMIT ${limit_bind}::int8",
+        select_columns(table),
+        table.name(),
+        predicates.join("\n    AND\n"),
+        direction = sql_direction(direction),
+    );
+    if !feed {
+        return format!("{page};\n");
+    }
+    // The page of a list read with a change feed also returns the cursor the
+    // feed starts from: the snapshot xmin of this one statement. The outer
+    // row carries it when the page has no rows (`docs/plan/wamn-sync.md`).
+    format!(
+        "SELECT\n    bound.feed_cursor,\n    {}\nFROM (SELECT {SNAPSHOT_XMIN} AS feed_cursor) AS bound\nLEFT JOIN LATERAL (\n{}\n) AS page ON true\nORDER BY page.{sort_field} {direction}, page.id {direction};\n",
+        aliased_columns(table, "page"),
+        indent(&page),
+        direction = sql_direction(direction),
+    )
+}
+
+/// The snapshot xmin of the statement: every transaction below it has ended.
+const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8";
+
+/// The change feed of a list read (`docs/plan/wamn-sync.md`, "Change feed").
+///
+/// The statement reads the history entries of the transactions from the
+/// cursor transaction up to the snapshot xmin, collapsed to one row per id in
+/// transaction and id order. Each row carries the live row when it is still
+/// in the scope of the list's filters. Otherwise it is a deletion, and it
+/// carries the revision the delete entry left. The outer row carries the
+/// snapshot xmin, and whether the cursor is older than the oldest entry the
+/// retention keeps, even when no entry changed.
+///
+/// The binds are the list's filters and search, then the cursor transaction,
+/// the cursor id and the limit.
+pub(crate) fn changes(
+    table: &Table,
+    operation: &OperationDeclaration,
+    revision: &str,
+    tombstoned: bool,
+    bounded_retention: bool,
+) -> String {
+    let (predicates, next_bind) = scope_predicates(table, operation, tombstoned);
+    let transaction = next_bind;
+    let after = transaction + 1;
+    let limit = after + 1;
+    let history = history_table_name(table.name());
+    let present = std::iter::once("model.id IS NOT NULL".to_owned())
+        .chain(predicates.iter().map(|predicate| predicate.trim().to_owned()))
+        .collect::<Vec<_>>()
+        .join("\n            AND ");
+    let expired = if bounded_retention {
+        format!(
+            "${transaction}::int8 < (SELECT min(entry.transaction_id) FROM {history} AS entry)"
+        )
+    } else {
+        "false".to_owned()
+    };
+    format!(
+        "SELECT
+    bound.feed_end,
+    bound.expired,
+    page.change_id,
+    page.change_transaction,
+    page.present,
+    page.deleted_version,
+    {columns}
+FROM (
+    SELECT
+        {SNAPSHOT_XMIN} AS feed_end,
+        {expired} AS expired
+) AS bound
+LEFT JOIN LATERAL (
+    SELECT
+        changed.change_id,
+        changed.change_transaction,
+        ({present}) AS present,
+        changed.deleted_version,
+        {model_columns}
+    FROM (
+        SELECT
+            (entry.row_key->>'id')::uuid AS change_id,
+            max(entry.transaction_id) AS change_transaction,
+            max((entry.before->>'{revision}')::int8) FILTER (WHERE entry.type = 'delete') AS deleted_version
+        FROM {history} AS entry
+        WHERE entry.transaction_id >= ${transaction}::int8
+          AND entry.transaction_id < bound.feed_end
+        GROUP BY (entry.row_key->>'id')::uuid
+    ) AS changed
+    LEFT JOIN {table} AS model ON model.id = changed.change_id
+    WHERE ${after}::uuid IS NULL
+       OR (changed.change_transaction, changed.change_id) > (${transaction}::int8, ${after}::uuid)
+    ORDER BY changed.change_transaction, changed.change_id
+    LIMIT ${limit}::int8
+) AS page ON true
+ORDER BY page.change_transaction, page.change_id;
+",
+        columns = aliased_columns(table, "page"),
+        model_columns = select_columns(table).replace("\n    ", "\n        "),
+        table = table.name(),
+    )
+}
+
+/// The predicates of a list read's filters and search, in bind order from
+/// `$1`, and the next free bind.
+fn scope_predicates(
+    table: &Table,
+    operation: &OperationDeclaration,
+    tombstoned: bool,
+) -> (Vec<String>, usize) {
     let mut predicates = Vec::new();
     if tombstoned {
         predicates.push(format!("    {LIVE_ROW}"));
@@ -266,24 +392,15 @@ pub(crate) fn query(
                 .join("\n        OR ")
         ));
     }
-    let cursor_value_bind = next_bind;
-    let cursor_id_bind = cursor_value_bind + 1;
-    let limit_bind = cursor_id_bind + 1;
-    let sort_type = postgres_type(column_type(table, sort_field));
-    let comparison = match direction {
-        CursorDirection::Ascending => ">",
-        CursorDirection::Descending => "<",
-    };
-    predicates.push(format!(
-        "    (${cursor_value_bind}::{sort_type} IS NULL OR (model.{sort_field}, model.id) {comparison} (${cursor_value_bind}::{sort_type}, ${cursor_id_bind}::uuid))"
-    ));
-    format!(
-        "SELECT\n    {}\nFROM {} AS model\nWHERE\n{}\nORDER BY model.{sort_field} {direction}, model.id {direction}\nLIMIT ${limit_bind}::int8;\n",
-        select_columns(table),
-        table.name(),
-        predicates.join("\n    AND\n"),
-        direction = sql_direction(direction),
-    )
+    (predicates, next_bind)
+}
+
+/// Each statement line indented by four more spaces.
+fn indent(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The bounds of one range filter: each bound the value states, inclusive.
@@ -322,6 +439,16 @@ fn column_type(table: &Table, field: &str) -> ColumnType {
         .find(|column| column.name() == field)
         .expect("validation resolved SQL field")
         .column_type()
+}
+
+/// The model columns as an outer statement reads them from `alias`.
+fn aliased_columns(table: &Table, alias: &str) -> String {
+    table
+        .columns()
+        .iter()
+        .map(|column| format!("{alias}.{}", column.name()))
+        .collect::<Vec<_>>()
+        .join(",\n    ")
 }
 
 fn select_columns(table: &Table) -> String {
@@ -388,7 +515,7 @@ mod tests {
                 .expect("declare a paged query");
         for direction in [CursorDirection::Ascending, CursorDirection::Descending] {
             let ascending = matches!(direction, CursorDirection::Ascending);
-            let sql = query(&table, &operation, "rank", direction, false);
+            let sql = query(&table, &operation, "rank", direction, false, false);
             client
                 .batch_execute(&format!("PREPARE page AS {sql}"))
                 .await

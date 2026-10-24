@@ -2545,6 +2545,108 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
     );
 }
 
+/// A logged model with a generated list read and a revision field gets the
+/// change feed of its list read (`docs/plan/wamn-sync.md`, Epic 2b): the
+/// changes statement, the feed part of the input, `cursor_expired` for a
+/// retention that prunes, and the App role's read of the history columns the
+/// statement selects. The cursor stays opaque: no contract or route names a
+/// history position or a transaction id.
+#[test]
+fn a_logged_list_read_gets_its_change_feed() {
+    let generated = |retention: &str| {
+        let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), retention);
+        manifest["models"]["gadget"]["operations"]["query"]
+            .as_object_mut()
+            .unwrap()
+            .remove("authored_sql");
+        run(&all_stamps_catalog(), &manifest, &[]).expect("a generated list read generates")
+    };
+    let pruned = generated("P30D");
+    let changes = std::str::from_utf8(
+        pruned
+            .file("generated/sql/gadget/changes.sql")
+            .expect("the list read has a changes statement")
+            .bytes(),
+    )
+    .unwrap();
+    for part in [
+        "pg_snapshot_xmin(pg_current_snapshot())",
+        "FROM gadget_history AS entry",
+        "LEFT JOIN gadget AS model ON model.id = changed.change_id",
+        "min(entry.transaction_id)",
+    ] {
+        assert!(changes.contains(part), "{part}:\n{changes}");
+    }
+    let page = std::str::from_utf8(
+        pruned
+            .file("generated/sql/gadget/query_created_at_ascending.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(
+        page.contains("AS feed_cursor") && page.contains("LEFT JOIN LATERAL"),
+        "the page carries its feed cursor:\n{page}"
+    );
+
+    let input = artifact_json(&pruned, "generated/contracts/gadget/query.input.json");
+    assert_eq!(input["feed"]["cursor"]["expired"], json!("cursor_expired"));
+    assert_eq!(input["feed"]["limit"]["maximum"], json!(100));
+    let route = artifact_json(&pruned, "generated/routes/gadget/query.json");
+    assert_eq!(
+        route["items"]["properties"]["feed"]["properties"]["cursor"],
+        json!({"type": "string", "minLength": 1})
+    );
+    let errors = artifact_json(&pruned, "generated/contracts/gadget/query.errors.json");
+    assert!(
+        errors["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|case| case["literal"] == "cursor_expired"),
+        "{errors}"
+    );
+    for path in [
+        "generated/contracts/gadget/query.input.json",
+        "generated/contracts/gadget/query.result.json",
+        "generated/contracts/gadget/query.errors.json",
+        "generated/routes/gadget/query.json",
+    ] {
+        let text = std::str::from_utf8(pruned.file(path).unwrap().bytes()).unwrap();
+        for name in ["position", "transaction_id", "xmin"] {
+            assert!(!text.contains(name), "{path} names {name}: {text}");
+        }
+    }
+
+    let overlay = artifact_json(&pruned, DATA_ACCESS_OVERLAY_PATH);
+    let history = object_named(
+        overlay["relations"].as_array().unwrap(),
+        "table",
+        "gadget_history",
+    );
+    assert_eq!(
+        history["select_fields"],
+        json!(["before", "row_key", "transaction_id", "type"])
+    );
+
+    // An unlimited retention prunes nothing, so no cursor expires.
+    let unlimited = generated("unlimited");
+    let changes = std::str::from_utf8(
+        unlimited
+            .file("generated/sql/gadget/changes.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(!changes.contains("min(entry.transaction_id)"), "{changes}");
+
+    // A model that keeps no log has no history table and no feed.
+    let unlogged = generated("none");
+    assert!(unlogged.file("generated/sql/gadget/changes.sql").is_none());
+    let input = artifact_json(&unlogged, "generated/contracts/gadget/query.input.json");
+    assert!(input.get("feed").is_none(), "{input}");
+}
+
 /// A custom operation reads a history table, and the read adds only its select grant.
 #[test]
 fn a_custom_operation_reads_a_history_table() {

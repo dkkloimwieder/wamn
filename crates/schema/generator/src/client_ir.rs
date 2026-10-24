@@ -504,6 +504,10 @@ pub struct PagingIr {
     /// contract JSON deliberately: its members carry semantic order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<Value>,
+    /// Whether the read takes the feed part, which reads the changes since a
+    /// cursor in place of a page.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub feed: bool,
 }
 
 /// One declared filter.
@@ -1443,6 +1447,7 @@ fn paging_of(input: &Value) -> Option<PagingIr> {
             })
         }),
         pagination: pagination.cloned(),
+        feed: input.get("feed").is_some_and(Value::is_object),
     })
 }
 

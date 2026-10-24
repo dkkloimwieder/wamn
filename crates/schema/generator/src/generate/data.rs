@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 
 use super::wit::access_error_literal;
 use super::{
-    AccessOperationErrorLiteral, AccessorBind, ColumnType, CrudAction, GenerateError,
+    AccessOperationErrorLiteral, AccessorBind, Column, ColumnType, CrudAction, GenerateError,
     ModelDeclaration, OperationDeclaration, PackageManifest, Table, WamnApi, column, insert_bytes,
     query_variants, rust_identifier, rust_type_identifier, sql,
 };
@@ -33,7 +33,7 @@ const ACTIONS: [CrudAction; 5] = [
 /// The literals a data function can answer. The codec answers
 /// `idempotency_conflict` itself, from the write log, so no data function
 /// produces it.
-const CODES: [AccessOperationErrorLiteral; 11] = [
+const CODES: [AccessOperationErrorLiteral; 12] = [
     AccessOperationErrorLiteral::InvalidInput,
     AccessOperationErrorLiteral::NotFound,
     AccessOperationErrorLiteral::ConcurrencyConflict,
@@ -45,6 +45,7 @@ const CODES: [AccessOperationErrorLiteral; 11] = [
     AccessOperationErrorLiteral::Timeout,
     AccessOperationErrorLiteral::PermissionDenied,
     AccessOperationErrorLiteral::InternalError,
+    AccessOperationErrorLiteral::CursorExpired,
 ];
 
 /// The Rust type a request carries a value of this column type in: the type
@@ -147,7 +148,7 @@ pub(super) fn emit_model_data(
         source,
         "// The generated `{model_name}` operations.\n\n\
          #[allow(unused_imports)]\n\
-         use wamn_data_access::{{Direction, Invalid, Page, cursor, scalar}};\n\
+         use wamn_data_access::{{Direction, Invalid, Page, cursor, feed, scalar}};\n\
          {connection}\n\
          #[allow(unused_imports)]\n\
          use super::error::{{Constraints, Error}};\n\n\
@@ -189,7 +190,14 @@ pub(super) fn emit_model_data(
     for (action, operation) in &model.operations {
         match action {
             CrudAction::Get => emit_get(&mut source, model_name, &model_type),
-            CrudAction::Query => emit_query(&mut source, model_name, &model_type, table, operation),
+            CrudAction::Query => emit_query(
+                &mut source,
+                model_name,
+                &model_type,
+                table,
+                operation,
+                model.feed_revision(),
+            ),
             CrudAction::Create => {
                 let number = model.number_field().map(|(field, sequence)| {
                     let pattern = &manifest.sequences[sequence].pattern;
@@ -501,6 +509,7 @@ fn emit_query(
     model_type: &str,
     table: &Table,
     operation: &OperationDeclaration,
+    feed: Option<&str>,
 ) {
     let pagination = operation
         .pagination
@@ -541,6 +550,15 @@ fn emit_query(
         arguments.push("search".to_owned());
     }
     let arguments = arguments.join(", ");
+    // A list read with a feed reads the feed cursor with its page.
+    let (feed_split, feed_wrap) = if feed.is_some() {
+        (
+            "let (feed_cursor, rows) = feed_page(rows)?;\n",
+            ".map(|page| page.with_feed_cursor(feed_cursor))",
+        )
+    } else {
+        ("", "")
+    };
 
     let default = &pagination.default_sort;
     let mut arms = String::new();
@@ -570,9 +588,10 @@ fn emit_query(
              None => (None, None),\n\
              }};\n\
              let rows = sql::query_{field}_{direction_name}(connection, {arguments}{comma} cursor_key, cursor_id, input.limit + 1).await.map_err(|error| query_statement(&error))?;\n\
+             {feed_split}\
              Page::new(rows, input.limit, |row| {{\n\
              {encode}.map_err(|Invalid| Error::internal())\n\
-             }})\n\
+             }}){feed_wrap}\n\
              }}",
             comma = if arguments.is_empty() { "" } else { "," },
         )
@@ -622,6 +641,117 @@ fn emit_query(
          }}\n",
         permission = permission_constant(CrudAction::Query),
         default_field = default.field,
+    )
+    .expect("writing to a String cannot fail");
+    if let Some(revision) = feed {
+        emit_feed(source, model_name, model_type, table, revision, &binds, &arguments);
+    }
+}
+
+/// The change feed of a list read: the page helper, and `changes`, which
+/// reads the list's filters and the feed part (`docs/plan/wamn-sync.md`).
+fn emit_feed(
+    source: &mut String,
+    model_name: &str,
+    model_type: &str,
+    table: &Table,
+    revision: &str,
+    binds: &str,
+    arguments: &str,
+) {
+    let members = table
+        .columns()
+        .iter()
+        .map(|column| {
+            let name = field_name(column.name());
+            // The match took the id.
+            if name == "id" {
+                "id,\n".to_owned()
+            } else if column.nullable() {
+                format!("{name}: $row.{name},\n")
+            } else {
+                format!("{name}: $row.{name}.ok_or_else(Error::internal)?,\n")
+            }
+        })
+        .collect::<String>();
+    // The contract carries the revision as an int64; an int32 column widens.
+    let version = match column(table, revision).map(Column::column_type) {
+        Some(ColumnType::Int64) => format!("data.{}", field_name(revision)),
+        _ => format!("i64::from(data.{})", field_name(revision)),
+    };
+    let comma = if arguments.is_empty() { "" } else { "," };
+    writeln!(
+        source,
+        "\n/// The model name a feed cursor carries.\n\
+         const MODEL: &str = {model_name:?};\n\n\
+         /// The model row of one row of a feed statement, or `None` for the row\n\
+         /// that only carries the snapshot.\n\
+         macro_rules! live_row {{\n\
+         ($row:expr) => {{\n\
+         match $row.id {{\n\
+         None => None,\n\
+         Some(id) => Some({model_type}Row {{\n\
+         {members}\
+         }}),\n\
+         }}\n\
+         }};\n\
+         }}\n\n\
+         /// The rows of one list page, and the cursor its change feed starts from.\n\
+         fn feed_page(rows: Vec<sql::{model_type}QueryFeedRow>) -> Result<(String, Vec<{model_type}Row>), Error> {{\n\
+         let mut end = None;\n\
+         let mut page = Vec::with_capacity(rows.len());\n\
+         for row in rows {{\n\
+         end = end.or(row.feed_cursor);\n\
+         if let Some(data) = live_row!(row) {{\n\
+         page.push(data);\n\
+         }}\n\
+         }}\n\
+         let transaction = end.ok_or_else(Error::internal)?;\n\
+         let cursor = feed::encode(MODEL, &feed::Cursor {{ transaction, after: None }}).map_err(|Invalid| Error::internal())?;\n\
+         Ok((cursor, page))\n\
+         }}\n\n\
+         /// The feed part of a `{model_name}.query` request, after its codec\n\
+         /// filled the limit.\n\
+         #[derive(Clone, Debug, Default, Eq, PartialEq)]\n\
+         pub struct FeedInput {{\n\
+         pub cursor: Option<String>,\n\
+         pub limit: i64,\n\
+         }}\n\n\
+         /// `{model_name}.query` with a feed part: the rows that changed in the\n\
+         /// scope of the list's filters since the cursor, one entry per row.\n\
+         ///\n/// A row that left the scope, or was deleted, is a change with no data.\n\
+         ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
+         pub async fn changes(connection: &mut Connection, input: QueryInput, part: FeedInput) -> Result<feed::Changes<{model_type}Row>, Error> {{\n\
+         let cursor = part.cursor.as_deref().map(|encoded| feed::decode(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\
+         {binds}\
+         let (cursor_transaction, cursor_id) = match cursor {{\n\
+         Some(cursor) => (Some(cursor.transaction), cursor.after),\n\
+         None => (None, None),\n\
+         }};\n\
+         let rows = sql::changes(connection, {arguments}{comma} cursor_transaction, cursor_id, part.limit + 1).await.map_err(|error| query_statement(&error))?;\n\
+         let mut end = None;\n\
+         let mut changed = Vec::with_capacity(rows.len());\n\
+         for row in rows {{\n\
+         if row.expired == Some(true) {{\n\
+         return Err(Error::cursor_expired());\n\
+         }}\n\
+         end = end.or(row.feed_end);\n\
+         let (Some(id), Some(transaction)) = (row.change_id.clone(), row.change_transaction) else {{\n\
+         continue;\n\
+         }};\n\
+         let present = row.present == Some(true);\n\
+         let deleted_version = row.deleted_version;\n\
+         let change = match live_row!(row) {{\n\
+         Some(data) if present => feed::Change {{ id: id.0.clone(), row_version: {version}, data: Some(data) }},\n\
+         // A row that left the scope carries its live revision, and a\n\
+         // deleted row the revision its delete entry left.\n\
+         live => feed::Change {{ id: id.0.clone(), row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
+         }};\n\
+         changed.push(feed::Changed {{ transaction, id, change }});\n\
+         }}\n\
+         let end = end.ok_or_else(Error::internal)?;\n\
+         feed::Changes::new(MODEL, part.cursor.as_deref(), end, changed, part.limit).map_err(|Invalid| Error::internal())\n\
+         }}"
     )
     .expect("writing to a String cannot fail");
 }
@@ -859,6 +989,9 @@ fn emit_error(
     .expect("writing to a String cannot fail");
     if has(AccessOperationErrorLiteral::NotFound) {
         constructors.push_str("/// No row has this id.\n#[must_use]\npub fn not_found(id: &wamn_postgres_statements::Uuid) -> Self { Self::NotFound { field: \"id\".to_owned(), id: id.0.clone() } }\n\n");
+    }
+    if has(AccessOperationErrorLiteral::CursorExpired) {
+        constructors.push_str("/// The change feed no longer holds the history the cursor starts from.\n#[must_use]\npub fn cursor_expired() -> Self { Self::CursorExpired }\n\n");
     }
     if has(AccessOperationErrorLiteral::ConcurrencyConflict) {
         constructors.push_str("/// The row carries another revision than the caller read.\n#[must_use]\npub fn conflict(expected_row_version: i64, observed_row_version: i64) -> Self { Self::ConcurrencyConflict { expected_row_version, observed_row_version } }\n\n");

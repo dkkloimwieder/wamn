@@ -8,6 +8,7 @@
 pub struct Page<Row> {
     rows: Vec<Row>,
     next_cursor: Option<String>,
+    feed_cursor: Option<String>,
 }
 
 impl<Row> Page<Row> {
@@ -31,7 +32,27 @@ impl<Row> Page<Row> {
         } else {
             None
         };
-        Ok(Self { rows, next_cursor })
+        Ok(Self {
+            rows,
+            next_cursor,
+            feed_cursor: None,
+        })
+    }
+
+    /// The page, with the cursor that its change feed starts from
+    /// ([`crate::feed`]).
+    #[must_use]
+    pub fn with_feed_cursor(self, feed_cursor: String) -> Self {
+        Self {
+            feed_cursor: Some(feed_cursor),
+            ..self
+        }
+    }
+
+    /// The cursor that the change feed of a list read starts from, when the
+    /// list read has a feed.
+    pub fn feed_cursor(&self) -> Option<&str> {
+        self.feed_cursor.as_deref()
     }
 
     /// The rows of the page, and the cursor that continues the read.

@@ -5,7 +5,8 @@ use std::fmt::Write as _;
 use crate::manifest::{CustomOperationType, authored_name};
 
 use super::{
-    AccessorBind, AccessorFetch, BTreeMap, CREATE_STATEMENT, CatalogIr, Column, ColumnType,
+    AccessorBind, AccessorFetch, BTreeMap, CHANGES_STATEMENT, CREATE_STATEMENT, CatalogIr, Column,
+    ColumnType,
     ConstraintNameSlice, ConstraintType, CrudAction, CustomOperationDeclaration, GenerateError,
     ModelDeclaration, MutationConstraintNames, NativeBindFixture, OperationDeclaration, Projection,
     ProjectionContents, RustMember, RustRow, RustVisibility, StaticSqlAccessor, StaticSqlFetch,
@@ -269,22 +270,13 @@ pub(super) fn wamn_api(
                 binds: vec![bind_for_column(table, "id", "id", false)],
             }),
             CrudAction::Query => {
+                let feed_rows = feed_rows(model_name, model, table, Projection::Wamn);
+                let query_row = feed_rows
+                    .first()
+                    .map_or_else(|| model_row.clone(), |row| row.name.clone());
                 for (index, (field, direction)) in query_variants(operation).into_iter().enumerate()
                 {
-                    let mut binds = operation
-                        .filters
-                        .iter()
-                        .map(|filter| {
-                            accessor_bind(
-                                &format!("{}_filter", filter.field),
-                                ColumnType::Json,
-                                true,
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    if operation.search.is_some() {
-                        binds.push(accessor_bind("search", ColumnType::Text, true));
-                    }
+                    let mut binds = scope_binds(operation);
                     binds.push(bind_for_column(table, field, "cursor_key", true));
                     let tie_breaker = &operation
                         .pagination
@@ -304,11 +296,33 @@ pub(super) fn wamn_api(
                             paths.len(),
                         ),
                         sql_path: paths[index].clone(),
-                        row: model_row.clone(),
+                        row: query_row.clone(),
                         fetch: AccessorFetch::All,
                         binds,
                     });
                 }
+                if let Some(changes_row) = feed_rows.get(1) {
+                    let mut binds = scope_binds(operation);
+                    binds.push(accessor_bind("cursor_transaction", ColumnType::Int64, true));
+                    binds.push(accessor_bind("cursor_id", ColumnType::Uuid, true));
+                    binds.push(accessor_bind("limit", ColumnType::Int64, false));
+                    let index = paths.len() - 1;
+                    accessors.push(WamnAccessor {
+                        name: CHANGES_STATEMENT.to_owned(),
+                        visibility: RustVisibility::Crate,
+                        operation: *action,
+                        statement_constant: statement_constant_name(
+                            action.as_str(),
+                            index,
+                            paths.len(),
+                        ),
+                        sql_path: paths[index].clone(),
+                        row: changes_row.name.clone(),
+                        fetch: AccessorFetch::All,
+                        binds,
+                    });
+                }
+                operation_rows.extend(feed_rows);
             }
             CrudAction::Create => accessors.push(WamnAccessor {
                 name: CREATE_STATEMENT.to_owned(),
@@ -504,6 +518,72 @@ fn native_inert_value(bind: &AccessorBind) -> String {
     }
 }
 
+/// The binds of a list read's filters and search, in statement order.
+fn scope_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
+    let mut binds = operation
+        .filters
+        .iter()
+        .map(|filter| accessor_bind(&format!("{}_filter", filter.field), ColumnType::Json, true))
+        .collect::<Vec<_>>();
+    if operation.search.is_some() {
+        binds.push(accessor_bind("search", ColumnType::Text, true));
+    }
+    binds
+}
+
+/// The rows of a list read with a change feed: the page row and the changes
+/// row, or none when the model has no feed.
+///
+/// Both statements return one outer row even when no model row matched, so
+/// every column is nullable (`crate::sql::query`, `crate::sql::changes`).
+fn feed_rows(
+    model_name: &str,
+    model: &ModelDeclaration,
+    table: &Table,
+    projection: Projection,
+) -> Vec<RustRow> {
+    if model.feed_revision().is_none() {
+        return Vec::new();
+    }
+    let member = |name: &str, ty: ColumnType| RustMember {
+        name: name.to_owned(),
+        rust_type: projected_rust_type(ty, projection, true),
+        statement_type: ty,
+        nullable: true,
+    };
+    let model_members = table.columns().iter().map(|column| RustMember {
+        name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
+        rust_type: optional_rust_type(column, projection),
+        statement_type: column.column_type(),
+        nullable: true,
+    });
+    let model_type = rust_type_identifier(model_name);
+    vec![
+        RustRow {
+            name: format!("{model_type}QueryFeedRow"),
+            visibility: RustVisibility::Public,
+            fields: std::iter::once(member("feed_cursor", ColumnType::Int64))
+                .chain(model_members.clone())
+                .collect(),
+        },
+        RustRow {
+            name: format!("{model_type}ChangesRow"),
+            visibility: RustVisibility::Public,
+            fields: [
+                member("feed_end", ColumnType::Int64),
+                member("expired", ColumnType::Boolean),
+                member("change_id", ColumnType::Uuid),
+                member("change_transaction", ColumnType::Int64),
+                member("present", ColumnType::Boolean),
+                member("deleted_version", ColumnType::Int64),
+            ]
+            .into_iter()
+            .chain(model_members)
+            .collect(),
+        },
+    ]
+}
+
 pub(super) fn operation_result_rows(
     model_name: &str,
     model: &ModelDeclaration,
@@ -517,7 +597,8 @@ pub(super) fn operation_result_rows(
             CrudAction::Update | CrudAction::Delete => vec![operation_result_row(
                 model_name, table, *action, operation, projection,
             )],
-            CrudAction::Create | CrudAction::Get | CrudAction::Query => Vec::new(),
+            CrudAction::Query => feed_rows(model_name, model, table, projection),
+            CrudAction::Create | CrudAction::Get => Vec::new(),
         })
         .collect()
 }

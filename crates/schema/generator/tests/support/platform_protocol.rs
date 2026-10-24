@@ -43,7 +43,8 @@ fn crud_errors_and_details_are_derived_from_action_and_catalog() {
             ],
         ),
         ("get", vec!["not_found"]),
-        ("query", vec![]),
+        // The widget keeps a P30D log, so its feed cursor can expire.
+        ("query", vec!["cursor_expired"]),
         (
             "update",
             vec![

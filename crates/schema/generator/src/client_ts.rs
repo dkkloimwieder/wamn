@@ -440,6 +440,7 @@ fn emit_operation(
         .paging
         .as_ref()
         .and_then(|paging| paging.sort.as_ref());
+    let feed = operation.paging.as_ref().is_some_and(|paging| paging.feed);
     match operation.description.as_deref() {
         // An authored description belongs to the operation, so it reaches the
         // type an author reads first. No screen shows it.
@@ -475,6 +476,7 @@ fn emit_operation(
         &type_stem,
         &operation.operation,
         result_class,
+        feed,
         result_fields,
         used,
     )?;
@@ -484,7 +486,7 @@ fn emit_operation(
         operation.operation
     )
     .expect("write");
-    write_result_field_map(source, &result_fields_const, result_class, result_fields)?;
+    write_result_field_map(source, &result_fields_const, result_class, feed, result_fields)?;
 
     let Some(route) = &operation.route else {
         // An unpublished operation has types but no HTTP route to invoke.
@@ -588,6 +590,49 @@ fn emit_operation(
         "  return reviveOutcome<{type_stem}Result>(\n    await transport.invoke({{\n      ...{route_const},\n      items: items.map((item) => toWire(item, {request_fields})),\n    }}),\n    {result_fields_const},\n  );\n}}"
     )
     .expect("write");
+    if feed {
+        write_changes(
+            source,
+            &type_stem,
+            &operation.operation,
+            &route_const,
+            &request_fields,
+            result_fields,
+            used,
+        )?;
+    }
+    Ok(())
+}
+
+/// Emit the change feed of a list read: its change types, their field map, the
+/// route the feed reads, and `changes`, which reads the changes in the scope of
+/// a request since a cursor (`docs/plan/wamn-sync.md`).
+///
+/// The feed is the list read with its feed part, so it calls the list's route.
+/// Its value is the changes envelope, which the route states as its own result
+/// class.
+fn write_changes(
+    source: &mut String,
+    type_stem: &str,
+    operation: &str,
+    route_const: &str,
+    request_fields: &str,
+    fields: &[FieldIr],
+    used: &mut BTreeSet<&'static str>,
+) -> Result<(), ClientTsError> {
+    used.insert("Uuid");
+    let stem = route_const.trim_end_matches("_ROUTE");
+    writeln!(
+        source,
+        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: Uuid;\n  readonly rowVersion: number;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"rowVersion\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
+    )
+    .expect("write");
+    write_map_members(source, fields, 5)?;
+    writeln!(
+        source,
+        "        }},\n      }},\n    }},\n  }},\n  \"next_cursor\": \"nextCursor\",\n  \"complete\": \"complete\",\n}};\n\n/** The list route of `{operation}`, read with its feed part. */\nexport const {stem}_CHANGES_ROUTE: OperationRoute = {{\n  ...{route_const},\n  contract: {{ ...{route_const}.contract, resultClass: \"changes\" }},\n}};\n\n/**\n * Read the changes of `{operation}` in the scope of `request` since `cursor`,\n * at most `limit` of them. A list page returns the first cursor.\n */\nexport async function changes(\n  transport: Transport,\n  request: Omit<{type_stem}Request, \"cursor\" | \"limit\" | \"sort\" | \"feed\">,\n  cursor: string,\n  limit?: number,\n): Promise<Outcome<{type_stem}Changes>> {{\n  const feed = limit === undefined ? {{ cursor }} : {{ cursor, limit }};\n  return reviveOutcome<{type_stem}Changes>(\n    await transport.invoke({{\n      ...{stem}_CHANGES_ROUTE,\n      items: [toWire({{ ...request, feed }}, {request_fields})],\n    }}),\n    {stem}_CHANGES_FIELDS,\n  );\n}}"
+    )
+    .expect("write");
     Ok(())
 }
 
@@ -601,6 +646,7 @@ fn write_result_field_map(
     source: &mut String,
     name: &str,
     result_class: Option<&str>,
+    feed: bool,
     fields: &[FieldIr],
 ) -> Result<(), ClientTsError> {
     let key = match result_class {
@@ -621,6 +667,9 @@ fn write_result_field_map(
     writeln!(source, "  }},").expect("write");
     if key == "item" {
         writeln!(source, "  \"next_cursor\": \"nextCursor\",").expect("write");
+    }
+    if feed {
+        writeln!(source, "  \"cursor\": \"cursor\",").expect("write");
     }
     writeln!(source, "}};").expect("write");
     Ok(())
@@ -706,6 +755,7 @@ fn write_result(
     type_stem: &str,
     operation: &str,
     result_class: Option<&str>,
+    feed: bool,
     fields: &[FieldIr],
     used: &mut BTreeSet<&'static str>,
 ) -> Result<(), ClientTsError> {
@@ -744,6 +794,14 @@ fn write_result(
         )
         .expect("write");
         writeln!(source, "  readonly nextCursor: string | null;").expect("write");
+        if feed {
+            writeln!(
+                source,
+                "  /** The cursor that the change feed starts from, at this page's snapshot. */"
+            )
+            .expect("write");
+            writeln!(source, "  readonly cursor: string;").expect("write");
+        }
     } else {
         writeln!(source, "  /** Every row the release served. */").expect("write");
         writeln!(source, "  readonly rows: readonly {type_stem}Row[];").expect("write");

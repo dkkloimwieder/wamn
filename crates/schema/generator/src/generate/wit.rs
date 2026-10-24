@@ -62,6 +62,7 @@ pub(super) fn emit_model_wit(
             *action,
             table,
             operation,
+            model.feed_revision().is_some(),
             &results[action].fields,
             &model.min_lengths,
             &details,
@@ -97,6 +98,7 @@ fn emit_model_package_wit(
             *action,
             table,
             operation,
+            model.feed_revision().is_some(),
             &results[action].fields,
             &details,
         );
@@ -109,6 +111,7 @@ fn emit_crud_interface(
     action: CrudAction,
     table: &Table,
     operation: &OperationDeclaration,
+    feed: bool,
     fields: &[ContractFieldDeclaration],
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) {
@@ -134,6 +137,9 @@ fn emit_crud_interface(
                 )
                 .expect("writing to a String cannot fail");
             }
+        }
+        if feed {
+            source.push_str("  /// The feed part: present, the read returns the changes since the\n  /// cursor instead of a page.\n  record query-feed {\n    cursor: option<string>,\n    limit: option<s64>,\n  }\n\n");
         }
     }
     writeln!(source, "  record {name}-request {{").expect("writing to a String cannot fail");
@@ -171,6 +177,9 @@ fn emit_crud_interface(
             if operation.limit.is_some() {
                 source.push_str("    limit: option<s64>,\n");
             }
+            if feed {
+                source.push_str("    feed: option<query-feed>,\n");
+            }
         }
         CrudAction::Update => unreachable!("update uses its compatibility emitter"),
     }
@@ -190,7 +199,7 @@ fn emit_crud_interface(
     source.push_str("  }\n\n");
     emit_operation_errors(source, name, details, revision_width(table, operation));
     if action == CrudAction::Query {
-        emit_query_page(source, fields);
+        emit_query_page(source, fields, feed);
         return;
     }
     let key = request_key_field(crud_is_keyed(action));
@@ -209,7 +218,7 @@ fn emit_crud_interface(
 /// A query returns its page as one result: the rows and the cursor that
 /// continues the read, or the error that ended it. `read-json` also returns
 /// the WAL position for a list ETag.
-fn emit_query_page(source: &mut String, fields: &[ContractFieldDeclaration]) {
+fn emit_query_page(source: &mut String, fields: &[ContractFieldDeclaration], feed: bool) {
     source.push_str("  record query-row {\n");
     for column in fields {
         let mut ty = wit_type(column.ty);
@@ -220,7 +229,13 @@ fn emit_query_page(source: &mut String, fields: &[ContractFieldDeclaration]) {
             .expect("writing to a String cannot fail");
     }
     source.push_str("  }\n\n");
-    source.push_str("  /// One page. A cursor means more rows follow.\n  record query-result {\n    item: list<query-row>,\n    next-cursor: option<string>,\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
+    if feed {
+        // A list read with a feed answers a page, with the cursor its feed
+        // starts from, or the changes since a cursor (docs/plan/wamn-sync.md).
+        source.push_str("  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the scope of the read.\n  record query-change {\n    id: string,\n    row-version: s64,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
+    } else {
+        source.push_str("  /// One page. A cursor means more rows follow.\n  record query-result {\n    item: list<query-row>,\n    next-cursor: option<string>,\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
+    }
     source.push_str("  run: async func(ctx: node-context, input: query-request) -> result<query-outcome, node-error>;\n");
     source.push_str("  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n");
     source.push_str("  read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;\n}\n\n");
@@ -380,6 +395,7 @@ pub(super) fn access_error_literal(literal: AccessOperationErrorLiteral) -> &'st
         AccessOperationErrorLiteral::Timeout => "timeout",
         AccessOperationErrorLiteral::PermissionDenied => "permission_denied",
         AccessOperationErrorLiteral::InternalError => "internal_error",
+        AccessOperationErrorLiteral::CursorExpired => "cursor_expired",
     }
 }
 
@@ -492,6 +508,7 @@ fn emit_crud_codec(
     action: CrudAction,
     table: &Table,
     operation: &OperationDeclaration,
+    feed: bool,
     fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
@@ -500,7 +517,7 @@ fn emit_crud_codec(
         return emit_update_codec(table, operation, fields, min_lengths, details);
     }
     if action == CrudAction::Query {
-        return emit_query_codec(table, operation, fields, details);
+        return emit_query_codec(table, operation, feed, fields, details);
     }
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(
@@ -545,13 +562,14 @@ fn emit_crud_codec(
 fn emit_query_codec(
     table: &Table,
     operation: &OperationDeclaration,
+    feed: bool,
     fields: &[ContractFieldDeclaration],
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
     let mut source = String::from(
         "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\nconst MINIMUM: usize = 1;\nconst MAXIMUM: usize = 1;\nconst COUNT_ERROR: &str = \"a query takes exactly one request\";\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n",
     );
-    emit_query_json_types(&mut source, table, operation);
+    emit_query_json_types(&mut source, table, operation, feed);
     let request = if operation.filters.is_empty() {
         "request"
     } else {
@@ -560,12 +578,20 @@ fn emit_query_codec(
     writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Result<contract::QueryRequest, contract::InvalidInputDetail>, CodecError> {{\n    let body = decode_read_envelope(input)?.into_iter().next().expect(\"the envelope holds one request\");\n    Ok(serde_json::from_value::<JsonRequest>(body).map(|{request}| contract::QueryRequest {{")
         .expect("writing to a String cannot fail");
     emit_crud_request_assignments(&mut source, CrudAction::Query, table, operation);
+    if feed {
+        source.push_str("            feed: request.feed.map(|feed| contract::QueryFeed { cursor: feed.cursor, limit: feed.limit }),\n");
+    }
     source.push_str("    }).map_err(|_| invalid(\"input\")))\n}\n\n");
     emit_crud_invalid_detail(&mut source, details);
     source.push_str("fn row_json(row: &contract::QueryRow) -> Value {\n    json!({\n");
     emit_json_row_fields(&mut source, fields, "row");
     source.push_str("    })\n}\n\n");
-    source.push_str("/// The page, or the error, as the outcome list a read reply carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(page) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
+    if feed {
+        source.push_str("fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version, \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n");
+        source.push_str("/// The page or the changes, or the error, as the outcome list a read reply\n/// carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(contract::QueryResult::Page(page)) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor, \"cursor\": page.cursor } }]),\n        Ok(contract::QueryResult::Changes(changes)) => json!([{ \"value\": { \"rows\": changes.rows.iter().map(change_json).collect::<Vec<_>>(), \"next_cursor\": changes.next_cursor, \"complete\": changes.complete } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
+    } else {
+        source.push_str("/// The page, or the error, as the outcome list a read reply carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(page) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
+    }
     source.push_str("fn error_value(error: &contract::QueryError) -> Value {\n    let (code, detail) = match error {");
     for (literal, detail) in details {
         emit_codec_error_arm(
@@ -585,7 +611,7 @@ fn emit_query_codec(
         fields,
         &BTreeMap::new(),
     ));
-    emit_query_limit(&mut source, operation, details);
+    emit_query_limit(&mut source, operation, feed, details);
     source.push_str(QUERY_RUN);
     source.push_str(&emit_row_adapter(
         fields
@@ -608,6 +634,7 @@ fn emit_query_codec(
 fn emit_query_limit(
     source: &mut String,
     operation: &OperationDeclaration,
+    feed: bool,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) {
     source.push_str("#[allow(clippy::unnecessary_wraps)]\nfn limit(request: &mut contract::QueryRequest) -> Result<(), contract::InvalidInputDetail> {\n    let _ = &request;\n");
@@ -631,6 +658,28 @@ fn emit_query_limit(
             source.push_str("        detail.observed = Some(limit.to_string());\n");
         }
         source.push_str("        return Err(detail);\n    }\n");
+        // The feed part's limit takes the page's default and minimum. The
+        // route schema holds its maximum.
+        if feed {
+            writeln!(
+                source,
+                "    if let Some(feed) = &mut request.feed {{\n        let limit = *feed.limit.get_or_insert({});\n        if limit < {} {{\n            #[allow(unused_mut)]\n            let mut detail = invalid(\"feed.limit\");",
+                limit.default, limit.minimum
+            )
+            .expect("writing to a String cannot fail");
+            if optional.contains(&OperationErrorDetailKey::Minimum) {
+                writeln!(
+                    source,
+                    "            detail.minimum = Some(\"{}\".to_owned());",
+                    limit.minimum
+                )
+                .expect("writing to a String cannot fail");
+            }
+            if optional.contains(&OperationErrorDetailKey::Observed) {
+                source.push_str("            detail.observed = Some(limit.to_string());\n");
+            }
+            source.push_str("            return Err(detail);\n        }\n    }\n");
+        }
     }
     source.push_str("    Ok(())\n}\n");
 }
@@ -757,7 +806,7 @@ fn emit_crud_json_codec(
             emit_json_columns(&mut source, table, &operation.writable_fields);
             source.push_str("}\n\n");
         }
-        CrudAction::Query => emit_query_json_types(&mut source, table, operation),
+        CrudAction::Query => emit_query_json_types(&mut source, table, operation, false),
         CrudAction::Update => unreachable!("update owns its compatibility JSON codec"),
     }
     let request = if action == CrudAction::Query && !operation.filters.is_empty() {
@@ -980,7 +1029,12 @@ fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
     }
 }
 
-fn emit_query_json_types(source: &mut String, table: &Table, operation: &OperationDeclaration) {
+fn emit_query_json_types(
+    source: &mut String,
+    table: &Table,
+    operation: &OperationDeclaration,
+    feed: bool,
+) {
     source.push_str("struct JsonRequest {\n");
     if !operation.filters.is_empty() {
         source.push_str("    #[serde(default)] filter: Option<JsonFilter>,\n");
@@ -997,7 +1051,13 @@ fn emit_query_json_types(source: &mut String, table: &Table, operation: &Operati
     if operation.limit.is_some() {
         source.push_str("    #[serde(default)] limit: Option<i64>,\n");
     }
+    if feed {
+        source.push_str("    #[serde(default)] feed: Option<JsonFeed>,\n");
+    }
     source.push_str("}\n\n");
+    if feed {
+        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFeed {\n    #[serde(default)] cursor: Option<String>,\n    #[serde(default)] limit: Option<i64>,\n}\n\n");
+    }
     if !operation.filters.is_empty() {
         source.push_str(
             "#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFilter {\n",

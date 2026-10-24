@@ -1,4 +1,5 @@
-//! The cursor, page and scalar code that generated data functions call.
+//! The cursor, page, change feed and scalar code that generated data
+//! functions call.
 //!
 //! A generated data function parses each request value in its one wire
 //! spelling, reads one keyset page, and mints the cursor that continues it.
@@ -7,6 +8,7 @@
 //! package's refusal.
 
 pub mod cursor;
+pub mod feed;
 pub mod page;
 pub mod scalar;
 

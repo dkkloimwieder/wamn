@@ -272,7 +272,9 @@ fn generated_function_name(schema: &str, relation: &str, suffix: &str) -> anyhow
 ///
 /// `wamn_history.create_history_table` is the one definition of the table
 /// shape. apply-package never drops a history table, so a relation whose
-/// retention becomes `none` keeps its table and its entries.
+/// retention becomes `none` keeps its table and its entries. The function runs
+/// for a present table too, so an older table gains the indexes the shape
+/// added since; only a new table counts as a change.
 pub(super) async fn create_history_tables(
     tx: &Transaction<'_>,
     manifest: &PackageManifest,
@@ -289,9 +291,6 @@ pub(super) async fn create_history_tables(
             .await
             .with_context(|| format!("read history table {}.{history}", model.schema))?
             .get::<_, bool>(0);
-        if present {
-            continue;
-        }
         // The package-owner role owns the relation, so it owns its history table.
         set_package_owner_role(tx).await?;
         tx.execute(
@@ -301,7 +300,7 @@ pub(super) async fn create_history_tables(
         .await
         .with_context(|| format!("create history table {}.{history}", model.schema))?;
         reset_host_role(tx).await?;
-        changed = true;
+        changed |= !present;
     }
     Ok(changed)
 }

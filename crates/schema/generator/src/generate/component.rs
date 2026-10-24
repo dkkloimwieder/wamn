@@ -70,7 +70,12 @@ pub(super) fn emit_model_component(
     for (action, operation) in &model.operations {
         let name = action.as_str();
         let contract = rust_type_identifier(name);
-        let (state, body) = handler(*action, &contract, operation);
+        let (state, body) = handler(
+            *action,
+            &contract,
+            operation,
+            model.feed_revision().is_some(),
+        );
         // A change works in the host's operation transaction, so its export
         // takes no state.
         let export_state = if action.changes_records() {
@@ -113,6 +118,7 @@ fn handler(
     action: CrudAction,
     contract: &str,
     operation: &OperationDeclaration,
+    feed: bool,
 ) -> (&'static str, String) {
     let connection = "connection: &mut Connection";
     let transaction = "transaction: &mut Transaction";
@@ -190,22 +196,55 @@ fn handler(
             } else {
                 members.push_str("sort_field: None,\nsort_direction: None,\n");
             }
-            (
-                connection,
+            let input = format!(
+                "let input = model::QueryInput {{\n\
+                 {members}\
+                 cursor: request.cursor,\n\
+                 limit: request.limit.expect(\"the codec fills the default limit\"),\n\
+                 }};\n\
+                 let refuse = |error: Error| codec::map_error(error.literal(), |key| error.detail(key));\n"
+            );
+            // A request with the feed part reads the changes since its
+            // cursor; one without it reads a page and its feed cursor.
+            let body = if feed {
                 format!(
-                    "let input = model::QueryInput {{\n\
-                     {members}\
-                     cursor: request.cursor,\n\
-                     limit: request.limit.expect(\"the codec fills the default limit\"),\n\
+                    "{input}\
+                     if let Some(part) = request.feed {{\n\
+                     let part = model::FeedInput {{\n\
+                     cursor: part.cursor,\n\
+                     limit: part.limit.expect(\"the codec fills the default limit\"),\n\
                      }};\n\
-                     let refuse = |error: Error| codec::map_error(error.literal(), |key| error.detail(key));\n\
+                     let changes = model::changes(connection, input, part).await.map_err(refuse)?;\n\
+                     return Ok(contract::{contract}Result::Changes(contract::{contract}Changes {{\n\
+                     rows: changes.rows.into_iter().map(|change| contract::{contract}Change {{\n\
+                     id: change.id,\n\
+                     row_version: change.row_version,\n\
+                     data: change.data.map(|row| codec::row!(row, contract::{contract}Row)),\n\
+                     }}).collect(),\n\
+                     next_cursor: changes.next_cursor,\n\
+                     complete: changes.complete,\n\
+                     }}));\n\
+                     }}\n\
+                     let page = model::query(connection, input).await.map_err(refuse)?;\n\
+                     let cursor = page.feed_cursor().map(str::to_owned).ok_or(contract::{contract}Error::InternalError)?;\n\
+                     let (rows, next_cursor) = page.into_parts();\n\
+                     Ok(contract::{contract}Result::Page(contract::{contract}Page {{\n\
+                     item: rows.into_iter().map(|row| codec::row!(row, contract::{contract}Row)).collect(),\n\
+                     next_cursor,\n\
+                     cursor,\n\
+                     }}))\n"
+                )
+            } else {
+                format!(
+                    "{input}\
                      let (rows, next_cursor) = model::query(connection, input).await.map_err(refuse)?.into_parts();\n\
                      Ok(contract::{contract}Result {{\n\
                      item: rows.into_iter().map(|row| codec::row!(row, contract::{contract}Row)).collect(),\n\
                      next_cursor,\n\
                      }})\n"
-                ),
-            )
+                )
+            };
+            (connection, body)
         }
     }
 }

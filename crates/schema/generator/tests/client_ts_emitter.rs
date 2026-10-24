@@ -82,7 +82,9 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "{operation} carries its exact canonical identity"
         );
     }
-    assert_eq!(widget.matches("export async function ").count(), 8);
+    // The widget list read has a change feed, which adds `changes`.
+    assert_eq!(widget.matches("export async function ").count(), 9);
+    assert!(widget.contains("export async function changes("));
     assert_eq!(
         source(&files, "generated/client-ts/index.ts"),
         concat!(
@@ -121,9 +123,11 @@ fn a_collection_result_is_typed_as_the_envelope_the_release_serves() {
             "  readonly item: readonly WidgetQueryRow[];\n",
             "  /** The next page's cursor, or null at the last page. */\n",
             "  readonly nextCursor: string | null;\n",
+            "  /** The cursor that the change feed starts from, at this page's snapshot. */\n",
+            "  readonly cursor: string;\n",
             "}\n",
         )),
-        "a page carries its array under `item`, beside the cursor"
+        "a page carries its array under `item`, beside the cursor and the feed cursor"
     );
     assert!(
         widget.contains(concat!(
@@ -211,8 +215,8 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
     );
     assert_eq!(
         widget.matches(": FieldMap = ").count(),
-        16,
-        "eight operations carry one input map and one result map each"
+        17,
+        "eight operations carry one input map and one result map each, and the feed one map"
     );
     assert!(
         widget.contains(

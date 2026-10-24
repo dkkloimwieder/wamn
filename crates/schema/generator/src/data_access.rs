@@ -5,7 +5,9 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN};
+use wamn_record_history::{
+    ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN, history_table_name,
+};
 use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::logged_history_tables;
@@ -14,6 +16,10 @@ use crate::manifest::{
     TombstoneColumn,
 };
 use crate::{CrudAction, GenerateError, GenerateErrorType, PackageManifest};
+
+/// The history columns that the change feed of a list read selects
+/// (`crate::sql::changes`).
+const FEED_HISTORY_COLUMNS: [&str; 4] = ["transaction_id", "row_key", "type", "before"];
 
 /// Package-relative canonical data-access evidence artifact.
 pub const DATA_ACCESS_OVERLAY_PATH: &str = "generated/platform-policy/data-access.json";
@@ -697,6 +703,19 @@ fn derive_data_access_overlay_for_manifest(
                 .filter(|column| ![POSITION_COLUMN, ENTRY_ID_COLUMN].contains(column))
                 .map(str::to_owned),
         );
+    }
+    // The change feed of a list read reads the history of its relation: the
+    // range of transactions, the row key, and the image a delete leaves.
+    for model in manifest.models.values() {
+        if model.feed_revision().is_some() {
+            let history = history_table_name(&model.table);
+            let relation = desired_relation(&mut desired, &model.schema, &history)?;
+            relation.select.extend(
+                FEED_HISTORY_COLUMNS
+                    .iter()
+                    .map(|column| (*column).to_owned()),
+            );
+        }
     }
     for operation in manifest.custom_operations.values() {
         for declared in &operation.relations {

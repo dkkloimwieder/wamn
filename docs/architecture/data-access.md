@@ -765,7 +765,9 @@ The generator recognizes the history table of each logged model by its name, and
 It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate.
 Authored SQL validation, the SQL lexer, the required schema contract, and grant derivation use that column list.
 A custom operation cannot require or map a constraint of a history table.
-The generated data-access evidence grants `wamn_app` `INSERT` on every entry column of the history table, and no read, update, or row lock.
+The generated data-access evidence grants `wamn_app` `INSERT` on every entry column of the history table, and no update or row lock.
+A model with a change feed ([execution](execution.md#change-feed)) also grants `wamn_app` `SELECT` on `transaction_id`, `row_key`, `type` and `before`, the columns its changes statement reads.
+`create_history_table` also creates an index on `transaction_id`, and apply-package runs it for a present table too, so an older table gains the index.
 The log function is `SECURITY INVOKER`, so the writer needs that grant.
 The reconciler reads the history table like any other package relation and keeps that grant.
 The generation database creates the history tables before `EXPLAIN` and SQLx prepare, as [running tests](../operations/running-tests.md#application-generation-and-sqlx) describes.

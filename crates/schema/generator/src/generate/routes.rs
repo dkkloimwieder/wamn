@@ -111,6 +111,25 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
             false,
         );
     }
+    // The feed part reads the changes since its cursor in place of a page.
+    if let Some(feed) = contract.get("feed").filter(|feed| feed.is_object()) {
+        item.insert(
+            "feed",
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "cursor": {"type": "string", "minLength": 1},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": feed["limit"]["minimum"],
+                        "maximum": feed["limit"]["maximum"],
+                    },
+                },
+            }),
+            false,
+        );
+    }
     json!({
         "type": "array",
         "minItems": CRUD_ITEMS_MINIMUM,

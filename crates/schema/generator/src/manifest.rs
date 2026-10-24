@@ -550,6 +550,8 @@ pub enum AccessOperationErrorLiteral {
     Timeout,
     PermissionDenied,
     InternalError,
+    /// The change feed no longer holds the history a cursor starts from.
+    CursorExpired,
 }
 
 /// One migration-derived relation consumed by static custom-operation SQL.
@@ -2143,7 +2145,7 @@ pub(crate) fn access_operation_error_detail(
         | Code::CheckViolation
         | Code::ExclusionViolation => (&[Key::Constraint], &[]),
         Code::PermissionDenied => (&[Key::Operation], &[]),
-        Code::Retry | Code::Timeout | Code::InternalError => (&[], &[]),
+        Code::Retry | Code::Timeout | Code::InternalError | Code::CursorExpired => (&[], &[]),
     };
     OperationErrorDetailDeclaration {
         required: required.to_vec(),
@@ -2760,6 +2762,25 @@ impl ModelDeclaration {
             .as_ref()
             .map(|audit_log| audit_log.retention.as_str())
             .filter(|retention| *retention != NO_LOG_RETENTION)
+    }
+
+    /// The revision field of the change feed on the model's list read.
+    ///
+    /// A model has a feed when it has a generated list read, a history table
+    /// and a revision field (`docs/plan/wamn-sync.md`). Any other model
+    /// returns `None` and gets no feed.
+    pub fn feed_revision(&self) -> Option<&str> {
+        self.log_retention()?;
+        // An authored list statement returns no feed cursor.
+        if self
+            .operations
+            .get(&CrudAction::Query)?
+            .authored_sql
+            .is_some()
+        {
+            return None;
+        }
+        self.revision_field()
     }
 
     /// Definition owner for one field, inheriting the relation owner when omitted.
