@@ -3,8 +3,9 @@
 This package renders the WMS packaging screen from a `@wfe/sync` collection and measures two read shapes.
 
 [`src/packaging-feed.ts`](src/packaging-feed.ts) is the feed and the collection of the `packaging` model.
-`list` calls the generated `query` read with the screen's list arguments.
-`changes` always returns no rows, because the host has no change feed read.
+`list` reads every page of the generated `query` read, up to 1000 rows, and returns the feed cursor of the first page.
+`changes` calls the generated `changes` binding: the same read with its feed part.
+A `cursor_expired` refusal throws `CursorExpired`, so the collection lists again.
 The collection key is `packaging:` and the list arguments as canonical JSON.
 
 ## Shapes
@@ -32,6 +33,21 @@ node bench/run.mjs --out <results.json>
 ```
 
 `bench/both.mjs` opens both shapes side by side at 100,000 rows and prints what each shows.
+
+## Live screen
+
+[`live.html`](live.html) is the packaging screen on a live host: shape A over the real feed.
+The page calls the release under `/wamn` on its own origin. `?poll=` sets the follow interval in milliseconds.
+[`bench/follow.mjs`](bench/follow.mjs) opens it in headless Chrome and forwards `/wamn` to the host with the caller's token.
+The test `local_feed` in `apps/wamn_wms/tests` runs it against a local WMS host:
+
+```bash
+cd web/sync-bench && pnpm run build && cd ../..
+WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/release/http_route.wasm" \
+WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
+  cargo test --locked --offline -p wamn-wms-tests --lib local_feed:: -- --ignored
+```
 
 ## Inputs
 
