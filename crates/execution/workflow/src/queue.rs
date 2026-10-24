@@ -22,7 +22,8 @@ use crate::router_action::{
 };
 use crate::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
-    CandidateWiringTarget, RouterDriver, RouterDriverRequest, Verdict,
+    CandidateWiringTarget, RouterDriver, RouterDriverRequest, Verdict, WorkflowIdentity,
+    WorkflowRunRequest,
 };
 
 /// The claim scope the queue binds; an event admission runs under it too.
@@ -42,6 +43,8 @@ struct QueueScope {
 enum QueueDriverRequest {
     Released(RouterDriverRequest),
     Candidate(CandidateCaseRequest),
+    /// A run of an environment workflow, resolved from its run row.
+    Workflow(WorkflowRunRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -380,22 +383,60 @@ async fn drain_one(
             durable_caller_attached,
             candidate,
             service_principal_id,
+            workflow,
         } => {
             let wiring_version = u32::try_from(wiring_version)
                 .context("claimed wiring version is not a positive u32")?;
             let queue_span =
                 queue_delivery_span(scope, &package_id, &run_id, &wiring_id, wiring_version);
             let result_only = candidate.is_some();
-            let caller = match service_principal_id {
-                Some(principal) => Some(
+            // An automation or schedule run executes with every role of its
+            // service; a workflow run with its one role.
+            let caller = match (&service_principal_id, &workflow) {
+                (Some(principal), _) => Some(
                     postgres
-                        .queued_service_caller(&scope.project, &scope.tenant_id, &principal)
+                        .queued_run_caller(&scope.project, &scope.tenant_id, principal, None)
                         .await?,
                 ),
-                None => None,
+                (None, Some(workflow)) => Some(
+                    postgres
+                        .queued_run_caller(
+                            &scope.project,
+                            &scope.tenant_id,
+                            &workflow.execution_principal_id,
+                            Some(&workflow.execution_role),
+                        )
+                        .await?,
+                ),
+                (None, None) => None,
             };
-            let request = match candidate {
-                Some(candidate) => QueueDriverRequest::Candidate(CandidateCaseRequest {
+            let run = RouterDriverRequest {
+                tenant_id: scope.tenant_id.clone(),
+                package_id: package_id.clone(),
+                environment: scope.environment.clone(),
+                wiring_id: wiring_id.clone(),
+                wiring_version,
+                delivery_id: run_id.clone(),
+                payload: payload.clone(),
+                caller_attached: router_caller_attached,
+                caller,
+                traceparent: None,
+                tracestate: None,
+            };
+            let request = match (candidate, workflow) {
+                (None, Some(workflow)) => {
+                    let workflow = *workflow;
+                    QueueDriverRequest::Workflow(WorkflowRunRequest {
+                        run,
+                        wiring_hash: workflow.wiring_hash,
+                        node_digests: workflow.node_digests,
+                        identity: WorkflowIdentity {
+                            principal_id: workflow.execution_principal_id,
+                            role: workflow.execution_role,
+                        },
+                    })
+                }
+                (Some(candidate), _) => QueueDriverRequest::Candidate(CandidateCaseRequest {
                     target: CandidateWiringTarget {
                         tenant_id: scope.tenant_id.clone(),
                         package_id: package_id.clone(),
@@ -410,19 +451,7 @@ async fn drain_one(
                     traceparent: None,
                     tracestate: None,
                 }),
-                None => QueueDriverRequest::Released(RouterDriverRequest {
-                    tenant_id: scope.tenant_id.clone(),
-                    package_id: package_id.clone(),
-                    environment: scope.environment.clone(),
-                    wiring_id,
-                    wiring_version,
-                    delivery_id: run_id.clone(),
-                    payload,
-                    caller_attached: router_caller_attached,
-                    caller,
-                    traceparent: None,
-                    tracestate: None,
-                }),
+                (None, None) => QueueDriverRequest::Released(run),
             };
             // Boxed: driving one claim is a large future the queue loop holds.
             Box::pin(
@@ -465,7 +494,7 @@ async fn drive_claim(
     request: QueueDriverRequest,
 ) -> anyhow::Result<()> {
     let candidate_coordinate = match &request {
-        QueueDriverRequest::Released(_) => None,
+        QueueDriverRequest::Released(_) | QueueDriverRequest::Workflow(_) => None,
         QueueDriverRequest::Candidate(request) => Some((
             request.target.wiring_id.clone(),
             request.target.wiring_version,
@@ -479,6 +508,9 @@ async fn drive_claim(
         QueueDriverRequest::Released(request) => {
             (request.wiring_id.clone(), request.wiring_version)
         }
+        QueueDriverRequest::Workflow(request) => {
+            (request.run.wiring_id.clone(), request.run.wiring_version)
+        }
         QueueDriverRequest::Candidate(request) => (
             request.target.wiring_id.clone(),
             request.target.wiring_version,
@@ -488,6 +520,7 @@ async fn drive_claim(
         match request {
             QueueDriverRequest::Released(request) => driver.execute(request).await,
             QueueDriverRequest::Candidate(request) => driver.execute_candidate(request).await,
+            QueueDriverRequest::Workflow(request) => driver.execute_workflow(request).await,
         }
     };
     tokio::pin!(execute);

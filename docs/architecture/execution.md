@@ -997,9 +997,9 @@ The HTTP-stop allowance bounds coordination and does not guarantee native comple
 
 Queue shutdown bounds its current turn and auxiliary cleanup.
 A turn beyond the budget retains the existing durable lease for recovery.
-The [workflow start command](../operations/queued-automation.md) admits production automation under an active service principal.
-The host reads that principal and its current application permissions before each delivery.
-The normal operation check applies: a service principal granted an entry runs it.
+The [workflow start command](../operations/queued-automation.md) calls the host route `workflow.start`, which admits a run of an environment workflow under its executing principal and one active role.
+The host reads that principal and the current permissions of that role before each node.
+The normal operation check applies: a role granted an entry runs it.
 SIGTERM and SIGINT share the host cleanup budget. The budget retains the native drain and plugin shutdown allowances.
 An aborted call loses its invocation authority, and native teardown releases its store.
 After the lease expires, recovery takes a new lease generation. The old generation cannot complete the run.

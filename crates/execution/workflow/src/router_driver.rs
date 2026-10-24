@@ -19,7 +19,10 @@ use wamn_engine::operation::{
     NativeApplication, OperationCall, OperationClosure, invoke_operation, node_types,
 };
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
-use wamn_engine::router_delivery::{authorize_registered_operation, bounded_node_deadline_ms};
+use wamn_engine::router_delivery::{
+    OperationRefusal, OperationRefusalType, authorize_registered_operation,
+    bounded_node_deadline_ms,
+};
 use wamn_event_wire::Causation;
 use wamn_execution_host::{
     CallIntents, DeadlineAdjustment, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition,
@@ -36,7 +39,7 @@ use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
 use wamn_runtime::plugins::wamn_postgres::{
-    CandidateBindingWorld, CandidateWiringResolution, ResolvedActiveWiring,
+    CandidateBindingWorld, CandidateWiringResolution, ResolvedActiveWiring, WorkflowRunKey,
 };
 
 /// Shared CLI/environment key for the only wiring cache in a serving process.
@@ -159,6 +162,29 @@ pub struct RouterDriverRequest {
     pub caller: Option<AuthenticatedCaller>,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
+}
+
+/// One queued run of an environment workflow (docs/plan/workflows.md R3,
+/// epic 1), with the facts its run row froze at admission.
+///
+/// `run` carries the application as its package, the workflow id and version
+/// as its wiring coordinate, and the claim-time caller. The run executes on a
+/// host of the release it pins: the claim leases it only there.
+#[derive(Debug, Clone)]
+pub struct WorkflowRunRequest {
+    pub run: RouterDriverRequest,
+    pub wiring_hash: String,
+    /// The component digest admission froze for each node.
+    pub node_digests: BTreeMap<String, String>,
+    /// The principal the run executes as, and its one active role.
+    pub identity: WorkflowIdentity,
+}
+
+/// The principal a workflow run executes as, with its one active role.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowIdentity {
+    pub principal_id: String,
+    pub role: String,
 }
 
 /// The exact context one `wamn:node` guest is invoked with.
@@ -444,6 +470,71 @@ impl RouterDriver {
             ExecutionClosure::Released,
             causation,
             platform,
+            None,
+        )
+        .await
+    }
+
+    /// Execute one queued run of an environment workflow through the same
+    /// router and node invoker as a released wiring.
+    ///
+    /// The run resolves from its row through
+    /// [`WamnPostgres::resolve_workflow`](wamn_runtime::plugins::wamn_postgres::WamnPostgres::resolve_workflow)
+    /// on every claim: the wiring cache holds released wirings of a package,
+    /// and a workflow is not one (epic 1). Every node is authorized with the
+    /// grants its principal holds for its role when the node runs, not with
+    /// the claim-time caller (docs/plan/workflows.md R3).
+    pub async fn execute_workflow(
+        &self,
+        request: WorkflowRunRequest,
+    ) -> anyhow::Result<RouterDelivery> {
+        let WorkflowRunRequest {
+            run,
+            wiring_hash,
+            node_digests,
+            identity,
+        } = request;
+        self.validate_request_scope(&run)?;
+        let manifest_digest = self.release.release().manifest_digest.as_str();
+        let resolved = self
+            .operations
+            .postgres
+            .resolve_workflow(
+                &self.operations.project,
+                &WorkflowRunKey {
+                    tenant_id: &run.tenant_id,
+                    environment: &run.environment,
+                    application: &run.package_id,
+                    workflow_id: &run.wiring_id,
+                    version: run.wiring_version,
+                    manifest_digest,
+                    wiring_hash: &wiring_hash,
+                    node_digests: &node_digests,
+                },
+            )
+            .instrument(wamn_engine::invocation_trace::sampled_span(|| {
+                tracing::info_span!("wamn.router.resolve")
+            }))
+            .await?;
+        let scope = WiringScope {
+            tenant_id: &run.tenant_id,
+            package_id: &run.package_id,
+            environment: &run.environment,
+        };
+        let wiring = lower_resolved_wiring(scope, &resolved).context("lower workflow graph")?;
+        let active = ActiveWiring {
+            version: resolved.version,
+            graph_hash: Arc::clone(&resolved.graph_hash),
+            wiring: Arc::new(wiring),
+            facts: Arc::new(CatalogFacts::from_resolved(&resolved)?),
+        };
+        self.execute_resolved(
+            run,
+            active,
+            ExecutionClosure::Released,
+            None,
+            Some(PlatformComponent::Executor),
+            Some(&identity),
         )
         .await
     }
@@ -510,6 +601,7 @@ impl RouterDriver {
                 },
                 None,
                 Some(PlatformComponent::Executor),
+                None,
             )
             .await;
         let cleanup = application.workload.unbind_all_plugins().await;
@@ -520,6 +612,9 @@ impl RouterDriver {
         }
     }
 
+    /// `workflow` is the identity of a workflow run: each node is then
+    /// authorized with the grants the principal holds for its role now. A
+    /// released or candidate delivery keeps its claim-time caller.
     async fn execute_resolved(
         &self,
         request: RouterDriverRequest,
@@ -527,6 +622,7 @@ impl RouterDriver {
         closure: ExecutionClosure<'_>,
         causation: Option<Causation>,
         platform: Option<PlatformComponent>,
+        workflow: Option<&WorkflowIdentity>,
     ) -> anyhow::Result<RouterDelivery> {
         let mut deadline_adjustments = Vec::new();
         let result = async {
@@ -582,8 +678,15 @@ impl RouterDriver {
                             let operation = component
                                 .operation(&call.operation)
                                 .ok_or_else(|| anyhow::anyhow!("router-node-operation-fact-missing"))?;
+                            let caller = match workflow {
+                                Some(identity) => Some(
+                                    self.workflow_node_caller(&request, identity, operation, &call)
+                                        .await?,
+                                ),
+                                None => request.caller.clone(),
+                            };
                             authorize_registered_operation(
-                                request.caller.as_ref(),
+                                caller.as_ref(),
                                 operation.registered_operation.as_deref(),
                             )?;
                             if let Some(requested_ms) = call.deadline_ms {
@@ -613,6 +716,7 @@ impl RouterDriver {
                                     causation.as_ref(),
                                     platform,
                                     effects.clone(),
+                                    caller,
                                 )
                                 .instrument(span)
                                 .await
@@ -662,6 +766,38 @@ impl RouterDriver {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// The caller of one node of a workflow run: the principal with the
+    /// grants of its role, read now through the host's auth memory. A
+    /// principal that is inactive or no longer holds the role is refused the
+    /// node, as a request is refused an operation it does not hold.
+    async fn workflow_node_caller(
+        &self,
+        request: &RouterDriverRequest,
+        identity: &WorkflowIdentity,
+        operation: &wamn_catalog::AdmittedComponentOperation,
+        call: &wamn_router::NodeCall,
+    ) -> anyhow::Result<AuthenticatedCaller> {
+        self.operations
+            .postgres
+            .workflow_node_caller(
+                &self.operations.project,
+                &request.tenant_id,
+                &identity.principal_id,
+                &identity.role,
+            )
+            .await?
+            .ok_or_else(|| {
+                OperationRefusal::new(
+                    OperationRefusalType::PermissionDenied,
+                    operation
+                        .registered_operation
+                        .as_deref()
+                        .unwrap_or(&call.operation),
+                )
+                .into()
+            })
     }
 
     async fn resolve_candidate(
@@ -955,7 +1091,7 @@ impl RouterDriver {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "the delivery, graph, call, closure, provenance and executing component are independent facts"
+        reason = "the delivery, graph, call, closure, provenance, executing component and caller are independent facts"
     )]
     async fn invoke_node(
         &self,
@@ -966,6 +1102,7 @@ impl RouterDriver {
         causation: Option<&Causation>,
         platform: Option<PlatformComponent>,
         effects: Option<EffectEvidence>,
+        caller: Option<AuthenticatedCaller>,
     ) -> anyhow::Result<NodeOutcome> {
         let component = active
             .facts
@@ -1025,7 +1162,7 @@ impl RouterDriver {
                     causation: causation.cloned(),
                     platform,
                 },
-                request.caller.clone(),
+                caller,
             ),
         };
         // A node logs the intents of the route that its operation publishes.

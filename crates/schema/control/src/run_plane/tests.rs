@@ -474,6 +474,71 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
     );
 }
 
+/// A manual workflow run is its own grain (docs/plan/workflows.md R3): no
+/// flow, no service principal, no registration, no binding world; a release
+/// pin, frozen node digests as a JSON object, an executing principal and
+/// role, and the invoking user. Every other grain leaves those columns NULL,
+/// and admission pins them.
+#[test]
+fn runs_manual_grain_check_mirrors_are_exact() {
+    let check = |name: &str| {
+        CHECK_SPECS
+            .iter()
+            .find(|spec| spec.table == "runs" && spec.name == name)
+            .unwrap_or_else(|| panic!("runs.{name} CHECK mirror exists"))
+            .definition
+    };
+    let grain = check("runs_execution_grain_check");
+    assert!(
+        grain.ends_with(
+            " OR flow_id IS NULL AND flow_version IS NULL \
+             AND NOT trigger_source IS DISTINCT FROM 'manual'::text \
+             AND registration_id IS NULL AND service_principal_id IS NULL \
+             AND wiring_id IS NOT NULL AND wiring_id <> ''::text \
+             AND wiring_version IS NOT NULL AND wiring_version > 0 \
+             AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'::text \
+             AND manifest_digest IS NOT NULL AND node_digests_json IS NOT NULL \
+             AND jsonb_typeof(node_digests_json) = 'object'::text \
+             AND execution_principal_id IS NOT NULL \
+             AND execution_role IS NOT NULL AND execution_role <> ''::text \
+             AND NOT invoked_by IS DISTINCT FROM 'manual'::text \
+             AND invoked_by_user_id IS NOT NULL AND binding_world_json IS NULL)"
+        ),
+        "{grain}"
+    );
+    assert_eq!(
+        check("runs_execution_identity_check"),
+        "CHECK (NOT trigger_source IS DISTINCT FROM 'manual'::text \
+         OR execution_principal_id IS NULL AND execution_role IS NULL \
+         AND invoked_by IS NULL AND invoked_by_user_id IS NULL \
+         AND node_digests_json IS NULL)"
+    );
+    // A manual run never needs a service principal.
+    assert_eq!(
+        check("runs_service_principal_check"),
+        "CHECK ((NOT trigger_source IS DISTINCT FROM 'automation'::text \
+         OR NOT trigger_source IS DISTINCT FROM 'schedule'::text) \
+         = (service_principal_id IS NOT NULL))"
+    );
+    for pinned in [
+        "execution_principal_id",
+        "execution_role",
+        "invoked_by",
+        "invoked_by_user_id",
+        "node_digests_json",
+    ] {
+        assert!(
+            RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(&format!(" {pinned},"))
+                || RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(&format!(" {pinned} ON")),
+            "the admission pins trigger names {pinned}"
+        );
+        assert!(
+            RUNS_ADMISSION_PINS_TRIGGER_SQL.contains(pinned),
+            "the admission pins trigger SQL names {pinned}"
+        );
+    }
+}
+
 /// Sections carry the table's whole apparatus: indexes, RLS, policy, grant.
 #[test]
 fn table_sections_carry_indexes_rls_and_grants() {

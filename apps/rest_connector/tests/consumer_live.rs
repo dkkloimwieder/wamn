@@ -273,8 +273,8 @@ pub async fn invoke(
         )
         .await?
         .get(0);
-    let caller = wamn_runtime::plugins::route_authentication::queued_service_caller(
-        &admin, TENANT, &principal,
+    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
+        &admin, TENANT, &principal, None,
     )
     .await?;
     wamn_engine::router_delivery::authorize_registered_operation(Some(&caller), Some(OPERATION))?;

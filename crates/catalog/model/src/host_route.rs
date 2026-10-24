@@ -183,6 +183,9 @@ pub enum HostHandler {
     /// Set one counter of a number sequence of the application
     /// (docs/plan/platform-config.md, Numbering, Administration).
     NumberCounterSet,
+    /// Start one run of the enabled version of an environment workflow
+    /// (docs/plan/workflows.md R3, epic 1).
+    WorkflowStart,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -297,6 +300,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::NumberCounterSet,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.start",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::WorkflowStart,
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -616,9 +626,50 @@ mod tests {
         assert!(is_granted_host_route_operation(
             "wamn-control:number-counter/set@0.9.0"
         ));
+        let start = HostRouteSet::Application
+            .attachment("wamn-control-workflow-start-http")
+            .expect("workflow.start is an application host route");
+        assert_eq!(start.route.handler, HostHandler::WorkflowStart);
+        assert_eq!(start.reference, "wamn-control:workflow/start");
+        assert_eq!(
+            start.registered_operation(),
+            Some("wamn-control:workflow/start@0.9.0")
+        );
+        assert!(is_granted_host_route_operation(
+            "wamn-control:workflow/start"
+        ));
+        assert!(is_granted_host_route_operation(
+            "wamn-control:workflow/start@0.9.0"
+        ));
         assert!(!is_granted_host_route_operation("wamn-control:role/create"));
         assert!(!is_granted_host_route_operation(
             "wamn-receiving:receipt/get"
         ));
+    }
+
+    /// `workflow.start` names no user, role or release: the caller is the
+    /// authenticated one and the release is the served one
+    /// (docs/plan/workflows.md R3).
+    #[test]
+    fn workflow_start_input_names_no_user() {
+        let input: Value = serde_json::from_str(include_str!(
+            "host_route/contracts/workflow/start.input.json"
+        ))
+        .expect("the start input contract is JSON");
+        let paths: Vec<&str> = input["fields"]
+            .as_array()
+            .expect("the contract lists its fields")
+            .iter()
+            .map(|field| field["path"].as_str().expect("a field has a path"))
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "request_id",
+                "value.workflow_id",
+                "value.input_json",
+                "value.idempotency_key"
+            ]
+        );
     }
 }

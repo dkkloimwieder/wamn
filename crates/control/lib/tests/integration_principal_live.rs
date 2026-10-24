@@ -6,7 +6,7 @@ use wamn_catalog::{ServingManifest, ServingWiring};
 use wamn_control::environment::stage::{materialize_application_principals, write_release};
 use wamn_engine::router_delivery::authorize_registered_operation;
 use wamn_platform_identity::auth_changes::AuthChanges;
-use wamn_runtime::plugins::route_authentication::queued_service_caller;
+use wamn_runtime::plugins::route_authentication::queued_run_caller;
 use wamn_schema_control::BareSchemaName;
 use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
 
@@ -225,7 +225,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             .get::<_, String>(0),
         principal
     );
-    let caller = queued_service_caller(&admin, TENANT, &principal).await?;
+    let caller = queued_run_caller(&admin, TENANT, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
@@ -250,7 +250,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         &AuthChanges::default(),
     )
     .await?;
-    let caller = queued_service_caller(&admin, TENANT, &principal).await?;
+    let caller = queued_run_caller(&admin, TENANT, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     assert!(
         authorize_registered_operation(Some(&caller), Some("consumer:item/delete@1.0.0")).is_err()
@@ -313,7 +313,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         )
         .await?
         .get(0);
-    let own_caller = queued_service_caller(&admin, TENANT, &scheduled_principal).await?;
+    let own_caller = queued_run_caller(&admin, TENANT, &scheduled_principal, None).await?;
     authorize_registered_operation(Some(&own_caller), None)?;
     assert_eq!(
         admin

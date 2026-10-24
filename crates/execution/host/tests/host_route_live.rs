@@ -231,6 +231,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             "wamn-control:user-role/grant",
             "wamn-control:user-role/revoke",
             "wamn-control:user/list",
+            "wamn-control:workflow/start",
         ]})
     );
 
@@ -361,6 +362,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         "wamn-control:permission/revoke",
         "wamn-control:user-role/grant",
         "wamn-control:user-role/revoke",
+        "wamn-control:workflow/start",
     ] {
         assert!(
             matches!(

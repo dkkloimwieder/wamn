@@ -69,6 +69,10 @@ impl RouteAuthenticator for EdgeAuthenticator {
                 .iter()
                 .map(|permission| wamn_catalog::sealed_operation_reference(permission).to_owned())
                 .collect(),
+            match claims.roles.as_slice() {
+                [role] => Some(role.as_str().into()),
+                _ => None,
+            },
         )))
     }
 }

@@ -221,6 +221,7 @@ async fn call(
                 CredentialType::Session,
                 false,
                 HashSet::new(),
+                None,
             )),
         )
         .await;

@@ -206,7 +206,12 @@ BEGIN
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
        OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json
        OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest
-       OR NEW.service_principal_id IS DISTINCT FROM OLD.service_principal_id THEN
+       OR NEW.service_principal_id IS DISTINCT FROM OLD.service_principal_id
+       OR NEW.execution_principal_id IS DISTINCT FROM OLD.execution_principal_id
+       OR NEW.execution_role IS DISTINCT FROM OLD.execution_role
+       OR NEW.invoked_by IS DISTINCT FROM OLD.invoked_by
+       OR NEW.invoked_by_user_id IS DISTINCT FROM OLD.invoked_by_user_id
+       OR NEW.node_digests_json IS DISTINCT FROM OLD.node_digests_json THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -312,6 +317,16 @@ CREATE TABLE wamn_run.runs (
     trigger_source  text,
     -- The service identity of an operator-admitted automation run.
     service_principal_id uuid,
+    -- A manual workflow run (docs/plan/workflows.md R3, R2): executed as this
+    -- principal with this one role active, invoked by `invoked_by` (what caused
+    -- it) and `invoked_by_user_id` (the session or PAT user), and executing
+    -- the component digest admission froze for each node. Every other grain
+    -- leaves the five columns NULL.
+    execution_principal_id uuid,
+    execution_role  text,
+    invoked_by      text,
+    invoked_by_user_id uuid,
+    node_digests_json jsonb,
     capture_mode    text NOT NULL DEFAULT 'off'
         CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
     -- The DURABILITY CLASS the run was admitted under (wamn-0h0g.20.1). The
@@ -418,8 +433,9 @@ CREATE TABLE wamn_run.runs (
     -- Exactly one complete historical or component-era execution grain. The
     -- explicit IS NOT NULL arms keep PostgreSQL CHECK's NULL truth value from
     -- admitting a half-record. Existing flow rows stay truthful; they are not
-    -- backfilled with an identity that was never recorded. The final arms admit
-    -- event runs with no caller and schedules under their application principal.
+    -- backfilled with an identity that was never recorded. The later arms admit
+    -- event runs with no caller, schedules under their application principal,
+    -- and manual workflow runs under their executing principal and role.
     CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
        AND flow_id <> '' AND flow_version > 0
@@ -459,6 +475,30 @@ CREATE TABLE wamn_run.runs (
        AND wiring_version IS NOT NULL AND wiring_version > 0
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
        AND binding_world_json IS NULL)
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND trigger_source IS NOT DISTINCT FROM 'manual'
+       AND registration_id IS NULL
+       AND service_principal_id IS NULL
+       AND wiring_id IS NOT NULL AND wiring_id <> ''
+       AND wiring_version IS NOT NULL AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND manifest_digest IS NOT NULL
+       AND node_digests_json IS NOT NULL
+       AND jsonb_typeof(node_digests_json) = 'object'
+       AND execution_principal_id IS NOT NULL
+       AND execution_role IS NOT NULL AND execution_role <> ''
+       AND invoked_by IS NOT DISTINCT FROM 'manual'
+       AND invoked_by_user_id IS NOT NULL
+       AND binding_world_json IS NULL)
+    ),
+    -- Only a manual workflow run carries an execution identity, an invoker and
+    -- frozen node digests.
+    CONSTRAINT runs_execution_identity_check CHECK (
+      trigger_source IS NOT DISTINCT FROM 'manual'
+      OR (execution_principal_id IS NULL AND execution_role IS NULL
+          AND invoked_by IS NULL AND invoked_by_user_id IS NULL
+          AND node_digests_json IS NULL)
     ),
     CONSTRAINT runs_service_principal_check CHECK (
       (trigger_source IS NOT DISTINCT FROM 'automation' OR trigger_source IS NOT DISTINCT FROM 'schedule')
@@ -505,7 +545,9 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF flow_id, flow_version, package_id, environment,
                  capture_mode, durability_class, wiring_id, wiring_version,
-                 wiring_hash, binding_world_json, manifest_digest, service_principal_id
+                 wiring_hash, binding_world_json, manifest_digest, service_principal_id,
+                 execution_principal_id, execution_role, invoked_by, invoked_by_user_id,
+                 node_digests_json
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only

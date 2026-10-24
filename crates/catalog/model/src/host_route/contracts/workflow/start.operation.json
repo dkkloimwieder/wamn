@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:workflow/start@0.9.0",
+  "type": "command",
+  "label": "Start a workflow",
+  "grant": "wamn-control:workflow/start@0.9.0",
+  "permission_token": "workflow.start",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

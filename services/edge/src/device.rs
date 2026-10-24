@@ -78,6 +78,7 @@ pub fn start(
             .iter()
             .map(|permission| wamn_catalog::sealed_operation_reference(permission).to_owned())
             .collect(),
+        Some(config.role.as_str().into()),
     );
     let route = delivery.device_route(&config.attachment, &caller)?;
     anyhow::ensure!(

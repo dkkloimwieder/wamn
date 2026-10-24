@@ -1,41 +1,44 @@
 # Queued automation
 
-`wamn-ctl workflow start` queues one released wiring under a service principal.
-The `workflow` commands call the workflow contract in `wamn-workflow`, and they use project-admin database authority.
+`wamn-ctl workflow start` starts one run of an environment workflow through the host route `workflow.start`.
+The route is an operation of the application's ACL: `admin` holds it, and another role holds it through a stored permission row of `wamn-control:workflow/start`.
+The other `workflow` commands call the workflow contract in `wamn-workflow`, and they use project-admin database authority.
 The host's queue worker uses its existing database roles to claim and execute the run.
 
-First, provision the service identity and reconcile its tenant user row.
-Assign its application roles in `platform.user_role` through the project administrator.
-Those roles grant operations through `platform.permission`.
-The service row must have type `service` and status `active`.
+Author and enable the workflow first with `wamn-ctl workflow author` and `wamn-ctl workflow enable`.
+A workflow of type `role` runs as the environment's `workflow` user with its execution role, so grant that role to the `workflow` user.
+A workflow of type `invoker` runs as the caller with its active role.
+A caller with `admin` acts as `admin`, and a caller with exactly one role acts with that role.
+A caller with no role or more than one role is refused with `active_role_required`.
 
-Reconcile the run schema before admission.
 Configure the host with the selected release and both executor-class and callable-HTTP database credentials.
-The callable-HTTP credential reads the service identity and its current permissions.
+The executor credential reads the enabled workflow and admits the run.
+The callable-HTTP credential reads the principal's current roles and permissions.
 
-Set `WAMN_PG_ADMIN_URL` to the project-admin connection URL.
+Set `WAMN_TOKEN` to a session token or a PAT of the caller.
 Then submit an input file:
 
 ```bash
 wamn-ctl workflow start \
-  --tenant acme --environment dev --package-id orders \
-  --release-digest "$RELEASE_DIGEST" --wiring-id process-orders --wiring-version 1 \
-  --service-principal-id "$SERVICE_PRINCIPAL_ID" \
+  --host-url "https://$APPLICATION_HOST" --workflow-id nightly \
   --idempotency-key batch-42 --input /tmp/orders-input.json
 ```
 
 The command prints the stored run id.
-An identical retry returns that id and creates no second queue row.
-A changed request with the same tenant and key refuses.
+The host admits the enabled version against the release it serves.
+It gates the graph against that release and refuses `workflow_not_served` when the graph does not gate or its hash differs from the stored hash.
+A workflow with no enabled version refuses `workflow_not_enabled`.
+The run records the release, the graph hash, the component digest of each node, the principal and role it executes as, and the caller as its invoker.
+An identical retry by the same caller returns that id and creates no second queue row.
+The same key with another input refuses `idempotency_conflict`.
 The run and queue row commit in one transaction.
-The run records the released wiring hash, service identity, and environment durability policy.
 
-Automation has no waiting HTTP caller.
+A workflow run has no waiting HTTP caller.
 Use an emit terminal, or let the graph finish without a terminal.
-The host reads current service permissions before delivery and applies the normal operation checks.
-Nested calls retain the service principal.
-Operations that require a fresh PAT refuse queued automation.
-The service principal owns application writes, while the `wamn:executor` credential class owns queue maintenance.
+Before each node, the host reads the principal's current grants for the run's role, and applies the normal operation checks.
+A role revoked during a run refuses the next node.
+Operations that require a fresh PAT refuse a queued run.
+The executing principal owns application writes, while the `wamn:executor` credential class owns queue maintenance.
 
 ## Park, release, and list runs
 

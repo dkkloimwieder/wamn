@@ -197,14 +197,16 @@ pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
 
 /// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
 ///
-/// Released and candidate resolution read these through the platform pool.
+/// Released and candidate resolution read these through the platform pool,
+/// and the host's workflow admission and resolution read `workflows`.
 ///
 /// TABLE grain, not column grain — the [`grant_system_reader_surface_sql`]
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 6] = [
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 7] = [
     "wirings",
+    "workflows",
     "connection_requirements",
     "connection_bindings",
     "connection_instances",
@@ -274,13 +276,17 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
     "attempts",
 ];
 
-/// Every `runs` column the executor-platform family INSERTs for event and schedule runs.
+/// Every `runs` column the executor-platform family INSERTs for event, schedule
+/// and manual workflow runs.
 ///
 /// The host admits an event or schedule run under the authority of the
 /// release that declares the workflow (`wamn_run_state::queue::insert_event_run_sql`).
-/// A schedule carries its application service principal. The list reaches no
-/// binding world, legacy flow, event ancestry, capture or caller-outcome column.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 14] = [
+/// A schedule carries its application service principal. A manual workflow
+/// run carries its executing principal and role, its invoker and its frozen
+/// node digests (`wamn_run_state::queue::insert_manual_run_sql`). The list
+/// reaches no binding world, legacy flow, event ancestry, capture or
+/// caller-outcome column.
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 19] = [
     "tenant_id",
     "package_id",
     "manifest_digest",
@@ -291,6 +297,11 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 14] = [
     "trigger_source",
     "registration_id",
     "service_principal_id",
+    "execution_principal_id",
+    "execution_role",
+    "invoked_by",
+    "invoked_by_user_id",
+    "node_digests_json",
     "idempotency_key",
     "input_json",
     "status",
@@ -1281,6 +1292,7 @@ mod tests {
              FROM \"wamn_executor_platform\"; \
              GRANT USAGE ON SCHEMA catalog, platform, \"wamn_run\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"workflows\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" \
@@ -1298,7 +1310,9 @@ mod tests {
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT INSERT (\"tenant_id\", \"package_id\", \"manifest_digest\", \
              \"environment\", \"wiring_id\", \"wiring_version\", \"wiring_hash\", \
-             \"trigger_source\", \"registration_id\", \"service_principal_id\", \"idempotency_key\", \"input_json\", \
+             \"trigger_source\", \"registration_id\", \"service_principal_id\", \
+             \"execution_principal_id\", \"execution_role\", \"invoked_by\", \
+             \"invoked_by_user_id\", \"node_digests_json\", \"idempotency_key\", \"input_json\", \
              \"status\", \"durability_class\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT SELECT, DELETE ON TABLE \"wamn_run\".\"run_queue\" \

@@ -71,22 +71,39 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permi
 pub struct HeldOperationGrants {
     pub admin: bool,
     pub references: BTreeSet<String>,
+    /// The names of the held roles.
+    pub roles: BTreeSet<String>,
 }
 
 impl HeldOperationGrants {
     /// Fold rows of `(role_name, permission)`, where a null permission is a
     /// role without permissions. The held references are the rows.
     pub fn from_rows(rows: &[tokio_postgres::Row]) -> Result<Self, tokio_postgres::Error> {
-        let mut admin = false;
-        let mut references = BTreeSet::new();
+        let mut held = Self::default();
         for row in rows {
             let role: String = row.try_get(0)?;
-            admin |= role == wamn_project_state::ADMIN_ROLE;
+            held.admin |= role == wamn_project_state::ADMIN_ROLE;
             if let Some(reference) = row.try_get::<_, Option<String>>(1)? {
-                references.insert(reference);
+                held.references.insert(reference);
             }
+            held.roles.insert(role);
         }
-        Ok(Self { admin, references })
+        Ok(held)
+    }
+
+    /// The one role a caller with these grants acts with
+    /// (docs/plan/workflows.md R3): `admin` for a holder of `admin`, the
+    /// single role of a caller that holds exactly one, and none for a caller
+    /// that holds no role or more than one.
+    pub fn active_role(&self) -> Option<Box<str>> {
+        if self.admin {
+            return Some(wamn_project_state::ADMIN_ROLE.into());
+        }
+        let mut roles = self.roles.iter();
+        match (roles.next(), roles.next()) {
+            (Some(role), None) => Some(role.as_str().into()),
+            _ => None,
+        }
     }
 }
 
@@ -123,6 +140,7 @@ fn held_grants(
         }
         held.admin |= role == wamn_project_state::ADMIN_ROLE;
         held.references.extend(permissions.iter().cloned());
+        held.roles.insert(role.clone());
     }
     held
 }
@@ -2129,25 +2147,57 @@ impl WamnPostgres {
         Ok(result)
     }
 
-    /// Refresh the identity and permissions of an operator-admitted queued service.
-    pub async fn queued_service_caller(
+    /// Refresh the identity and permissions of the principal of a queued run,
+    /// with `role` active or, without one, with every role it holds
+    /// ([`queued_run_caller`](crate::plugins::route_authentication::queued_run_caller)).
+    pub async fn queued_run_caller(
         &self,
         project: &str,
         tenant: &str,
         principal_id: &str,
+        role: Option<&str>,
     ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
-        anyhow::ensure!(valid_project(project), "invalid queued-service project");
-        anyhow::ensure!(valid_tenant(tenant), "invalid queued-service tenant");
+        anyhow::ensure!(valid_project(project), "invalid queued-run project");
+        anyhow::ensure!(valid_tenant(tenant), "invalid queued-run tenant");
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        crate::plugins::route_authentication::queued_service_caller(
+        crate::plugins::route_authentication::queued_run_caller(
             &**connection,
             tenant,
             principal_id,
+            role,
         )
         .await
+    }
+
+    /// The caller of one node of a workflow run that executes as
+    /// `principal_id` with `role` active, from the grants the principal holds
+    /// now, read through the host's auth memory as a request reads them
+    /// (docs/plan/workflows.md R3). None when the principal is inactive or no
+    /// longer holds `role`.
+    pub async fn workflow_node_caller(
+        &self,
+        project: &str,
+        tenant: &str,
+        principal_id: &str,
+        role: &str,
+    ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
+        let principal: wamn_platform_identity::PrincipalId = principal_id
+            .parse()
+            .context("the run's principal is not a principal id")?;
+        let grants = self.principal_grants(project, tenant, &principal).await?;
+        Ok(grants
+            .active
+            .then(|| {
+                crate::plugins::route_authentication::role_caller(
+                    principal.as_str(),
+                    role,
+                    &grants.roles,
+                )
+            })
+            .flatten())
     }
 
     pub(super) fn require_tenant(&self, component_id: &str) -> Result<String, PgError> {

@@ -71,11 +71,16 @@ mod run_stream;
 mod statements;
 mod types;
 mod wiring_resolution;
+mod workflow_resolution;
 pub mod write_log;
 
 pub use wiring_resolution::{
     CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,
     ResolvedActiveWiring,
+};
+pub use workflow_resolution::{
+    EnabledWorkflow, WorkflowResolutionError, WorkflowResolutionErrorType, WorkflowRunKey,
+    resolve_workflow_in_release,
 };
 
 pub use claims::{
@@ -89,7 +94,9 @@ pub use credential_exactness::{
     CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
-pub use event_admission::{EventRunAdmission, EventRunAdmitted};
+pub use event_admission::{
+    EventRunAdmission, EventRunAdmitted, ManualRunAdmission, ManualRunAdmitted,
+};
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation_transaction::{CommitFailure, OperationTransaction};
 pub use pool::{
@@ -99,7 +106,7 @@ pub use pool::{
 pub use production_claim::{
     ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorType,
     ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseRenewal, ProductionReapResult,
+    ProductionLeaseRenewal, ProductionReapResult, ProductionWorkflow,
 };
 #[cfg(feature = "test-util")]
 pub use resources::retained_transaction_for_test;

@@ -270,7 +270,7 @@ run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
            ASSERT actual = \
              'connection_bindings:SELECT,\
 connection_generations:SELECT,connection_instances:SELECT,connection_requirements:SELECT,\
-releases:SELECT,wirings:SELECT', \
+releases:SELECT,wirings:SELECT,workflows:SELECT', \
                   'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \
@@ -298,9 +298,10 @@ result_json,state_json,status,terminal_reason,updated_at', \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
            ASSERT actual = \
-             'durability_class,environment,idempotency_key,input_json,manifest_digest,\
+             'durability_class,environment,execution_principal_id,execution_role,\
+idempotency_key,input_json,invoked_by,invoked_by_user_id,manifest_digest,node_digests_json,\
 package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,wiring_hash,wiring_id,wiring_version', \
-                  'runs INSERT columns (the event run grain) drifted: ' || coalesce(actual, '<none>'); \
+                  'runs INSERT columns (the event and manual run grains) drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \
             WHERE a.attrelid = 'wamn_run.run_queue'::regclass AND a.attnum > 0 \

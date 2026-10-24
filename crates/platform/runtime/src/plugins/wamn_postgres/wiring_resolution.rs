@@ -758,11 +758,11 @@ impl WamnPostgres {
     }
 }
 
-struct DecodedWiring {
-    version: u32,
-    package_version: String,
-    graph_hash: String,
-    document: WiringDocument,
+pub(super) struct DecodedWiring {
+    pub(super) version: u32,
+    pub(super) package_version: String,
+    pub(super) graph_hash: String,
+    pub(super) document: WiringDocument,
 }
 
 fn decode_wiring(wiring_id: &str, row: &tokio_postgres::Row) -> anyhow::Result<DecodedWiring> {
@@ -924,7 +924,7 @@ fn decode_active_wiring(
 }
 
 /// Check each node's admitted component against the document, and keep both.
-fn resolved_wiring(
+pub(super) fn resolved_wiring(
     decoded: DecodedWiring,
     manifest_digest: &str,
     resolved: BTreeMap<String, AdmittedComponent>,

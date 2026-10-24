@@ -18,7 +18,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{OperationRefusalType, authorize_released_operation};
 use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::route_authentication::queued_service_caller;
+use wamn_runtime::plugins::route_authentication::queued_run_caller;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -146,7 +146,7 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
         statements: std::collections::BTreeMap::new(),
     };
 
-    let caller = queued_service_caller(&admin, TENANT, SERVICE).await?;
+    let caller = queued_run_caller(&admin, TENANT, SERVICE, None).await?;
     assert_eq!(caller.credential_type(), CredentialType::QueuedService);
     let refusal = authorize_released_operation(Some(&caller), &released)
         .expect_err("a service without the grant was admitted");
@@ -163,7 +163,7 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
             &[&TENANT],
         )
         .await?;
-    let caller = queued_service_caller(&admin, TENANT, SERVICE).await?;
+    let caller = queued_run_caller(&admin, TENANT, SERVICE, None).await?;
     assert_eq!(caller.credential_type(), CredentialType::QueuedService);
     authorize_released_operation(Some(&caller), &released)
         .expect("a service granted the operation is admitted");

@@ -28,8 +28,11 @@ use crate::{RunStatus, sql as run_sql};
 /// the router, the durability class it gates the rest of the turn on, and the
 /// immutable wiring pair admission froze, plus the existing trigger-source
 /// classification that tells the router whether a caller is waiting, and the
-/// selected row's package id. The release is admission-pinned by its manifest
-/// digest, which the grant compares with the claiming pod's digest.
+/// selected row's package id. A manual workflow run adds what its queue
+/// request needs: its trigger source, its executing principal and active role,
+/// and the component digest of every node (docs/plan/workflows.md R3, R2). The
+/// release is admission-pinned by its manifest digest, which the grant
+/// compares with the claiming pod's digest.
 /// `$1` is the exact package-id set in the mounted release and `$2` is the
 /// environment scope. One set-valued predicate preserves the tenant's single
 /// global FIFO; an executor never leases a package outside its release merely
@@ -85,7 +88,9 @@ pub fn select_production_claim_sql() -> String {
                     AS durable_caller_attached, \
                 r.flow_id, r.flow_version, \
                 r.wiring_hash, r.binding_world_json::text, r.package_id, \
-                r.service_principal_id::text \
+                r.service_principal_id::text, r.trigger_source, \
+                r.execution_principal_id::text, r.execution_role, \
+                r.node_digests_json::text \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
@@ -380,6 +385,13 @@ mod tests {
         // R20: no NULL on either side skips the release filter.
         assert!(claim.contains("selected_run.manifest_digest IS NOT DISTINCT FROM $3::text"));
         assert!(!claim.contains("IS NULL OR selected_run.manifest_digest"));
+        // A manual workflow run carries its executing identity and frozen
+        // node digests to the queue request.
+        assert!(claim.contains(
+            "r.service_principal_id::text, r.trigger_source, \
+             r.execution_principal_id::text, r.execution_role, \
+             r.node_digests_json::text"
+        ));
         assert!(claim.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
         assert_eq!(claim.matches("LIMIT 1").count(), 1);
 
