@@ -96,7 +96,7 @@ pub struct AuthorArgs {
     /// The active role of a run. Required with `--execution-type role`.
     #[arg(long)]
     pub execution_role: Option<String>,
-    /// The `platform.users` id of the authoring principal.
+    /// The `platform."user"` id of the authoring principal.
     #[arg(long)]
     pub principal_id: String,
 }
@@ -121,7 +121,7 @@ pub struct VersionArgs {
 pub struct EnableArgs {
     #[command(flatten)]
     pub version: VersionArgs,
-    /// The `platform.users` id of the enabling principal.
+    /// The `platform."user"` id of the enabling principal.
     #[arg(long)]
     pub principal_id: String,
 }

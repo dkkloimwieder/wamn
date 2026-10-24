@@ -216,7 +216,7 @@ impl PlatformComponent {
 /// user. The platform grants it none.
 pub const WORKFLOW_USER_NAME: &str = "workflow";
 
-/// The `platform.users` id of the workflow user: the UUIDv5 of
+/// The `platform."user"` id of the workflow user: the UUIDv5 of
 /// [`WORKFLOW_USER_NAME`] under [`WAMN_NAMESPACE`].
 pub fn workflow_user_id() -> uuid::Uuid {
     uuid::Uuid::new_v5(&WAMN_NAMESPACE, WORKFLOW_USER_NAME.as_bytes())

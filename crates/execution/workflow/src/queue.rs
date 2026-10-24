@@ -8,13 +8,15 @@ use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_run_state::{FailType, RunStore as _};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
-    ProductionReapResult, ReleaseIdentity, SessionClaims, WamnPostgres,
+    ProductionReapResult, ReleaseIdentity, SessionClaims, WamnPostgres, WorkflowResolutionError,
+    WorkflowResolutionErrorType,
 };
 
 use crate::router_action::{
@@ -493,6 +495,7 @@ async fn drive_claim(
     result_only: bool,
     request: QueueDriverRequest,
 ) -> anyhow::Result<()> {
+    let workflow_run = matches!(request, QueueDriverRequest::Workflow(_));
     let candidate_coordinate = match &request {
         QueueDriverRequest::Released(_) | QueueDriverRequest::Workflow(_) => None,
         QueueDriverRequest::Candidate(request) => Some((
@@ -577,6 +580,19 @@ async fn drive_claim(
     let delivery = match delivery {
         Ok(delivery) => delivery,
         Err(error) => {
+            if workflow_run && let Some((result, fail_type)) = workflow_refusal(&error, run_id) {
+                tracing::warn!(run_id, error = %error, "workflow run refused");
+                commit_completion(
+                    postgres,
+                    run_id,
+                    lease_generation,
+                    &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
+                        result, fail_type, None,
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
             let Some(refusal) = error.downcast_ref::<CandidateExecutionRefusal>() else {
                 return Err(error);
             };
@@ -693,6 +709,36 @@ async fn drive_claim(
         }
     }
     Ok(())
+}
+
+/// The failure a workflow run records for a refusal that no retry changes
+/// (docs/plan/workflows.md R3, R8): a node its principal no longer holds the
+/// grant for, or a run that does not resolve against its pinned release.
+/// Any other error leaves the lease for redelivery.
+fn workflow_refusal(error: &anyhow::Error, run_id: &str) -> Option<(serde_json::Value, FailType)> {
+    if let Some(refusal) = error.downcast_ref::<OperationRefusal>() {
+        let OperationRefusalType::PermissionDenied = refusal.refusal_type();
+        let result = serde_json::json!({"error": {
+            "code": "permission_denied",
+            "operation": refusal.operation(),
+            "run-id": run_id,
+        }});
+        return Some((result, FailType::Terminal));
+    }
+    let refusal = error.downcast_ref::<WorkflowResolutionError>()?;
+    let fail_type = match refusal.error_type() {
+        WorkflowResolutionErrorType::NotFound => FailType::UnresolvableName,
+        WorkflowResolutionErrorType::HashMismatch => FailType::HashInvalidBytes,
+        WorkflowResolutionErrorType::NodeNotInRelease => FailType::ForeignRevision,
+        WorkflowResolutionErrorType::Incompatible | WorkflowResolutionErrorType::Definition => {
+            FailType::IncompatibleContract
+        }
+    };
+    let result = serde_json::json!({"error": {
+        "code": "workflow_resolution_refused",
+        "run-id": run_id,
+    }});
+    Some((result, fail_type))
 }
 
 async fn commit_completion(
