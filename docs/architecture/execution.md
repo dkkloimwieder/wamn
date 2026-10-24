@@ -12,7 +12,7 @@ Route concurrency limits refuse excess work with HTTP 429.
 The HTTP ingress path authenticates the caller before invoking application code.
 The host compares the route, operation, permissions, wiring, and release facts before dispatch.
 The host side of the ingress guest's two imports lives in `wamn-engine`: the [route plugin](../../crates/platform/engine/src/flow_http_routing.rs) and the [delivery plugin](../../crates/platform/engine/src/router_delivery.rs).
-`wamn-engine` also owns the generated [binding](../../crates/platform/engine/src/entry_operation.rs) of the guest's `wamn:operation` import, and each host implements it: the cloud over PostgreSQL in `wamn-runtime`, the edge for reads only.
+`wamn-engine` also owns the generated [binding](../../crates/platform/engine/src/entry_operation.rs) of the guest's `wamn:operation` import, and each host implements it: the cloud over PostgreSQL in `wamn-runtime`, the edge over the SQLite intent store of `wamn-run-state-sqlite`.
 A host plugs in through two traits.
 `RouteAuthenticator` reads the credential of a protected route, and `RouteDelivery` serves one delivery request.
 The cloud implements them as [`PlatformRouteAuthenticator`](../../crates/platform/runtime/src/plugins/route_authentication.rs) and [`RouterDeliveryBridge`](../../crates/execution/host/src/router_delivery.rs).
