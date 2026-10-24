@@ -315,7 +315,9 @@ CREATE TABLE catalog.workflows (
     version        int         NOT NULL CHECK (version > 0),
     graph_json     jsonb       NOT NULL,
     wiring_hash    text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
-    trigger        text        NOT NULL CHECK (trigger = 'manual'),
+    trigger        text        NOT NULL CHECK (trigger IN ('manual', 'schedule')),
+    -- The five-field cron, evaluated in UTC, of a schedule trigger.
+    schedule       text,
     execution_type text        NOT NULL CHECK (execution_type IN ('role', 'invoker')),
     execution_role text        CHECK (execution_role <> ''),
     enabled        boolean     NOT NULL DEFAULT false,
@@ -324,7 +326,9 @@ CREATE TABLE catalog.workflows (
     CONSTRAINT workflows_pkey
         PRIMARY KEY (tenant_id, environment, application, workflow_id, version),
     CONSTRAINT workflows_execution_identity_check
-        CHECK ((execution_type = 'role') = (execution_role IS NOT NULL))
+        CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)),
+    CONSTRAINT workflows_schedule_check
+        CHECK ((trigger = 'schedule') = (schedule IS NOT NULL))
 );
 CREATE UNIQUE INDEX workflows_one_enabled
     ON catalog.workflows (tenant_id, environment, application, workflow_id)
@@ -336,11 +340,11 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     IF ROW(NEW.tenant_id, NEW.environment, NEW.application, NEW.workflow_id,
-           NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger,
+           NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.schedule,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
        ROW(OLD.tenant_id, OLD.environment, OLD.application, OLD.workflow_id,
-           OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger,
+           OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.schedule,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'workflow-version-immutable';

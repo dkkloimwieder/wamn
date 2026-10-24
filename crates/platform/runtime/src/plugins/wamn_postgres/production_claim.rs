@@ -64,7 +64,7 @@ pub struct ProductionCandidate {
     pub binding_world: CandidateBindingWorld,
 }
 
-/// What a manual workflow run froze at admission (docs/plan/workflows.md R3,
+/// What a manual or schedule workflow run froze at admission (docs/plan/workflows.md R3,
 /// R2): the graph hash, the principal it executes as, its one active role,
 /// and the component digest of every node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1490,8 +1490,10 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     })
 }
 
-/// The frozen execution of a manual workflow run, or none for every other
-/// grain, which carries none of its columns.
+/// The frozen execution of a manual or schedule workflow run, or none for
+/// every other grain, which carries none of its columns. A schedule run is a
+/// workflow run when it carries an executing principal; a released schedule
+/// run carries a service principal instead.
 fn decode_workflow(
     wiring_hash: Option<String>,
     trigger_source: Option<&str>,
@@ -1506,8 +1508,10 @@ fn decode_workflow(
             "run-workflow-execution-corrupt",
         )
     };
+    let workflow_grain = trigger_source == Some("manual")
+        || (trigger_source == Some("schedule") && execution_principal_id.is_some());
     match (
-        trigger_source == Some("manual"),
+        workflow_grain,
         wiring_hash,
         execution_principal_id,
         execution_role,

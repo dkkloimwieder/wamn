@@ -13,6 +13,9 @@
 //! transaction makes the switch atomic. For `execution_type = 'role'` the
 //! enabler holds the execution role or `admin`, and the `workflow` user holds
 //! the execution role. `invoker` on a manual trigger needs no check.
+//! `invoker` on a schedule trigger runs as the `workflow` user with `admin`
+//! active, so it is assigning `admin`: the enabler holds `admin`, and the
+//! `workflow` user holds `admin`.
 //!
 //! Disable sets `enabled = false` and nothing else. Queued and running runs
 //! finish under the version they pinned.
@@ -29,7 +32,7 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
-SELECT graph_json::text, wiring_hash, execution_role FROM catalog.workflows \
+SELECT graph_json::text, wiring_hash, execution_role, trigger FROM catalog.workflows \
  WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5 \
    FOR UPDATE";
@@ -321,6 +324,7 @@ async fn enable_in(
     let graph_json: String = row.get(0);
     let stored_hash: String = row.get(1);
     let execution_role: Option<String> = row.get(2);
+    let trigger: String = row.get(3);
 
     let graph = serde_json::from_str(&graph_json)
         .map_err(WorkflowLifecycleError::stored)
@@ -346,7 +350,14 @@ async fn enable_in(
         ));
     }
 
-    if let Some(role) = execution_role.as_deref() {
+    // The role a run executes with: the execution role, or `admin` for a
+    // callerless `invoker` (docs/plan/workflows.md R3).
+    let assigned = match (execution_role.as_deref(), trigger.as_str()) {
+        (Some(role), _) => Some(role),
+        (None, "schedule") => Some(ADMIN_ROLE),
+        (None, _) => None,
+    };
+    if let Some(role) = assigned {
         let sufficient = [role, ADMIN_ROLE];
         if !holds_role(transaction, workflow.tenant_id, enabler, &sufficient).await? {
             return Err(WorkflowLifecycleError::new(

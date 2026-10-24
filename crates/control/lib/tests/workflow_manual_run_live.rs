@@ -31,7 +31,8 @@ use wamn_catalog::{
     ServingManifest, ServingWiring, WiringDocument,
 };
 use wamn_control::author_workflow::{
-    AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, author_workflow_in_databases,
+    AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
+    author_workflow_in_databases,
 };
 use wamn_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_control_provision::{
@@ -539,6 +540,7 @@ impl Fixture {
                 environment: ENVIRONMENT,
                 application: APPLICATION,
                 document,
+                trigger: WorkflowTrigger::Manual,
                 execution: WorkflowExecution::Invoker,
                 created_by: READER,
                 manifest_digest: &self.digest,

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
 use tokio_postgres::NoTls;
-use wamn_control::author_workflow::{AuthorWorkflowRequest, WorkflowExecution};
+use wamn_control::author_workflow::{AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger};
 use wamn_control::environment::Platform;
 use wamn_control::workflow_lifecycle::WorkflowVersion;
 use wamn_workflow::{PostgresWorkflows, Workflows as _};
@@ -23,7 +23,7 @@ use crate::env_verbs::parse_coordinate;
 /// Params: `$1` tenant, `$2` environment.
 const LIST_WORKFLOWS_SQL: &str = "\
 SELECT application, workflow_id, version, wiring_hash, trigger, execution_type, \
-       execution_role, enabled, created_by::text, created_at::text \
+       execution_role, enabled, created_by::text, created_at::text, schedule \
   FROM catalog.workflows \
  WHERE tenant_id = $1 AND environment = $2 \
  ORDER BY application, workflow_id, version";
@@ -96,6 +96,10 @@ pub struct AuthorArgs {
     /// The active role of a run. Required with `--execution-type role`.
     #[arg(long)]
     pub execution_role: Option<String>,
+    /// A five-field UTC cron: the schedule task starts the workflow at each
+    /// due moment. Without it, the trigger is manual.
+    #[arg(long)]
+    pub schedule: Option<String>,
     /// The `platform."user"` id of the authoring principal.
     #[arg(long)]
     pub principal_id: String,
@@ -232,6 +236,10 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                     environment: &args.scope.environment,
                     application: &args.application,
                     document: &document,
+                    trigger: args
+                        .schedule
+                        .as_deref()
+                        .map_or(WorkflowTrigger::Manual, WorkflowTrigger::Schedule),
                     execution,
                     created_by: &args.principal_id,
                     manifest_digest: &digest,
@@ -296,6 +304,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                         "version": row.get::<_, i32>(2),
                         "wiring-hash": row.get::<_, String>(3),
                         "trigger": row.get::<_, String>(4),
+                        "schedule": row.get::<_, Option<String>>(10),
                         "execution-type": row.get::<_, String>(5),
                         "execution-role": row.get::<_, Option<String>>(6),
                         "enabled": row.get::<_, bool>(7),

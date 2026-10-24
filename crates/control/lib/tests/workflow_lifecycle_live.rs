@@ -18,7 +18,7 @@ use wamn_catalog::{
 };
 use wamn_control::author_workflow::{
     AuthorWorkflowError, AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution,
-    author_workflow,
+    WorkflowTrigger, author_workflow,
 };
 use wamn_control::environment::lock::LifecycleLock;
 use wamn_control::workflow_lifecycle::{
@@ -197,6 +197,7 @@ impl Fixture {
                 environment: ENVIRONMENT,
                 application: APPLICATION,
                 document,
+                trigger: WorkflowTrigger::Manual,
                 execution,
                 created_by: ALICE,
                 manifest_digest: &self.digest,
@@ -491,13 +492,16 @@ async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user() {
     assert_eq!(fixture.enabled("approve").await, [2]);
 }
 
-/// `project/0032_workflows.sql` creates on an installed database the table
-/// that `catalog-schema.sql` creates on a fresh one: the same columns,
-/// constraints, indexes, triggers, tenant floor and grants.
+/// `project/0032_workflows.sql` then `project/0033_workflow_schedules.sql`
+/// create on an installed database the table that `catalog-schema.sql`
+/// creates on a fresh one: the same columns, constraints, indexes, triggers,
+/// tenant floor, grants and guard function.
 #[tokio::test]
 async fn the_migration_creates_the_table_of_the_full_schema() {
     const MIGRATION: &str =
         include_str!("../../../../deploy/sql/migrations/project/0032_workflows.sql");
+    const SCHEDULES: &str =
+        include_str!("../../../../deploy/sql/migrations/project/0033_workflow_schedules.sql");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
     let client = connect(database.url()).await;
@@ -521,7 +525,8 @@ async fn the_migration_creates_the_table_of_the_full_schema() {
                    UNION ALL SELECT 'rls ' || relrowsecurity || ' ' || relforcerowsecurity \
                           || ' ' || coalesce(relacl::text, '') \
                      FROM pg_class WHERE oid = 'catalog.workflows'::regclass \
-                   UNION ALL SELECT 'function ' || coalesce(proacl::text, '') FROM pg_proc \
+                   UNION ALL SELECT 'function ' || coalesce(proacl::text, '') || ' ' \
+                          || prosrc FROM pg_proc \
                      WHERE oid = 'catalog.guard_workflow_update()'::regprocedure \
                  ) shape ORDER BY entry COLLATE \"C\"",
                 &[],
@@ -543,5 +548,9 @@ async fn the_migration_creates_the_table_of_the_full_schema() {
         .batch_execute(&format!("BEGIN;\n{MIGRATION}\nCOMMIT;"))
         .await
         .expect("apply the migration");
+    client
+        .batch_execute(&format!("BEGIN;\n{SCHEDULES}\nCOMMIT;"))
+        .await
+        .expect("apply the schedule migration");
     assert_eq!(shape().await, fresh);
 }

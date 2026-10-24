@@ -24,13 +24,14 @@ use wamn_run_state::AuthorityClass;
 use super::WamnPostgres;
 use super::wiring_resolution::{DecodedWiring, ResolvedActiveWiring, resolved_wiring};
 
-/// The enabled version of one workflow. Binds: `$1` tenant, `$2` environment,
+/// The enabled version of one manual workflow. A schedule workflow is not
+/// started through `workflow.start`. Binds: `$1` tenant, `$2` environment,
 /// `$3` application, `$4` workflow id.
 const ENABLED_WORKFLOW_SQL: &str = "\
 SELECT version, graph_json::text, wiring_hash, execution_type, execution_role \
   FROM catalog.workflows \
  WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
-   AND workflow_id = $4 AND enabled";
+   AND workflow_id = $4 AND enabled AND trigger = 'manual'";
 
 /// One workflow version, enabled or not: a run finishes under the version it
 /// pinned. Binds: `$1` tenant, `$2` environment, `$3` application, `$4`
@@ -43,7 +44,7 @@ SELECT graph_json::text, wiring_hash \
 
 /// The verified manifest bytes of the release a run pins. Binds: `$1`
 /// tenant, `$2` manifest digest.
-const PINNED_RELEASE_SQL: &str = "\
+pub(super) const PINNED_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE tenant_id = $1 AND manifest_digest = $2";
 
@@ -280,14 +281,14 @@ pub fn resolve_workflow_in_release(
     })
 }
 
-fn parse_graph(graph_json: &str) -> anyhow::Result<WiringDocument> {
+pub(super) fn parse_graph(graph_json: &str) -> anyhow::Result<WiringDocument> {
     let value = serde_json::from_str(graph_json).context("parse the stored workflow graph")?;
     WiringDocument::parse(&value).context("validate the stored workflow graph")
 }
 
 impl WamnPostgres {
-    /// The enabled version of workflow `workflow_id` of `application` in
-    /// `environment`, or none.
+    /// The enabled version of manual workflow `workflow_id` of `application`
+    /// in `environment`, or none.
     pub async fn enabled_workflow(
         &self,
         project: &str,

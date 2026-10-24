@@ -317,11 +317,11 @@ CREATE TABLE wamn_run.runs (
     trigger_source  text,
     -- The service identity of an operator-admitted automation run.
     service_principal_id uuid,
-    -- A manual workflow run (docs/plan/workflows.md R3, R2): executed as this
-    -- principal with this one role active, invoked by `invoked_by` (what caused
-    -- it) and `invoked_by_user_id` (the session or PAT user), and executing
-    -- the component digest admission froze for each node. Every other grain
-    -- leaves the five columns NULL.
+    -- A manual or schedule workflow run (docs/plan/workflows.md R3, R2):
+    -- executed as this principal with this one role active, invoked by
+    -- `invoked_by` (what caused it) and `invoked_by_user_id` (the session or
+    -- PAT user of a manual run), and executing the component digest admission
+    -- froze for each node. Every other grain leaves the five columns NULL.
     execution_principal_id uuid,
     execution_role  text,
     invoked_by      text,
@@ -435,7 +435,8 @@ CREATE TABLE wamn_run.runs (
     -- admitting a half-record. Existing flow rows stay truthful; they are not
     -- backfilled with an identity that was never recorded. The later arms admit
     -- event runs with no caller, schedules under their application principal,
-    -- and manual workflow runs under their executing principal and role.
+    -- and manual and schedule workflow runs under their executing principal
+    -- and role.
     CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
        AND flow_id <> '' AND flow_version > 0
@@ -491,17 +492,36 @@ CREATE TABLE wamn_run.runs (
        AND invoked_by IS NOT DISTINCT FROM 'manual'
        AND invoked_by_user_id IS NOT NULL
        AND binding_world_json IS NULL)
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND trigger_source IS NOT DISTINCT FROM 'schedule'
+       AND registration_id IS NULL
+       AND service_principal_id IS NULL
+       AND wiring_id IS NOT NULL AND wiring_id <> ''
+       AND wiring_version IS NOT NULL AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND manifest_digest IS NOT NULL
+       AND node_digests_json IS NOT NULL
+       AND jsonb_typeof(node_digests_json) = 'object'
+       AND execution_principal_id IS NOT NULL
+       AND execution_role IS NOT NULL AND execution_role <> ''
+       AND invoked_by IS NOT DISTINCT FROM 'schedule'
+       AND invoked_by_user_id IS NULL
+       AND binding_world_json IS NULL)
     ),
-    -- Only a manual workflow run carries an execution identity, an invoker and
-    -- frozen node digests.
+    -- Only a manual or a schedule workflow run carries an execution identity,
+    -- an invoker and frozen node digests. A released schedule run carries a
+    -- service principal instead.
     CONSTRAINT runs_execution_identity_check CHECK (
       trigger_source IS NOT DISTINCT FROM 'manual'
+      OR (trigger_source IS NOT DISTINCT FROM 'schedule' AND service_principal_id IS NULL)
       OR (execution_principal_id IS NULL AND execution_role IS NULL
           AND invoked_by IS NULL AND invoked_by_user_id IS NULL
           AND node_digests_json IS NULL)
     ),
     CONSTRAINT runs_service_principal_check CHECK (
-      (trigger_source IS NOT DISTINCT FROM 'automation' OR trigger_source IS NOT DISTINCT FROM 'schedule')
+      (trigger_source IS NOT DISTINCT FROM 'automation'
+       OR (trigger_source IS NOT DISTINCT FROM 'schedule' AND invoked_by IS NULL))
       = (service_principal_id IS NOT NULL)
     ),
     PRIMARY KEY (tenant_id, run_id),

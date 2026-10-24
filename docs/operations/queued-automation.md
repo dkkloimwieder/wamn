@@ -27,6 +27,12 @@ A workflow of type `invoker` runs as the caller with its active role.
 A caller with `admin` acts as `admin`, and a caller with exactly one role acts with that role.
 A caller with no role or more than one role is refused with `active_role_required`.
 
+`wamn-ctl workflow author --schedule '<cron>'` authors a schedule workflow: a five-field cron, evaluated in UTC.
+An invalid cron is refused at author.
+`workflow.start` does not start a schedule workflow, and it refuses `workflow_not_enabled`.
+A schedule run executes as the `workflow` user: with its execution role for type `role`, and with `admin` for type `invoker`.
+So to enable an `invoker` schedule, the enabler must hold `admin`, and the `workflow` user must hold `admin`.
+
 Configure the host with the selected release and both executor-class and callable-HTTP database credentials.
 The executor credential reads the enabled workflow and admits the run.
 The callable-HTTP credential reads the principal's current roles and permissions.

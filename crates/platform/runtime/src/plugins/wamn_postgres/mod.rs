@@ -98,6 +98,7 @@ pub use credential_exactness::{
 };
 pub use event_admission::{
     EventRunAdmission, EventRunAdmitted, ManualRunAdmission, ManualRunAdmitted,
+    ScheduleRunAdmission, ScheduleRunAdmitted,
 };
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation_transaction::{CommitFailure, OperationTransaction};

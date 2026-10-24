@@ -133,6 +133,44 @@ pub fn select_manual_run_sql() -> &'static str {
         AND trigger_source = 'manual' AND input_json = $3::text::jsonb"
 }
 
+/// Admit one schedule run of an environment workflow (docs/plan/workflows.md
+/// R3, epic 2): the host admits it at a due moment against the release it
+/// serves. The run executes as the `workflow` user with one role, is invoked
+/// by the schedule with no user, and carries the component digest of every
+/// node. `ON CONFLICT DO NOTHING` on the idempotency key returns no row for a
+/// repeated due moment, and the caller then reads the first run with
+/// [`select_workflow_schedule_run_sql`].
+///
+/// Binds: `$1` tenant, `$2` application package, `$3` release manifest
+/// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
+/// wiring hash, `$8` executing principal, `$9` execution role, `$10` node
+/// digests JSON text, `$11` idempotency key, `$12` input JSON text, `$13`
+/// durability class.
+pub fn insert_workflow_schedule_run_sql() -> String {
+    format!(
+        "INSERT INTO runs (tenant_id, package_id, manifest_digest, environment, \
+             wiring_id, wiring_version, wiring_hash, trigger_source, \
+             execution_principal_id, execution_role, invoked_by, \
+             node_digests_json, idempotency_key, input_json, status, durability_class) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'schedule', $8::text::uuid, $9, 'schedule', \
+                 $10::text::jsonb, $11, $12::text::jsonb, '{dispatched}', $13) \
+         ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+         RETURNING run_id",
+        dispatched = RunStatus::Dispatched.as_sql(),
+    )
+}
+
+/// The run an earlier admission of the same due moment wrote: the same key
+/// and the same input. It returns no row when the key belongs to another
+/// input or another grain.
+///
+/// Binds: `$1` tenant, `$2` idempotency key, `$3` input JSON text.
+pub fn select_workflow_schedule_run_sql() -> &'static str {
+    "SELECT run_id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2 \
+        AND trigger_source = 'schedule' AND invoked_by = 'schedule' \
+        AND input_json = $3::text::jsonb"
+}
+
 /// Queue one admitted run. Binds: `$1` tenant, `$2` run id.
 pub fn insert_run_queue_sql() -> &'static str {
     "INSERT INTO run_queue (tenant_id, run_id) VALUES ($1, $2)"

@@ -13,26 +13,28 @@
 //! produces it, and the control store must hold a green gate report under it.
 //! An exact resubmission converges. Other bytes under the same version refuse.
 //! A version is authored disabled; [`crate::workflow_lifecycle`] enables it.
+//!
+//! The trigger is part of the version: `manual`, or `schedule` with a
+//! five-field UTC cron, parsed as the schedule task parses it
+//! ([`wamn_catalog::parse_workflow_schedule`]). An invalid cron refuses
+//! before the graph is gated.
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls, Transaction};
-use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument};
+use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workflow_schedule};
 
 use crate::author_wiring::{AuthorWiringError, read_gate_verdict, require_green_report};
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
-/// The one trigger this epic admits.
-const MANUAL_TRIGGER: &str = "manual";
-
 /// Params: `$1` tenant, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
-/// `$10` execution role, `$11` authoring principal.
+/// `$10` execution role, `$11` authoring principal, `$12` schedule.
 const INSERT_WORKFLOW_SQL: &str = "\
 INSERT INTO catalog.workflows (\
        tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, \
-       trigger, execution_type, execution_role, created_by\
-     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11::text::uuid) \
+       trigger, execution_type, execution_role, created_by, schedule\
+     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11::text::uuid, $12) \
 ON CONFLICT DO NOTHING";
 
 /// The stored version carries exactly this definition. The author is not part
@@ -44,7 +46,7 @@ SELECT EXISTS (\
        AND workflow_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
        AND wiring_hash = $7 AND trigger = $8 AND execution_type = $9 \
        AND execution_role IS NOT DISTINCT FROM $10 \
-       AND $11::text <> ''\
+       AND $11::text <> '' AND schedule IS NOT DISTINCT FROM $12\
     )";
 
 const SELECT_RELEASE_SQL: &str = "\
@@ -65,6 +67,8 @@ pub enum AuthorWorkflowErrorType {
     /// No GREEN gate report covers this document's own hash.
     Report,
     Conflict,
+    /// The schedule is not a five-field UTC cron.
+    Schedule,
 }
 
 impl AuthorWorkflowErrorType {
@@ -75,6 +79,7 @@ impl AuthorWorkflowErrorType {
             Self::Gate => "gate",
             Self::Report => "report",
             Self::Conflict => "conflict",
+            Self::Schedule => "schedule",
         }
     }
 }
@@ -174,6 +179,33 @@ impl<'a> WorkflowExecution<'a> {
     }
 }
 
+/// What starts a run of the workflow (docs/plan/workflows.md R3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkflowTrigger<'a> {
+    /// The host route `workflow.start`.
+    Manual,
+    /// The schedule task, at each due moment of this five-field UTC cron.
+    Schedule(&'a str),
+}
+
+impl<'a> WorkflowTrigger<'a> {
+    /// The stored `trigger`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Schedule(_) => "schedule",
+        }
+    }
+
+    /// The stored `schedule`.
+    pub const fn schedule(self) -> Option<&'a str> {
+        match self {
+            Self::Manual => None,
+            Self::Schedule(cron) => Some(cron),
+        }
+    }
+}
+
 /// One workflow version to author. The workflow id and the version are the
 /// document's own `wiring-id` and `version`.
 #[derive(Clone, Copy, Debug)]
@@ -184,6 +216,7 @@ pub struct AuthorWorkflowRequest<'a> {
     /// calls.
     pub application: &'a str,
     pub document: &'a WiringDocument,
+    pub trigger: WorkflowTrigger<'a>,
     pub execution: WorkflowExecution<'a>,
     /// The authoring principal, as the text of its `platform."user"` id.
     pub created_by: &'a str,
@@ -241,6 +274,15 @@ pub async fn author_workflow(
         .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
         .await
         .map_err(|error| storage("claim the authoring tenant", error))?;
+    if let Some(cron) = request.trigger.schedule() {
+        parse_workflow_schedule(cron).map_err(|error| {
+            AuthorWorkflowError::with_source(
+                AuthorWorkflowErrorType::Schedule,
+                format!("schedule {cron:?} is not a five-field UTC cron"),
+                error,
+            )
+        })?;
+    }
     let document = request.document;
     let hash = gate_against_release(
         transaction,
@@ -269,7 +311,9 @@ pub async fn author_workflow(
     let stored_hash = hash.as_str();
     let execution_type = request.execution.type_str();
     let execution_role = request.execution.role();
-    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 11] = [
+    let trigger = request.trigger.as_str();
+    let schedule = request.trigger.schedule();
+    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 12] = [
         &request.tenant_id,
         &request.environment,
         &request.application,
@@ -277,10 +321,11 @@ pub async fn author_workflow(
         &version,
         &graph_json,
         &stored_hash,
-        &MANUAL_TRIGGER,
+        &trigger,
         &execution_type,
         &execution_role,
         &request.created_by,
+        &schedule,
     ];
     transaction
         .execute(INSERT_WORKFLOW_SQL, &parameters)
@@ -353,5 +398,12 @@ mod tests {
         assert_eq!(WorkflowExecution::Role("clerk").role(), Some("clerk"));
         assert_eq!(WorkflowExecution::Invoker.type_str(), "invoker");
         assert_eq!(WorkflowExecution::Invoker.role(), None);
+        assert_eq!(WorkflowTrigger::Manual.as_str(), "manual");
+        assert_eq!(WorkflowTrigger::Manual.schedule(), None);
+        assert_eq!(WorkflowTrigger::Schedule("0 * * * *").as_str(), "schedule");
+        assert_eq!(
+            WorkflowTrigger::Schedule("0 * * * *").schedule(),
+            Some("0 * * * *")
+        );
     }
 }
