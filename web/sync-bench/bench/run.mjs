@@ -75,6 +75,24 @@ async function run(shape, size, seed) {
   }
 }
 
+if (process.argv.includes("--map")) {
+  // The cost of adding row_version to every listed row (owner ruling 5).
+  console.log("| rows | copy row_version per list (ms) | load average |");
+  console.log("| --- | --- | --- |");
+  for (const size of [10_000, 100_000]) {
+    const page = await browser.newPage();
+    await page.goto(`${base}?shape=b&size=${size}`);
+    await page.waitForFunction(() => window.bench !== undefined);
+    const samples = [];
+    for (let repeat = 0; repeat < 5; repeat++) samples.push(await page.evaluate(() => window.bench.mapCost()));
+    await page.close();
+    console.log(`| ${size.toLocaleString("en-US")} | ${median(samples).toFixed(1)} | ${loadavg()[0].toFixed(1)} |`);
+  }
+  await browser.close();
+  await server.close();
+  process.exit(0);
+}
+
 const results = [];
 for (const size of sizes) {
   const cells = { a: [], b: [] };

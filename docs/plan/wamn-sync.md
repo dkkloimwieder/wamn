@@ -633,3 +633,49 @@ One epic at a time per repo; a wamn epic starts only when its wfe counterpart is
 | 4a. Shell | wfe | `shell()`: worker registration, `persist()`, quota; the worker that precaches the shell and never serves `/api` | Browser tests: opens offline, worker never serves `/api` |
 | 4b. Take-offline | wamn | Manifest, database names, release digest and reload rule, `offline: true` screens, take-offline action; case 2 end to end | Close the tab, open with no network, record, reconnect, upload; the old-entry invariant passes |
 | 5. Generator | wamn | Manifest fields, per-model and per-screen emission, build checks; Receiving and WMS regenerated with no hand edits | Regenerate and diff shows only generated files; build checks fire on the refusal cases |
+
+## Epic 1b measurements
+
+Measured on 2026-10-24 with [`web/sync-bench`](../../web/sync-bench/README.md) (bead `wamn-hhd77`).
+The ruling on the read shape per screen type, and on whether `@tanstack/db` stays, belongs to the owner.
+
+| Input | Version |
+| --- | --- |
+| wfe pin | `fdeaacc` (wfe main) |
+| `@tanstack/db` | 0.15.2 |
+| `@tanstack/db-ivm` | 0.2.0 |
+| `solid-js`, `@solidjs/web` | 2.0.0-rc.18 |
+| Browser | Google Chrome 156.0.8078.47, headless, through Playwright 1.63.0 |
+| Machine | 8 cores, shared with other agents |
+
+The screen is the WMS `packaging` table: the generated `PackagingQueryTable` columns over virtual rows, then groups by status and type with count and the sum of `row_version`, and a totals row.
+Shape A reads a `@wfe/sync` collection through `liveRows`, and its groups and totals come from `@tanstack/db` live queries.
+Shape B keeps a Solid store keyed by id, and its sort, filter, groups and totals are memos.
+In both shapes the row order is a memo that sorts by packaging code. The status filter was "all" for every run.
+
+Each cell is the median of 5 runs. Each run mounted one shape on a new page of the production build, filled from a fake feed of seeded synthetic rows.
+The shapes alternated their order in each repeat. The other agents held new builds and test runs during the run, from 15:03:20 to 15:05:21 UTC.
+
+- Fill is the time from `list` resolving to the first painted row (the frame after the first row is in the DOM).
+- Update is the time from applying one batch of 100 changes (70 updates, 20 inserts, 10 deletes) to the next frame. Each run applied 10 batches, so each median covers 50 batches.
+- Heap is `performance.memory.usedJSHeapSize` after a forced garbage collection.
+
+| Shape | Rows | Fill to first paint (ms) | Update per 100 changes (ms) | Heap after fill (MB) | Heap after 10 batches (MB) | Runs finished | Load average |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 10,000 | 453.2 | 46.8 | 15.5 | 16.4 | 5/5 | 5.5–5.8 |
+| B | 10,000 | 223.4 | 68.6 | 17.2 | 17.9 | 5/5 | 5.5–5.8 |
+| A | 100,000 | 3,403.1 | 308.5 | 111.8 | 112.6 | 5/5 | 5.7–7.8 |
+| B | 100,000 | 1,634.6 | 933.0 | 141.9 | 142.6 | 5/5 | 5.7–7.8 |
+
+Single updates ranged from 27.5 to 69.6 ms (A) and 58.4 to 137.8 ms (B) at 10,000 rows, and from 224.8 to 583.4 ms (A) and 668.4 to 1,958.8 ms (B) at 100,000 rows.
+The fake feed returns rows that already carry `row_version`. The real feed copies every row to add `row_version` beside the generated `rowVersion`.
+That copy took a median of 4.9 ms at 10,000 rows and 164.1 ms at 100,000 rows, measured separately at 15:06 UTC with load average 18.6 to 19.1, so it is not part of the fill column.
+
+Conditions that limit these numbers:
+
+- The summed column is `row_version`, a stand-in, because packaging has no other numeric column.
+- Shape A sums with the float `sum` of `@tanstack/db`, which has no custom aggregates. The sum is exact here only because the column is int32 and the total stays below 2^53. Shape B sums with an exact BigInt sum inside its memo.
+- `@wfe/sync` 1a fills only. The feed has no `follow`, so updates come from `applyChanges`, not from a host feed.
+- Shape A reads the live query results through `liveRows` with a cast, and the view uses `Table`, because `ReadOnlyTable` has no body slot for virtual rows.
+
+The wfe findings from this epic are beads `wamn-7e86p` (row version name), `wamn-b4icu` (`liveRows` on a live query result), `wamn-dhggm` (no custom aggregates) and `wamn-5dcm4` (`ReadOnlyTable` body slot).

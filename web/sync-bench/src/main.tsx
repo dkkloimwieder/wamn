@@ -5,7 +5,7 @@ import "@wfe/components/styles.css";
 import { applyChanges } from "@wfe/sync/internal";
 import type { Change, Feed } from "@wfe/sync";
 import { fakeFeed, makeRows, randomChanges, seeded } from "./fake";
-import { packagingCollection, type PackagingRow, type PackagingScope } from "./packaging-feed";
+import { packagingCollection, withRowVersion, type PackagingRow, type PackagingScope } from "./packaging-feed";
 import type { StatusFilter } from "./order";
 import { shapeA } from "./shape-a";
 import { shapeB } from "./shape-b";
@@ -32,6 +32,8 @@ declare global {
       ready: Promise<Record<Shape, number>>;
       batch: () => Promise<Record<Shape, number>>;
       heap: () => number | null;
+      /** Milliseconds for the feed to add `row_version` to every row of this size. */
+      mapCost: () => number;
     };
   }
 }
@@ -127,6 +129,12 @@ function App() {
       (entries) => Object.fromEntries(entries) as Record<Shape, number>,
     ),
     batch,
+    mapCost: () => {
+      const plain = rows.map(({ row_version: _version, ...row }) => row);
+      const start = performance.now();
+      plain.map(withRowVersion);
+      return performance.now() - start;
+    },
     heap: () => {
       (globalThis as { gc?: () => void }).gc?.();
       return (performance as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? null;

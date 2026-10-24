@@ -23,6 +23,7 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Table data loading](table-adv-data.md): done, `wamn-3nsf`.
 - [Table presentation](table-adv-ui.md): done, `wamn-8iul`.
 - [Transactional composition](trx-pkg-plan.md): done, `wamn-14bx8`, `wamn-lqtai`, `wamn-ponya` and `wamn-aemxz`.
+- [wamn offline and sync](wamn-sync.md): live. Epic 1b `wamn-hhd77` is measured, and its ruling is the owner's.
 - [Web deployment](web-deployment.md): done, `wamn-xyxj`.
 - [Workflow feature](workflow-feature.md): done, `wamn-upl3`.
 - [Write log](write-log.md): done, `wamn-an24`.
