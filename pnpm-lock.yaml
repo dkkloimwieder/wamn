@@ -324,6 +324,9 @@ importers:
       '@wfe/components':
         specifier: workspace:*
         version: link:../wfe/packages/components
+      '@wfe/generator':
+        specifier: workspace:*
+        version: link:../wfe/packages/generator
       '@wfe/sync':
         specifier: workspace:*
         version: link:../wfe/packages/sync
@@ -337,6 +340,9 @@ importers:
       '@solidjs/vite-plugin':
         specifier: 3.0.0-next.50
         version: 3.0.0-next.50(@solidjs/web@2.0.0-rc.18(solid-js@2.0.0-rc.18))(solid-js@2.0.0-rc.18)(vite@8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0))
+      '@types/d3-shape':
+        specifier: 3.1.8
+        version: 3.1.8
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
