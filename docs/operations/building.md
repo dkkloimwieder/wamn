@@ -45,6 +45,8 @@ cargo build --locked --offline -p wamn-host -p wamn-ctl -p wamn-identity \
 cargo build --locked --offline -p wamn-ctl --features ops --bin wamn-ctl-ops
 ```
 
+`wamn-host` uses mimalloc as its global allocator. Cargo builds its bundled C source with the existing C toolchain; no other program changes allocator.
+
 `wamn` owns the developer commands.
 `wamn-ctl` owns provisioning and publication.
 `wamn-ctl-ops` owns database maintenance and retained event advisory commands.

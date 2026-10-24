@@ -38,6 +38,9 @@ enum Command {
     Host(Box<host::HostArgs>),
 }
 
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // wash-runtime builds its log filter from RUST_LOG, else from the level,

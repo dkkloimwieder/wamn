@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mimalloc = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-execution-host = { workspace = true }
 # The walk, the wiring delivery, and the queue (docs/architecture/overview.md).
