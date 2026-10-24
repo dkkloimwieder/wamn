@@ -1,7 +1,7 @@
 //! The platform principal rows that provisioning writes into a tenant database.
 //!
 //! Every platform component that writes in a tenant has an `platform."user"`
-//! row of type `platform`. The row carries the tenant id, the derived id, the
+//! row of type `platform`. The row carries the derived id, the
 //! `wamn:<component>` name, and the email `<component>@<platform-domain>`.
 //! `deploy/sql/app-schema.sql` pins each name and id pair. Static SQL cannot
 //! read deployment configuration, so this module checks the platform domain
@@ -82,12 +82,8 @@ pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
 ///
 /// Returns [`PlatformDomainError`] when `platform_domain` is not a valid
 /// domain name.
-pub fn platform_principals_sql(
-    tenant: &str,
-    platform_domain: &str,
-) -> Result<String, PlatformDomainError> {
+pub fn platform_principals_sql(platform_domain: &str) -> Result<String, PlatformDomainError> {
     validate_platform_domain(platform_domain)?;
-    let tenant = quote_literal(tenant);
     let components = std::iter::once(PlatformComponent::Provisioning).chain(
         PlatformComponent::ALL
             .into_iter()
@@ -97,7 +93,7 @@ pub fn platform_principals_sql(
     for component in components {
         writeln!(
             sql,
-            "INSERT INTO {} (tenant_id, id, type, email, display_name) VALUES ({tenant}, {}, {}, {}, {}) ON CONFLICT (tenant_id, id) DO NOTHING;",
+            "INSERT INTO {} (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
             USERS.qualified(),
             quote_literal(&component.principal_id().to_string()),
             quote_literal(UserType::Platform.as_str()),
@@ -155,7 +151,7 @@ mod tests {
             );
         }
         assert!(
-            platform_principals_sql("t1", "example.invalid")
+            platform_principals_sql("example.invalid")
                 .expect("a domain name renders")
                 .starts_with(&bind_platform_principal_sql(
                     PlatformComponent::Provisioning
@@ -166,10 +162,9 @@ mod tests {
 
     #[test]
     fn a_platform_row_that_is_already_there_is_kept() {
-        let sql = platform_principals_sql("t1", "example.invalid").expect("a domain name renders");
+        let sql = platform_principals_sql("example.invalid").expect("a domain name renders");
         assert_eq!(
-            sql.matches("ON CONFLICT (tenant_id, id) DO NOTHING")
-                .count(),
+            sql.matches("ON CONFLICT (id) DO NOTHING").count(),
             PlatformComponent::ALL.len(),
             "every insert keeps a row that is already there, so a tenant holding part of the \
              list converges to the whole list"
@@ -180,7 +175,7 @@ mod tests {
     fn a_domain_name_renders() {
         for domain in ["example.invalid", "localhost", "a-1.b2.example"] {
             assert!(
-                platform_principals_sql("t1", domain).is_ok(),
+                platform_principals_sql(domain).is_ok(),
                 "{domain} is a valid domain name"
             );
         }
@@ -206,7 +201,7 @@ mod tests {
             long_label.as_str(),
             long_domain.as_str(),
         ] {
-            let error = platform_principals_sql("t1", domain).unwrap_err();
+            let error = platform_principals_sql(domain).unwrap_err();
             assert_eq!(error.domain(), domain);
         }
     }

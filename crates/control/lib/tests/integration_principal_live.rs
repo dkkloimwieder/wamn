@@ -34,7 +34,6 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         .await?;
     admin
         .batch_execute(&wamn_control_provision::platform_principals_sql(
-            TENANT,
             "example.invalid",
         )?)
         .await?;
@@ -162,7 +161,12 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         )
         .await?;
     }
-    let row = admin.query_one("SELECT count(*), min(id::text) FROM platform.\"user\" WHERE tenant_id=$1 AND type='service'", &[&TENANT]).await?;
+    let row = admin
+        .query_one(
+            "SELECT count(*), min(id::text) FROM platform.\"user\" WHERE type='service'",
+            &[],
+        )
+        .await?;
     assert_eq!(row.get::<_, i64>(0), 1);
     let principal: String = row.get(1);
     let identity = connect(system.url()).await?;

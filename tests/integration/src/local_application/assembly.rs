@@ -119,12 +119,8 @@ pub(super) async fn assemble(
         ))
         .await
         .context("create the catalog and application ACL owner roles")?;
-    wamn_control::dev::environment::install_journey_platform_floor(
-        &project,
-        input.tenant,
-        "local.invalid",
-    )
-    .await?;
+    wamn_control::dev::environment::install_journey_platform_floor(&project, "local.invalid")
+        .await?;
     let run_schema = wamn_schema_control::BareSchemaName::new("wamn_run")?;
     wamn_control::reconcile_run_plane::reconcile(&project, &run_schema, true).await?;
     project
@@ -137,8 +133,8 @@ pub(super) async fn assemble(
         .await?;
     project
         .execute(
-            "INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'service','local@example.invalid')",
-            &[&input.tenant, &principal.id().as_str()],
+            "INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','local@example.invalid')",
+            &[&principal.id().as_str()],
         )
         .await?;
     project

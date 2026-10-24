@@ -19,8 +19,8 @@ const PASSWORD: &str = "session-role-reader-fixture-password";
 const FAMILY: WorkloadRoleFamily = WorkloadRoleFamily::SessionRoleReader;
 const PRINCIPAL: &str = "00000000-0000-0000-0000-000000000001";
 const READ_ROLES: &str = "SELECT r.role_name FROM platform.\"user\" u \
-    JOIN platform.user_role r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
-    WHERE u.tenant_id = 'fixture-a' AND u.id = '00000000-0000-0000-0000-000000000001' \
+    JOIN platform.user_role r ON r.tenant_id = 'fixture-a' AND r.user_id = u.id \
+    WHERE u.id = '00000000-0000-0000-0000-000000000001' \
       AND u.status = 'active' ORDER BY r.role_name";
 
 fn psql(url: &str, script: &str) -> (bool, String, String) {
@@ -144,14 +144,13 @@ fn assert_surface(admin: &str) {
         [
             "column|platform|user.id|SELECT|f",
             "column|platform|user.status|SELECT|f",
-            "column|platform|user.tenant_id|SELECT|f",
             "column|platform|user_role.role_name|SELECT|f",
             "column|platform|user_role.tenant_id|SELECT|f",
             "column|platform|user_role.user_id|SELECT|f",
             "schema|platform|platform|USAGE|f",
         ]
         .join("\n"),
-        "dedicated reader must hold only the six approved SELECT columns"
+        "dedicated reader must hold only the five approved SELECT columns"
     );
 }
 
@@ -212,8 +211,8 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
                 "REVOKE TEMPORARY ON DATABASE {DATABASE} FROM PUBLIC; \
             SET app.user_id = '{PRINCIPAL}'; \
             SET app.operation = 'admin:seed-session-role-reader-fixture'; \
-            INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES \
-              ('fixture-a','{PRINCIPAL}','user','a@fixture.invalid'), ('fixture-b','{PRINCIPAL}','user','b@fixture.invalid'); \
+            INSERT INTO platform.\"user\" (id,type,email) VALUES \
+              ('{PRINCIPAL}','user','a@fixture.invalid'); \
             INSERT INTO platform.role (tenant_id,name) VALUES ('fixture-a','receiver'), ('fixture-b','outsider'); \
             INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES \
               ('fixture-a','{PRINCIPAL}','receiver'), ('fixture-b','{PRINCIPAL}','outsider');"
@@ -282,7 +281,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             assert_eq!(
                 run(
                     url,
-                    "SELECT tenant_id FROM platform.\"user\" ORDER BY tenant_id"
+                    "SELECT tenant_id FROM platform.user_role ORDER BY tenant_id"
                 ),
                 "fixture-a\nfixture-b"
             );
@@ -293,7 +292,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
                 "SELECT * FROM platform.role",
                 "SELECT * FROM catalog.packages",
                 "SELECT * FROM wamn_run.runs",
-                "INSERT INTO platform.\"user\" (tenant_id,id,type,status) VALUES ('fixture-a','00000000-0000-0000-0000-000000000002','user','active')",
+                "INSERT INTO platform.\"user\" (id,type,status) VALUES ('00000000-0000-0000-0000-000000000002','user','active')",
                 "UPDATE platform.\"user\" SET status = 'disabled'",
                 "DELETE FROM platform.user_role",
                 "TRUNCATE platform.\"user\" CASCADE",
@@ -309,7 +308,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &format!(
                 "SET app.user_id = '{PRINCIPAL}'; \
                  SET app.operation = 'admin:disable-session-role-reader-fixture'; \
-                 UPDATE platform.\"user\" SET status = 'disabled' WHERE tenant_id = 'fixture-a'"
+                 UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{PRINCIPAL}'"
             ),
         );
         assert_eq!(
@@ -322,7 +321,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &format!(
                 "SET app.user_id = '{PRINCIPAL}'; \
                  SET app.operation = 'admin:enable-session-role-reader-fixture'; \
-                 UPDATE platform.\"user\" SET status = 'active' WHERE tenant_id = 'fixture-a'"
+                 UPDATE platform.\"user\" SET status = 'active' WHERE id = '{PRINCIPAL}'"
             ),
         );
         assert_eq!(run(&b_url, READ_ROLES), "receiver");

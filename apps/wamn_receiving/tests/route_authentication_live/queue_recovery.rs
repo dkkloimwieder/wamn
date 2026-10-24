@@ -117,7 +117,7 @@ async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
             )
             .await
             .context("write the environment's run policy")?;
-        super::bind_fixture_principal(&client, tenant).await?;
+        super::bind_fixture_principal(&client).await?;
         client
             .batch_execute(
                 "INSERT INTO receiving.item (id, item_number) VALUES \
@@ -131,9 +131,9 @@ async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
         // The local application's operator service holds the admin role.
         let principal: String = client
             .query_one(
-                "SELECT id::text FROM platform.\"user\" WHERE tenant_id = $1 AND type = 'service' \
+                "SELECT id::text FROM platform.\"user\" WHERE type = 'service' \
                    AND email = 'local@example.invalid'",
-                &[&tenant],
+                &[],
             )
             .await
             .context("read the local operator service")?

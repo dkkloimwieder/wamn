@@ -8,9 +8,11 @@
 //! table exists. The test reads the privileges from the server catalogs, on a
 //! fresh install and on a database that `project/0025_platform_configuration.sql`
 //! and `project/0028_platform_singular_tables.sql`,
-//! `project/0029_number_assignment.sql` and
-//! `project/0030_number_counter_set.sql` upgrade. It holds the process lock
-//! of its server, because the schema files create cluster-wide roles.
+//! `project/0029_number_assignment.sql`,
+//! `project/0030_number_counter_set.sql` and `project/0031_org_boundary.sql`
+//! upgrade. A last test applies 0031 to a database with rows in the old shape
+//! (wamn-83eth.6). It holds the process lock of its server, because the
+//! schema files create cluster-wide roles.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
@@ -24,6 +26,9 @@ const NUMBER_ASSIGNMENT: &str =
     include_str!("../../../../deploy/sql/migrations/project/0029_number_assignment.sql");
 const NUMBER_SETTING: &str =
     include_str!("../../../../deploy/sql/migrations/project/0030_number_counter_set.sql");
+const ORG_BOUNDARY: &str =
+    include_str!("../../../../deploy/sql/migrations/project/0031_org_boundary.sql");
+const TENANT_FLOOR: &str = include_str!("fixtures/org-boundary-before-0031.sql");
 
 /// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
 /// that the host reads as `wamn_app` on each request
@@ -166,8 +171,13 @@ async fn the_migration_grants_the_application_role_invariant_one() {
     let client = fresh_install(&url).await;
     // The database as 0024 left it: the plural table names, no platform
     // configuration tables, the configurations table with its history and
-    // grants, and the api_keys read. 0028 renders the administration surface,
-    // which names the run plane schema.
+    // grants, and the api_keys read, and user under the tenant floor of
+    // before 0031. 0028 and 0031 render the administration surface, which
+    // names the run plane schema.
+    client
+        .batch_execute(&format!("SET wamn.fixture_tenant = 't1'; {TENANT_FLOOR}"))
+        .await
+        .expect("give user the tenant floor of before 0031");
     client
         .batch_execute(PLURAL_TABLES)
         .await
@@ -219,6 +229,159 @@ async fn the_migration_grants_the_application_role_invariant_one() {
         ))
         .await
         .expect("apply the plural table renames, the number assignment and the number setting");
+    client
+        .batch_execute(&format!("BEGIN; {ORG_BOUNDARY} COMMIT;"))
+        .await
+        .expect("drop the tenant floor");
     assert_eq!(surface(&client).await, invariant_one());
     assert_eq!(control_plane_tables(&client).await, 0);
+}
+
+/// Project migration 0031 on a database with rows in the old shape: each row
+/// stays, loses its tenant, and keeps its history under its new key. The
+/// single-column keys hold, and the counter functions run on the sequence and
+/// the application claim alone (wamn-83eth.6).
+#[tokio::test]
+async fn the_org_boundary_migration_keeps_the_rows_of_the_old_shape() {
+    const USER: &str = "00000000-0000-4000-8000-000000000031";
+    const SYSTEM: &str = "00000000-0000-4000-8000-000000000032";
+    const CONNECTION: &str = "00000000-0000-4000-8000-000000000033";
+    const SEQUENCE: &str = "00000000-0000-4000-8000-000000000034";
+    const TABLES: [&str; 8] = [
+        "user",
+        "external_system",
+        "connection",
+        "integration_allow",
+        "project_connection",
+        "number_sequence",
+        "number_counter",
+        "setting",
+    ];
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = fresh_install(&url).await;
+    client
+        .batch_execute(&format!(
+            "CREATE SCHEMA wamn_run; SET wamn.fixture_tenant = 't1'; {TENANT_FLOOR}"
+        ))
+        .await
+        .expect("give the tables the tenant floor of before 0031");
+    client
+        .batch_execute(&format!(
+            "SET app.user_id = '{USER}'; SET app.operation = 'admin:org-boundary-fixture'; \
+             INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
+               VALUES ('t1', '{USER}', 'user', 'clerk@example.invalid'); \
+             INSERT INTO platform.role (tenant_id, name) VALUES ('t1', 'clerk'); \
+             INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
+               VALUES ('t1', '{USER}', 'clerk'); \
+             INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) \
+               VALUES ('t1', '{USER}', 'ci', 'hash-1', 'wk_a'); \
+             INSERT INTO platform.external_system (tenant_id, id, integration, name) \
+               VALUES ('t1', '{SYSTEM}', 'netsuite', 'erp'); \
+             INSERT INTO platform.connection \
+               (tenant_id, id, integration, external_system_id, name, transport, exchange) \
+               VALUES ('t1', '{CONNECTION}', 'netsuite', '{SYSTEM}', 'erp-rest', 'https', 'request'); \
+             INSERT INTO platform.project_connection (tenant_id, project_id, connection_id) \
+               VALUES ('t1', 'shop', '{CONNECTION}'); \
+             INSERT INTO platform.integration_allow (tenant_id, scope_type, scope_id, integration) \
+               VALUES ('t1', 'org', 'acme', 'netsuite'); \
+             INSERT INTO platform.number_sequence (tenant_id, id, application, name, pattern) \
+               VALUES ('t1', '{SEQUENCE}', 'receiving', 'po', 'P-{{seq:po}}'); \
+             INSERT INTO platform.number_counter (tenant_id, sequence_id, counter, key_value, value) \
+               VALUES ('t1', '{SEQUENCE}', 'po', '', 7); \
+             INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) \
+               VALUES ('t1', 'org', 'acme', 'locale', '\"en\"');"
+        ))
+        .await
+        .expect("write one row of each table in the old shape");
+
+    client
+        .batch_execute(&format!("BEGIN; {ORG_BOUNDARY} COMMIT;"))
+        .await
+        .expect("drop the tenant floor");
+
+    let relations: Vec<String> = TABLES
+        .iter()
+        .flat_map(|table| [(*table).to_owned(), format!("{table}_history")])
+        .collect();
+    let tenant_columns: i64 = client
+        .query_one(
+            "SELECT count(*) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid \
+              WHERE c.relnamespace = 'platform'::regnamespace AND a.attname = 'tenant_id' \
+                AND NOT a.attisdropped AND c.relname = ANY($1)",
+            &[&relations],
+        )
+        .await
+        .expect("read the tenant columns")
+        .get(0);
+    assert_eq!(tenant_columns, 0, "no table of the scope keeps tenant_id");
+    for table in TABLES {
+        let rows: i64 = client
+            .query_one(&format!("SELECT count(*) FROM platform.\"{table}\""), &[])
+            .await
+            .expect("count the rows")
+            .get(0);
+        assert_eq!(rows, 1, "platform.{table} keeps its row");
+    }
+    for table in TABLES.iter().filter(|table| **table != "number_counter") {
+        let row = client
+            .query_one(
+                &format!(
+                    "SELECT count(*), count(*) FILTER (WHERE row_key ? 'tenant_id') \
+                       FROM platform.{table}_history"
+                ),
+                &[],
+            )
+            .await
+            .expect("read the history entries");
+        assert_eq!(
+            (row.get::<_, i64>(0), row.get::<_, i64>(1)),
+            (1, 0),
+            "platform.{table}_history keeps its entry under the new key"
+        );
+    }
+    assert_eq!(surface(&client).await, invariant_one());
+
+    let bumped: i64 = client
+        .query_one(
+            &format!(
+                "SELECT platform.bump_counter('{SEQUENCE}', 'po', '') \
+                   FROM (SELECT set_config('app.application', 'receiving', false)) AS claim"
+            ),
+            &[],
+        )
+        .await
+        .expect("bump the counter of the claimed application")
+        .get(0);
+    assert_eq!(bumped, 7);
+    let refused = client
+        .batch_execute(&format!(
+            "SELECT set_config('app.application', 'wms', false); \
+             SELECT platform.bump_counter('{SEQUENCE}', 'po', '')"
+        ))
+        .await
+        .expect_err("a sequence of another application is refused");
+    assert_eq!(
+        refused.code(),
+        Some(&tokio_postgres::error::SqlState::UNDEFINED_OBJECT),
+        "{refused}"
+    );
+    client
+        .batch_execute(&format!(
+            "DELETE FROM platform.\"user\" WHERE id = '{USER}'"
+        ))
+        .await
+        .expect("remove the user");
+    let cascaded: i64 = client
+        .query_one(
+            "SELECT (SELECT count(*) FROM platform.user_role) \
+                  + (SELECT count(*) FROM platform.api_key)",
+            &[],
+        )
+        .await
+        .expect("count the rows of the user")
+        .get(0);
+    assert_eq!(
+        cascaded, 0,
+        "the user's foreign keys remove its role and key rows"
+    );
 }

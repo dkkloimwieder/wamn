@@ -233,7 +233,7 @@ impl Table {
 /// Application accounts. `id` (`uuid`) is the [`USER_ID_CLAIM`] ownership target.
 pub const USERS: Table = Table {
     name: "user",
-    columns: &["tenant_id", "id", "type", "email", "display_name", "status"],
+    columns: &["id", "type", "email", "display_name", "status"],
 };
 
 /// Named roles. `name` is the [`ROLE_CLAIM`] gate target.
@@ -276,21 +276,13 @@ pub const ENVIRONMENT: Table = Table {
 /// is the catalog code of the connector code.
 pub const EXTERNAL_SYSTEM: Table = Table {
     name: "external_system",
-    columns: &[
-        "tenant_id",
-        "id",
-        "integration",
-        "name",
-        "parameters",
-        "status",
-    ],
+    columns: &["id", "integration", "name", "parameters", "status"],
 };
 
 /// A configured instance of an integration, bound by `name`.
 pub const CONNECTION: Table = Table {
     name: "connection",
     columns: &[
-        "tenant_id",
         "id",
         "integration",
         "external_system_id",
@@ -305,19 +297,19 @@ pub const CONNECTION: Table = Table {
 /// The integrations allowed at an org, project or environment scope.
 pub const INTEGRATION_ALLOW: Table = Table {
     name: "integration_allow",
-    columns: &["tenant_id", "scope_type", "scope_id", "integration"],
+    columns: &["scope_type", "scope_id", "integration"],
 };
 
 /// The connections a project has enabled.
 pub const PROJECT_CONNECTION: Table = Table {
     name: "project_connection",
-    columns: &["tenant_id", "project_id", "connection_id"],
+    columns: &["project_id", "connection_id"],
 };
 
 /// One document number sequence of one application.
 pub const NUMBER_SEQUENCE: Table = Table {
     name: "number_sequence",
-    columns: &["tenant_id", "id", "application", "name", "pattern"],
+    columns: &["id", "application", "name", "pattern"],
 };
 
 /// One counter of a sequence per key value. The application writes it only
@@ -325,20 +317,13 @@ pub const NUMBER_SEQUENCE: Table = Table {
 /// table ([`HISTORY_EXEMPT`]).
 pub const NUMBER_COUNTER: Table = Table {
     name: "number_counter",
-    columns: &["tenant_id", "sequence_id", "counter", "key_value", "value"],
+    columns: &["sequence_id", "counter", "key_value", "value"],
 };
 
 /// Display and view settings per scope.
 pub const SETTING: Table = Table {
     name: "setting",
-    columns: &[
-        "tenant_id",
-        "scope_type",
-        "scope_id",
-        "key",
-        "value",
-        "locked",
-    ],
+    columns: &["scope_type", "scope_id", "key", "value", "locked"],
 };
 
 /// Every table in the system schema, in dependency order (a superset FK order:
@@ -365,6 +350,12 @@ pub const TABLES: &[Table] = &[
 /// writes of every create, and the write log is the audit (owner ruling,
 /// wamn-aqd0m.1).
 pub const HISTORY_EXEMPT: &[&str] = &["number_counter"];
+
+/// The tables of [`TABLES`] that carry `tenant_id` and its row policy. The
+/// database is the org boundary (owner ruling of 2026-10-23 on
+/// `wamn-83eth.6`), so `user` and the platform configuration tables carry
+/// neither.
+pub const TENANT_FLOOR: &[&str] = &["role", "user_role", "permission", "api_key", "environment"];
 
 /// Test databases with the tenant+platform floor.
 #[cfg(any(test, feature = "test-util"))]
@@ -405,11 +396,12 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), TABLES.len(), "table names must be unique");
-        // Every table carries the tenant floor column.
+        // Exactly the tenant floor tables carry the tenant floor column.
         for t in TABLES {
-            assert!(
+            assert_eq!(
                 t.columns.contains(&"tenant_id"),
-                "{} is tenant-scoped and must pin tenant_id",
+                TENANT_FLOOR.contains(&t.name),
+                "{} pins tenant_id exactly when it is under the tenant floor",
                 t.name
             );
         }

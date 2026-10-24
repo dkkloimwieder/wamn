@@ -12,12 +12,11 @@ const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
 pub(crate) async fn seed_fixture(project: &Client, initial_revision: i64) -> anyhow::Result<()> {
     // The fixture writes as its test principal, whose row stamps itself.
-    let tenant = crate::environment::identity().tenant.as_str();
     project.batch_execute(&format!(
         "BEGIN;\n\
          SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                 set_config('app.operation', 'admin:seed-wms-fixture', true);\n\
-         INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES ('{tenant}', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid');\n\
+         INSERT INTO platform.\"user\" (id, type, email) VALUES ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid');\n\
          INSERT INTO wms.product (id, product_code) VALUES ('{PRODUCT_ID}', 'PROD-101');\n\
          INSERT INTO wms.location (id, location_code) VALUES ('{LOCATION_A_ID}', 'LOC-A'), ('{LOCATION_B_ID}', 'LOC-B');\n\
          INSERT INTO wms.packaging (id, packaging_code, type, location_id, status, row_version) VALUES ('{PACKAGING_ID}', 'PAL-301', 'pallet', '{LOCATION_A_ID}', 'available', {initial_revision});\n\

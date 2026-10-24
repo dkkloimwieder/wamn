@@ -51,10 +51,11 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
 use wamn_control_registry::identifiers::valid_project;
+use wamn_control_registry::project_env_tenant;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_platform_identity::application::{
-    ApplicationUser, environment_tenant, permission_rows, remove_admin, remove_user, role_names,
+    ApplicationUser, permission_rows, remove_admin, remove_user, require_platform_rows, role_names,
     write_admin, write_environment_status, write_user,
 };
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
@@ -375,7 +376,11 @@ impl ControlRoutes<'_> {
                         .map_err(|_| {
                             anyhow::anyhow!("no administration login for status counts")
                         })?;
-                    application_counts(&logins[0]).await
+                    application_counts(
+                        &logins[0],
+                        &project_env_tenant(self.org, &request.project, &request.env),
+                    )
+                    .await
                 };
                 let memberships = async {
                     let row = self
@@ -416,7 +421,8 @@ impl ControlRoutes<'_> {
                     directory.join(control_administration_key(&request.project, &request.env));
                 let url = std::fs::read_to_string(&path)
                     .with_context(|| format!("read the administration login {}", path.display()))?;
-                match release_profile(url.trim(), &request.digest).await? {
+                let tenant = project_env_tenant(self.org, &request.project, &request.env);
+                match release_profile(url.trim(), &tenant, &request.digest).await? {
                     Some((profile, roles)) => Ok(json!({
                         "digest": request.digest,
                         "operations": profile.operations,
@@ -746,7 +752,8 @@ impl ControlRoutes<'_> {
         let logins = self.logins(environments)?;
         let mut completed: Vec<String> = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            match write_status(&url, attachment, caller, status).await {
+            let tenant = project_env_tenant(self.org, project, env);
+            match write_status(&url, &tenant, attachment, caller, status).await {
                 Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
@@ -838,7 +845,10 @@ impl ControlRoutes<'_> {
                     email,
                     display_name,
                 });
-            match write_application(&url, attachment, caller, principal, user, *write).await {
+            let tenant = project_env_tenant(self.org, project, env);
+            match write_application(&url, &tenant, attachment, caller, principal, user, *write)
+                .await
+            {
                 Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
@@ -911,25 +921,26 @@ impl ControlRoutes<'_> {
 /// prevent the runtime status from answering. Each read has its own deadline.
 const STATUS_COUNTS_TIMEOUT: Duration = Duration::from_secs(2);
 
-// The platform rows identify the sole tenant, as environment_tenant does.
-// query_one refuses missing or multiple tenants. EXISTS counts each human
-// user once even when that user holds several roles, and excludes services.
+// The role rows of the tenant `$1` of the environment. EXISTS counts each
+// human user once even when that user holds several roles, and excludes
+// services.
 const APPLICATION_COUNTS_SQL: &str = "SELECT \
     (SELECT count(*)::int4 FROM platform.\"user\" u \
-     WHERE u.tenant_id = t.tenant_id AND u.type = 'user' AND EXISTS \
+     WHERE u.type = 'user' AND EXISTS \
        (SELECT 1 FROM platform.user_role r \
-        WHERE r.tenant_id = u.tenant_id AND r.user_id = u.id)), \
-    (SELECT count(*)::int4 FROM platform.role r WHERE r.tenant_id = t.tenant_id) \
-    FROM (SELECT DISTINCT tenant_id FROM platform.\"user\" WHERE type = 'platform') t";
+        WHERE r.tenant_id = $1 AND r.user_id = u.id)), \
+    (SELECT count(*)::int4 FROM platform.role r WHERE r.tenant_id = $1)";
 
-async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {
+async fn application_counts(url: &str, tenant: &str) -> anyhow::Result<(i32, i32)> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls).await?;
     // Poll the connection here so cancellation drops its socket too. A spawned
     // connection could retain a blocked query after the deadline.
     tokio::select! {
         result = async {
             let transaction = client.build_transaction().read_only(true).start().await?;
-            let row = transaction.query_one(APPLICATION_COUNTS_SQL, &[]).await?;
+            let row = transaction
+                .query_one(APPLICATION_COUNTS_SQL, &[&tenant])
+                .await?;
             let counts = (row.get(0), row.get(1));
             transaction.commit().await?;
             anyhow::Ok(counts)
@@ -987,6 +998,7 @@ async fn status_with_counts(
 /// database holds no platform rows.
 async fn write_application(
     url: &str,
+    tenant: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
@@ -1006,8 +1018,8 @@ async fn write_application(
                 &[&caller.as_str(), &attachment.operation],
             )
             .await?;
-        let tenant = match environment_tenant(&transaction).await {
-            Ok(tenant) => tenant,
+        match require_platform_rows(&transaction).await {
+            Ok(()) => {}
             // A database without platform rows holds no user row to remove.
             Err(error)
                 if error.error_type() == IdentityErrorType::NotFound
@@ -1016,20 +1028,20 @@ async fn write_application(
                 return Ok(AuthDrops::default());
             }
             Err(error) => return Err(error.into()),
-        };
+        }
         let mut drops = AuthDrops::default();
         match (write, user) {
             (ApplicationWrite::User, Some(user)) => {
-                write_user(&transaction, &tenant, user, &mut drops).await?;
+                write_user(&transaction, tenant, user, &mut drops).await?;
             }
             (ApplicationWrite::Admin, Some(user)) => {
-                write_admin(&transaction, &tenant, user, &mut drops).await?;
+                write_admin(&transaction, tenant, user, &mut drops).await?;
             }
             (ApplicationWrite::RemoveAdmin, _) => {
-                remove_admin(&transaction, &tenant, principal, &mut drops).await?;
+                remove_admin(&transaction, tenant, principal, &mut drops).await?;
             }
             (ApplicationWrite::RemoveUser, _) => {
-                remove_user(&transaction, &tenant, principal, &mut drops).await?;
+                remove_user(&transaction, tenant, principal, &mut drops).await?;
             }
             (write, None) => anyhow::bail!("{write:?} needs the user's email and display name"),
         }
@@ -1064,6 +1076,7 @@ const RELATION_COLUMNS_SQL: &str = "SELECT c.relname::text, a.attname::text \
 /// release. `admin` holds every operation of the release. It writes nothing.
 async fn release_profile(
     url: &str,
+    tenant: &str,
     digest: &str,
 ) -> anyhow::Result<
     Option<(
@@ -1088,9 +1101,9 @@ async fn release_profile(
         }
         let profile =
             wamn_schema_generator::profile::release_profile(&manifest.components, &relations);
-        let tenant = environment_tenant(&client).await?;
+        require_platform_rows(&client).await?;
         let mut roles = BTreeMap::new();
-        for role in role_names(&client, &tenant).await? {
+        for role in role_names(&client, tenant).await? {
             let operations = if role == ADMIN_ROLE {
                 profile
                     .operations
@@ -1098,7 +1111,7 @@ async fn release_profile(
                     .map(|each| each.operation.clone())
                     .collect()
             } else {
-                permission_rows(&client, &tenant, &role).await?
+                permission_rows(&client, tenant, &role).await?
             };
             roles.insert(role, operations);
         }
@@ -1114,6 +1127,7 @@ async fn release_profile(
 /// administration login. It returns the drops of the write.
 async fn write_status(
     url: &str,
+    tenant: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
@@ -1131,9 +1145,9 @@ async fn write_status(
                 &[&caller.as_str(), &attachment.operation],
             )
             .await?;
-        let tenant = environment_tenant(&transaction).await?;
+        require_platform_rows(&transaction).await?;
         let mut drops = AuthDrops::default();
-        write_environment_status(&transaction, &tenant, status, &mut drops).await?;
+        write_environment_status(&transaction, tenant, status, &mut drops).await?;
         transaction.commit().await?;
         anyhow::Ok(drops)
     }

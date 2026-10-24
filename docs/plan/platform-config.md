@@ -28,6 +28,8 @@ Each section carries the dependency it waits on, so it can be ruled and filed as
 
 Every table below lives in `platform` in the project environment's database. Credentials and targets are control-plane data and are never materialized into an application database: the application cannot read what is not there.
 
+One database per (org, project, environment) is the org boundary. No table below has a tenant column, and no row policy or tenant key index separates its rows; each key is the table's own columns, such as `id` or `(scope_type, scope_id, key)`, and a foreign key is one column (owner ruling 2026-10-23).
+
 | level | table | columns | written by | application reads |
 | --- | --- | --- | --- | --- |
 | org | `user` | id, name, email, type (`user`, `service`, `platform`), active | platform routes | yes |
@@ -132,7 +134,7 @@ platform.assign_counter(sequence, counter, key) -> bigint // Postgres only: SECU
 platform.set_counter(sequence, counter, key, value)       // Postgres only: SECURITY DEFINER, the set_counter route's write, under the row lock
 ```
 
-On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. On SQLite there are no roles; the plugin's statement admission refuses application SQL that writes `platform.*`, which it must do there regardless. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
+On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses a sequence that the `app.application` claim does not own. On SQLite there are no roles; the plugin's statement admission refuses application SQL that writes `platform.*`, which it must do there regardless. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
 
 ### Pattern
 
@@ -516,7 +518,7 @@ Rulings for C2:
 - `role = "actor"` fills from `app.user_id`. An insert fills every actor field. An update fills `updated_by` and never touches `created_by` (owner ruling 2026-10-23). A payload that supplies an actor field is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
 - Build refusals: a write that supplies a `number` or `actor` field; a sequence with no field and no caller; `per=` on a key field; `reset=` or `per=` on a sequence bound to a key field; an `int32` key with anything but a bare `{seq}`; a key named by `per=` or `reset=` that is not a field of every model using the sequence, another counter, or `date:`.
-- `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, tenant check, `EXECUTE` for the application role) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It refuses a set below a live number by the dry render, and never touches a `per=` mapping.
+- `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `app.application` check, `EXECUTE` for the application role) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It refuses a set below a live number by the dry render, and never touches a `per=` mapping.
 - Env apply creates `number_sequence` rows from package defaults and never overwrites an existing pattern.
 - Receiving conformance only: `purchase_order.create {writable_fields = ["supplier_id"]}` with `purchase_order_number` numbered by `PO-{seq:po,width=6}`, and `role = "actor"` on `created_by` and `updated_by`. Receiving moves to 2.2.6, and Acme moves only its Receiving pin and its `record-receipt` import to 2.2.6. WMS does not change (owner ruling 2026-10-23).
 - The kind case checks the `number_sequence` row after apply. A local live test covers the numbered create, because the kind suite has no token issuer.

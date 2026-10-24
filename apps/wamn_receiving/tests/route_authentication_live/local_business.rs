@@ -55,7 +55,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
             tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
         let connection = tokio::spawn(connection);
         let tenant = super::identity().tenant.as_str();
-        super::bind_fixture_principal(&client, tenant).await?;
+        super::bind_fixture_principal(&client).await?;
         client
             .batch_execute(
                 "INSERT INTO receiving.item (id, item_number) VALUES \
@@ -204,7 +204,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
             tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
         let connection = tokio::spawn(connection);
         let tenant = super::identity().tenant.as_str();
-        super::bind_fixture_principal(&client, tenant).await?;
+        super::bind_fixture_principal(&client).await?;
         let supplier = "00000000-0000-0000-0000-000000000950";
         client
             .execute(
@@ -215,9 +215,9 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
         for owner in ["wamn_receiving", "client_acme_receiving"] {
             client
                 .execute(
-                    "INSERT INTO platform.number_sequence (tenant_id, application, name, pattern) \
-                     VALUES ($1, $2, 'purchase_order', 'PO-{seq:po,width=6}')",
-                    &[&tenant, &owner],
+                    "INSERT INTO platform.number_sequence (application, name, pattern) \
+                     VALUES ($1, 'purchase_order', 'PO-{seq:po,width=6}')",
+                    &[&owner],
                 )
                 .await?;
         }
@@ -345,7 +345,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     .await?;
     let first_client = connect(first_project.url()).await?;
     let stored = async {
-        super::bind_fixture_principal(&first_client, super::identity().tenant.as_str()).await?;
+        super::bind_fixture_principal(&first_client).await?;
         seed_acme_orders(&first_client).await?;
         item(&first).await
     }
@@ -553,7 +553,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     let (project, connection) =
         tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
-    super::bind_fixture_principal(&project, super::identity().tenant.as_str()).await?;
+    super::bind_fixture_principal(&project).await?;
     seed_acme_orders(&project).await?;
     member_instances(
         &project,

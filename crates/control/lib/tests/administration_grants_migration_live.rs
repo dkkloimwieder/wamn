@@ -1,12 +1,14 @@
 //! Live test of `project/0024_platform_schema.sql`,
 //! `project/0026_administration_platform_configuration.sql`,
-//! `project/0027_platform_user.sql` and
-//! `project/0028_platform_singular_tables.sql` (wamn-a40n.2, wamn-a40n.9,
-//! wamn-zua8.2, wamn-snz0.6, wamn-aemxz.1, wamn-aqd0m.1, wamn-aqd0m.3): on a
+//! `project/0027_platform_user.sql`,
+//! `project/0028_platform_singular_tables.sql` and
+//! `project/0031_org_boundary.sql` (wamn-a40n.2, wamn-a40n.9, wamn-zua8.2,
+//! wamn-snz0.6, wamn-aemxz.1, wamn-aqd0m.1, wamn-aqd0m.3, wamn-83eth.6): on a
 //! project database installed before the schema rename, 0024 renames the
 //! schema to platform, 0026 grants the platform configuration tables, 0027
-//! renames platform.users to platform."user", and 0028 renames the plural
-//! role, user_role, permission and api_key tables and gives
+//! renames the plural user table to platform."user", 0028 renames the plural
+//! role, user_role, permission and api_key tables, and 0031 drops the tenant
+//! floor of user and the platform configuration tables and gives
 //! `wamn_administration` the exact surface that provisioning grants. The test holds the process lock of
 //! its server, because the files create a cluster-wide role.
 
@@ -22,7 +24,10 @@ const USER_RENAME: &str =
     include_str!("../../../../deploy/sql/migrations/project/0027_platform_user.sql");
 const SINGULAR_TABLES: &str =
     include_str!("../../../../deploy/sql/migrations/project/0028_platform_singular_tables.sql");
+const ORG_BOUNDARY: &str =
+    include_str!("../../../../deploy/sql/migrations/project/0031_org_boundary.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const TENANT_FLOOR: &str = include_str!("fixtures/org-boundary-before-0031.sql");
 const PLURAL_USER: &str = include_str!("fixtures/platform-user-before-0027.sql");
 const PLURAL_TABLES: &str = include_str!("fixtures/platform-singular-tables-before-0028.sql");
 
@@ -93,6 +98,10 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .await
         .expect("install the application schema");
     client
+        .batch_execute(&format!("SET wamn.fixture_tenant = 't1'; {TENANT_FLOOR}"))
+        .await
+        .expect("give user and the platform configuration tables the tenant floor of before 0031");
+    client
         .batch_execute(PLURAL_USER)
         .await
         .expect("name the user table as before 0027");
@@ -121,6 +130,10 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .batch_execute(&format!("BEGIN; {SINGULAR_TABLES} COMMIT;"))
         .await
         .expect("apply the plural table renames");
+    client
+        .batch_execute(&format!("BEGIN; {ORG_BOUNDARY} COMMIT;"))
+        .await
+        .expect("drop the tenant floor");
     let migrated = surface(&client).await;
     for expected in [
         "column platform.role_history.operation INSERT",
@@ -140,6 +153,7 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         "table platform.number_sequence SELECT",
         "table platform.setting UPDATE",
         "column platform.setting_history.after INSERT",
+        "column platform.role_history.tenant_id INSERT",
     ] {
         assert!(
             migrated.iter().any(|entry| entry == expected),
@@ -152,6 +166,14 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
             .any(|entry| entry.contains("platform.number_counter")),
         "the migration grants nothing on number_counter: {migrated:#?}"
     );
+    for history in ["user_history", "setting_history", "connection_history"] {
+        assert!(
+            !migrated
+                .iter()
+                .any(|entry| entry == &format!("column platform.{history}.tenant_id INSERT")),
+            "{history} has no tenant_id: {migrated:#?}"
+        );
+    }
 
     client
         .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))

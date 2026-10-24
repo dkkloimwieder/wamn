@@ -1,7 +1,7 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
-//! the current package-era relation set contains 49 governed relations, all off
+//! the current package-era relation set contains 34 governed relations, all off
 //! the settable `app.tenant` claim and onto
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
@@ -373,8 +373,9 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "49",
-        "the sweep must cover exactly the 49 governed relations"
+        governed, "34",
+        "the sweep must cover exactly the 34 governed relations: user, the platform \
+         configuration tables and their history tables have no tenant floor (wamn-83eth.6)"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
@@ -1260,8 +1261,8 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
             "BEGIN;\n\
              SELECT set_config('app.user_id', '{OPERATOR}', true), \
                     set_config('app.operation', 'admin:seed-operator-fixture', true);\n\
-             INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-               VALUES ('t1', '{OPERATOR}', 'user', 'operator@example.test');\n\
+             INSERT INTO platform.\"user\" (id, type, email) \
+               VALUES ('{OPERATOR}', 'user', 'operator@example.test');\n\
              COMMIT;\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\

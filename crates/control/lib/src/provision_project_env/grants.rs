@@ -502,8 +502,8 @@ pub(super) fn verify_session_role_reader_grants(
         "USAGE".to_string(),
     )]);
     for (relation, columns) in [
-        ("user", ["tenant_id", "id", "status"]),
-        ("user_role", ["tenant_id", "user_id", "role_name"]),
+        ("user", &["id", "status"][..]),
+        ("user_role", &["tenant_id", "user_id", "role_name"][..]),
     ] {
         for column in columns {
             expected.insert((
@@ -611,7 +611,7 @@ fn verify_executor_platform_grants(
         "platform".to_owned(),
         "USAGE".to_owned(),
     ));
-    for column in ["tenant_id", "id", "type", "status", "email"] {
+    for column in ["id", "type", "status", "email"] {
         expected.insert((
             "column".to_owned(),
             "platform".to_owned(),
@@ -717,7 +717,8 @@ pub(super) fn verify_http_admitter_grants(
 /// Exact surface of the administration family (`wamn-a40n.2`): `USAGE` on
 /// `catalog`, `platform` and `wamn_history`, `SELECT`, `INSERT`, `UPDATE`
 /// and `DELETE` on each relation of `sql::ADMINISTRATION_RELATIONS`, `INSERT`
-/// on the entry columns of its history table, `SELECT` on `catalog.releases`
+/// on the entry columns of its history table (`tenant_id` only under the
+/// tenant floor, `sql::ADMINISTRATION_TENANT_RELATIONS`), `SELECT` on `catalog.releases`
 /// (`wamn-aemxz.1`), and `EXECUTE` on `row_image` and on the tenant-key
 /// derivation. The grants go to `wamn_administration` alone.
 pub(super) fn verify_administration_grants(
@@ -754,8 +755,10 @@ pub(super) fn verify_administration_grants(
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             expected.insert(tuple("relation", "platform", relation, privilege));
         }
-        for column in [
-            "tenant_id",
+        let tenant = sql::ADMINISTRATION_TENANT_RELATIONS
+            .contains(&relation)
+            .then_some("tenant_id");
+        for column in tenant.into_iter().chain([
             "row_key",
             "type",
             "operation",
@@ -764,7 +767,7 @@ pub(super) fn verify_administration_grants(
             "transaction_id",
             "before",
             "after",
-        ] {
+        ]) {
             expected.insert(tuple(
                 "column",
                 "platform",

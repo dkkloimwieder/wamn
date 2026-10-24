@@ -115,7 +115,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
         rows::read_back(&guest)
             .await
             .expect("the guest generation reads the configuration rows"),
-        rows::expected(TENANT, CLI_PROJECT),
+        rows::expected(CLI_PROJECT),
         "the guest generation reads each row as written, stamped by the caller"
     );
     let inserted: Vec<String> = rows::TABLES
@@ -263,7 +263,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
         .principal_id()
         .to_string();
     assert_eq!(
-        create_number_sequences(&target_url, TENANT, &defaults)
+        create_number_sequences(&target_url, &defaults)
             .await
             .expect("the first apply creates the sequence"),
         1
@@ -287,7 +287,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
         .await
         .expect("edit the pattern");
     assert_eq!(
-        create_number_sequences(&target_url, TENANT, &defaults)
+        create_number_sequences(&target_url, &defaults)
             .await
             .expect("the second apply runs"),
         0,

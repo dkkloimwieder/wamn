@@ -565,6 +565,13 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "setting",
 ];
 
+/// The [`ADMINISTRATION_RELATIONS`] that still carry `tenant_id`, so their
+/// history tables do too. `user` and the platform configuration tables have
+/// none: the database is the org boundary (owner ruling of 2026-10-23 on
+/// `wamn-83eth.6`).
+pub const ADMINISTRATION_TENANT_RELATIONS: [&str; 4] =
+    ["role", "user_role", "permission", "environment"];
+
 /// Converge the stable administration role to its exact surface
 /// (`wamn-a40n.2`).
 ///
@@ -593,10 +600,15 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
     );
     for relation in ADMINISTRATION_RELATIONS {
+        let tenant = if ADMINISTRATION_TENANT_RELATIONS.contains(&relation) {
+            "tenant_id, "
+        } else {
+            ""
+        };
         write!(
             sql,
             " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE platform.{relation} TO {role}; \
-             GRANT INSERT (tenant_id, row_key, type, operation, changed_by, changed_at, \
+             GRANT INSERT ({tenant}row_key, type, operation, changed_by, changed_at, \
              transaction_id, before, after) ON TABLE platform.{history} TO {role};",
             relation = quote_ident(relation),
             history = quote_ident(&format!("{relation}_history")),
@@ -608,7 +620,7 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
     sql
 }
 
-/// Converge the session role reader onto six columns and no execution authority.
+/// Converge the session role reader onto five columns and no execution authority.
 ///
 /// Apply after the project schemas exist. The existing platform RLS arm admits
 /// these reads; consumers must bind the target tenant explicitly. Revoke column
@@ -636,7 +648,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
          END $session_column_acl$; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
          GRANT USAGE ON SCHEMA platform TO {role}; \
-         GRANT SELECT (tenant_id, id, status) ON TABLE platform.\"user\" TO {role}; \
+         GRANT SELECT (id, status) ON TABLE platform.\"user\" TO {role}; \
          GRANT SELECT (tenant_id, user_id, role_name) ON TABLE platform.user_role TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
         role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
@@ -721,7 +733,7 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
-         GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.\"user\" TO {role};"
+         GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" TO {role};"
     )
     .expect("writing to a String cannot fail");
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
@@ -1299,7 +1311,7 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT (tenant_id, id, type, status, email) ON TABLE platform.\"user\" \
+             GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" \
              TO \"wamn_executor_platform\"; \
              GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
              TO \"wamn_executor_platform\";",

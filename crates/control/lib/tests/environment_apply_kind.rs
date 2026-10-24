@@ -1164,7 +1164,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .await?;
     let read = platform_configuration::read_back(dev_project.as_ref()).await?;
     dev_task.abort();
-    let expected = platform_configuration::expected(&tenant, PROJECT);
+    let expected = platform_configuration::expected(PROJECT);
     run.pass(
         "the administration login writes the platform configuration rows",
         &format!(

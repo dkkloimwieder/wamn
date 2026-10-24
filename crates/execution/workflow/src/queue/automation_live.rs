@@ -132,12 +132,11 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
         .await?;
     admin
         .batch_execute(&wamn_control_provision::platform_principals_sql(
-            TENANT,
             "automation.invalid",
         )?)
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    admin.batch_execute(&format!("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
+    admin.batch_execute(&format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
       INSERT INTO platform.role (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');")).await?;
     let released = wamn_catalog::ServingComponentOperation {
@@ -252,12 +251,11 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         .await?;
     admin
         .batch_execute(&wamn_control_provision::platform_principals_sql(
-            TENANT,
             "automation.invalid",
         )?)
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
-    admin.batch_execute(&format!("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
+    admin.batch_execute(&format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
       INSERT INTO platform.role (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
       INSERT INTO platform.permission (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}');
@@ -699,8 +697,8 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     assert!(row.get::<_, Option<String>>(1).is_none());
     admin
         .execute(
-            "UPDATE platform.\"user\" SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
-            &[&TENANT, &SERVICE],
+            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
+            &[&SERVICE],
         )
         .await?;
     request.idempotency_key = "inactive".to_owned();

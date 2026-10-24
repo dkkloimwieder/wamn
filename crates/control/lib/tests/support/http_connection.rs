@@ -698,8 +698,8 @@ async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyh
     let email = format!("{subject}@{}", super::PLATFORM_DOMAIN);
     let principal: String = database
         .query_one(
-            "SELECT id::text FROM platform.\"user\" WHERE tenant_id=$1 AND email=$2",
-            &[&tenant, &email],
+            "SELECT id::text FROM platform.\"user\" WHERE email=$1",
+            &[&email],
         )
         .await?
         .get(0);

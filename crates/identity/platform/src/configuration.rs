@@ -6,9 +6,9 @@
 //! `platform.number_sequence` and `platform.setting` on the path that writes
 //! the application rows of [`crate::application`]: with the environment's
 //! `wamn_administration` login, in one transaction on the project database
-//! that binds the caller and the route's sealed operation id. The login is
-//! neither a superuser nor `BYPASSRLS`, so the row security of each table
-//! applies. The application reads these rows and writes none of them.
+//! that binds the caller and the route's sealed operation id. The database is
+//! the org boundary, so these tables have no tenant column and no row
+//! security. The application reads these rows and writes none of them.
 //!
 //! A write keeps a row whose values are already the given ones, so writing
 //! the same configuration twice changes nothing and logs no history. A write
@@ -21,9 +21,9 @@ use tokio_postgres::GenericClient;
 use crate::{IdentityError, database_error};
 
 const EXTERNAL_SYSTEM_SQL: &str = "INSERT INTO platform.external_system \
-    (tenant_id, id, integration, name, parameters, status) \
-    VALUES ($1, $2::text::uuid, $3, $4, $5::text::jsonb, $6) \
-    ON CONFLICT (tenant_id, id) DO UPDATE SET \
+    (id, integration, name, parameters, status) \
+    VALUES ($1::text::uuid, $2, $3, $4::text::jsonb, $5) \
+    ON CONFLICT (id) DO UPDATE SET \
       integration = EXCLUDED.integration, name = EXCLUDED.name, \
       parameters = EXCLUDED.parameters, status = EXCLUDED.status \
     WHERE (external_system.integration, external_system.name, \
@@ -32,10 +32,9 @@ const EXTERNAL_SYSTEM_SQL: &str = "INSERT INTO platform.external_system \
           (EXCLUDED.integration, EXCLUDED.name, EXCLUDED.parameters, EXCLUDED.status)";
 
 const CONNECTION_SQL: &str = "INSERT INTO platform.connection \
-    (tenant_id, id, integration, external_system_id, name, transport, exchange, \
-     parameters, status) \
-    VALUES ($1, $2::text::uuid, $3, $4::text::uuid, $5, $6, $7, $8::text::jsonb, $9) \
-    ON CONFLICT (tenant_id, id) DO UPDATE SET \
+    (id, integration, external_system_id, name, transport, exchange, parameters, status) \
+    VALUES ($1::text::uuid, $2, $3::text::uuid, $4, $5, $6, $7::text::jsonb, $8) \
+    ON CONFLICT (id) DO UPDATE SET \
       integration = EXCLUDED.integration, \
       external_system_id = EXCLUDED.external_system_id, name = EXCLUDED.name, \
       transport = EXCLUDED.transport, exchange = EXCLUDED.exchange, \
@@ -48,16 +47,16 @@ const CONNECTION_SQL: &str = "INSERT INTO platform.connection \
            EXCLUDED.transport, EXCLUDED.exchange, EXCLUDED.parameters, EXCLUDED.status)";
 
 const PROJECT_CONNECTION_SQL: &str = "INSERT INTO platform.project_connection \
-    (tenant_id, project_id, connection_id) VALUES ($1, $2, $3::text::uuid) \
+    (project_id, connection_id) VALUES ($1, $2::text::uuid) \
     ON CONFLICT DO NOTHING";
 
 const INTEGRATION_ALLOW_SQL: &str = "INSERT INTO platform.integration_allow \
-    (tenant_id, scope_type, scope_id, integration) VALUES ($1, $2, $3, $4) \
+    (scope_type, scope_id, integration) VALUES ($1, $2, $3) \
     ON CONFLICT DO NOTHING";
 
 const NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
-    (tenant_id, id, application, name, pattern) VALUES ($1, $2::text::uuid, $3, $4, $5) \
-    ON CONFLICT (tenant_id, id) DO UPDATE SET \
+    (id, application, name, pattern) VALUES ($1::text::uuid, $2, $3, $4) \
+    ON CONFLICT (id) DO UPDATE SET \
       application = EXCLUDED.application, name = EXCLUDED.name, pattern = EXCLUDED.pattern \
     WHERE (number_sequence.application, number_sequence.name, number_sequence.pattern) \
           IS DISTINCT FROM (EXCLUDED.application, EXCLUDED.name, EXCLUDED.pattern)";
@@ -65,13 +64,13 @@ const NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
 /// A package's default pattern, written only when the application has no row
 /// of that name: an edited pattern stays.
 const DEFAULT_NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
-    (tenant_id, application, name, pattern) VALUES ($1, $2, $3, $4) \
-    ON CONFLICT (tenant_id, application, name) DO NOTHING";
+    (application, name, pattern) VALUES ($1, $2, $3) \
+    ON CONFLICT (application, name) DO NOTHING";
 
 const SETTING_SQL: &str = "INSERT INTO platform.setting \
-    (tenant_id, scope_type, scope_id, key, value, locked) \
-    VALUES ($1, $2, $3, $4, $5::text::jsonb, $6) \
-    ON CONFLICT (tenant_id, scope_type, scope_id, key) DO UPDATE SET \
+    (scope_type, scope_id, key, value, locked) \
+    VALUES ($1, $2, $3, $4::text::jsonb, $5) \
+    ON CONFLICT (scope_type, scope_id, key) DO UPDATE SET \
       value = EXCLUDED.value, locked = EXCLUDED.locked \
     WHERE (setting.value, setting.locked) IS DISTINCT FROM (EXCLUDED.value, EXCLUDED.locked)";
 
@@ -166,18 +165,16 @@ impl PlatformConfiguration {
     }
 }
 
-/// Write the rows of `configuration` for `tenant`, and return how many rows
-/// were inserted or changed.
+/// Write the rows of `configuration`, and return how many rows were inserted
+/// or changed.
 ///
 /// The caller runs this on the `wamn_administration` login in a transaction
 /// that binds `app.user_id` and `app.operation`, because every table stamps
-/// and logs its writes. `tenant` is the tenant that
-/// [`crate::application::environment_tenant`] reads. The
-/// writes go in foreign key order, so a connection can name an external
-/// system and a project connection a connection of the same configuration.
+/// and logs its writes. The writes go in foreign key order, so a connection
+/// can name an external system and a project connection a connection of the
+/// same configuration.
 pub async fn write_configuration(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
     configuration: &PlatformConfiguration,
 ) -> Result<u64, IdentityError> {
     let mut written = 0;
@@ -186,7 +183,6 @@ pub async fn write_configuration(
             client,
             EXTERNAL_SYSTEM_SQL,
             &[
-                &tenant,
                 &row.id,
                 &row.integration,
                 &row.name,
@@ -201,7 +197,6 @@ pub async fn write_configuration(
             client,
             CONNECTION_SQL,
             &[
-                &tenant,
                 &row.id,
                 &row.integration,
                 &row.external_system_id,
@@ -218,7 +213,7 @@ pub async fn write_configuration(
         written += execute(
             client,
             PROJECT_CONNECTION_SQL,
-            &[&tenant, &row.project_id, &row.connection_id],
+            &[&row.project_id, &row.connection_id],
         )
         .await?;
     }
@@ -226,7 +221,7 @@ pub async fn write_configuration(
         written += execute(
             client,
             INTEGRATION_ALLOW_SQL,
-            &[&tenant, &row.scope_type, &row.scope_id, &row.integration],
+            &[&row.scope_type, &row.scope_id, &row.integration],
         )
         .await?;
     }
@@ -234,7 +229,7 @@ pub async fn write_configuration(
         written += execute(
             client,
             NUMBER_SEQUENCE_SQL,
-            &[&tenant, &row.id, &row.application, &row.name, &row.pattern],
+            &[&row.id, &row.application, &row.name, &row.pattern],
         )
         .await?;
     }
@@ -243,7 +238,6 @@ pub async fn write_configuration(
             client,
             SETTING_SQL,
             &[
-                &tenant,
                 &row.scope_type,
                 &row.scope_id,
                 &row.key,
@@ -275,7 +269,6 @@ pub struct SequenceDefault {
 /// and `app.operation`.
 pub async fn create_default_sequences(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
     defaults: &[SequenceDefault],
 ) -> Result<u64, IdentityError> {
     let mut created = 0;
@@ -283,7 +276,7 @@ pub async fn create_default_sequences(
         created += execute(
             client,
             DEFAULT_NUMBER_SEQUENCE_SQL,
-            &[&tenant, &row.application, &row.name, &row.pattern],
+            &[&row.application, &row.name, &row.pattern],
         )
         .await?;
     }

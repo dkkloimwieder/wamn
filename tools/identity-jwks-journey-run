@@ -379,7 +379,7 @@ session_target() {
   # The one provisioning function renders the tenant's platform rows. Its
   # actor binding is transaction-local, so psql runs it as one transaction.
   run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl print-platform-principals \
-    --tenant "$tenant" --platform-domain example.invalid >"$evidence_dir/session-$label-platform-principals.sql"
+    --platform-domain example.invalid >"$evidence_dir/session-$label-platform-principals.sql"
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
     --single-transaction <"$evidence_dir/session-$label-platform-principals.sql" >"$evidence_dir/session-$label-platform-principals.log" 2>&1
   # The fixture writes as the session user, whose row stamps itself, under
@@ -388,7 +388,7 @@ session_target() {
     "SET app.operation = 'admin:seed-session-journey-fixture';" \
     "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
     "REVOKE CONNECT, TEMPORARY ON DATABASE \"$database\" FROM PUBLIC;" \
-    "INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ('$tenant','$session_user_id','user','session@example.invalid');" \
+    "INSERT INTO platform.\"user\" (id,type,email) VALUES ('$session_user_id','user','session@example.invalid');" \
     "INSERT INTO platform.role (tenant_id,name) VALUES ('$tenant','$role');" \
     "INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ('$tenant','$session_user_id','$role');" \
     >"$evidence_dir/session-$label-data.sql"

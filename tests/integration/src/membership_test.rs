@@ -278,13 +278,9 @@ async fn seed_tenant_role(
         .await
         .context("begin test fixture seed")?;
     tx.execute(
-        "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-         VALUES ($1, $2::text::uuid, 'user', $3)",
-        &[
-            &args.tenant,
-            &principal.as_str(),
-            &format!("{role}@example.test"),
-        ],
+        "INSERT INTO platform.\"user\" (id, type, email) \
+         VALUES ($1::text::uuid, 'user', $2)",
+        &[&principal.as_str(), &format!("{role}@example.test")],
     )
     .await
     .context("seed the exact platform-issued UUID in the tenant")?;
@@ -404,8 +400,8 @@ async fn cleanup(
     let project_result: anyhow::Result<()> = async {
         let tx = project.transaction().await?;
         tx.execute(
-            "DELETE FROM platform.\"user\" WHERE tenant_id = $1 AND id = $2::text::uuid",
-            &[&tenant, &principal.as_str()],
+            "DELETE FROM platform.\"user\" WHERE id = $1::text::uuid",
+            &[&principal.as_str()],
         )
         .await?;
         let mut drops = AuthDrops::default();

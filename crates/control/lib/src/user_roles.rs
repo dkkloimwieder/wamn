@@ -171,8 +171,8 @@ async fn resolve_user(
     let rows = transaction
         .query(
             "SELECT id::text FROM platform.\"user\" \
-             WHERE tenant_id = $1 AND lower(email) = lower($2) ORDER BY id",
-            &[&tenant, &user],
+             WHERE lower(email) = lower($1) ORDER BY id",
+            &[&user],
         )
         .await
         .context("resolve the user email")?;

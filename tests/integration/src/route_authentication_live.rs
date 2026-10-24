@@ -109,9 +109,9 @@ async fn grant_service_operator(
     let email = format!("{subject}@example.invalid");
     project
         .execute(
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-             VALUES ($1, $2::text::uuid, 'service', $3)",
-            &[&TENANT, &principal.id().as_str(), &email],
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ($1::text::uuid, 'service', $2)",
+            &[&principal.id().as_str(), &email],
         )
         .await
         .context("write the operator service's user row")?;
@@ -175,9 +175,9 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("bind the fixture test principal")?;
     project
         .execute(
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-             VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid')",
-            &[&TENANT, &FIXTURE_PRINCIPAL],
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ($1::text::uuid, 'user', 'fixture@example.invalid')",
+            &[&FIXTURE_PRINCIPAL],
         )
         .await
         .context("seed the fixture test principal")?;
@@ -451,11 +451,10 @@ async fn assert_user_environment_membership(
     ).await?;
     project
         .execute(
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-         VALUES ($1, $2::text::uuid, 'user', 'member@example.test'), \
-                ($1, $3::text::uuid, 'user', 'other@example.test'), \
-                ('other-tenant', $2::text::uuid, 'user', 'member@example.test')",
-            &[&TENANT, &user.id().as_str(), &other.id().as_str()],
+            "INSERT INTO platform.\"user\" (id, type, email) \
+         VALUES ($1::text::uuid, 'user', 'member@example.test'), \
+                ($2::text::uuid, 'user', 'other@example.test')",
+            &[&user.id().as_str(), &other.id().as_str()],
         )
         .await?;
     project
@@ -661,10 +660,12 @@ async fn assert_user_environment_membership(
         "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'user-reader')",
         &[&TENANT, &user.id().as_str()],
     ).await?;
-    project.execute(
-        "UPDATE platform.\"user\" SET status = 'disabled' WHERE tenant_id = $1 AND id = $2::text::uuid",
-        &[&TENANT, &user.id().as_str()],
-    ).await?;
+    project
+        .execute(
+            "UPDATE platform.\"user\" SET status = 'disabled' WHERE id = $1::text::uuid",
+            &[&user.id().as_str()],
+        )
+        .await?;
     assert_eq!(
         invoke(
             route_auth,
@@ -675,10 +676,12 @@ async fn assert_user_environment_membership(
         .await,
         Err(Refusal::Permission(OPERATION.into()))
     );
-    project.execute(
-        "UPDATE platform.\"user\" SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
-        &[&TENANT, &user.id().as_str()],
-    ).await?;
+    project
+        .execute(
+            "UPDATE platform.\"user\" SET status = 'active' WHERE id = $1::text::uuid",
+            &[&user.id().as_str()],
+        )
+        .await?;
     invoke(
         route_auth,
         loaded_release,
@@ -1152,9 +1155,9 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     ] {
         project
             .execute(
-                "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-                 VALUES ($1, gen_random_uuid(), $2, $3)",
-                &[&TENANT, &kind, &email],
+                "INSERT INTO platform.\"user\" (id, type, email) \
+                 VALUES (gen_random_uuid(), $1, $2)",
+                &[&kind, &email],
             )
             .await
             .expect("write a user row");
@@ -1175,7 +1178,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
             project
                 .query(
                     "SELECT r.role_name FROM platform.user_role r \
-                     JOIN platform.\"user\" u ON u.tenant_id = r.tenant_id AND u.id = r.user_id \
+                     JOIN platform.\"user\" u ON u.id = r.user_id \
                      WHERE r.tenant_id = $1 AND u.email = $2 ORDER BY r.role_name",
                     &[&TENANT, &email],
                 )

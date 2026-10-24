@@ -904,7 +904,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     let holders = db
         .query(
             "SELECT u.email FROM platform.user_role AS r \
-             JOIN platform.\"user\" AS u ON u.tenant_id=r.tenant_id AND u.id=r.user_id \
+             JOIN platform.\"user\" AS u ON u.id=r.user_id \
              WHERE r.tenant_id=$1 AND r.role_name=$2 ORDER BY u.id",
             &[&inputs.tenant, &inputs.caller_role],
         )
@@ -1009,7 +1009,7 @@ pub(crate) fn assert_histories_with_cancellation(
         &runtime,
         deadline,
         cancellation,
-        bind_fixture_principal(&db.client, &inputs.tenant),
+        bind_fixture_principal(&db.client),
     )?;
     let version: String = run_before(
         &runtime,

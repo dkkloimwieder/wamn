@@ -85,7 +85,6 @@ pub async fn install(
         .await?;
     admin
         .batch_execute(&wamn_control_provision::platform_principals_sql(
-            TENANT,
             "example.test",
         )?)
         .await?;

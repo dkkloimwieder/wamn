@@ -117,12 +117,7 @@ pub(super) async fn install_candidate_release(
     admin_task.abort();
     let route = route?;
     let (project, project_task) = connect(&route.database_url).await?;
-    let floor = install_journey_platform_floor(
-        project.as_ref(),
-        identity().tenant.as_str(),
-        PLATFORM_DOMAIN,
-    )
-    .await;
+    let floor = install_journey_platform_floor(project.as_ref(), PLATFORM_DOMAIN).await;
     project_task.abort();
     floor?;
     reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;

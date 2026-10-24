@@ -613,7 +613,6 @@ fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl 
 fn session_reader_requires_exact_grants() {
     let mut exact = vec![role_acl("schema", "platform", "platform", "USAGE")];
     for column in [
-        "user.tenant_id",
         "user.id",
         "user.status",
         "user_role.tenant_id",

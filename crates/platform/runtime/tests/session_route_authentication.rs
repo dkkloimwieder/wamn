@@ -142,8 +142,8 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
         (first.as_str(), "first@example.test"),
         (SECOND_PRINCIPAL, "second@example.test"),
     ] {
-        admin.execute("INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'user', $3)",
-            &[&TENANT, &principal, &email]).await?;
+        admin.execute("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'user', $2)",
+            &[&principal, &email]).await?;
         admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-reader')",
             &[&TENANT, &principal]).await?;
     }
@@ -284,7 +284,8 @@ fn assert_permission_reads(
     assert!(query.starts_with("SELECT u.status = "), "{query}");
     assert!(
         query.contains("FROM platform.\"user\" u LEFT JOIN platform.user_role r")
-            && query.contains("u.tenant_id = $1 AND u.id = $2::text::uuid"),
+            && query.contains("r.tenant_id = $1 AND r.user_id = u.id")
+            && query.contains("WHERE u.id = $2::text::uuid"),
         "{query}"
     );
     assert_eq!(
@@ -520,10 +521,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
         )
         .await?;
     admin
-        .execute(
-            "UPDATE platform.\"user\" SET status = 'disabled' WHERE tenant_id = $1",
-            &[&TENANT],
-        )
+        .execute("UPDATE platform.\"user\" SET status = 'disabled'", &[])
         .await?;
     reader.auth_cache().clear();
     let snapshot = accepted(&route, &first).await;

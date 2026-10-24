@@ -262,7 +262,7 @@ impl ApplicationRoutes<'_> {
                 let user: PrincipalId = request.user_id.parse()?;
                 let user_id = user.as_str();
                 self.run(attachment, principal, false, async |client| {
-                    require_user(client, tenant, user_id).await?;
+                    require_user(client, user_id).await?;
                     let granted =
                         grant_user_role(client, tenant, user_id, &request.role, drops).await?;
                     Ok(json!({ "granted": granted }))
@@ -285,7 +285,7 @@ impl ApplicationRoutes<'_> {
                 }
                 let user_id = user.as_str();
                 self.run(attachment, principal, false, async |client| {
-                    require_user(client, tenant, user_id).await?;
+                    require_user(client, user_id).await?;
                     let revoked =
                         revoke_user_role(client, tenant, user_id, &request.role, drops).await?;
                     Ok(json!({ "revoked": revoked }))

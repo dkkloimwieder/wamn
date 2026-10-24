@@ -385,21 +385,21 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     )
     .await
     .expect_redacted("remove only target principal roles");
-    // Alice's other-tenant row and Bob's current-tenant row both remain active.
+    // Alice's other-tenant role and Bob's current-tenant row both remain active.
     refuse(https, alice_pat.token(), aud).await;
     seed_user(dev, &alice, TENANT, "receiver").await;
     for status in ["disabled", "invited"] {
         dev.execute(
-            "UPDATE platform.\"user\" SET status=$1 WHERE tenant_id=$2 AND id=$3::text::uuid",
-            &[&status, &TENANT, &alice.id().as_str()],
+            "UPDATE platform.\"user\" SET status=$1 WHERE id=$2::text::uuid",
+            &[&status, &alice.id().as_str()],
         )
         .await
         .expect_redacted("tenant user status control");
         refuse(https, alice_pat.token(), aud).await;
     }
     dev.execute(
-        "DELETE FROM platform.\"user\" WHERE tenant_id=$1 AND id=$2::text::uuid",
-        &[&TENANT, &alice.id().as_str()],
+        "DELETE FROM platform.\"user\" WHERE id=$1::text::uuid",
+        &[&alice.id().as_str()],
     )
     .await
     .expect_redacted("remove target tenant user");
@@ -1139,7 +1139,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
 }
 
 async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &str) {
-    client.execute("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
+    client.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'", &[&principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
         .await.expect_redacted("tenant user fixture");
     client
         .execute(
@@ -1306,8 +1306,8 @@ async fn setup(raw: &str) -> Fixture {
             .batch_execute(&format!(
                 "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
                  SET app.operation = 'admin:session-exchange-fixture'; \
-                 INSERT INTO platform.\"user\" (tenant_id,id,type,email) \
-                 VALUES ('{TENANT}','{FIXTURE_PRINCIPAL}','user','fixture@example.invalid');"
+                 INSERT INTO platform.\"user\" (id,type,email) \
+                 VALUES ('{FIXTURE_PRINCIPAL}','user','fixture@example.invalid');"
             ))
             .await
             .expect_redacted("environment test principal");
@@ -1809,8 +1809,8 @@ async fn password_environment_discovery_requires_current_authority() {
     fixture.environments[0]
         .client
         .execute(
-            "UPDATE platform.\"user\" SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",
-            &[&TENANT, &alice.id().as_str()],
+            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
+            &[&alice.id().as_str()],
         )
         .await
         .unwrap();

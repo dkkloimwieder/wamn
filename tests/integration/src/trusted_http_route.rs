@@ -486,7 +486,6 @@ async fn seed_with_client(
         .context("install the catalog and run-plane DDL")?;
     client
         .batch_execute(&wamn_control_provision::platform_principals_sql(
-            TENANT,
             "http-fixture.invalid",
         )?)
         .await?;

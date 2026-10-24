@@ -361,12 +361,7 @@ async fn install_fresh(
             fresh.get(1),
         ))
         .await?;
-    super::install_journey_platform_floor(
-        &project,
-        identity().tenant.as_str(),
-        super::PLATFORM_DOMAIN,
-    )
-    .await?;
+    super::install_journey_platform_floor(&project, super::PLATFORM_DOMAIN).await?;
     let roots = packages
         .iter()
         .map(|package| {

@@ -9,7 +9,6 @@
 //! [`expected`]. [`history`] reads the history entries of the writes.
 
 use serde_json::{Value, json};
-use wamn_platform_identity::application::environment_tenant;
 use wamn_platform_identity::configuration::{
     Connection, ExternalSystem, IntegrationAllow, NumberSequence, PlatformConfiguration,
     ProjectConnection, Setting, write_configuration,
@@ -38,9 +37,8 @@ pub const TABLES: [&str; 6] = [
 ];
 
 /// Write `configuration` with the `wamn_administration` login `client`, in
-/// one transaction that binds [`CALLER`] and [`OPERATION`], for the tenant
-/// that the platform rows of the database name. It returns the rows
-/// inserted or changed.
+/// one transaction that binds [`CALLER`] and [`OPERATION`]. It returns the
+/// rows inserted or changed.
 pub async fn write(
     client: &mut tokio_postgres::Client,
     configuration: &PlatformConfiguration,
@@ -53,8 +51,7 @@ pub async fn write(
             &[&CALLER, &OPERATION],
         )
         .await?;
-    let tenant = environment_tenant(&transaction).await?;
-    let written = write_configuration(&transaction, &tenant, configuration).await?;
+    let written = write_configuration(&transaction, configuration).await?;
     transaction.commit().await?;
     Ok(written)
 }
@@ -105,11 +102,10 @@ pub fn configuration(project: &str) -> PlatformConfiguration {
     }
 }
 
-/// The rows [`read_back`] answers after [`configuration`] is written for
-/// `tenant` by [`write`], each stamped by [`CALLER`].
-pub fn expected(tenant: &str, project: &str) -> Vec<Value> {
+/// The rows [`read_back`] answers after [`configuration`] is written by
+/// [`write`], each stamped by [`CALLER`].
+pub fn expected(project: &str) -> Vec<Value> {
     let stamped = |table: &str, mut row: Value| {
-        row["tenant_id"] = json!(tenant);
         row["created_by"] = json!(CALLER);
         row["updated_by"] = json!(CALLER);
         json!({"table": table, "row": row})

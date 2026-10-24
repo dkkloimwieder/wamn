@@ -40,11 +40,11 @@ pub async fn queued_service_caller(
             "SELECT users.id::text, user_roles.role_name, permissions.permission \
              FROM platform.\"user\" AS users \
              LEFT JOIN platform.user_role AS user_roles \
-               ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
+               ON user_roles.tenant_id = $1 AND user_roles.user_id = users.id \
              LEFT JOIN platform.permission AS permissions \
                ON permissions.tenant_id = user_roles.tenant_id \
               AND permissions.role_name = user_roles.role_name \
-             WHERE users.tenant_id = $1 AND users.id = $2::text::uuid \
+             WHERE users.id = $2::text::uuid \
                AND users.type = 'service' AND users.status = 'active'",
             &[&tenant, &principal_id],
         )

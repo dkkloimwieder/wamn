@@ -2,9 +2,11 @@
 //!
 //! Each test applies `deploy/sql/app-schema.sql` to a test database of the test
 //! PostgreSQL server (a superuser URL; the harness prepares App generations) and
-//! asserts what PostgreSQL enforces: tenant RLS isolation, the model's columns and
-//! forced row security, the tenant-key indexes, the FK cascades, the empty-tenant
-//! / status / type CHECKs, and the platform principal rows.
+//! asserts what PostgreSQL enforces: tenant RLS isolation on the tenant floor
+//! tables, the org boundary of `user` and the platform configuration tables
+//! (no tenant column, no row security), the model's columns, the tenant-key
+//! indexes, the FK cascades, the empty-tenant / status / type CHECKs, and the
+//! platform principal rows.
 
 use std::fmt::Write as _;
 
@@ -15,7 +17,7 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 use wamn_project_state::{
-    HISTORY_EXEMPT, PlatformComponent, SCHEMA_NAME, TABLES, UserStatus, UserType,
+    HISTORY_EXEMPT, PlatformComponent, SCHEMA_NAME, TABLES, TENANT_FLOOR, UserStatus, UserType,
 };
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
@@ -165,57 +167,65 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     script.push('\n');
-    // Seed as the superuser (bypasses RLS): two tenants for the isolation test,
-    // known user ids to tie the docs rows to. U1 has a role, key, and config.
+    // Seed as the superuser (bypasses RLS): one tenant's role rows for the
+    // isolation test, known user ids to tie the docs rows to. U1 has a role,
+    // key, and config. The database is the org boundary, so the user and
+    // setting rows name no tenant.
     // The fixture writes as U1, its test principal, whose row stamps itself.
     writeln!(
         script,
         "SET app.user_id = '{U1}';\n\
          SET app.operation = 'admin:seed-isolation-fixture';\n\
-         INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES \
-           ('t1','{U1}','user','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','user','u3@t2');\n\
+         INSERT INTO platform.\"user\" (id, type, email) VALUES \
+           ('{U1}','user','u1@t1'),('{U2}','service','u2@t1'),('{U3}','user','u3@t2');\n\
          INSERT INTO platform.role (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
          INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
          INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
          INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
-         INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES ('t1','user','{U1}','display.theme','\"dark\"'::jsonb);"
+         INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES ('user','{U1}','display.theme','\"dark\"'::jsonb);"
     )
     .expect("writing to a String cannot fail");
 
-    // Tenant isolation follows current_user's prepared scope: tenant 1 sees only
-    // tenant 1's rows without any settable tenant claim.
+    // Tenant isolation of the tenant floor tables follows current_user's
+    // prepared scope: tenant 1 sees only tenant 1's role rows without any
+    // settable tenant claim. Every generation reads every user and setting row
+    // of the database, the org boundary.
     writeln!(
         script,
         "BEGIN;\n\
          SET LOCAL ROLE {tenant_1_app};\n\
          DO $$ BEGIN\n\
            ASSERT current_user='{tenant_1_app}', 'tenant authority is the prepared tenant-1 generation';\n\
-           ASSERT (SELECT count(*) FROM platform.\"user\")=2, 't1 sees its 2 users, not t2''s';\n\
+           ASSERT (SELECT count(*) FROM platform.\"user\")=3, 't1 sees every user of the database';\n\
            ASSERT (SELECT count(*) FROM platform.role)=2, 't1 sees its roles';\n\
            ASSERT (SELECT count(*) FROM platform.user_role)=1, 't1 sees its grant';\n\
            ASSERT (SELECT count(*) FROM platform.permission)=1, 't1 sees its permission';\n\
-           ASSERT (SELECT count(*) FROM platform.setting)=1, 't1 sees its setting';\n\
+           ASSERT (SELECT count(*) FROM platform.setting)=1, 't1 sees the setting of the database';\n\
          END $$;\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
-    // Tenant 2 sees only its row. Spoofing the retired app.tenant claim does not
-    // move tenant 1, and the stable ACL carrier itself maps to no tenant.
+    // Tenant 2 sees no role row of tenant 1, and every user. Spoofing the
+    // retired app.tenant claim does not move tenant 1, and the stable ACL
+    // carrier itself maps to no tenant.
     writeln!(
         script,
         "BEGIN;\n\
          SET LOCAL ROLE {tenant_2_app};\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.\"user\")=1, 't2 sees only its user'; END $$;\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM platform.role)=0, 't2 sees no role of t1';\n\
+           ASSERT (SELECT count(*) FROM platform.\"user\")=3, 't2 sees every user of the database';\n\
+         END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE {tenant_1_app};\n\
          SET LOCAL app.tenant = '{TENANT_2}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.\"user\")=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
          SET LOCAL app.tenant = '{TENANT_1}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.\"user\")=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
@@ -237,22 +247,20 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
            ASSERT d IS NULL, 'users.id must have no server default; the org issues it';\n\
          END $$;\n",
     );
-    // The status / empty-tenant CHECKs reject bad rows.
+    // The status CHECK rejects a bad row.
     writeln!(
         script,
         "DO $$ BEGIN BEGIN\n\
-           INSERT INTO platform.\"user\" (tenant_id, id, type, email, status) VALUES ('t1','{U3}','user','x@t1','zombie');\n\
+           INSERT INTO platform.\"user\" (id, type, email, status) VALUES ('{U4}','user','x@t1','zombie');\n\
            ASSERT false, 'an unknown user status must be rejected';\n\
-         EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n\
-         DO $$ BEGIN BEGIN\n\
-           INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES ('','{U4}','user','x@none');\n\
-           ASSERT false, 'a ''-tenant row must be rejected (a45)';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
     )
     .expect("writing to a String cannot fail");
-    // The model is the oracle for each table: row security is enabled and
-    // forced, every model column exists, and a tenant-key expression index
-    // serves the policy on the table and on its history table.
+    // The model is the oracle for each table: every model column exists. A
+    // tenant floor table enables and forces row security, and a tenant-key
+    // expression index serves the policy on the table and on its history
+    // table. Any other table is at the org boundary: it and its history table
+    // have no tenant_id, no row security, no policy and no tenant-key index.
     for table in TABLES {
         let qualified = table.qualified();
         let history = format!("{SCHEMA_NAME}.{}_history", table.name);
@@ -271,22 +279,48 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         writeln!(
             script,
             "DO $$ BEGIN\n\
-               ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_catalog.pg_class \
-                       WHERE oid = '{qualified}'::regclass), '{qualified} must enable and force row security';\n\
                ASSERT (SELECT count(*) FROM pg_catalog.pg_attribute \
                        WHERE attrelid = '{qualified}'::regclass AND attnum > 0 AND NOT attisdropped \
                          AND attname IN ({columns})) = {count}, '{qualified} must carry every model column';\n\
-               ASSERT (SELECT count(*) FROM (VALUES {indexed}) AS relation(qualified_name) \
-                       WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_index AS i \
-                         WHERE i.indrelid = relation.qualified_name::regclass \
-                           AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%wamn_authority.tenant_key(tenant_id)%')) = 0, \
-                      '{qualified} and its history must carry a tenant-key index';\n\
              END $$;",
             count = table.columns.len(),
         )
         .expect("writing to a String cannot fail");
+        if TENANT_FLOOR.contains(&table.name) {
+            writeln!(
+                script,
+                "DO $$ BEGIN\n\
+                   ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_catalog.pg_class \
+                           WHERE oid = '{qualified}'::regclass), '{qualified} must enable and force row security';\n\
+                   ASSERT (SELECT count(*) FROM (VALUES {indexed}) AS relation(qualified_name) \
+                           WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_index AS i \
+                             WHERE i.indrelid = relation.qualified_name::regclass \
+                               AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%wamn_authority.tenant_key(tenant_id)%')) = 0, \
+                          '{qualified} and its history must carry a tenant-key index';\n\
+                 END $$;"
+            )
+            .expect("writing to a String cannot fail");
+        } else {
+            writeln!(
+                script,
+                "DO $$ BEGIN\n\
+                   ASSERT (SELECT count(*) FROM (VALUES {indexed}) AS relation(qualified_name) \
+                           JOIN pg_catalog.pg_class AS c ON c.oid = relation.qualified_name::regclass \
+                           WHERE c.relrowsecurity OR c.relforcerowsecurity \
+                              OR EXISTS (SELECT FROM pg_catalog.pg_policy AS p WHERE p.polrelid = c.oid) \
+                              OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a \
+                                          WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' \
+                                            AND NOT a.attisdropped) \
+                              OR EXISTS (SELECT FROM pg_catalog.pg_index AS i \
+                                          WHERE i.indrelid = c.oid \
+                                            AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%tenant_key%')) = 0, \
+                          '{qualified} and its history are at the org boundary: no tenant_id, row security, policy or tenant-key index';\n\
+                 END $$;"
+            )
+            .expect("writing to a String cannot fail");
+        }
     }
-    // Every base table refuses a ''-tenant row, not only users (a45).
+    // Every tenant floor table refuses a ''-tenant row (a45).
     for (table, insert) in [
         ("role", "(tenant_id, name) VALUES ('', 'empty')".to_owned()),
         (
@@ -296,31 +330,6 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         (
             "permission",
             "(tenant_id, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
-                .to_owned(),
-        ),
-        (
-            "external_system",
-            "(tenant_id, integration, name) VALUES ('', 'netsuite', 'erp')".to_owned(),
-        ),
-        (
-            "connection",
-            "(tenant_id, integration, name, transport, exchange) \
-             VALUES ('', 'netsuite', 'erp-read', 'http', 'request')"
-                .to_owned(),
-        ),
-        (
-            "integration_allow",
-            "(tenant_id, scope_type, scope_id, integration) VALUES ('', 'org', 'acme', 'netsuite')"
-                .to_owned(),
-        ),
-        (
-            "number_sequence",
-            "(tenant_id, application, name, pattern) VALUES ('', 'receiving', 'po', 'P-{seq:po}')"
-                .to_owned(),
-        ),
-        (
-            "setting",
-            "(tenant_id, scope_type, scope_id, key, value) VALUES ('', 'org', 'acme', 'locale', '1'::jsonb)"
                 .to_owned(),
         ),
         (
@@ -343,8 +352,8 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     for (index, status) in UserStatus::ALL.iter().enumerate() {
         writeln!(
             script,
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email, status) \
-             VALUES ('t1', '55555555-5555-5555-5555-{index:012}', 'user', 'status-{index}@t1', '{}');",
+            "INSERT INTO platform.\"user\" (id, type, email, status) \
+             VALUES ('55555555-5555-5555-5555-{index:012}', 'user', 'status-{index}@t1', '{}');",
             status.as_str()
         )
         .expect("writing to a String cannot fail");
@@ -359,7 +368,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // FK cascade: deleting U1 prunes its role grant and api key.
     writeln!(
         script,
-        "DELETE FROM platform.\"user\" WHERE tenant_id='t1' AND id='{U1}';\n\
+        "DELETE FROM platform.\"user\" WHERE id='{U1}';\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM platform.user_role WHERE user_id='{U1}')=0, 'user_role cascade';\n\
            ASSERT (SELECT count(*) FROM platform.api_key WHERE user_id='{U1}')=0, 'api_key cascade';\n\
@@ -416,7 +425,6 @@ fn run(url: &str, script: &str) -> String {
 /// user or service row with a `wamn:` name.
 #[test]
 fn platform_rows_carry_their_pinned_ids_on_postgres() {
-    const TENANT: &str = "t1";
     const DOMAIN: &str = "example.invalid";
     const USER: &str = "11111111-1111-1111-1111-111111111111";
     const FIXTURE_USER: &str = "00000000-0000-0000-0000-000000000000";
@@ -433,9 +441,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     script.push_str("\nBEGIN;\n");
-    script.push_str(
-        &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
-    );
+    script.push_str(&platform_principals_sql(DOMAIN).expect("example.invalid is a domain name"));
     // The fixture writes as its first admitted user row below.
     writeln!(
         script,
@@ -449,29 +455,29 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         (
             "not_null_violation",
             format!(
-                "INSERT INTO platform.\"user\" (tenant_id, id, email) \
-                 VALUES ('{TENANT}', '{USER}', 'untyped@{DOMAIN}')"
+                "INSERT INTO platform.\"user\" (id, email) \
+                 VALUES ('{USER}', 'untyped@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
-                "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-                 VALUES ('{TENANT}', '{USER}', 'robot', 'robot@{DOMAIN}')"
+                "INSERT INTO platform.\"user\" (id, type, email) \
+                 VALUES ('{USER}', 'robot', 'robot@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
-                "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-                 VALUES ('{TENANT}', '{USER}', 'platform', 'unnamed@{DOMAIN}')"
+                "INSERT INTO platform.\"user\" (id, type, email) \
+                 VALUES ('{USER}', 'platform', 'unnamed@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
-                "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
-                 VALUES ('{TENANT}', '{}', 'platform', 'swapped@{DOMAIN}', '{}')",
+                "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+                 VALUES ('{}', 'platform', 'swapped@{DOMAIN}', '{}')",
                 executor.principal_id(),
                 provisioning.principal_name(),
             ),
@@ -479,8 +485,8 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         (
             "check_violation",
             format!(
-                "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
-                 VALUES ('{TENANT}', '{USER}', 'platform', 'unknown@{DOMAIN}', 'wamn:unknown')"
+                "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+                 VALUES ('{USER}', 'platform', 'unknown@{DOMAIN}', 'wamn:unknown')"
             ),
         ),
     ]
@@ -492,12 +498,12 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
                 let user_type = user_type.as_str();
                 [
                     format!(
-                        "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
-                         VALUES ('{TENANT}', '{USER}', '{user_type}', 'named@{DOMAIN}', 'wamn:user')"
+                        "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+                         VALUES ('{USER}', '{user_type}', 'named@{DOMAIN}', 'wamn:user')"
                     ),
                     format!(
-                        "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
-                         VALUES ('{TENANT}', '{}', '{user_type}', 'pinned@{DOMAIN}', '{}')",
+                        "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+                         VALUES ('{}', '{user_type}', 'pinned@{DOMAIN}', '{}')",
                         provisioning.principal_id(),
                         provisioning.principal_name(),
                     ),
@@ -523,8 +529,8 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         }
         writeln!(
             script,
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
-             VALUES ('other', '00000000-0000-0000-0000-00000000000{index}', '{user_type}', \
+            "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+             VALUES ('00000000-0000-0000-0000-00000000000{index}', '{user_type}', \
                      '{user_type}@{DOMAIN}', 'Fixture {user_type}');"
         )
         .expect("writing to a String cannot fail");
@@ -532,8 +538,8 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     writeln!(
         script,
         "SELECT display_name, id, type, email FROM platform.\"user\" \
-          WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
-         SELECT count(*) FROM platform.\"user\" WHERE tenant_id = 'other';\n\
+          WHERE type = 'platform' ORDER BY display_name;\n\
+         SELECT count(*) FROM platform.\"user\" WHERE type <> 'platform';\n\
          DROP SCHEMA platform CASCADE;"
     )
     .expect("writing to a String cannot fail");
@@ -570,7 +576,6 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
 /// with the provisioning transaction.
 #[test]
 fn platform_relations_stamp_provisioning_writes_on_postgres() {
-    const TENANT: &str = "t1";
     const DOMAIN: &str = "example.invalid";
 
     let _serialized = wamn_test_postgres::lock();
@@ -606,9 +611,7 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
           ORDER BY c.relname COLLATE \"C\", t.tgname;\n\
          BEGIN;\n",
     );
-    script.push_str(
-        &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
-    );
+    script.push_str(&platform_principals_sql(DOMAIN).expect("example.invalid is a domain name"));
     writeln!(
         script,
         "COMMIT;\n\
@@ -616,7 +619,7 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
          SELECT 'stamp|' || display_name || '|' || (id = created_by)::text || '|' \
                 || created_by::text || '|' || updated_by::text || '|' \
                 || (updated_at >= created_at)::text \
-           FROM platform.\"user\" WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
+           FROM platform.\"user\" WHERE type = 'platform' ORDER BY display_name;\n\
          DROP SCHEMA platform CASCADE;"
     )
     .expect("writing to a String cannot fail");
@@ -700,7 +703,8 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
 /// Record history level 2 for the relations that `deploy/sql/app-schema.sql`
 /// owns (epic rulings 14, 40 to 43, and 52 to 57). Administrative SQL writes
 /// each `platform` relation in three transactions. Each change writes one
-/// entry with the tenant of its row, the bound operation, and the bound actor.
+/// entry with the tenant of its row (`-` for a table at the org boundary), the
+/// bound operation, and the bound actor.
 /// An update that changes a key column writes a delete and an insert entry.
 /// The user delete cascades to `user_role` and `api_key`, and those delete
 /// entries carry the actor and the operation of the deleting transaction. The
@@ -751,16 +755,16 @@ fn platform_relations_log_every_row_change_on_postgres() {
         "BEGIN;\n\
          SET LOCAL app.user_id = '{U1}';\n\
          SET LOCAL app.operation = '{SEED}';\n\
-         INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES \
-           ('t1', '{U1}', 'user', 'u1@t1'), ('t2', '{U2}', 'user', 'u2@t2'), \
-           ('t1', '{U3}', 'service', 'u3@t1');\n\
+         INSERT INTO platform.\"user\" (id, type, email) VALUES \
+           ('{U1}', 'user', 'u1@t1'), ('{U2}', 'user', 'u2@t2'), \
+           ('{U3}', 'service', 'u3@t1');\n\
          INSERT INTO platform.role (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
          INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES \
            ('t1', '{U1}', 'admin'), ('t1', '{U3}', 'admin');\n\
          INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
            ('t1', 'auditor', 'platform-fixture:widget/get');\n\
-         INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES \
-           ('t1', 'org', 'acme', 'display.theme', '\"dark\"');\n\
+         INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES \
+           ('org', 'acme', 'display.theme', '\"dark\"');\n\
          INSERT INTO platform.api_key (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
            ('t1', '{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('t1', '{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
          COMMIT;\n\
@@ -794,9 +798,10 @@ fn platform_relations_log_every_row_change_on_postgres() {
         .filter(|table| !HISTORY_EXEMPT.contains(&table.name))
         .map(|table| {
             format!(
-                "SELECT '{name}' AS relation, position, tenant_id, type, operation, \
+                "SELECT '{name}' AS relation, position, \
+                        COALESCE(to_jsonb(h) ->> 'tenant_id', '-') AS tenant_id, type, operation, \
                         changed_by, row_key, before, after \
-                   FROM {SCHEMA_NAME}.{name}_history",
+                   FROM {SCHEMA_NAME}.{name}_history AS h",
                 name = table.name,
             )
         })
@@ -845,15 +850,15 @@ entry|role|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id"
 entry|role|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "tenant_id": "t1", "description": null}
 entry|role|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}
 entry|role|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "tenant_id": "t1", "description": "administrators"}|{}
-entry|setting|t1|insert|admin:seed-history-fixture|U1|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{}|{"key": "display.theme", "value": "dark", "locked": false, "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}
-entry|setting|t1|update|admin:change-history-fixture|U2|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{"value": "dark"}|{"value": "light"}
-entry|setting|t1|delete|admin:remove-history-fixture|U3|{"key": "display.theme", "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{"key": "display.theme", "value": "light", "locked": false, "scope_id": "acme", "tenant_id": "t1", "scope_type": "org"}|{}
-entry|user|t1|insert|admin:seed-history-fixture|U1|{"id": "U1", "tenant_id": "t1"}|{}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}
-entry|user|t2|insert|admin:seed-history-fixture|U1|{"id": "U2", "tenant_id": "t2"}|{}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "active", "tenant_id": "t2", "display_name": null}
-entry|user|t1|insert|admin:seed-history-fixture|U1|{"id": "U3", "tenant_id": "t1"}|{}|{"id": "U3", "type": "service", "email": "u3@t1", "status": "active", "tenant_id": "t1", "display_name": null}
-entry|user|t2|update|admin:change-history-fixture|U2|{"id": "U2", "tenant_id": "t2"}|{"status": "active"}|{"status": "disabled"}
-entry|user|t1|delete|admin:remove-history-fixture|U3|{"id": "U1", "tenant_id": "t1"}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}|{}
-entry|user|t2|delete|admin:remove-history-fixture|U3|{"id": "U2", "tenant_id": "t2"}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "disabled", "tenant_id": "t2", "display_name": null}|{}
+entry|setting|-|insert|admin:seed-history-fixture|U1|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{}|{"key": "display.theme", "value": "dark", "locked": false, "scope_id": "acme", "scope_type": "org"}
+entry|setting|-|update|admin:change-history-fixture|U2|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{"value": "dark"}|{"value": "light"}
+entry|setting|-|delete|admin:remove-history-fixture|U3|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{"key": "display.theme", "value": "light", "locked": false, "scope_id": "acme", "scope_type": "org"}|{}
+entry|user|-|insert|admin:seed-history-fixture|U1|{"id": "U1"}|{}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "display_name": null}
+entry|user|-|insert|admin:seed-history-fixture|U1|{"id": "U2"}|{}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "active", "display_name": null}
+entry|user|-|insert|admin:seed-history-fixture|U1|{"id": "U3"}|{}|{"id": "U3", "type": "service", "email": "u3@t1", "status": "active", "display_name": null}
+entry|user|-|update|admin:change-history-fixture|U2|{"id": "U2"}|{"status": "active"}|{"status": "disabled"}
+entry|user|-|delete|admin:remove-history-fixture|U3|{"id": "U1"}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "display_name": null}|{}
+entry|user|-|delete|admin:remove-history-fixture|U3|{"id": "U2"}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "disabled", "display_name": null}|{}
 entry|user_role|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}
 entry|user_role|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}
 entry|user_role|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}

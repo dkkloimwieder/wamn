@@ -134,8 +134,8 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
         &format!(
             "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
          set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
-         INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES \
-           ('t1', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
+         INSERT INTO platform.\"user\" (id, type, email) VALUES \
+           ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
          INSERT INTO platform.role (tenant_id, name) VALUES ('t1', 'clerk'); \
          INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
            ('t1', 'clerk', 'platform-fixture:widget/create'), \

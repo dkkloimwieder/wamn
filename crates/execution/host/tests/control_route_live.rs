@@ -800,8 +800,8 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
 async fn application_rows(target: &Client, principal: &str) -> Vec<String> {
     target
         .query(
-            "SELECT 'user ' || tenant_id FROM platform.\"user\" WHERE id = $1::text::uuid \
-             UNION ALL SELECT 'role ' || role_name FROM platform.user_role \
+            "SELECT 'user' FROM platform.\"user\" WHERE id = $1::text::uuid \
+             UNION ALL SELECT 'role ' || role_name || ' ' || tenant_id FROM platform.user_role \
                WHERE user_id = $1::text::uuid \
              ORDER BY 1",
             &[&principal],
@@ -869,11 +869,11 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&billing, ann).await,
-        ["role admin", "user t-billing"]
+        ["role admin org-a--billing--dev", "user"]
     );
     assert_eq!(
         application_rows(&shop, ann).await,
-        ["role admin", "user t-shop"]
+        ["role admin org-a--shop--dev", "user"]
     );
     assert_eq!(
         call(
@@ -887,15 +887,15 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&billing, ann).await,
-        ["role admin", "user t-billing"],
+        ["role admin org-a--billing--dev", "user"],
         "a refused revoke changes no application row"
     );
     assert_eq!(
         call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await,
         Ok(json!({"principal_id": ann, "org_admin": false}))
     );
-    assert_eq!(application_rows(&billing, ann).await, ["user t-billing"]);
-    assert_eq!(application_rows(&shop, ann).await, ["user t-shop"]);
+    assert_eq!(application_rows(&billing, ann).await, ["user"]);
+    assert_eq!(application_rows(&shop, ann).await, ["user"]);
 
     // project-admin covers its project's environments only.
     assert_eq!(
@@ -910,14 +910,14 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&billing, ann).await,
-        ["role admin", "user t-billing"]
+        ["role admin org-a--billing--dev", "user"]
     );
-    assert_eq!(application_rows(&shop, ann).await, ["user t-shop"]);
+    assert_eq!(application_rows(&shop, ann).await, ["user"]);
     assert_eq!(
         call(&delivery, "project-admin/revoke", boss, billing_admin).await,
         Ok(json!({"principal_id": ann, "project": "billing", "project_admin": false}))
     );
-    assert_eq!(application_rows(&billing, ann).await, ["user t-billing"]);
+    assert_eq!(application_rows(&billing, ann).await, ["user"]);
 
     // A membership revoke removes the user row, and a grant writes it again.
     assert_eq!(
@@ -929,7 +929,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         call(&delivery, "member/grant", boss, billing_member).await,
         Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
     );
-    assert_eq!(application_rows(&billing, ann).await, ["user t-billing"]);
+    assert_eq!(application_rows(&billing, ann).await, ["user"]);
 
     // A failed environment refuses with the completed ones named, and the
     // system rows of the deactivation stay uncommitted.
@@ -944,7 +944,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
         ))
     );
     assert!(application_rows(&billing, ann).await.is_empty());
-    assert_eq!(application_rows(&shop, ann).await, ["user t-shop"]);
+    assert_eq!(application_rows(&shop, ann).await, ["user"]);
     assert_eq!(
         grants(&admin, ann).await,
         [
@@ -1422,16 +1422,16 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     )
     .await?;
     billing.batch_execute(
-        "INSERT INTO platform.role (tenant_id, name) VALUES ('t-billing', 'first'), ('t-billing', 'second'), ('other', 'ignored');
-         INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES
-           ('t-billing', '00000000-0000-0000-0000-000000000001', 'user', 'one@example.test'),
-           ('t-billing', '00000000-0000-0000-0000-000000000002', 'user', 'two@example.test'),
-           ('t-billing', '00000000-0000-0000-0000-000000000003', 'service', 'service@example.test'),
-           ('other', '00000000-0000-0000-0000-000000000004', 'user', 'other@example.test');
+        "INSERT INTO platform.role (tenant_id, name) VALUES ('org-a--billing--dev', 'first'), ('org-a--billing--dev', 'second'), ('other', 'ignored');
+         INSERT INTO platform.\"user\" (id, type, email) VALUES
+           ('00000000-0000-0000-0000-000000000001', 'user', 'one@example.test'),
+           ('00000000-0000-0000-0000-000000000002', 'user', 'two@example.test'),
+           ('00000000-0000-0000-0000-000000000003', 'service', 'service@example.test'),
+           ('00000000-0000-0000-0000-000000000004', 'user', 'other@example.test');
          INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES
-           ('t-billing', '00000000-0000-0000-0000-000000000001', 'first'),
-           ('t-billing', '00000000-0000-0000-0000-000000000001', 'second'),
-           ('t-billing', '00000000-0000-0000-0000-000000000003', 'first'),
+           ('org-a--billing--dev', '00000000-0000-0000-0000-000000000001', 'first'),
+           ('org-a--billing--dev', '00000000-0000-0000-0000-000000000001', 'second'),
+           ('org-a--billing--dev', '00000000-0000-0000-0000-000000000003', 'first'),
            ('other', '00000000-0000-0000-0000-000000000004', 'ignored');"
     ).await?;
     let delivery = HostRouteDelivery::new(

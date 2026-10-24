@@ -210,7 +210,7 @@ fn consumer_state(info: &async_nats::jetstream::consumer::Info) -> Value {
 async fn fixture(project: &Client, label: &str) -> anyhow::Result<(String, String)> {
     let order = uuid::Uuid::new_v4().to_string();
     let line = uuid::Uuid::new_v4().to_string();
-    super::bind_fixture_principal(project, super::identity().tenant.as_str()).await?;
+    super::bind_fixture_principal(project).await?;
     // The order references a supplier, and every label reuses the same one.
     project
         .execute(

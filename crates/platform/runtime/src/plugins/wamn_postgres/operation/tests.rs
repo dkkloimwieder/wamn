@@ -235,7 +235,7 @@ async fn fixture() -> (
 ) {
     let database = wamn_test_postgres::database();
     let url = live_guest_url(database.url(), TENANT).await;
-    ensure_live_users_rows(database.url(), TENANT, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     let schema = include_str!("../../../../../../../deploy/sql/app-schema.sql");
     let start = schema
         .find("CREATE TABLE IF NOT EXISTS platform.write_log")

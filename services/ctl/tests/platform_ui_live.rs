@@ -81,7 +81,7 @@ async fn provision_browser_environment(
         environment: ENVIRONMENT.to_owned(),
         tenant: wamn_control_registry::project_env_tenant(ORG, BROWSER_PROJECT, ENVIRONMENT),
     };
-    install_journey_platform_floor(&target, &scope.tenant, "example.invalid").await?;
+    install_journey_platform_floor(&target, "example.invalid").await?;
     reconcile_journey_run_plane(&scope, system_url, target_url.as_str()).await?;
     let secret = output.join("administration.json");
     run_workload_action(&generation_args(

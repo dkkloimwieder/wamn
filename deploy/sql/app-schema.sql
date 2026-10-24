@@ -48,6 +48,10 @@
 -- CHECK (tenant_id <> '') forbids a ''-tenant row, so the floor is structural.
 -- A history table has the same policies and index. It has no such CHECK, and
 -- it copies tenant_id from a row of its base table.
+-- user and the platform configuration tables are the exception. The database
+-- is the org boundary (owner ruling of 2026-10-23 on wamn-83eth.6), so they
+-- and their history tables have no tenant_id, no row policy and no
+-- tenant_key index.
 --
 -- WRITE AUTHORITY (R11) splits these tables into four classes. RLS answers
 -- "which rows"; the GRANT answers "which relations at all", and the two questions
@@ -177,7 +181,7 @@ $wamn_authority_bootstrap$;
 -- database default; it is the app.user_id ownership target (3.5). Identity
 -- only: no credential material lives here (auth is 4.2/8.1).
 -- `status` gates whether the account may authenticate (enforced by 4.2, not this
--- schema). Email is unique within a tenant.
+-- schema). Email is unique in the database.
 --
 -- `type` names the kind of principal: a user, a service (a station or an
 -- integration), or a platform component. It has no default, so every insert
@@ -187,9 +191,13 @@ $wamn_authority_bootstrap$;
 -- refuses a `wamn:` name on any other type. PostgreSQL has no UUIDv5, so a
 -- Rust test compares these literals with the derivation. Provisioning writes
 -- the platform rows and their `<component>@<platform-domain>` email.
+--
+-- The database is the org boundary (owner ruling of 2026-10-23 on
+-- wamn-83eth.6), so the table has no tenant_id, no row policy and no
+-- tenant_key index. Project migration 0031 drops them from an installed
+-- database.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform."user" (
-    tenant_id    text NOT NULL CHECK (tenant_id <> ''),
     id           uuid NOT NULL,
     type         text NOT NULL,
     email        text NOT NULL,
@@ -199,8 +207,8 @@ CREATE TABLE platform."user" (
     created_by   uuid NOT NULL,
     updated_at   timestamptz NOT NULL,
     updated_by   uuid NOT NULL,
-    PRIMARY KEY (tenant_id, id),
-    UNIQUE (tenant_id, email),
+    PRIMARY KEY (id),
+    UNIQUE (email),
     CONSTRAINT user_status_check
         CHECK (status IN ('active', 'disabled', 'invited')),
     CONSTRAINT user_type_check
@@ -221,18 +229,6 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON platform."user"
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-ALTER TABLE platform."user" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform."user" FORCE ROW LEVEL SECURITY;
-CREATE POLICY user_tenant ON platform."user"
-    TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY user_platform ON platform."user"
-    AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
-CREATE INDEX user_tkey
-    ON platform."user" ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT ON platform."user" TO wamn_app;
 
 -- ---------------------------------------------------------------------------
@@ -277,8 +273,8 @@ GRANT SELECT ON platform.role TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- User↔role linkage (many-to-many). 4.2 reads this to compute a user's role for
--- the app.role claim it injects. Both sides FK ON DELETE CASCADE within the
--- tenant, so removing a user or a role prunes the grant.
+-- the app.role claim it injects. Both sides FK ON DELETE CASCADE, so removing
+-- a user or a role prunes the grant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.user_role (
     tenant_id  text NOT NULL CHECK (tenant_id <> ''),
@@ -289,8 +285,8 @@ CREATE TABLE platform.user_role (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (tenant_id, user_id, role_name),
-    FOREIGN KEY (tenant_id, user_id)
-        REFERENCES platform."user" (tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id)
+        REFERENCES platform."user" (id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, role_name)
         REFERENCES platform.role (tenant_id, name) ON DELETE CASCADE
 );
@@ -376,8 +372,8 @@ CREATE TABLE platform.api_key (
     updated_by   uuid NOT NULL,
     PRIMARY KEY (tenant_id, id),
     UNIQUE (tenant_id, key_hash),
-    FOREIGN KEY (tenant_id, user_id)
-        REFERENCES platform."user" (tenant_id, id) ON DELETE CASCADE
+    FOREIGN KEY (user_id)
+        REFERENCES platform."user" (id) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON platform.api_key
@@ -433,33 +429,24 @@ GRANT SELECT ON platform.environment TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- HISTORY TABLES. wamn_history.create_history_table creates <table>_history
--- for each table with the tenant flag, so each history table has tenant_id.
--- The applier owns each history table. Each history table has the tenant
--- floor of its base table: FORCEd RLS, a <table>_history_tenant policy TO
--- wamn_app, a <table>_history_platform arm TO wamn_platform, and a
--- <table>_history_tkey index. A wamn_platform member that writes a table
--- needs the platform arm to append an entry. Each wamn_record_history_log trigger
--- has the argument 'unlimited', the shape that apply-package installs, so the
--- audit retention role gets no grant on these history tables.
+-- for each table. A table with tenant_id gets its history table with the
+-- tenant flag, so that history table has tenant_id. The applier owns each
+-- history table. Each history table has the tenant floor of its base table:
+-- FORCEd RLS, a <table>_history_tenant policy TO wamn_app, a
+-- <table>_history_platform arm TO wamn_platform, and a <table>_history_tkey
+-- index. A wamn_platform member that writes a table needs the platform arm to
+-- append an entry. user has no tenant floor, so user_history has neither
+-- tenant_id nor a floor. Each wamn_record_history_log trigger has the argument
+-- 'unlimited', the shape that apply-package installs, so the audit retention
+-- role gets no grant on these history tables.
 -- ---------------------------------------------------------------------------
 DO $history_tables$ BEGIN
+  PERFORM wamn_history.create_history_table('platform', 'user', false);
   PERFORM wamn_history.create_history_table('platform', relation, true)
-     FROM unnest(ARRAY['user', 'role', 'user_role', 'permission',
+     FROM unnest(ARRAY['role', 'user_role', 'permission',
                        'api_key', 'environment']) AS relation;
 END $history_tables$;
 
-ALTER TABLE platform.user_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE platform.user_history FORCE ROW LEVEL SECURITY;
-CREATE POLICY user_history_tenant ON platform.user_history
-    TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY user_history_platform ON platform.user_history
-    AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
-CREATE INDEX user_history_tkey
-    ON platform.user_history ((wamn_authority.tenant_key(tenant_id)));
 CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON platform."user"
     FOR EACH ROW
@@ -590,13 +577,15 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- PLATFORM CONFIGURATION (docs/plan/platform-config.md, Tables and Numbering).
 -- The platform writes these rows through its routes and the host, and the
 -- application reads them: wamn_app holds SELECT on each table and EXECUTE on
--- platform.bump_counter, and nothing else. An integration is connector code,
--- named here by its catalog code. A connection is a configured instance of an
--- integration. An external system is the persistent identity that a group of
--- connections reach. Credentials and targets stay in the control plane, so no
--- table here holds them.
+-- the three counter functions of NUMBER COUNTERS below, and nothing else. An
+-- integration is connector code, named here by its catalog code. A connection
+-- is a configured instance of an integration. An external system is the
+-- persistent identity that a group of connections reach. Credentials and
+-- targets stay in the control plane, so no table here holds them.
 --
--- Each table has the tenant floor and the record history of the tables above.
+-- The database is the org boundary (owner ruling of 2026-10-23 on
+-- wamn-83eth.6), so these tables have no tenant_id, no row policy and no
+-- tenant_key index. Each table has the record history of the tables above.
 -- number_counter is the one exception: it has no history table and no log
 -- trigger, because one history entry per bump would double the writes of
 -- every create, and the write log is the audit (owner ruling, wamn-aqd0m.1).
@@ -605,11 +594,10 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- and project_id are text. A role scope names a role by name, and an
 -- application scope names an application by name.
 --
--- Project migration 0025 carries this section verbatim, and a test in
--- crates/control/provision/src/schema_migrations.rs compares the bytes.
+-- Project migration 0025 created these tables under the tenant floor, and
+-- project migration 0031 drops the floor from an installed database.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.external_system (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     id          uuid NOT NULL DEFAULT gen_random_uuid(),
     integration text NOT NULL CHECK (integration <> ''),
     name        text NOT NULL CHECK (name <> ''),
@@ -619,14 +607,13 @@ CREATE TABLE platform.external_system (
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
-    PRIMARY KEY (tenant_id, id),
-    UNIQUE (tenant_id, name),
+    PRIMARY KEY (id),
+    UNIQUE (name),
     CONSTRAINT external_system_status_check
         CHECK (status IN ('active', 'disabled'))
 );
 
 CREATE TABLE platform.connection (
-    tenant_id          text NOT NULL CHECK (tenant_id <> ''),
     id                 uuid NOT NULL DEFAULT gen_random_uuid(),
     integration        text NOT NULL CHECK (integration <> ''),
     external_system_id uuid,
@@ -639,10 +626,10 @@ CREATE TABLE platform.connection (
     created_by         uuid NOT NULL,
     updated_at         timestamptz NOT NULL,
     updated_by         uuid NOT NULL,
-    PRIMARY KEY (tenant_id, id),
-    UNIQUE (tenant_id, name),
-    FOREIGN KEY (tenant_id, external_system_id)
-        REFERENCES platform.external_system (tenant_id, id),
+    PRIMARY KEY (id),
+    UNIQUE (name),
+    FOREIGN KEY (external_system_id)
+        REFERENCES platform.external_system (id),
     CONSTRAINT connection_exchange_check
         CHECK (exchange IN ('request', 'event')),
     CONSTRAINT connection_status_check
@@ -652,7 +639,6 @@ CREATE TABLE platform.connection (
 -- The integrations allowed at one scope. Each scope narrows the one above it:
 -- org, then project, then environment.
 CREATE TABLE platform.integration_allow (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     scope_type  text NOT NULL,
     scope_id    text NOT NULL CHECK (scope_id <> ''),
     integration text NOT NULL CHECK (integration <> ''),
@@ -660,28 +646,26 @@ CREATE TABLE platform.integration_allow (
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
-    PRIMARY KEY (tenant_id, scope_type, scope_id, integration),
+    PRIMARY KEY (scope_type, scope_id, integration),
     CONSTRAINT integration_allow_scope_type_check
         CHECK (scope_type IN ('org', 'project', 'environment'))
 );
 
 -- The connections a project has enabled.
 CREATE TABLE platform.project_connection (
-    tenant_id     text NOT NULL CHECK (tenant_id <> ''),
     project_id    text NOT NULL CHECK (project_id <> ''),
     connection_id uuid NOT NULL,
     created_at    timestamptz NOT NULL,
     created_by    uuid NOT NULL,
     updated_at    timestamptz NOT NULL,
     updated_by    uuid NOT NULL,
-    PRIMARY KEY (tenant_id, project_id, connection_id),
-    FOREIGN KEY (tenant_id, connection_id)
-        REFERENCES platform.connection (tenant_id, id)
+    PRIMARY KEY (project_id, connection_id),
+    FOREIGN KEY (connection_id)
+        REFERENCES platform.connection (id)
 );
 
 -- One document number sequence of one application, and its pattern.
 CREATE TABLE platform.number_sequence (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     id          uuid NOT NULL DEFAULT gen_random_uuid(),
     application text NOT NULL CHECK (application <> ''),
     name        text NOT NULL CHECK (name <> ''),
@@ -690,14 +674,13 @@ CREATE TABLE platform.number_sequence (
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
-    PRIMARY KEY (tenant_id, id),
-    UNIQUE (tenant_id, application, name)
+    PRIMARY KEY (id),
+    UNIQUE (application, name)
 );
 
 -- One counter of a sequence for one key value. `value` is the next value to
 -- render. The '' key value is the allocator row of a per= counter.
 CREATE TABLE platform.number_counter (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     sequence_id uuid NOT NULL,
     counter     text NOT NULL CHECK (counter <> ''),
     key_value   text NOT NULL,
@@ -706,15 +689,14 @@ CREATE TABLE platform.number_counter (
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
-    PRIMARY KEY (tenant_id, sequence_id, counter, key_value),
-    FOREIGN KEY (tenant_id, sequence_id)
-        REFERENCES platform.number_sequence (tenant_id, id) ON DELETE CASCADE
+    PRIMARY KEY (sequence_id, counter, key_value),
+    FOREIGN KEY (sequence_id)
+        REFERENCES platform.number_sequence (id) ON DELETE CASCADE
 );
 
 -- Display and view settings, resolved from least to most specific scope. A
 -- locked row stops overrides at more specific scopes.
 CREATE TABLE platform.setting (
-    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     scope_type text NOT NULL,
     scope_id   text NOT NULL CHECK (scope_id <> ''),
     key        text NOT NULL CHECK (key <> ''),
@@ -724,13 +706,12 @@ CREATE TABLE platform.setting (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    PRIMARY KEY (tenant_id, scope_type, scope_id, key),
+    PRIMARY KEY (scope_type, scope_id, key),
     CONSTRAINT setting_scope_type_check
         CHECK (scope_type IN ('org', 'project', 'application', 'role', 'user'))
 );
 
--- The tenant floor and the stamp trigger of each table, and the SELECT of
--- wamn_app.
+-- The stamp trigger of each table, and the SELECT of wamn_app.
 DO $platform_configuration$
 DECLARE relation text;
 BEGIN
@@ -741,40 +722,17 @@ BEGIN
                    'FOR EACH ROW EXECUTE FUNCTION '
                    'wamn_history.stamp_row(''created_at'', ''created_by'', ''updated_at'', ''updated_by'')',
                    relation);
-    EXECUTE format('ALTER TABLE platform.%I ENABLE ROW LEVEL SECURITY', relation);
-    EXECUTE format('ALTER TABLE platform.%I FORCE ROW LEVEL SECURITY', relation);
-    EXECUTE format('CREATE POLICY %I ON platform.%I TO wamn_app '
-                   'USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()) '
-                   'WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())',
-                   relation || '_tenant', relation);
-    EXECUTE format('CREATE POLICY %I ON platform.%I AS PERMISSIVE FOR ALL TO wamn_platform '
-                   'USING (true) WITH CHECK (true)',
-                   relation || '_platform', relation);
-    EXECUTE format('CREATE INDEX %I ON platform.%I ((wamn_authority.tenant_key(tenant_id)))',
-                   relation || '_tkey', relation);
     EXECUTE format('GRANT SELECT ON platform.%I TO wamn_app', relation);
   END LOOP;
 END $platform_configuration$;
 
--- The history table of each table except number_counter, with the tenant
--- floor of its base table, as in HISTORY TABLES above.
+-- The history table of each table except number_counter, with no tenant_id.
 DO $platform_configuration_history$
 DECLARE relation text;
 BEGIN
   FOREACH relation IN ARRAY ARRAY['external_system', 'connection', 'integration_allow',
                                   'project_connection', 'number_sequence', 'setting'] LOOP
-    PERFORM wamn_history.create_history_table('platform', relation, true);
-    EXECUTE format('ALTER TABLE platform.%I ENABLE ROW LEVEL SECURITY', relation || '_history');
-    EXECUTE format('ALTER TABLE platform.%I FORCE ROW LEVEL SECURITY', relation || '_history');
-    EXECUTE format('CREATE POLICY %I ON platform.%I TO wamn_app '
-                   'USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()) '
-                   'WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())',
-                   relation || '_history_tenant', relation || '_history');
-    EXECUTE format('CREATE POLICY %I ON platform.%I AS PERMISSIVE FOR ALL TO wamn_platform '
-                   'USING (true) WITH CHECK (true)',
-                   relation || '_history_platform', relation || '_history');
-    EXECUTE format('CREATE INDEX %I ON platform.%I ((wamn_authority.tenant_key(tenant_id)))',
-                   relation || '_history_tkey', relation || '_history');
+    PERFORM wamn_history.create_history_table('platform', relation, false);
     EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE '
                    'ON platform.%I FOR EACH ROW EXECUTE FUNCTION '
                    'wamn_history.log_row_change(''unlimited'')',
@@ -782,41 +740,63 @@ BEGIN
   END LOOP;
 END $platform_configuration_history$;
 
--- bump_counter advances one counter and returns the value to render: it locks
--- the counter row, inserts it at 1 when it is absent, returns its value and
--- increments it. It knows no pattern and parses nothing; the renderer of the
--- wamn:postgres plugin owns both. It runs as its owner, the applier, so that
--- wamn_app needs no write on number_counter.
+-- ---------------------------------------------------------------------------
+-- NUMBER COUNTERS (docs/plan/platform-config.md, Numbering and
+-- Administration; owner rulings of wamn-83eth.2, wamn-83eth.3 and
+-- wamn-83eth.6). The three platform functions that write number_counter.
+-- Each runs as its owner, the applier, so that wamn_app needs no write on
+-- number_counter. None knows a pattern or parses anything; the renderer of
+-- the wamn:postgres plugin owns both.
 --
--- The owner's authority would read every tenant, so the function takes the
--- caller's tenant from the caller's role name, with the parse of
--- wamn_authority.current_tenant_key(): the SET ROLE role, or the session user
--- when the session set no role. A definer function keeps the role setting of
--- its caller. A sequence of another tenant, or a caller that is no App
--- generation, is refused with insufficient_privilege.
-CREATE FUNCTION platform.bump_counter(target_sequence uuid, target_counter text, target_key text)
+-- bump_counter advances one counter and returns the value to render: it
+-- locks the counter row, inserts it at 1 when it is absent, returns its value
+-- and increments it.
+--
+-- assign_counter gives a per= counter one value for each distinct key: under
+-- a transaction advisory lock on the (sequence, counter, key), it returns the
+-- value already assigned to the key, or allocates the next value from the
+-- counter's '' allocator row and inserts the key row with it. Concurrent
+-- first callers of one key wait on the lock, so the allocator advances once
+-- for each key, and a rollback gives the value back. The '' key value is the
+-- allocator itself, so it is refused with invalid_parameter_value.
+--
+-- set_counter is the write of the set_counter host route: under the counter
+-- row's lock, it inserts the row of (counter, key) with the value, or sets
+-- the value of the row that exists. The value is the next value to render. A
+-- value below 1 is refused with invalid_parameter_value. The route refuses a
+-- per= counter and a set below a live number with the renderer before it
+-- commits.
+--
+-- The database is the org boundary, so no function checks a tenant. The
+-- app.application claim of the operation transaction decides which sequences
+-- a caller reaches: a sequence of another application, or a caller with no
+-- application claim, is refused with undefined_object, the refusal of the
+-- renderer for a sequence that the claim does not own.
+--
+-- CREATE OR REPLACE, so that project migration 0031 replaces the functions
+-- of 0025, 0029 and 0030 in an installed database. 0031 carries this section
+-- verbatim, and a test in crates/control/provision/src/schema_migrations.rs
+-- compares the bytes.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION platform.bump_counter(target_sequence uuid, target_counter text,
+                                                 target_key text)
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
 DECLARE
-    caller_key text := substring(COALESCE(NULLIF(current_setting('role'), 'none'), session_user::text)
-                                 from '^wamn_app_([0-9a-f]{40})_[ab]$');
-    sequence_tenant text;
     allocated bigint;
 BEGIN
-    SELECT s.tenant_id INTO sequence_tenant
-      FROM platform.number_sequence AS s
-     WHERE s.id = target_sequence
-       AND wamn_authority.tenant_key(s.tenant_id) = caller_key;
-    IF sequence_tenant IS NULL THEN
-        RAISE EXCEPTION 'number sequence % is not a sequence of the caller''s tenant', target_sequence
-            USING ERRCODE = 'insufficient_privilege';
+    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s
+                    WHERE s.id = target_sequence
+                      AND s.application = NULLIF(current_setting('app.application', true), '')) THEN
+        RAISE EXCEPTION 'number sequence % is not a sequence of the claimed application', target_sequence
+            USING ERRCODE = 'undefined_object';
     END IF;
-    INSERT INTO platform.number_counter AS c (tenant_id, sequence_id, counter, key_value, value)
-    VALUES (sequence_tenant, target_sequence, target_counter, target_key, 2)
-    ON CONFLICT (tenant_id, sequence_id, counter, key_value)
+    INSERT INTO platform.number_counter AS c (sequence_id, counter, key_value, value)
+    VALUES (target_sequence, target_counter, target_key, 2)
+    ON CONFLICT (sequence_id, counter, key_value)
     DO UPDATE SET value = c.value + 1
     RETURNING c.value - 1 INTO allocated;
     RETURN allocated;
@@ -825,112 +805,70 @@ $$;
 REVOKE ALL ON FUNCTION platform.bump_counter(uuid, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.bump_counter(uuid, text, text) TO wamn_app;
 
--- ---------------------------------------------------------------------------
--- NUMBER ASSIGNMENT (docs/plan/platform-config.md, Numbering; owner ruling of
--- wamn-83eth.2). assign_counter is the second of the two platform functions
--- that write number_counter, beside bump_counter. It gives a per= counter one
--- value for each distinct key: under a transaction advisory lock on the
--- (tenant, sequence, counter, key), it returns the value already assigned to
--- the key, or allocates the next value from the counter's '' allocator row
--- and inserts the key row with it. Concurrent first callers of one key wait
--- on the lock, so the allocator advances once for each key, and a rollback
--- gives the value back. The '' key value is the allocator itself, so it is
--- refused with invalid_parameter_value.
---
--- It runs as its owner and checks the caller's tenant as bump_counter does.
--- Project migration 0029 carries this section verbatim, and a test in
--- crates/control/provision/src/schema_migrations.rs compares the bytes.
--- ---------------------------------------------------------------------------
-CREATE FUNCTION platform.assign_counter(target_sequence uuid, target_counter text, target_key text)
+CREATE OR REPLACE FUNCTION platform.assign_counter(target_sequence uuid, target_counter text,
+                                                   target_key text)
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
 DECLARE
-    caller_key text := substring(COALESCE(NULLIF(current_setting('role'), 'none'), session_user::text)
-                                 from '^wamn_app_([0-9a-f]{40})_[ab]$');
-    sequence_tenant text;
     assigned bigint;
 BEGIN
-    SELECT s.tenant_id INTO sequence_tenant
-      FROM platform.number_sequence AS s
-     WHERE s.id = target_sequence
-       AND wamn_authority.tenant_key(s.tenant_id) = caller_key;
-    IF sequence_tenant IS NULL THEN
-        RAISE EXCEPTION 'number sequence % is not a sequence of the caller''s tenant', target_sequence
-            USING ERRCODE = 'insufficient_privilege';
+    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s
+                    WHERE s.id = target_sequence
+                      AND s.application = NULLIF(current_setting('app.application', true), '')) THEN
+        RAISE EXCEPTION 'number sequence % is not a sequence of the claimed application', target_sequence
+            USING ERRCODE = 'undefined_object';
     END IF;
     IF target_key = '' THEN
         RAISE EXCEPTION 'the '''' key value is the allocator row of counter %', target_counter
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     PERFORM pg_advisory_xact_lock(hashtextextended(
-        format('number_counter %s %s %s %s', sequence_tenant, target_sequence, target_counter, target_key), 0));
+        format('number_counter %s %s %s', target_sequence, target_counter, target_key), 0));
     SELECT c.value INTO assigned
       FROM platform.number_counter AS c
-     WHERE c.tenant_id = sequence_tenant
-       AND c.sequence_id = target_sequence
+     WHERE c.sequence_id = target_sequence
        AND c.counter = target_counter
        AND c.key_value = target_key;
     IF assigned IS NOT NULL THEN
         RETURN assigned;
     END IF;
-    INSERT INTO platform.number_counter AS c (tenant_id, sequence_id, counter, key_value, value)
-    VALUES (sequence_tenant, target_sequence, target_counter, '', 2)
-    ON CONFLICT (tenant_id, sequence_id, counter, key_value)
+    INSERT INTO platform.number_counter AS c (sequence_id, counter, key_value, value)
+    VALUES (target_sequence, target_counter, '', 2)
+    ON CONFLICT (sequence_id, counter, key_value)
     DO UPDATE SET value = c.value + 1
     RETURNING c.value - 1 INTO assigned;
-    INSERT INTO platform.number_counter (tenant_id, sequence_id, counter, key_value, value)
-    VALUES (sequence_tenant, target_sequence, target_counter, target_key, assigned);
+    INSERT INTO platform.number_counter (sequence_id, counter, key_value, value)
+    VALUES (target_sequence, target_counter, target_key, assigned);
     RETURN assigned;
 END;
 $$;
 REVOKE ALL ON FUNCTION platform.assign_counter(uuid, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION platform.assign_counter(uuid, text, text) TO wamn_app;
 
--- ---------------------------------------------------------------------------
--- NUMBER SETTING (docs/plan/platform-config.md, Numbering and Administration;
--- owner ruling of wamn-83eth.3). set_counter is the third of the three
--- platform functions that write number_counter, beside bump_counter and
--- assign_counter. It is the write of the set_counter host route: under the
--- counter row's lock, it inserts the row of (counter, key) with the value, or
--- sets the value of the row that exists. The value is the next value to
--- render. A value below 1 is refused with invalid_parameter_value. It knows
--- no pattern: the route refuses a per= counter and a set below a live number
--- with the renderer of the wamn:postgres plugin before it commits.
---
--- It runs as its owner and checks the caller's tenant as bump_counter does.
--- Project migration 0030 carries this section verbatim, and a test in
--- crates/control/provision/src/schema_migrations.rs compares the bytes.
--- ---------------------------------------------------------------------------
-CREATE FUNCTION platform.set_counter(target_sequence uuid, target_counter text, target_key text,
-                                     target_value bigint)
+CREATE OR REPLACE FUNCTION platform.set_counter(target_sequence uuid, target_counter text,
+                                                target_key text, target_value bigint)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog
 AS $$
-DECLARE
-    caller_key text := substring(COALESCE(NULLIF(current_setting('role'), 'none'), session_user::text)
-                                 from '^wamn_app_([0-9a-f]{40})_[ab]$');
-    sequence_tenant text;
 BEGIN
-    SELECT s.tenant_id INTO sequence_tenant
-      FROM platform.number_sequence AS s
-     WHERE s.id = target_sequence
-       AND wamn_authority.tenant_key(s.tenant_id) = caller_key;
-    IF sequence_tenant IS NULL THEN
-        RAISE EXCEPTION 'number sequence % is not a sequence of the caller''s tenant', target_sequence
-            USING ERRCODE = 'insufficient_privilege';
+    IF NOT EXISTS (SELECT FROM platform.number_sequence AS s
+                    WHERE s.id = target_sequence
+                      AND s.application = NULLIF(current_setting('app.application', true), '')) THEN
+        RAISE EXCEPTION 'number sequence % is not a sequence of the claimed application', target_sequence
+            USING ERRCODE = 'undefined_object';
     END IF;
     IF target_value IS NULL OR target_value < 1 THEN
         RAISE EXCEPTION 'counter % takes a value of 1 or more, not %', target_counter, target_value
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    INSERT INTO platform.number_counter AS c (tenant_id, sequence_id, counter, key_value, value)
-    VALUES (sequence_tenant, target_sequence, target_counter, target_key, target_value)
-    ON CONFLICT (tenant_id, sequence_id, counter, key_value)
+    INSERT INTO platform.number_counter AS c (sequence_id, counter, key_value, value)
+    VALUES (target_sequence, target_counter, target_key, target_value)
+    ON CONFLICT (sequence_id, counter, key_value)
     DO UPDATE SET value = EXCLUDED.value;
 END;
 $$;

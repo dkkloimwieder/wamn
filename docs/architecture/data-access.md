@@ -726,14 +726,15 @@ A `platform` row carries its `wamn:<component>` name in `display_name` and its d
 Its email is `<component>@<platform-domain>`.
 The `user_platform_principal_check` constraint pins each name and id pair, and it refuses a `wamn:` name on another type.
 `wamn_app` has only `SELECT` on `platform."user"`.
+The database is the org boundary, so `platform."user"` has no `tenant_id`, no row policy, and no tenant key index. Its key is `id`, and `email` is unique in the database.
 
-The [platform principal owner](../../crates/control/provision/src/platform_principals.rs) renders the platform rows of one tenant.
+The [platform principal owner](../../crates/control/provision/src/platform_principals.rs) renders the platform rows of a project database.
 It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
 
 The control host writes the platform configuration rows of one environment on the path of its application rows, through the [platform configuration writer](../../crates/identity/platform/src/configuration.rs).
-The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the route's sealed operation id, so the row security of each table applies and each row write appends its history entry.
+The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the route's sealed operation id, so each row write appends its history entry.
 The writer keeps a row that already holds the given values, and it removes no row.
 No route calls the writer yet. The connection and settings routes of C3 and C4 add the callers.
 
@@ -743,20 +744,23 @@ These relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `e
 An integration is connector code, and `integration` columns hold its catalog code. A connection is a configured instance of an integration. An external system is the persistent identity that a group of connections reach.
 Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
 `number_counter` has no history table, because one entry per counter advance would double the writes of every create. The write log is its audit.
-The file creates each history table with the tenant flag, so the table has a `tenant_id` column.
-Each history table has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
+The database is the org boundary (owner ruling of 2026-10-23 on `wamn-83eth.6`), so `user` and the seven platform configuration tables have no `tenant_id`, no row policy, and no tenant key index, and neither do their history tables. Their keys are the keys of [platform configuration](../plan/platform-config.md) without a tenant column.
+`role`, `user_role`, `permission`, `api_key`, and `environment` still carry `tenant_id`.
+The file creates the history table of each of these five with the tenant flag, so the table has a `tenant_id` column.
+Each of these history tables has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key`, on a history table, or on `schema_migrations`.
-`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It takes the caller's tenant from the caller's role name, with the parse of `wamn_authority.current_tenant_key()`, and refuses a sequence of another tenant with `insufficient_privilege`.
-`platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the tenant in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`. Project migration `0029_number_assignment.sql` adds it to an installed database.
-`platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the tenant in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`. Project migration `0030_number_counter_set.sql` adds it to an installed database.
+`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant. The `app.application` claim decides which sequences a caller reaches: it refuses a sequence of another application, or a caller with no application claim, with `undefined_object`.
+`platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the application claim in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`. Project migration `0029_number_assignment.sql` adds it to an installed database.
+`platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the application claim in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`. Project migration `0030_number_counter_set.sql` adds it to an installed database.
+Project migration `0031_org_boundary.sql` drops the tenant floor of `user` and the platform configuration tables in an installed database and replaces the three counter functions.
 Project migration `0025_platform_configuration.sql` adds the platform configuration tables to an installed database, removes `configurations` and its history table, and revokes the `api_keys` read.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `user`, `role`, `user_role`, `permission` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
-It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
+It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation. The entry columns include `tenant_id` only on the history tables of `role`, `user_role`, `permission`, and `environment`.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 Project migration `0007` creates `environment` in an installed database, and `0008` gives the family its write.
-Project migration `0028` renders the current surface, and `0027`, `0026`, `0024`, `0020`, `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
+Project migration `0031` renders the current surface, and `0028`, `0027`, `0026`, `0024`, `0020`, `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
@@ -865,7 +869,7 @@ The application host writes roles, permissions and user roles through its [host 
 A member that `wamn-ctl grant-project-env-membership` or `wamn-ctl invite` adds gains the row at the next `wamn-ctl env apply`, because those verbs hold no tenant connection.
 A principal with no user row cannot write in the tenant.
 The invocation bind refuses it.
-`WamnPostgres::bind_session_claims` refuses a principal that owns no `platform."user"` row in the tenant.
+`WamnPostgres::bind_session_claims` refuses a principal that owns no `platform."user"` row in the project database.
 The caller sees `permission-denied`.
 The host's [auth memory](execution.md#auth-memory) answers the check, and a miss reads the row.
 A removed row stays accepted until a change message clears the memory or 60 seconds pass.

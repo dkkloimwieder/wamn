@@ -256,7 +256,7 @@ async fn every_application_writer_records_a_drop_of_its_tenant_or_principal() {
     let database = wamn_project_state::test_database::tenant_platform();
     let client = connect(database.url(), None).await;
     client
-        .batch_execute(&platform_principals_sql("t1", "example.invalid").unwrap())
+        .batch_execute(&platform_principals_sql("example.invalid").unwrap())
         .await
         .unwrap();
     // The writes stamp wamn:provisioning for the whole session.

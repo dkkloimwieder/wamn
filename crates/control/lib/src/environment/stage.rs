@@ -147,7 +147,6 @@ pub async fn stage(
     .await?;
     create_number_sequences(
         project_url,
-        &tenant,
         &sequence_defaults(
             manifest,
             packages.iter().map(|(_, _, _, manifest)| manifest),
@@ -250,10 +249,9 @@ pub async fn materialize_application_principals(
         );
         let written = transaction
             .execute(
-                "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
-             VALUES ($1, $2::text::uuid, 'service', $3, $4) ON CONFLICT (tenant_id, id) DO NOTHING",
+                "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+             VALUES ($1::text::uuid, 'service', $2, $3) ON CONFLICT (id) DO NOTHING",
                 &[
-                    &tenant,
                     &principal.id().as_str(),
                     &format!("{subject}@{domain}"),
                     &subject,
@@ -324,15 +322,14 @@ pub fn sequence_defaults<'a>(
 /// that exists keeps its pattern, so an edited pattern survives every apply.
 ///
 /// The write narrows the apply login to `wamn_administration`, the authority
-/// of the control host's configuration writes, so the row security of the
-/// table applies; it binds `wamn:provisioning` as the actor and operation.
+/// of the control host's configuration writes; it binds `wamn:provisioning`
+/// as the actor and operation.
 ///
 /// # Errors
 ///
 /// When the database refuses a statement.
 pub async fn create_number_sequences(
     project_url: &str,
-    tenant: &str,
     defaults: &[wamn_platform_identity::configuration::SequenceDefault],
 ) -> anyhow::Result<u64> {
     if defaults.is_empty() {
@@ -353,12 +350,9 @@ pub async fn create_number_sequences(
         ))
         .await
         .context("narrow the apply login to the administration authority")?;
-    let created = wamn_platform_identity::configuration::create_default_sequences(
-        &transaction,
-        tenant,
-        defaults,
-    )
-    .await?;
+    let created =
+        wamn_platform_identity::configuration::create_default_sequences(&transaction, defaults)
+            .await?;
     transaction.commit().await?;
     Ok(created)
 }

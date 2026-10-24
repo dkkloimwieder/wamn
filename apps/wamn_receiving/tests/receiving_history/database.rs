@@ -15,9 +15,9 @@ pub const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 /// `app.operation` for this session.
 ///
 /// The record-history triggers stamp and log each fixture write with this
-/// principal and operation. The first binding in a tenant creates its users
+/// principal and operation. The first binding in a database creates its user
 /// row, and that row stamps itself.
-pub async fn bind_fixture_principal(client: &Client, tenant: &str) -> Result<()> {
+pub async fn bind_fixture_principal(client: &Client) -> Result<()> {
     client
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
@@ -28,10 +28,10 @@ pub async fn bind_fixture_principal(client: &Client, tenant: &str) -> Result<()>
         .context("bind the fixture test principal")?;
     client
         .execute(
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-             VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid') \
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ($1::text::uuid, 'user', 'fixture@example.invalid') \
              ON CONFLICT DO NOTHING",
-            &[&tenant, &FIXTURE_PRINCIPAL],
+            &[&FIXTURE_PRINCIPAL],
         )
         .await
         .context("create the fixture test principal")?;

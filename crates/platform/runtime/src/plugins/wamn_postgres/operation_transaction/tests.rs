@@ -269,7 +269,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let guest_url = live_guest_url(database.url(), TENANT).await;
-    ensure_live_users_rows(database.url(), TENANT, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(guest_url)),

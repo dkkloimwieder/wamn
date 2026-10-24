@@ -620,9 +620,8 @@ async fn converge_tenant_identity(
     let missing_platform: Vec<PlatformComponent> = if app_schema_present {
         let present: BTreeSet<String> = client
             .query(
-                "SELECT id::text FROM platform.\"user\" \
-                  WHERE tenant_id = $1 AND type = 'platform'",
-                &[&tenant_id],
+                "SELECT id::text FROM platform.\"user\" WHERE type = 'platform'",
+                &[],
             )
             .await
             .context("read the tenant's platform rows")?
@@ -640,10 +639,7 @@ async fn converge_tenant_identity(
     let (present_users, present_user_type): (BTreeSet<String>, BTreeSet<String>) =
         if app_schema_present {
             client
-                .query(
-                    "SELECT id::text, type = 'user' FROM platform.\"user\" WHERE tenant_id = $1",
-                    &[&tenant_id],
-                )
+                .query("SELECT id::text, type = 'user' FROM platform.\"user\"", &[])
                 .await
                 .context("read the tenant's user rows")?
                 .into_iter()
@@ -724,8 +720,8 @@ async fn converge_tenant_identity(
              'example.invalid'"
         );
     };
-    let platform_rows = platform_principals_sql(tenant_id, platform_domain)
-        .map_err(|source| anyhow::anyhow!("{source}"))?;
+    let platform_rows =
+        platform_principals_sql(platform_domain).map_err(|source| anyhow::anyhow!("{source}"))?;
 
     let transaction = client
         .transaction()

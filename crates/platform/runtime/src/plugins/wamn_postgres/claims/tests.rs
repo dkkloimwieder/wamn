@@ -777,16 +777,15 @@ const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 /// The `platform."user"` floor the provisioning check reads
 /// (`wamn-0h0g.9.19`).
 ///
-/// Only the two columns the check names, because row existence is the whole
+/// Only the column the check names, because row existence is the whole
 /// question. `deploy/sql/app-schema.sql` owns the production table with its
-/// row-level security and its type checks. The guest login reads it, so the
+/// type checks. The guest login reads it, so the
 /// fixture grants the stable ACL role what the production floor grants: usage
 /// on the schema and select on the table.
 const ENSURE_LIVE_USERS_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; \
      CREATE TABLE IF NOT EXISTS platform.\"user\" ( \
-         tenant_id text NOT NULL, \
          id uuid NOT NULL, \
-         PRIMARY KEY (tenant_id, id)); \
+         PRIMARY KEY (id)); \
      GRANT USAGE ON SCHEMA platform TO wamn_app; \
      GRANT SELECT ON platform.\"user\" TO wamn_app;";
 
@@ -794,7 +793,6 @@ const ENSURE_LIVE_USERS_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform;
 /// that own a row there.
 pub(in crate::plugins::wamn_postgres) async fn ensure_live_users_rows(
     admin_url: &str,
-    tenant: &str,
     principals: &[&str],
 ) {
     let admin = connect_raw(admin_url).await;
@@ -807,9 +805,9 @@ pub(in crate::plugins::wamn_postgres) async fn ensure_live_users_rows(
     for principal in principals {
         admin
             .execute(
-                "INSERT INTO platform.\"user\" (tenant_id, id) VALUES ($1, $2::text::uuid) \
+                "INSERT INTO platform.\"user\" (id) VALUES ($1::text::uuid) \
                  ON CONFLICT DO NOTHING",
-                &[&tenant, principal],
+                &[principal],
             )
             .await
             .expect("provision the live principal's user row");
@@ -2196,7 +2194,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&cold_parse_fixture_sql(&schema, &role))
@@ -2370,7 +2368,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
+    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2492,12 +2490,7 @@ async fn live_a_bind_refuses_a_principal_with_no_users_row() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(
-        admin_url,
-        TENANT,
-        &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL],
-    )
-    .await;
+    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2563,7 +2556,7 @@ async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2586,8 +2579,8 @@ async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
     let admin = connect_raw(admin_url).await;
     admin
         .execute(
-            "DELETE FROM platform.\"user\" WHERE tenant_id = $1",
-            &[&TENANT],
+            "DELETE FROM platform.\"user\" WHERE id = $1::text::uuid",
+            &[&LIVE_PRINCIPAL],
         )
         .await
         .expect("remove the user row after issuance");
@@ -2696,7 +2689,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2880,7 +2873,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,

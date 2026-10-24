@@ -50,7 +50,7 @@ pub(super) async fn install_journey_project(
     project: &Client,
     project_url: &str,
 ) -> anyhow::Result<()> {
-    install_journey_platform_floor(project, identity().tenant.as_str(), PLATFORM_DOMAIN).await?;
+    install_journey_platform_floor(project, PLATFORM_DOMAIN).await?;
     for (package, root) in released_journey_packages().zip(packages) {
         apply_package::apply_package(ApplyPackageRequest {
             package: root.clone(),
@@ -568,7 +568,7 @@ pub(super) async fn publish_journey_release(
 }
 
 pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Result<()> {
-    bind_fixture_principal(project, identity().tenant.as_str()).await?;
+    bind_fixture_principal(project).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.item (id, item_number) VALUES \
@@ -626,7 +626,7 @@ pub(super) async fn seed_materializer_order(
     line_id: &str,
     number: &str,
 ) -> anyhow::Result<()> {
-    bind_fixture_principal(project, identity().tenant.as_str()).await?;
+    bind_fixture_principal(project).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.supplier (id, name) VALUES \

@@ -13,9 +13,10 @@
 //!   application cannot create a platform row or a `wamn:` name. `api_key`
 //!   takes no grant at all;
 //! - `number_counter` is written only through `platform.bump_counter`,
-//!   `platform.assign_counter` and `platform.set_counter`, which take the caller's tenant from its role name — the control proving the
-//!   other test fails for the revoked privilege rather than for an over-broad
-//!   narrowing;
+//!   `platform.assign_counter` and `platform.set_counter`, which reach only a
+//!   sequence of the application that the `app.application` claim names — the
+//!   control proving the other test fails for the revoked privilege rather
+//!   than for an over-broad narrowing;
 //! - the history tables take no read and no direct write from an App
 //!   generation.
 //!
@@ -37,11 +38,12 @@ const TENANT: &str = "t1";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
 /// An unused user id for the refused inserts.
 const U2: &str = "22222222-2222-2222-2222-222222222222";
-/// A number sequence of [`TENANT`].
+/// A number sequence of [`APPLICATION`].
 const SEQUENCE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-/// Another tenant, whose rows the probe generation must not reach.
-const OTHER_TENANT: &str = "t2";
-/// A number sequence of [`OTHER_TENANT`].
+/// The application that the probes claim as `app.application`.
+const APPLICATION: &str = "receiving";
+/// A number sequence of another application, which a caller claiming
+/// [`APPLICATION`] must not reach.
 const OTHER_SEQUENCE: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 /// The pinned `wamn:provisioning` id, the row a tenant must not create.
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
@@ -82,7 +84,9 @@ fn current_database(url: &str) -> String {
 
 /// The superuser prelude: a production-prepared tenant-scoped App generation,
 /// the stable passwordless `wamn_app` ACL carrier it inherits, a fresh
-/// `platform` applied verbatim from the DDL of record, and one tenant's rows.
+/// `platform` applied verbatim from the DDL of record, one tenant's role rows,
+/// the user and configuration rows of the database, and a sequence of each of
+/// two applications.
 /// Seeded as the superuser, so the seed itself is unaffected by the grants under
 /// test. The fixture writes as U1, its test principal, whose row stamps itself,
 /// under an administrative operation, and both bindings stay for the probes.
@@ -112,15 +116,15 @@ fn prelude(url: &str) -> (String, String) {
         r#"
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
-INSERT INTO platform."user" (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','user','u1@t1');
+INSERT INTO platform."user" (id, type, email) VALUES ('{U1}','user','u1@t1');
 INSERT INTO platform.role (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
 INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
 INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
 INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
-INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES ('{TENANT}','org','acme','display.theme','"dark"'::jsonb);
-INSERT INTO platform.number_sequence (tenant_id, id, application, name, pattern) VALUES
-  ('{TENANT}','{SEQUENCE}','receiving','purchase_order','P-{{seq:po,width=8}}'),
-  ('{OTHER_TENANT}','{OTHER_SEQUENCE}','receiving','purchase_order','P-{{seq:po,width=8}}');"#
+INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
+INSERT INTO platform.number_sequence (id, application, name, pattern) VALUES
+  ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}'),
+  ('{OTHER_SEQUENCE}','wms','purchase_order','P-{{seq:po,width=8}}');"#
     )
     .expect("writing to a String cannot fail");
     (app_generation, script)
@@ -205,7 +209,7 @@ DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
     'the tenant authority is the prepared App generation';
   ASSERT (SELECT count(*) FROM platform."user") = 1,
-    'the generation-derived tenant is live and users is still readable';
+    'users is still readable';
   ASSERT (SELECT count(*) FROM platform.user_role) = 1,
     'the role linkage 4.2 resolves app.role from is still readable';
 END $$;
@@ -214,8 +218,8 @@ DO $$
 DECLARE probe_sql text;
 BEGIN
   FOREACH probe_sql IN ARRAY ARRAY[
-    'INSERT INTO platform."user" (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''user'', ''intruder@t1'')',
-    'INSERT INTO platform."user" (tenant_id, id, type, email, display_name) VALUES (''{TENANT}'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
+    'INSERT INTO platform."user" (id, type, email) VALUES (''{U2}'', ''user'', ''intruder@t1'')',
+    'INSERT INTO platform."user" (id, type, email, display_name) VALUES (''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
     'UPDATE platform."user" SET status = ''disabled''',
     'UPDATE platform."user" SET display_name = ''wamn:intruder''',
     'DELETE FROM platform."user"',
@@ -232,16 +236,16 @@ BEGIN
     'UPDATE platform.api_key SET revoked_at = now()',
     'DELETE FROM platform.api_key',
     'SELECT count(*) FROM platform.api_key',
-    'INSERT INTO platform.number_counter (tenant_id, sequence_id, counter, key_value, value) VALUES (''{TENANT}'', ''{SEQUENCE}'', ''po'', '''', 100)',
+    'INSERT INTO platform.number_counter (sequence_id, counter, key_value, value) VALUES (''{SEQUENCE}'', ''po'', '''', 100)',
     'UPDATE platform.number_counter SET value = 1',
     'DELETE FROM platform.number_counter',
-    'INSERT INTO platform.number_sequence (tenant_id, application, name, pattern) VALUES (''{TENANT}'', ''receiving'', ''forged'', ''F-{{seq:f}}'')',
+    'INSERT INTO platform.number_sequence (application, name, pattern) VALUES (''receiving'', ''forged'', ''F-{{seq:f}}'')',
     'UPDATE platform.number_sequence SET pattern = ''F-{{seq:f}}''',
-    'INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) VALUES (''{TENANT}'', ''org'', ''acme'', ''locale'', ''true'')',
+    'INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES (''org'', ''acme'', ''locale'', ''true'')',
     'UPDATE platform.setting SET locked = true',
-    'INSERT INTO platform.external_system (tenant_id, integration, name) VALUES (''{TENANT}'', ''netsuite'', ''forged'')',
-    'INSERT INTO platform.connection (tenant_id, integration, name, transport, exchange) VALUES (''{TENANT}'', ''netsuite'', ''forged'', ''http'', ''request'')',
-    'INSERT INTO platform.integration_allow (tenant_id, scope_type, scope_id, integration) VALUES (''{TENANT}'', ''org'', ''acme'', ''modbus'')',
+    'INSERT INTO platform.external_system (integration, name) VALUES (''netsuite'', ''forged'')',
+    'INSERT INTO platform.connection (integration, name, transport, exchange) VALUES (''netsuite'', ''forged'', ''http'', ''request'')',
+    'INSERT INTO platform.integration_allow (scope_type, scope_id, integration) VALUES (''org'', ''acme'', ''modbus'')',
     'DELETE FROM platform.project_connection',
     'INSERT INTO platform.environment (tenant_id, status) VALUES (''{TENANT}'', ''active'')',
     'UPDATE platform.environment SET status = ''active''',
@@ -264,11 +268,12 @@ ROLLBACK;"#
 
 /// `number_counter` advances only through `platform.bump_counter`
 /// (docs/plan/platform-config.md, Numbering). The App generation holds
-/// EXECUTE on it and no write on the table. The function runs as its owner,
-/// keeps the caller's role setting, and takes the caller's tenant from that
-/// role name: it returns 1 for a new counter row and then counts up, starts
-/// each key at 1, and refuses a sequence of another tenant and a caller that
-/// is no App generation. `number_counter` has no history table.
+/// EXECUTE on it and no write on the table. The function runs as its owner
+/// and reaches only a sequence of the application that the `app.application`
+/// claim names: it returns 1 for a new counter row and then counts up, starts
+/// each key at 1, and refuses with `undefined_object` a sequence of another
+/// application and a caller with no application claim. `number_counter` has
+/// no history table.
 #[test]
 fn the_application_advances_a_counter_only_through_bump_counter() {
     let _serialized = wamn_test_postgres::lock();
@@ -290,21 +295,13 @@ DO $$ BEGIN
     'number_counter has no history table';
 END $$;
 
--- A probe definer function, owned like bump_counter, that reports the role
--- setting it sees.
-CREATE FUNCTION platform.role_probe() RETURNS text
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog
-AS $probe$ SELECT current_user::text || '|' || current_setting('role') $probe$;
-GRANT EXECUTE ON FUNCTION platform.role_probe() TO wamn_app;
-
 BEGIN;
 SET LOCAL ROLE {app_generation};
+SET LOCAL app.application = '{APPLICATION}';
 
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
-    'the tenant authority is the prepared App generation';
-  ASSERT platform.role_probe() = session_user::text || '|{app_generation}',
-    'a definer function runs as its owner and keeps the caller''s role setting';
+    'the probe runs as the prepared App generation';
   ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 1, 'a new counter renders 1';
   ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 2, 'the next call renders 2';
   ASSERT platform.bump_counter('{SEQUENCE}', 'line', 'batch-a') = 1, 'a new key renders 1';
@@ -314,30 +311,31 @@ DO $$ BEGIN
            WHERE counter = 'po' AND key_value = '') = 3,
     'the row holds the next value, readable by the application';
   ASSERT (SELECT count(*) FROM platform.number_counter) = 3,
-    'the generation sees its tenant''s counter rows';
-  ASSERT (SELECT count(*) FROM platform.number_sequence) = 1,
-    'the generation sees only its tenant''s sequence';
+    'the generation sees the counter rows of the database';
+  ASSERT (SELECT count(*) FROM platform.number_sequence) = 2,
+    'the generation sees every sequence of the database';
 END $$;
 
 DO $$ BEGIN
   BEGIN
     PERFORM platform.bump_counter('{OTHER_SEQUENCE}', 'po', '');
-    RAISE EXCEPTION 'bump_counter advanced a sequence of another tenant';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
+    RAISE EXCEPTION 'bump_counter advanced a sequence of another application';
+  EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
 RESET ROLE;
+SET LOCAL app.application = '';
 DO $$ BEGIN
-  ASSERT (SELECT count(*) FROM platform.number_counter WHERE tenant_id = '{OTHER_TENANT}') = 0,
-    'the refused call wrote no counter of the other tenant';
+  ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
+    'the refused call wrote no counter of the other application';
   ASSERT (SELECT created_by FROM platform.number_counter
            WHERE counter = 'po' AND key_value = '') = '{U1}',
     'the counter row stamps the bound actor';
   BEGIN
     PERFORM platform.bump_counter('{SEQUENCE}', 'po', '');
-    RAISE EXCEPTION 'bump_counter advanced a counter for a caller that is no App generation';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
+    RAISE EXCEPTION 'bump_counter advanced a counter for a caller with no application claim';
+  EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
@@ -352,8 +350,8 @@ ROLLBACK;"
 /// `platform.assign_counter` (docs/plan/platform-config.md, Numbering; owner
 /// ruling of wamn-83eth.2). The App generation holds EXECUTE on it. A key gets
 /// the next value of the `''` allocator once, and the same value after; the
-/// `''` key is refused, as are a sequence of another tenant and a caller that
-/// is no App generation.
+/// `''` key is refused, and a sequence of another application and a caller
+/// with no application claim are refused with `undefined_object`.
 #[test]
 fn the_application_assigns_a_keyed_counter_only_through_assign_counter() {
     let _serialized = wamn_test_postgres::lock();
@@ -375,6 +373,7 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE {app_generation};
+SET LOCAL app.application = '{APPLICATION}';
 
 DO $$ BEGIN
   ASSERT platform.assign_counter('{SEQUENCE}', 'batch', 'batch-a') = 1, 'a new key takes 1';
@@ -390,19 +389,20 @@ DO $$ BEGIN
   END;
   BEGIN
     PERFORM platform.assign_counter('{OTHER_SEQUENCE}', 'batch', 'batch-a');
-    RAISE EXCEPTION 'assign_counter assigned a key of another tenant';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
+    RAISE EXCEPTION 'assign_counter assigned a key of another application';
+  EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
 RESET ROLE;
+SET LOCAL app.application = '';
 DO $$ BEGIN
-  ASSERT (SELECT count(*) FROM platform.number_counter WHERE tenant_id = '{OTHER_TENANT}') = 0,
-    'the refused call wrote no counter of the other tenant';
+  ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
+    'the refused call wrote no counter of the other application';
   BEGIN
     PERFORM platform.assign_counter('{SEQUENCE}', 'batch', 'batch-c');
-    RAISE EXCEPTION 'assign_counter assigned a key for a caller that is no App generation';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
+    RAISE EXCEPTION 'assign_counter assigned a key for a caller with no application claim';
+  EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
@@ -416,8 +416,9 @@ ROLLBACK;"
 /// `platform.set_counter` is the third writer of `number_counter`, the write
 /// of the set_counter host route (docs/plan/platform-config.md, Numbering;
 /// owner ruling of wamn-83eth.3). The App generation holds EXECUTE on it. It
-/// inserts a counter row or sets its value; it refuses a value below 1, a
-/// sequence of another tenant and a caller that is no App generation.
+/// inserts a counter row or sets its value; it refuses a value below 1, and
+/// refuses with `undefined_object` a sequence of another application and a
+/// caller with no application claim.
 #[test]
 fn the_application_sets_a_counter_only_through_set_counter() {
     let _serialized = wamn_test_postgres::lock();
@@ -439,6 +440,7 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE {app_generation};
+SET LOCAL app.application = '{APPLICATION}';
 
 DO $$ BEGIN
   PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 100);
@@ -452,19 +454,20 @@ DO $$ BEGIN
   END;
   BEGIN
     PERFORM platform.set_counter('{OTHER_SEQUENCE}', 'po', '', 5);
-    RAISE EXCEPTION 'set_counter set a counter of another tenant';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
+    RAISE EXCEPTION 'set_counter set a counter of another application';
+  EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
 RESET ROLE;
+SET LOCAL app.application = '';
 DO $$ BEGIN
-  ASSERT (SELECT count(*) FROM platform.number_counter WHERE tenant_id = '{OTHER_TENANT}') = 0,
-    'the refused call wrote no counter of the other tenant';
+  ASSERT (SELECT count(*) FROM platform.number_counter WHERE sequence_id = '{OTHER_SEQUENCE}') = 0,
+    'the refused call wrote no counter of the other application';
   BEGIN
     PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 5);
-    RAISE EXCEPTION 'set_counter set a counter for a caller that is no App generation';
-  EXCEPTION WHEN insufficient_privilege THEN NULL;
+    RAISE EXCEPTION 'set_counter set a counter for a caller with no application claim';
+  EXCEPTION WHEN undefined_object THEN NULL;
   END;
 END $$;
 
@@ -480,7 +483,8 @@ ROLLBACK;"
 /// cannot choose a `position` with `OVERRIDING SYSTEM VALUE` either.
 ///
 /// Each denied insert is RLS-legal for the probe tenant, so `42501` here is
-/// the missing privilege and not a `WITH CHECK` rejection.
+/// the missing privilege and not a `WITH CHECK` rejection. A history table at
+/// the org boundary has no tenant_id, so its entry names none.
 #[test]
 fn author_sql_reads_and_writes_no_history_table() {
     let _serialized = wamn_test_postgres::lock();
@@ -489,7 +493,7 @@ fn author_sql_reads_and_writes_no_history_table() {
 
     let (app_generation, mut script) = prelude(&url);
     // One direct entry insert. A position also names the position column.
-    let entry = |history: &str, position: Option<i64>, row_key: &str| {
+    let entry = |history: &str, position: Option<i64>, tenant: bool, row_key: &str| {
         let (column, value, overriding) = match position {
             None => ("", String::new(), ""),
             Some(position) => (
@@ -498,32 +502,36 @@ fn author_sql_reads_and_writes_no_history_table() {
                 " OVERRIDING SYSTEM VALUE",
             ),
         };
+        let (tenant_column, tenant_value) = if tenant {
+            ("tenant_id, ", format!("''{TENANT}'', "))
+        } else {
+            ("", String::new())
+        };
         format!(
-            "'INSERT INTO platform.{history} ({column}tenant_id, row_key, type, operation, \
+            "'INSERT INTO platform.{history} ({column}{tenant_column}row_key, type, operation, \
              changed_by, changed_at, transaction_id, before, after){overriding} VALUES \
-             ({value}''{TENANT}'', ''{row_key}'', ''delete'', ''admin:forge-history'', \
+             ({value}{tenant_value}''{row_key}'', ''delete'', ''admin:forge-history'', \
              ''{U1}'', now(), 1, ''{{}}'', ''{{}}'')'"
         )
     };
     let direct_writes = [
-        entry(
-            "user_history",
-            None,
-            &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
-        ),
+        entry("user_history", None, false, &format!(r#"{{"id": "{U2}"}}"#)),
         entry(
             "role_history",
             None,
+            true,
             &format!(r#"{{"name": "admin", "tenant_id": "{TENANT}"}}"#),
         ),
         entry(
             "user_role_history",
             None,
+            true,
             &format!(r#"{{"user_id": "{U1}", "role_name": "admin", "tenant_id": "{TENANT}"}}"#),
         ),
         entry(
             "permission_history",
             None,
+            true,
             &format!(
                 r#"{{"role_name": "auditor", "tenant_id": "{TENANT}", "permission": "platform-fixture:widget/get"}}"#
             ),
@@ -531,24 +539,26 @@ fn author_sql_reads_and_writes_no_history_table() {
         entry(
             "api_key_history",
             None,
+            true,
             &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
         ),
         entry(
             "environment_history",
             None,
+            true,
             &format!(r#"{{"tenant_id": "{TENANT}"}}"#),
         ),
         entry(
             "setting_history",
             Some(-5),
-            &format!(
-                r#"{{"key": "display.theme", "scope_id": "acme", "tenant_id": "{TENANT}", "scope_type": "org"}}"#
-            ),
+            false,
+            r#"{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}"#,
         ),
         entry(
             "number_sequence_history",
             None,
-            &format!(r#"{{"id": "{SEQUENCE}", "tenant_id": "{TENANT}"}}"#),
+            false,
+            &format!(r#"{{"id": "{SEQUENCE}"}}"#),
         ),
     ]
     .join(",\n    ");

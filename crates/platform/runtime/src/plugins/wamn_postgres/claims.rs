@@ -41,29 +41,28 @@ const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform
 /// principal without roles yields one row with a null role.
 const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission \
     FROM platform.\"user\" u LEFT JOIN platform.user_role r \
-    ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+    ON r.tenant_id = $1 AND r.user_id = u.id \
     LEFT JOIN platform.permission p \
     ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
-    WHERE u.tenant_id = $1 AND u.id = $2::text::uuid";
+    WHERE u.id = $2::text::uuid";
 
 /// One row of the bound principal, read under the tenant's own guest login.
 ///
 /// Row existence is the whole question, so the projection is a constant. The
-/// `user_tenant` policy already limits a guest login to its own tenant, and
-/// the bound `tenant_id` predicate keeps the read on the claimed tenant.
+/// database is the org boundary, so the table has no tenant column.
 const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
-    WHERE tenant_id = $1 AND id = $2::text::uuid";
+    WHERE id = $1::text::uuid";
 
 /// Each role that the active user holds, with each permission of that
 /// role.
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
     FROM platform.\"user\" AS users \
     JOIN platform.user_role AS user_roles \
-      ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
+      ON user_roles.tenant_id = $1 AND user_roles.user_id = users.id \
     LEFT JOIN platform.permission AS permissions \
       ON permissions.tenant_id = user_roles.tenant_id \
       AND permissions.role_name = user_roles.role_name \
-    WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active'";
+    WHERE users.id = $2::text::uuid AND users.status = 'active'";
 
 /// The application authority a caller holds now: whether it holds `admin`,
 /// and the stable operation references its other roles grant under the loaded
@@ -1551,9 +1550,8 @@ impl WamnPostgres {
     /// The read uses the tenant's own guest login, for two reasons. It is the
     /// only authority class every composition root names, because the platform
     /// classes are unnamed when their generation is absent. And it is the
-    /// credential the tenant floor already grants `SELECT` on this table, with
-    /// the `user_tenant` policy limiting it to its own rows, so the check
-    /// needs no new grant and can read no other tenant.
+    /// credential that already holds `SELECT` on this table, so the check
+    /// needs no new grant. The database is the org boundary.
     ///
     /// A read that cannot run refuses the bind with its own error rather than
     /// the `UnprovisionedPrincipal` refusal. An unreachable table is an
@@ -1581,7 +1579,7 @@ impl WamnPostgres {
             }
         };
         let rows = connection
-            .query(&statement, &[&tenant, &principal_id])
+            .query(&statement, &[&principal_id])
             .instrument(wamn_engine::invocation_trace::sampled_span(|| {
                 tracing::info_span!("wamn.claims.principal.query")
             }))

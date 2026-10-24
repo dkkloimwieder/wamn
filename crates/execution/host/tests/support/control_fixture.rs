@@ -74,8 +74,8 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
 }
 
 /// One environment's project database on the test server, with the catalog,
-/// the application schema and one platform row of `tenant`, and its
-/// administration login minted by the production prepare. The login goes
+/// the application schema and one platform row, and its administration
+/// login of `tenant` minted by the production prepare. The login goes
 /// into `logins` under the key its control patch names, as the mounted
 /// Secret shows it.
 pub(super) async fn project_database(
@@ -128,10 +128,9 @@ pub(super) async fn project_database(
         .await?;
     target
         .execute(
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email, display_name) \
-             VALUES ($1, $2::text::uuid, 'platform', 'provisioning@example.test', $3)",
+            "INSERT INTO platform.\"user\" (id, type, email, display_name) \
+             VALUES ($1::text::uuid, 'platform', 'provisioning@example.test', $2)",
             &[
-                &tenant,
                 &PlatformComponent::Provisioning.principal_id().to_string(),
                 &PlatformComponent::Provisioning.principal_name(),
             ],
@@ -191,12 +190,18 @@ pub(super) async fn environments(
         admin_url,
         "billing",
         "aaaaaaa1",
-        "t-billing",
+        "org-a--billing--dev",
         &logins,
     )
     .await?;
     let shop = project_database(
-        admin, admin_url, admin_url, "shop", "aaaaaaa2", "t-shop", &logins,
+        admin,
+        admin_url,
+        admin_url,
+        "shop",
+        "aaaaaaa2",
+        "org-a--shop--dev",
+        &logins,
     )
     .await?;
     Ok((logins, billing, shop))

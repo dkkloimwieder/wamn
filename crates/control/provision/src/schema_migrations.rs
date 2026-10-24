@@ -380,6 +380,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0030_number_counter_set.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0030_number_counter_set.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0031_org_boundary.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0031_org_boundary.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -435,10 +439,10 @@ mod tests {
         }
     }
 
-    /// The project migration that gives the role, user_role, permission and
-    /// api_key tables their singular names carries the latest rendering of the
-    /// administration surface. 0003, 0006, 0008, 0016, 0020, 0024, 0026 and
-    /// 0027 hold the earlier surfaces, as installed databases recorded them.
+    /// The project migration that drops the tenant floor from `user` and the
+    /// platform configuration tables carries the latest rendering of the
+    /// administration surface. 0003, 0006, 0008, 0016, 0020, 0024, 0026, 0027
+    /// and 0028 hold the earlier surfaces, as installed databases recorded them.
     #[test]
     fn the_latest_administration_migration_is_the_rendered_administration_surface() {
         let rendered = format!(
@@ -447,12 +451,8 @@ mod tests {
         );
         let migration = PROJECT_MIGRATIONS
             .iter()
-            .find(|migration| {
-                migration
-                    .relative_path
-                    .ends_with("_platform_singular_tables.sql")
-            })
-            .expect("the project migration that renames the plural platform tables exists");
+            .find(|migration| migration.relative_path.ends_with("_org_boundary.sql"))
+            .expect("the project migration that drops the tenant floor exists");
         assert!(
             migration.sql.ends_with(&rendered),
             "{} does not end with the rendered administration surface",
@@ -474,31 +474,30 @@ mod tests {
         format!("{}\n", rest[..end].trim_end())
     }
 
-    /// The project migration that adds the platform configuration tables
-    /// ends with the PLATFORM CONFIGURATION section of `app-schema.sql`, byte
-    /// for byte, so a fresh install and an upgraded database hold the same
-    /// tables, function and grants. The migration that adds
-    /// `platform.assign_counter` ends with the NUMBER ASSIGNMENT section, and
-    /// the one that adds `platform.set_counter` with the NUMBER SETTING
-    /// section.
+    /// The project migration that drops the tenant floor carries the NUMBER
+    /// COUNTERS section of `app-schema.sql`, byte for byte, right before the
+    /// administration surface, so a fresh install and an upgraded database
+    /// hold the same three counter functions and grants. 0025, 0029 and 0030
+    /// hold the earlier functions, and 0025 the tables under the tenant
+    /// floor; `upgrade_schema_live` compares the tables of an upgraded
+    /// database with those of a fresh install.
     #[test]
-    fn the_platform_configuration_migrations_are_the_app_schema_sections() {
-        for (suffix, title) in [
-            ("_platform_configuration.sql", "PLATFORM CONFIGURATION"),
-            ("_number_assignment.sql", "NUMBER ASSIGNMENT"),
-            ("_number_counter_set.sql", "NUMBER SETTING"),
-        ] {
-            let section = app_schema_section(title);
-            let migration = PROJECT_MIGRATIONS
-                .iter()
-                .find(|migration| migration.relative_path.ends_with(suffix))
-                .unwrap_or_else(|| panic!("the {title} migration exists"));
-            assert!(
-                migration.sql.ends_with(&section),
-                "{} does not end with the {title} section of app-schema.sql",
-                migration.relative_path
-            );
-        }
+    fn the_org_boundary_migration_carries_the_number_counters_section() {
+        let section = app_schema_section("NUMBER COUNTERS");
+        let surface = format!(
+            "\n{}\n",
+            crate::sql::grant_administration_surface_sql("wamn_run")
+        );
+        let migration = PROJECT_MIGRATIONS
+            .iter()
+            .find(|migration| migration.relative_path.ends_with("_org_boundary.sql"))
+            .expect("the project migration that drops the tenant floor exists");
+        assert!(
+            migration.sql.ends_with(&format!("{section}{surface}")),
+            "{} does not end with the NUMBER COUNTERS section of app-schema.sql and the \
+             administration surface",
+            migration.relative_path
+        );
     }
 
     #[test]

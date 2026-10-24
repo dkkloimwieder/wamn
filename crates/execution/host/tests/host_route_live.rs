@@ -574,9 +574,9 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
     } = &host;
     admin
         .execute(
-            "INSERT INTO platform.number_sequence (tenant_id, application, name, pattern) \
-             VALUES ($1, 'session_test', 'purchase_order', 'P-{seq:po}')",
-            &[&TENANT],
+            "INSERT INTO platform.number_sequence (application, name, pattern) \
+             VALUES ('session_test', 'purchase_order', 'P-{seq:po}')",
+            &[],
         )
         .await?;
     let bearer = |body: &Value| format!("Bearer {}", signed(&header(), body));

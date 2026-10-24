@@ -292,7 +292,7 @@ async fn tenant_identity_leg(su: &Client) {
     let rows: Vec<(String, String, String, String)> = su
         .query(
             "SELECT id::text, type, email, created_by::text FROM platform.\"user\" \
-              WHERE tenant_id = 't1' ORDER BY email",
+              ORDER BY email",
             &[],
         )
         .await
@@ -352,8 +352,7 @@ async fn tenant_identity_leg(su: &Client) {
     );
     let user_display_name: String = su
         .query_one(
-            "SELECT display_name FROM platform.\"user\" \
-              WHERE tenant_id = 't1' AND id = $1::text::uuid",
+            "SELECT display_name FROM platform.\"user\" WHERE id = $1::text::uuid",
             &[&FIXTURE_USER_ID],
         )
         .await
@@ -410,7 +409,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     assert_eq!(outcome.tenant_identity.user_rows_removed, 1);
     let rows: Vec<(String, i64)> = su
         .query(
-            "SELECT type, count(*) FROM platform.\"user\" WHERE tenant_id = 't1' \
+            "SELECT type, count(*) FROM platform.\"user\" \
              GROUP BY type ORDER BY type",
             &[],
         )

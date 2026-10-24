@@ -42,7 +42,7 @@ fn write_log_sql() -> &'static str {
 async fn tenant_database(tenant: &str) -> (wamn_test_postgres::Database, Arc<WamnPostgres>) {
     let database = wamn_test_postgres::database();
     let guest_url = live_guest_url(database.url(), tenant).await;
-    ensure_live_users_rows(database.url(), tenant, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     database
         .execute(&[write_log_sql()])
         .expect("install the write log");

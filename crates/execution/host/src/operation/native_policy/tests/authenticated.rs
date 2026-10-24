@@ -129,9 +129,9 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
         .await?;
     admin
         .execute(
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-             VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid')",
-            &[&TENANT, &FIXTURE_PRINCIPAL],
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ($1::text::uuid, 'user', 'fixture@example.invalid')",
+            &[&FIXTURE_PRINCIPAL],
         )
         .await?;
     for role in ["native-parent", "native-child"] {
@@ -202,8 +202,7 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
 pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     tenant_postgres(admin_url).await?;
     let admin = connect(admin_url).await?;
-    let principals =
-        wamn_control_provision::platform_principals_sql(TENANT, "platform.example.invalid")?;
+    let principals = wamn_control_provision::platform_principals_sql("platform.example.invalid")?;
     admin
         .batch_execute(&format!("BEGIN; {principals} COMMIT;"))
         .await?;
@@ -231,7 +230,12 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         (&*first, "alice@example.test"),
         (second, "bob@example.test"),
     ] {
-        admin.execute("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3)", &[&TENANT,&principal,&email]).await?;
+        admin
+            .execute(
+                "INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2)",
+                &[&principal, &email],
+            )
+            .await?;
         for role in ["native-parent", "native-child"] {
             admin.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)", &[&TENANT,&principal,&role]).await?;
         }
@@ -1094,7 +1098,7 @@ async fn warm_postgres_with_pool(
         .await?;
     admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
     for principal in principals {
-        admin.execute("INSERT INTO platform.\"user\" (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'user', $2 || '@example.invalid')", &[&TENANT, principal]).await?;
+        admin.execute("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'user', $1 || '@example.invalid')", &[principal]).await?;
     }
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&role)
@@ -1297,7 +1301,7 @@ async fn pat_caller(
     .await?;
     let admin = connect(admin_url).await?;
     admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
-    admin.execute("INSERT INTO platform.\"user\" (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user','warm-pat@example.invalid')", &[&TENANT, &principal.id().as_str()]).await?;
+    admin.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','warm-pat@example.invalid')", &[&principal.id().as_str()]).await?;
     admin.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'native-child')", &[&TENANT, &principal.id().as_str()]).await?;
     let reader_role = workload_generation_role(
         WorkloadRoleFamily::IdentityReader,

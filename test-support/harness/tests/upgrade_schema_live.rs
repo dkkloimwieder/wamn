@@ -24,6 +24,8 @@ use wamn_control::upgrade_schema::{UpgradeSchemaRequest, upgrade_schema_with};
 use wamn_control_provision::schema_migrations::{Migration, MigrationTarget};
 use wamn_gate_harness::environment::apply_project_database;
 
+const ORG_BOUNDARY: &str =
+    include_str!("../../../crates/control/lib/tests/fixtures/org-boundary-before-0031.sql");
 const PLURAL_USER: &str =
     include_str!("../../../crates/control/lib/tests/fixtures/platform-user-before-0027.sql");
 const PLURAL_TABLES: &str = include_str!(
@@ -102,6 +104,45 @@ async fn scalar(url: &str, statement: &str) -> i64 {
         .get(0);
     close(client).await;
     value
+}
+
+/// The shape of schema `platform`: each column, constraint, index and policy,
+/// and the row security of each table, by name and not by position.
+async fn platform_shape(url: &str) -> Vec<String> {
+    let client = connect(url).await;
+    let shape = client
+        .0
+        .query(
+            "SELECT entry FROM ( \
+               SELECT 'column ' || c.relname || '.' || a.attname || ' ' \
+                      || format_type(a.atttypid, a.atttypmod) || ' ' || a.attnotnull AS entry \
+                 FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid \
+                WHERE c.relnamespace = 'platform'::regnamespace AND c.relkind = 'r' \
+                  AND a.attnum > 0 AND NOT a.attisdropped \
+               UNION ALL \
+               SELECT 'constraint ' || c.relname || '.' || k.conname || ' ' \
+                      || pg_get_constraintdef(k.oid) \
+                 FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid \
+                WHERE c.relnamespace = 'platform'::regnamespace \
+               UNION ALL \
+               SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'platform' \
+               UNION ALL \
+               SELECT 'policy ' || tablename || '.' || policyname || ' ' \
+                      || COALESCE(qual, '') || ' ' || COALESCE(with_check, '') \
+                 FROM pg_policies WHERE schemaname = 'platform' \
+               UNION ALL \
+               SELECT 'security ' || relname || ' ' || relrowsecurity || ' ' || relforcerowsecurity \
+                 FROM pg_class WHERE relnamespace = 'platform'::regnamespace AND relkind = 'r' \
+             ) q ORDER BY entry COLLATE \"C\"",
+            &[],
+        )
+        .await
+        .expect("read the shape of schema platform")
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    close(client).await;
+    shape
 }
 
 async fn install_control(admin_url: &str, system_url: &str) {
@@ -252,9 +293,19 @@ async fn upgrade_schema_applies_each_pending_file_once() {
 
     // A project database installed before 0024: the run reads the record
     // table in the old schema, applies the rename and records it in platform,
-    // then applies 0025 to 0030. The database also loses what 0025, 0029 and 0030 add, gets
-    // back what 0025 removes, and has the table names from before 0027 and 0028.
+    // then applies 0025 to 0031. The database also loses what 0025, 0029 and
+    // 0030 add, gets back what 0025 removes, has the table names from before
+    // 0027 and 0028, and has the tenant floor that 0031 drops. Its platform
+    // rows and their history entries carry the tenant, as before 0031.
+    let fresh_shape = platform_shape(&project_url).await;
     let client = connect(&project_url).await;
+    client
+        .0
+        .batch_execute(&format!(
+            "SET wamn.fixture_tenant = '{TENANT}'; {ORG_BOUNDARY}"
+        ))
+        .await
+        .expect("give user and the platform configuration tables the tenant floor of before 0031");
     client
         .0
         .batch_execute(PLURAL_USER)
@@ -312,6 +363,22 @@ async fn upgrade_schema_applies_each_pending_file_once() {
         .await,
         0,
         "the rename leaves no schema under the old name"
+    );
+    assert_eq!(
+        platform_shape(&project_url).await,
+        fresh_shape,
+        "the upgraded schema platform has the shape of a fresh install"
+    );
+    assert_eq!(
+        scalar(
+            &project_url,
+            "SELECT count(*) FROM platform.\"user\" u \
+              WHERE u.type = 'platform' AND EXISTS (SELECT FROM platform.user_history h \
+                    WHERE h.row_key = jsonb_build_object('id', u.id))"
+        )
+        .await,
+        i64::try_from(wamn_control_provision::PlatformComponent::ALL.len()).unwrap(),
+        "each platform row keeps its rows and its history under its new key"
     );
 
     // The system database: plan, apply, then nothing pending.

@@ -120,8 +120,8 @@ impl Live {
             scopes: AtomicU32::new(0),
         };
         live.administer(&format!(
-            "INSERT INTO platform.\"user\" (tenant_id, id, type, email) \
-             VALUES ('{TENANT}', '{LIVE_PRINCIPAL}', 'user', 'caller@example.invalid');"
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ('{LIVE_PRINCIPAL}', 'user', 'caller@example.invalid');"
         ))
         .await;
         live
@@ -143,8 +143,8 @@ impl Live {
 
     async fn sequence(&self, application: &str, name: &str, pattern: &str) {
         self.administer(&format!(
-            "INSERT INTO platform.number_sequence (tenant_id, application, name, pattern) \
-             VALUES ('{TENANT}', '{application}', '{name}', '{pattern}');"
+            "INSERT INTO platform.number_sequence (application, name, pattern) \
+             VALUES ('{application}', '{name}', '{pattern}');"
         ))
         .await;
     }
@@ -419,8 +419,8 @@ async fn live_the_date_uses_the_application_timezone_else_utc() {
     live.sequence(OTHER_APPLICATION, "stamp", pattern).await;
     // POSIX sign: Etc/GMT-14 is fourteen hours ahead of UTC.
     live.administer(&format!(
-        "INSERT INTO platform.setting (tenant_id, scope_type, scope_id, key, value) \
-         VALUES ('{TENANT}', 'application', '{APPLICATION}', 'timezone', '\"Etc/GMT-14\"');"
+        "INSERT INTO platform.setting (scope_type, scope_id, key, value) \
+         VALUES ('application', '{APPLICATION}', 'timezone', '\"Etc/GMT-14\"');"
     ))
     .await;
     let date = |offset_hours: i64| {
