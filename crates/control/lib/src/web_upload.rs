@@ -39,7 +39,7 @@ pub struct UploadedClient {
 /// # Errors
 ///
 /// When `release` is not the release the environment serves, a package
-/// artifact cannot be read or holds no built client, or a write fails. An
+/// artifact cannot be read or its web build holds no index, or a write fails. An
 /// object is never replaced.
 pub async fn upload_release(
     platform: &Platform,
@@ -94,6 +94,9 @@ pub async fn upload_release(
         };
         let project = client_project(client)?;
         let dist = web_build(opened.root());
+        let Some(mut files) = built_files(&dist, &tag)? else {
+            continue;
+        };
         let root = client_root(sink.prefix, package.package_id(), hex);
         let location = format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket);
         let index = object_store::path::Path::from(format!("{root}/index.html"));
@@ -105,13 +108,6 @@ pub async fn upload_release(
             });
             continue;
         }
-        let mut files = Vec::new();
-        collect(&dist, &mut files)
-            .with_context(|| format!("the package artifact {tag} holds no built web client"))?;
-        ensure!(
-            files.iter().any(|file| file == &dist.join("index.html")),
-            "the package artifact {tag} holds no web client index.html"
-        );
         write_files(
             store.as_ref(),
             &root,
@@ -376,6 +372,22 @@ impl<'a> Sink<'a> {
     }
 }
 
+/// The built files of a package web build, or `None` when the package has no
+/// web app: its empty web layer unpacks to no web build (wamn-21cms).
+fn built_files(dist: &Path, tag: &str) -> anyhow::Result<Option<Vec<PathBuf>>> {
+    if !dist.is_dir() {
+        return Ok(None);
+    }
+    let mut files = Vec::new();
+    collect(dist, &mut files)
+        .with_context(|| format!("the package artifact {tag} holds no built web client"))?;
+    ensure!(
+        files.iter().any(|file| file == &dist.join("index.html")),
+        "the package artifact {tag} holds no web client index.html"
+    );
+    Ok(Some(files))
+}
+
 /// Every file under `directory`.
 pub fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(directory)
@@ -415,10 +427,30 @@ mod tests {
     use object_store::ObjectStoreExt as _;
     use object_store::memory::InMemory;
 
-    use super::{Scheme, Sink, collect, write_files};
+    use super::{Scheme, Sink, built_files, collect, write_files};
 
     const HEAD: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SCOPE: &[u8] = br#"{"org":"acme","project":"receiving"}"#;
+
+    #[test]
+    fn a_package_without_a_web_build_has_no_files_and_one_without_an_index_refuses() {
+        let dist = std::env::temp_dir().join(format!("wamn-web-built-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dist);
+        assert!(built_files(&dist, "wamn_wms-2.1.3").unwrap().is_none());
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(dist.join("app.js"), "x").unwrap();
+        let error = built_files(&dist, "wamn_wms-2.1.3").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the package artifact wamn_wms-2.1.3 holds no web client index.html"
+        );
+        std::fs::write(dist.join("index.html"), "x").unwrap();
+        assert_eq!(
+            built_files(&dist, "wamn_wms-2.1.3").unwrap().unwrap().len(),
+            2
+        );
+        std::fs::remove_dir_all(&dist).unwrap();
+    }
 
     #[tokio::test]
     async fn an_existing_object_is_never_replaced() {
