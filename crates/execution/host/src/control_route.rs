@@ -246,7 +246,7 @@ impl ControlRoutes<'_> {
                         .await?
                         .is_empty()
             }
-            authority @ HostRouteAuthority::Admin => {
+            authority @ (HostRouteAuthority::Admin | HostRouteAuthority::Granted) => {
                 return Err(Refusal::Failed(anyhow::anyhow!(
                     "the control host does not admit the authority {authority:?}"
                 )));

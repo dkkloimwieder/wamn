@@ -10,7 +10,9 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use super::super::{NO_NUMBER_ISSUED, NumberCall, render_number};
+use super::super::{
+    CounterSet, CounterSetError, CounterSetRefusal, NO_NUMBER_ISSUED, NumberCall, render_number,
+};
 use crate::plugins::wamn_postgres::claims::tests::{LIVE_PRINCIPAL, live_guest_url};
 use crate::plugins::wamn_postgres::{
     ClassCredentials, PgError, SessionClaims, StatementError, WamnPostgres, WamnPostgresConfig,
@@ -48,7 +50,7 @@ enum Finish {
 
 struct Live {
     _lock: wamn_test_postgres::ProcessLock,
-    _database: wamn_test_postgres::Database,
+    database: wamn_test_postgres::Database,
     administration: tokio_postgres::Client,
     plugin: WamnPostgres,
     scopes: AtomicU32,
@@ -113,7 +115,7 @@ impl Live {
             })
             .expect("the plugin builds from the guest generation's url"),
             _lock: lock,
-            _database: database,
+            database,
             administration,
             scopes: AtomicU32::new(0),
         };
@@ -438,4 +440,271 @@ async fn live_the_date_uses_the_application_timezone_else_utc() {
             "{application}: {number} is not {before}-1 or {after}-1"
         );
     }
+}
+
+/// The operation id of the `number_counter.set` host route, as the host
+/// passes it.
+const SET_OPERATION: &str = "wamn-control:number-counter/set@0.9.0";
+
+impl Live {
+    /// A table of the application's records whose unique `number` holds
+    /// rendered numbers, readable by `wamn_app`.
+    async fn records(&self) -> tokio_postgres::Client {
+        let superuser = connect(self.database.url()).await;
+        superuser
+            .batch_execute(
+                "CREATE SCHEMA numbered; \
+                 CREATE TABLE numbered.purchase_order (id serial PRIMARY KEY, number text UNIQUE); \
+                 GRANT USAGE ON SCHEMA numbered TO wamn_app; \
+                 GRANT SELECT ON numbered.purchase_order TO wamn_app;",
+            )
+            .await
+            .expect("create the records table");
+        superuser
+    }
+
+    async fn set(
+        &self,
+        request_id: &str,
+        sequence: &str,
+        counter: &str,
+        key: &str,
+        value: i64,
+    ) -> Result<String, CounterSetError> {
+        self.plugin
+            .set_number_counter(
+                crate::plugins::wamn_postgres::DEFAULT_PROJECT,
+                TENANT,
+                LIVE_PRINCIPAL,
+                SET_OPERATION,
+                request_id,
+                &CounterSet {
+                    application: APPLICATION.to_owned(),
+                    sequence: sequence.to_owned(),
+                    counter: counter.to_owned(),
+                    key: key.to_owned(),
+                    value,
+                },
+                &["numbered".to_owned()],
+            )
+            .await
+    }
+
+    async fn refused(
+        &self,
+        sequence: &str,
+        counter: &str,
+        key: &str,
+        value: i64,
+    ) -> CounterSetRefusal {
+        let request = format!("refused-{}", self.scopes.fetch_add(1, Ordering::Relaxed));
+        match self.set(&request, sequence, counter, key, value).await {
+            Err(CounterSetError::Refused(refusal)) => refusal,
+            other => panic!("the set of {counter} to {value} is refused: {other:?}"),
+        }
+    }
+}
+
+/// An advance renders the set value next; a set lower than the counter is
+/// allowed when no record carries the number it gives, and refused when one
+/// does, which leaves the counter as it was.
+#[tokio::test]
+async fn live_set_counter_advances_resets_and_refuses_a_live_number() {
+    let live = Live::new().await;
+    live.sequence(APPLICATION, "purchase_order", "PO-{seq:po,width=6}")
+        .await;
+    let superuser = live.records().await;
+    for _ in 0..3 {
+        let number = live.next("purchase_order", "{}").await;
+        superuser
+            .execute(
+                "INSERT INTO numbered.purchase_order (number) VALUES ($1)",
+                &[&number],
+            )
+            .await
+            .expect("record the number");
+    }
+    assert_eq!(
+        live.set("advance", "purchase_order", "po", "", 100)
+            .await
+            .unwrap(),
+        "PO-000100"
+    );
+    assert_eq!(live.next("purchase_order", "{}").await, "PO-000100");
+    // PO-000100 was issued but no record carries it, and PO-000004 is free.
+    assert_eq!(
+        live.set("reset", "purchase_order", "po", "", 4)
+            .await
+            .unwrap(),
+        "PO-000004"
+    );
+    assert_eq!(
+        live.refused("purchase_order", "po", "", 2).await,
+        CounterSetRefusal::NumberLive {
+            number: "PO-000002".to_owned()
+        }
+    );
+    assert_eq!(live.next("purchase_order", "{}").await, "PO-000004");
+    assert_eq!(
+        live.refused("purchase_order", "po", "", 0).await,
+        CounterSetRefusal::InvalidInput { field: "value" }
+    );
+    assert_eq!(
+        live.refused("purchase_order", "po", "facility", 9).await,
+        CounterSetRefusal::InvalidInput { field: "key" }
+    );
+    assert_eq!(
+        live.refused("purchase_order", "line", "", 9).await,
+        CounterSetRefusal::CounterNotFound
+    );
+    assert_eq!(
+        live.refused("shipment", "po", "", 9).await,
+        CounterSetRefusal::SequenceNotFound
+    );
+}
+
+/// A `reset=` counter is set for one key, and a set of 1 on a new period key
+/// is allowed; a `per=` counter is refused, and no mapping row changes.
+#[tokio::test]
+async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
+    let live = Live::new().await;
+    live.sequence(
+        APPLICATION,
+        "pick_label",
+        "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}",
+    )
+    .await;
+    live.sequence(APPLICATION, "yearly", "{date:YY}-{seq:n,reset=date:YY}")
+        .await;
+    let _superuser = live.records().await;
+    let abc = r#"{"batch_id":"abc"}"#;
+    assert_eq!(live.next("pick_label", abc).await, "B0001-001");
+    assert_eq!(
+        live.refused("pick_label", "batch", "abc", 7).await,
+        CounterSetRefusal::AssignedPerKey
+    );
+    assert_eq!(
+        live.set("line", "pick_label", "line", "0001", 5)
+            .await
+            .unwrap(),
+        "B0001-005"
+    );
+    assert_eq!(live.next("pick_label", abc).await, "B0001-005");
+    assert_eq!(
+        live.next("pick_label", r#"{"batch_id":"def"}"#).await,
+        "B0002-001",
+        "the per= allocator did not move"
+    );
+    assert_eq!(
+        live.set("period", "yearly", "n", "99", 1).await.unwrap(),
+        "99-1"
+    );
+}
+
+/// A set waits for a concurrent next number that holds the counter row, and
+/// the next number after both renders the set value.
+#[tokio::test]
+async fn live_set_counter_serializes_with_a_concurrent_next_number() {
+    let live = Live::new().await;
+    live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
+        .await;
+    let _superuser = live.records().await;
+    assert_eq!(live.next("purchase_order", "{}").await, "P-1");
+    let scope = "numbering-held";
+    live.plugin
+        .bind_session_claims(
+            scope,
+            &SessionClaims {
+                tenant: TENANT.to_owned(),
+                user_id: Some(LIVE_PRINCIPAL.to_owned()),
+                application: Some(APPLICATION.to_owned()),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .expect("the claims bind");
+    let held = live
+        .plugin
+        .begin_operation_transaction(scope)
+        .await
+        .expect("the operation transaction begins");
+    live.plugin
+        .bind_operation_transaction(scope, &held)
+        .expect("the transaction binds");
+    let number = render_number(
+        &live.plugin,
+        scope,
+        "purchase_order".to_owned(),
+        "{}".to_owned(),
+        NumberCall::Next,
+    )
+    .await
+    .expect("the held call renders");
+    assert_eq!(number, "P-2");
+    let set = live.set("serialized", "purchase_order", "po", "", 50);
+    tokio::pin!(set);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut set)
+            .await
+            .is_err(),
+        "the set waits for the counter row"
+    );
+    live.plugin.revoke_operation_transaction(scope);
+    held.commit().await.expect("the held call commits");
+    assert_eq!(set.await.unwrap(), "P-50");
+    assert_eq!(live.next("purchase_order", "{}").await, "P-50");
+}
+
+/// A set is one write log row under the route's operation and the request
+/// id, with the next number as its result; a retry answers it and changes
+/// nothing, a different set under the same id is refused, and the counter
+/// row names the caller.
+#[tokio::test]
+async fn live_set_counter_is_logged_by_its_request_id() {
+    let live = Live::new().await;
+    live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
+        .await;
+    let superuser = live.records().await;
+    assert_eq!(
+        live.set("logged", "purchase_order", "po", "", 10)
+            .await
+            .unwrap(),
+        "P-10"
+    );
+    let row = superuser
+        .query_one(
+            "SELECT result FROM platform.write_log \
+             WHERE operation = 'wamn-control:number-counter/set' AND idempotency_key = 'logged'",
+            &[],
+        )
+        .await
+        .expect("the set has its write log row");
+    assert_eq!(
+        row.get::<_, Option<String>>(0).as_deref(),
+        Some(r#"{"next_number":"P-10"}"#)
+    );
+    assert_eq!(live.next("purchase_order", "{}").await, "P-10");
+    assert_eq!(
+        live.set("logged", "purchase_order", "po", "", 10)
+            .await
+            .unwrap(),
+        "P-10",
+        "a retry answers the stored result"
+    );
+    assert_eq!(live.next("purchase_order", "{}").await, "P-11");
+    assert!(matches!(
+        live.set("logged", "purchase_order", "po", "", 30).await,
+        Err(CounterSetError::Refused(
+            CounterSetRefusal::IdempotencyConflict
+        ))
+    ));
+    let updated_by: String = superuser
+        .query_one(
+            "SELECT updated_by::text FROM platform.number_counter WHERE counter = 'po'",
+            &[],
+        )
+        .await
+        .expect("the counter row")
+        .get(0);
+    assert_eq!(updated_by, LIVE_PRINCIPAL);
 }

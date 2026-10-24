@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "next_number",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

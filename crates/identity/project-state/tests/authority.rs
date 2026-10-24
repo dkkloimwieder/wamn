@@ -12,8 +12,8 @@
 //!   their stable `wamn_app` reads and nothing more, so a tenant or an
 //!   application cannot create a platform row or a `wamn:` name. `api_key`
 //!   takes no grant at all;
-//! - `number_counter` is written only through `platform.bump_counter` and
-//!   `platform.assign_counter`, which take the caller's tenant from its role name — the control proving the
+//! - `number_counter` is written only through `platform.bump_counter`,
+//!   `platform.assign_counter` and `platform.set_counter`, which take the caller's tenant from its role name — the control proving the
 //!   other test fails for the revoked privilege rather than for an over-broad
 //!   narrowing;
 //! - the history tables take no read and no direct write from an App
@@ -402,6 +402,68 @@ DO $$ BEGIN
   BEGIN
     PERFORM platform.assign_counter('{SEQUENCE}', 'batch', 'batch-c');
     RAISE EXCEPTION 'assign_counter assigned a key for a caller that is no App generation';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+ROLLBACK;"
+    )
+    .expect("writing to a String cannot fail");
+    script.push_str(TEARDOWN);
+    run(&url, &script);
+}
+
+/// `platform.set_counter` is the third writer of `number_counter`, the write
+/// of the set_counter host route (docs/plan/platform-config.md, Numbering;
+/// owner ruling of wamn-83eth.3). The App generation holds EXECUTE on it. It
+/// inserts a counter row or sets its value; it refuses a value below 1, a
+/// sequence of another tenant and a caller that is no App generation.
+#[test]
+fn the_application_sets_a_counter_only_through_set_counter() {
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
+
+    let (app_generation, mut script) = prelude(&url);
+    writeln!(
+        script,
+        r"
+DO $$ BEGIN
+  ASSERT has_function_privilege('wamn_app'::name,
+                                'platform.set_counter(uuid, text, text, bigint)'::text, 'EXECUTE'),
+    'wamn_app must execute set_counter';
+  ASSERT (SELECT prosecdef FROM pg_catalog.pg_proc
+           WHERE oid = 'platform.set_counter(uuid, text, text, bigint)'::regprocedure),
+    'set_counter must be SECURITY DEFINER';
+END $$;
+
+BEGIN;
+SET LOCAL ROLE {app_generation};
+
+DO $$ BEGIN
+  PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 100);
+  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 100, 'a new row renders the set value';
+  PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 7);
+  ASSERT platform.bump_counter('{SEQUENCE}', 'po', '') = 7, 'a set row renders the set value';
+  BEGIN
+    PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 0);
+    RAISE EXCEPTION 'set_counter set a value below 1';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  BEGIN
+    PERFORM platform.set_counter('{OTHER_SEQUENCE}', 'po', '', 5);
+    RAISE EXCEPTION 'set_counter set a counter of another tenant';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+
+RESET ROLE;
+DO $$ BEGIN
+  ASSERT (SELECT count(*) FROM platform.number_counter WHERE tenant_id = '{OTHER_TENANT}') = 0,
+    'the refused call wrote no counter of the other tenant';
+  BEGIN
+    PERFORM platform.set_counter('{SEQUENCE}', 'po', '', 5);
+    RAISE EXCEPTION 'set_counter set a counter for a caller that is no App generation';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 END $$;

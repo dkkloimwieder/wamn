@@ -112,6 +112,7 @@ impl HostRouteDelivery {
         &self,
         attachment: &HostAttachment,
         caller: &AuthenticatedCaller,
+        request_id: Option<&str>,
         payload: &str,
     ) -> Result<serde_json::Value, Refusal> {
         let principal: PrincipalId = caller.principal_id().parse().map_err(
@@ -190,7 +191,7 @@ impl HostRouteDelivery {
                         .as_ref()
                         .map(|(client, org)| (client.as_ref(), org.as_str())),
                 }
-                .handle(attachment, &principal, payload)
+                .handle(attachment, &principal, request_id, payload)
                 .await
             }
             (
@@ -316,7 +317,15 @@ impl RouteDelivery for HostRouteDelivery {
                 Value::Array(vec![Value::Object(item)]).to_string(),
             )))
         };
-        match self.handle(attachment, &caller, &input.to_string()).await {
+        match self
+            .handle(
+                attachment,
+                &caller,
+                request_id.as_deref(),
+                &input.to_string(),
+            )
+            .await
+        {
             Ok(result) => outcome("value", result),
             Err(Refusal::Declared { code, detail }) => {
                 let mut error = serde_json::Map::new();

@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:number-counter/set@0.9.0",
+  "type": "command",
+  "label": "Set a number counter",
+  "grant": "wamn-control:number-counter/set@0.9.0",
+  "permission_token": "number_counter.set",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -1,0 +1,75 @@
+{
+  "cases": [
+    {
+      "literal": "invalid_input",
+      "from": [
+        "malformed_input"
+      ],
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "sequence_not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The application has no number sequence of this name."
+    },
+    {
+      "literal": "counter_not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The pattern of the sequence has no counter of this name."
+    },
+    {
+      "literal": "counter_assigned_per_key",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "A per= counter gives each key one number for good, so it is never set."
+    },
+    {
+      "literal": "number_live",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "A record already carries the number that this value gives, so the set is refused."
+    },
+    {
+      "literal": "idempotency_conflict",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "This request id was used for a different set."
+    },
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    }
+  ],
+  "closed": true
+}

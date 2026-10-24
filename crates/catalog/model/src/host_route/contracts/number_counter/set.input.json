@@ -1,0 +1,45 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.application",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Application"
+    },
+    {
+      "path": "value.sequence",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Sequence"
+    },
+    {
+      "path": "value.counter",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Counter"
+    },
+    {
+      "path": "value.key",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Key"
+    },
+    {
+      "path": "value.value",
+      "type": "int64",
+      "nullable": false,
+      "values": [],
+      "label": "Next value"
+    }
+  ]
+}

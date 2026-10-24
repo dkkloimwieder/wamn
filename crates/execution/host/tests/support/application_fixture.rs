@@ -142,9 +142,36 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
     Ok((admitter, administration))
 }
 
+/// The App generation of the fixture tenant, as provisioning prepares it:
+/// the guest authority that `number_counter.set` runs under. Returns its
+/// login name.
+pub(super) async fn app_generation(admin: &Client, database: &str) -> anyhow::Result<String> {
+    let role = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database,
+        },
+        CredentialGeneration::A,
+    )?;
+    admin
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            database,
+            &role,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await?;
+    Ok(role)
+}
+
+/// The host's credentials: the admitter and the administration login, and
+/// the guest login when the host serves `number_counter.set`.
 pub(super) fn credentials(
     admitter: &str,
     administration: &str,
+    guest: Option<&str>,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
@@ -154,10 +181,14 @@ pub(super) fn credentials(
         statement_timeout_ms: 5000,
         row_limit: 100,
     };
-    let configuration = json!({PROJECT: {"credentials": {
+    let mut classes = json!({
         (AuthorityClass::CallableHttp.as_str()): admitter,
         (AuthorityClass::Administration.as_str()): administration,
-    }}});
+    });
+    if let Some(guest) = guest {
+        classes[AuthorityClass::GuestSql.as_str()] = json!(guest);
+    }
+    let configuration = json!({PROJECT: {"credentials": classes}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
     Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(projects, None),
@@ -220,6 +251,7 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
         .await?
         .get(0);
     let (admitter, administration) = install(&admin, &database).await?;
+    let guest = app_generation(&admin, &database).await?;
     let first = claims()["sub"].as_str().unwrap().to_owned();
     let server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
@@ -244,6 +276,7 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
         &login(admin_url, &administration)?,
+        Some(&login(admin_url, &guest)?),
     )?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(

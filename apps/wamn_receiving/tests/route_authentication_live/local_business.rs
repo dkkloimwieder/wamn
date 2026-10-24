@@ -179,6 +179,117 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
     result
 }
 
+/// `purchase_order.create` numbers the order from the `purchase_order`
+/// sequence and fills its actor fields from the caller
+/// (docs/plan/platform-config.md, Issues for C2, Receiving conformance): two
+/// creates give PO-000001 and PO-000002, each created and updated by the
+/// caller. The local runtime runs no env apply, so the test writes the
+/// sequence row that env apply creates, for the composing application and
+/// for Receiving; the application claim selects one.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let application = start(system.url(), project.url(), scratch.path()).await?;
+    let result = async {
+        let (client, connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        let tenant = super::identity().tenant.as_str();
+        super::bind_fixture_principal(&client, tenant).await?;
+        let supplier = "00000000-0000-0000-0000-000000000950";
+        client
+            .execute(
+                "INSERT INTO receiving.supplier (id, name) VALUES ($1::text::uuid, 'SUPPLIER-950')",
+                &[&supplier],
+            )
+            .await?;
+        for owner in ["wamn_receiving", "client_acme_receiving"] {
+            client
+                .execute(
+                    "INSERT INTO platform.number_sequence (tenant_id, application, name, pattern) \
+                     VALUES ($1, $2, 'purchase_order', 'PO-{seq:po,width=6}')",
+                    &[&tenant, &owner],
+                )
+                .await?;
+        }
+        let http = reqwest::Client::new();
+        let mut numbers = Vec::new();
+        for key in ["numbered-1", "numbered-2"] {
+            let response = http
+                .post(format!("{}/purchase_order/create", application.endpoint))
+                .header(reqwest::header::HOST, &application.route_host)
+                .bearer_auth(&application.bearer)
+                .json(
+                    &json!([{"request_id": key, "idempotency_key": key, "supplier_id": supplier}]),
+                )
+                .send()
+                .await?;
+            ensure!(
+                response.status().is_success(),
+                "the create was refused: {}",
+                response.status()
+            );
+            let body: Value = response.json().await?;
+            let number = body[0]["value"]["purchase_order_number"]
+                .as_str()
+                .with_context(|| format!("the create answered no number: {body}"))?;
+            numbers.push(number.to_owned());
+        }
+        ensure!(
+            numbers == ["PO-000001", "PO-000002"],
+            "the creates were numbered {numbers:?}"
+        );
+        let caller: String = client
+            .query_one(
+                "SELECT user_id::text FROM platform.user_role \
+                 WHERE tenant_id = $1 AND role_name = 'admin'",
+                &[&tenant],
+            )
+            .await?
+            .get(0);
+        let rows = client
+            .query(
+                "SELECT purchase_order_number, created_by::text, updated_by::text \
+                 FROM receiving.purchase_order ORDER BY purchase_order_number",
+                &[],
+            )
+            .await?;
+        let actors = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    row.get::<_, String>(1),
+                    row.get::<_, String>(2),
+                )
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            actors
+                == numbers
+                    .iter()
+                    .map(|number| (number.clone(), caller.clone(), caller.clone()))
+                    .collect::<Vec<_>>(),
+            "the orders do not name the caller {caller}: {actors:?}"
+        );
+        drop(client);
+        connection.await??;
+        Ok(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
 /// A write-log entry is keyed by the versionless operation, so a key stored
 /// through Acme under one release answers the stored result under the next
 /// (docs/plan/trx-pkg-plan.md, Idempotency ruling 2026-10-12). The local
@@ -326,6 +437,7 @@ async fn start_with(
         matches!(
             wamn_schema_generator::sealed_operation_reference(route_operation(attachment)),
             "wamn-receiving:purchase-order/query"
+                | "wamn-receiving:purchase-order/create"
                 | "wamn-receiving:purchase-order/update"
                 | "wamn-receiving:receipt/get"
                 | "wamn-receiving:receiving/record-receipt"

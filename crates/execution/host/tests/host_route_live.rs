@@ -179,6 +179,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
         &login(admin_url, &administration)?,
+        None,
     )?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
@@ -219,6 +220,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         json!({"admin": true, "permissions": [
             "session-test:purchase/read",
             "session-test:purchase/write",
+            "wamn-control:number-counter/set",
             "wamn-control:permission/grant",
             "wamn-control:permission/list",
             "wamn-control:permission/mine",
@@ -551,6 +553,133 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     assert_eq!(
         answer("wamn-control:role/delete", json!({"role": "clerk"})).await,
         json!({"deleted": true})
+    );
+    host.server.stop().await;
+    Ok(())
+}
+
+/// `number_counter.set` is granted per role (docs/plan/platform-config.md,
+/// Numbering, Administration): an authored role without the permission is
+/// refused, `permission.grant` gives it to the role, and the set then runs
+/// in an operation transaction under the caller, logged in the write log by
+/// its request id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
+    let mut host = application_host("number_counter_set").await?;
+    let ApplicationHost {
+        admin,
+        routing,
+        delivery,
+        ..
+    } = &host;
+    admin
+        .execute(
+            "INSERT INTO platform.number_sequence (tenant_id, application, name, pattern) \
+             VALUES ($1, 'session_test', 'purchase_order', 'P-{seq:po}')",
+            &[&TENANT],
+        )
+        .await?;
+    let bearer = |body: &Value| format!("Bearer {}", signed(&header(), body));
+    let mut admin_claims = claims();
+    admin_claims["roles"] = json!(["admin"]);
+    let mut member_claims = claims();
+    member_claims["sub"] = json!(MEMBER);
+    member_claims["authority"] = json!({"login": MEMBER});
+    member_claims["roles"] = json!(["purchase-reader"]);
+    let set = "wamn-control:number-counter/set";
+    // One write item with its own request id, answered as its one item.
+    let call = async |claims: &Value, reference: &str, request_id: &str, value: Value| {
+        let route = route_of(reference);
+        let caller = routing
+            .authenticate_authorization_for_test(&route, Some(&bearer(claims)))
+            .await
+            .expect("the session is admitted")
+            .expect("a host-owned caller");
+        let outcome = delivery
+            .deliver(
+                DeliveryRequest {
+                    source: Source::Attachment(route.clone()),
+                    delivery_id: request_id.to_owned(),
+                    payload: json!([{"request_id": request_id, "value": value}]).to_string(),
+                    caller: None,
+                    trace: None,
+                    parent_causation: None,
+                    if_none_match: None,
+                },
+                Some(caller),
+            )
+            .await
+            .outcome?;
+        let DeliveryOutcome::Respond(body) = outcome else {
+            panic!("{reference} responds: {outcome:?}");
+        };
+        let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+        Ok::<_, DeliveryError>(item)
+    };
+    let request = |counter: &str, value: i64| {
+        json!({"application": "session_test", "sequence": "purchase_order",
+               "counter": counter, "key": "", "value": value})
+    };
+
+    assert!(
+        matches!(
+            call(&member_claims, set, "denied", request("po", 7)).await,
+            Err(DeliveryError::PermissionDenied(_))
+        ),
+        "an authored role without the permission is refused"
+    );
+    assert_eq!(
+        admin
+            .query_one("SELECT count(*) FROM platform.number_counter", &[])
+            .await?
+            .get::<_, i64>(0),
+        0
+    );
+
+    let granted = call(
+        &admin_claims,
+        "wamn-control:permission/grant",
+        "grant",
+        json!({"role": "purchase-reader", "operation": set}),
+    )
+    .await
+    .expect("the grant answers");
+    assert_eq!(granted["value"], json!({"rows_added": 1}), "{granted}");
+
+    assert_eq!(
+        call(&member_claims, set, "set-7", request("po", 7))
+            .await
+            .expect("the set answers"),
+        json!({"request_id": "set-7", "value": {"next_number": "P-7"}})
+    );
+    let row = admin
+        .query_one(
+            "SELECT value, updated_by::text FROM platform.number_counter \
+             WHERE counter = 'po' AND key_value = ''",
+            &[],
+        )
+        .await?;
+    assert_eq!(
+        (row.get::<_, i64>(0), row.get::<_, String>(1)),
+        (7, MEMBER.to_owned())
+    );
+    let logged = admin
+        .query_one(
+            "SELECT result FROM platform.write_log \
+             WHERE operation = $1 AND idempotency_key = 'set-7'",
+            &[&set],
+        )
+        .await?;
+    assert_eq!(
+        logged.get::<_, Option<String>>(0).as_deref(),
+        Some(r#"{"next_number":"P-7"}"#)
+    );
+    assert_eq!(
+        call(&member_claims, set, "nope", request("nope", 7))
+            .await
+            .expect("the set answers"),
+        json!({"request_id": "nope",
+               "error": {"code": "counter_not_found", "detail": {"field": "counter"}}})
     );
     host.server.stop().await;
     Ok(())

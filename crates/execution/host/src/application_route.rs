@@ -17,8 +17,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{
-    HostAttachment, HostHandler, HostRouteAuthority, is_host_route_operation,
-    sealed_operation_reference,
+    HostAttachment, HostHandler, HostRouteAuthority, is_granted_host_route_operation,
+    is_host_route_operation, sealed_operation_reference,
 };
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -31,7 +31,9 @@ use wamn_platform_identity::application::{
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::is_project_admin;
 use wamn_project_state::ADMIN_ROLE;
-use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
+use wamn_runtime::plugins::wamn_postgres::{
+    CounterSet, CounterSetError, CounterSetRefusal, WamnPostgres,
+};
 
 use crate::control_route::{Refusal, parse};
 
@@ -62,6 +64,16 @@ struct RoleRequest {
 struct PermissionRequest {
     role: String,
     operation: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CounterSetRequest {
+    application: String,
+    sequence: String,
+    counter: String,
+    key: String,
+    value: i64,
 }
 
 #[derive(Deserialize)]
@@ -100,13 +112,44 @@ fn declared(refusal: &AdministrationRefusal) -> Refusal {
     }
 }
 
+/// The code and detail that the contract of `number_counter.set` declares
+/// for one refused set.
+fn counter_set_refusal(refusal: &CounterSetRefusal) -> Refusal {
+    let (code, field) = match refusal {
+        CounterSetRefusal::InvalidInput { field } => ("invalid_input", *field),
+        CounterSetRefusal::SequenceNotFound => ("sequence_not_found", "sequence"),
+        CounterSetRefusal::CounterNotFound => ("counter_not_found", "counter"),
+        CounterSetRefusal::AssignedPerKey => ("counter_assigned_per_key", "counter"),
+        CounterSetRefusal::NumberLive { number } => {
+            return Refusal::Declared {
+                code: "number_live",
+                detail: json!({ "field": "value", "number": number }),
+            };
+        }
+        CounterSetRefusal::IdempotencyConflict => ("idempotency_conflict", "request_id"),
+    };
+    Refusal::Declared {
+        code,
+        detail: json!({ "field": field }),
+    }
+}
+
 impl ApplicationRoutes<'_> {
+    /// Serve one application route. `request_id` is the request id of a
+    /// write, which `number_counter.set` logs in the write log.
     pub(crate) async fn handle(
         &self,
         attachment: &HostAttachment,
         principal: &PrincipalId,
+        request_id: Option<&str>,
         payload: &str,
     ) -> Result<Value, Refusal> {
+        if attachment.route.handler == HostHandler::NumberCounterSet {
+            let request: CounterSetRequest = parse(payload)?;
+            return self
+                .set_counter(attachment, principal, request_id, request)
+                .await;
+        }
         let tenant = self.release.scope().tenant_id.as_str();
         let mut drops = AuthDrops::default();
         let result = self
@@ -187,7 +230,9 @@ impl ApplicationRoutes<'_> {
             }
             HostHandler::PermissionGrant => {
                 let request: PermissionRequest = parse(payload)?;
-                if is_host_route_operation(&request.operation) {
+                if is_host_route_operation(&request.operation)
+                    && !is_granted_host_route_operation(&request.operation)
+                {
                     return Err(
                         AdministrationError::from(AdministrationRefusal::NotGrantable {
                             reference: request.operation,
@@ -251,6 +296,62 @@ impl ApplicationRoutes<'_> {
                 "the application routes do not serve the host handler {handler:?}"
             ))),
         }
+    }
+
+    /// Set one counter of a sequence of the requested application in an
+    /// operation transaction of the guest authority, logged in the write log
+    /// under the route's operation and the request id
+    /// (docs/plan/platform-config.md, Numbering, Administration). The
+    /// application is a composing application of the release, and its
+    /// records are in the schemas of its components.
+    async fn set_counter(
+        &self,
+        attachment: &HostAttachment,
+        principal: &PrincipalId,
+        request_id: Option<&str>,
+        request: CounterSetRequest,
+    ) -> Result<Value, Refusal> {
+        let manifest = self.release.manifest();
+        let components = manifest
+            .components
+            .iter()
+            .filter(|component| manifest.composing_application(component) == request.application)
+            .collect::<Vec<_>>();
+        if components.is_empty() {
+            return Err(counter_set_refusal(&CounterSetRefusal::InvalidInput {
+                field: "application",
+            }));
+        }
+        let schemas = components
+            .iter()
+            .filter_map(|component| component.runtime_schema.clone())
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let set = CounterSet {
+            application: request.application,
+            sequence: request.sequence,
+            counter: request.counter,
+            key: request.key,
+            value: request.value,
+        };
+        let number = self
+            .postgres
+            .set_number_counter(
+                self.project,
+                self.release.scope().tenant_id.as_str(),
+                principal.as_str(),
+                &attachment.operation,
+                request_id.unwrap_or_default(),
+                &set,
+                &schemas,
+            )
+            .await
+            .map_err(|error| match error {
+                CounterSetError::Refused(refusal) => counter_set_refusal(&refusal),
+                CounterSetError::Failed(error) => Refusal::Failed(error),
+            })?;
+        Ok(json!({ "next_number": number }))
     }
 
     /// The identity reader of the host. `project-admin`, which `org-admin`
@@ -321,7 +422,8 @@ impl ApplicationRoutes<'_> {
                 json!({
                     "operation": operation,
                     "served": served.contains(operation) || authority.is_some(),
-                    "grantable": served.contains(operation) && authority.is_none(),
+                    "grantable": (served.contains(operation) && authority.is_none())
+                        || authority == Some(&HostRouteAuthority::Granted),
                     "admin_only": authority == Some(&HostRouteAuthority::Admin),
                     "selected": rows.iter().any(|row| row == operation),
                 })

@@ -73,10 +73,15 @@ static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> =
 const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 /// Domain of the platform principal emails in every test tenant.
 const PLATFORM_DOMAIN: &str = "example.invalid";
-// Eleven base operations: the supplier record (wamn-rm14.8) added
-// supplier_create and supplier_query to the nine before it.
-const BASE_OPERATIONS: [(&str, &str); 11] = [
+// Twelve base operations: the supplier record (wamn-rm14.8) added
+// supplier_create and supplier_query to the nine before it, and numbering
+// (wamn-83eth.3) added purchase_order_create.
+const BASE_OPERATIONS: [(&str, &str); 12] = [
     ("location_list", "wamn-receiving:location/list"),
+    (
+        "purchase_order_create",
+        "wamn-receiving:purchase-order/create",
+    ),
     ("purchase_order_get", "wamn-receiving:purchase-order/get"),
     (
         "purchase_order_query",

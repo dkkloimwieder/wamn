@@ -376,6 +376,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0029_number_assignment.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0029_number_assignment.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0030_number_counter_set.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0030_number_counter_set.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -474,12 +478,15 @@ mod tests {
     /// ends with the PLATFORM CONFIGURATION section of `app-schema.sql`, byte
     /// for byte, so a fresh install and an upgraded database hold the same
     /// tables, function and grants. The migration that adds
-    /// `platform.assign_counter` ends with the NUMBER ASSIGNMENT section.
+    /// `platform.assign_counter` ends with the NUMBER ASSIGNMENT section, and
+    /// the one that adds `platform.set_counter` with the NUMBER SETTING
+    /// section.
     #[test]
     fn the_platform_configuration_migrations_are_the_app_schema_sections() {
         for (suffix, title) in [
             ("_platform_configuration.sql", "PLATFORM CONFIGURATION"),
             ("_number_assignment.sql", "NUMBER ASSIGNMENT"),
+            ("_number_counter_set.sql", "NUMBER SETTING"),
         ] {
             let section = app_schema_section(title);
             let migration = PROJECT_MIGRATIONS

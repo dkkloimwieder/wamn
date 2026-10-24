@@ -252,7 +252,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
 
     // A project database installed before 0024: the run reads the record
     // table in the old schema, applies the rename and records it in platform,
-    // then applies 0025 to 0029. The database also loses what 0025 and 0029 add, gets
+    // then applies 0025 to 0030. The database also loses what 0025, 0029 and 0030 add, gets
     // back what 0025 removes, and has the table names from before 0027 and 0028.
     let client = connect(&project_url).await;
     client
@@ -269,6 +269,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
         .0
         .batch_execute(
             "DELETE FROM platform.schema_migrations WHERE ordinal >= 24; \
+             DROP FUNCTION platform.set_counter(uuid, text, text, bigint); \
              DROP FUNCTION platform.assign_counter(uuid, text, text); \
              DROP FUNCTION platform.bump_counter(uuid, text, text); \
              DROP TABLE platform.setting_history, platform.number_sequence_history, \

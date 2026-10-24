@@ -19,7 +19,12 @@ struct Operation {
     route: &'static str,
 }
 
-const OPERATIONS: [Operation; 11] = [
+const OPERATIONS: [Operation; 12] = [
+    Operation {
+        token: "wamn-receiving:purchase-order/create",
+        attachment: "purchase-order-create-http",
+        route: "/purchase_order/create",
+    },
     Operation {
         token: "wamn-receiving:purchase-order/get",
         attachment: "purchase-order-get-http",
@@ -149,7 +154,7 @@ fn declaration() -> ComponentDeclaration {
 }
 
 #[test]
-fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
+fn package_owned_inputs_declare_the_exact_twelve_route_closure() {
     let package_manifest = read_json(&wamn_schema_generator::package_manifest_path(
         &repository_root().join("apps/wamn_receiving"),
     ));

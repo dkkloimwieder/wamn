@@ -549,8 +549,8 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 /// and writes (docs/plan/platform-ui.md §2.1), the environment status that
 /// the status routes mirror (§5.4), and the platform configuration tables
 /// that the control host writes (docs/plan/platform-config.md, Issues for C1,
-/// 3). `number_counter` is not one of them: only `platform.bump_counter` and
-/// `platform.assign_counter` write it.
+/// 3). `number_counter` is not one of them: only `platform.bump_counter`,
+/// `platform.assign_counter` and `platform.set_counter` write it.
 pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "user",
     "role",

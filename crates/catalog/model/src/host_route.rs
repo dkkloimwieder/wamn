@@ -67,14 +67,27 @@ pub fn host_route_version() -> &'static str {
 }
 
 /// Whether a stable operation reference or sealed operation id names a host
-/// route. A host route is fixed to `admin` or to every member, so no authored
-/// role holds one (docs/plan/platform-ui.md §2.5).
+/// route. Most host routes are fixed to `admin` or to every member, so no
+/// authored role holds one (docs/plan/platform-ui.md §2.5). A
+/// [`HostRouteAuthority::Granted`] route is the exception: see
+/// [`is_granted_host_route_operation`].
 pub fn is_host_route_operation(operation: &str) -> bool {
     static TOKEN_PACKAGE: LazyLock<String> =
         LazyLock::new(|| CONTRACT.package.id.replace('_', "-"));
     operation
         .split_once(':')
         .is_some_and(|(package, _)| package == TOKEN_PACKAGE.as_str())
+}
+
+/// Whether a stable operation reference or sealed operation id names a host
+/// route that an authored role holds through a stored permission row
+/// ([`HostRouteAuthority::Granted`]), such as `number_counter.set`.
+pub fn is_granted_host_route_operation(operation: &str) -> bool {
+    let reference = sealed_operation_reference(operation);
+    ATTACHMENTS.values().any(|attachment| {
+        attachment.route.authority == HostRouteAuthority::Granted
+            && attachment.reference == reference
+    })
 }
 
 /// The path prefix of every host route, with its closing `/`. Publish
@@ -167,6 +180,9 @@ pub enum HostHandler {
     ProjectInactivate,
     /// Create a project with no environment (docs/plan/platform-ui.md §5.1).
     ProjectCreate,
+    /// Set one counter of a number sequence of the application
+    /// (docs/plan/platform-config.md, Numbering, Administration).
+    NumberCounterSet,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -185,6 +201,11 @@ pub enum HostRouteAuthority {
     /// the project that the request names. The handler checks the role,
     /// again in its write transaction.
     ProjectAdmin,
+    /// A holder of `admin`, or of an authored role that holds the route's
+    /// operation as a stored permission row, as for a package operation.
+    /// `permission.grant` gives it to a role (docs/plan/platform-config.md,
+    /// Numbering, Administration; owner ruling of wamn-83eth.3).
+    Granted,
 }
 
 /// One fixed host route.
@@ -269,6 +290,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::UserRoleRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "number_counter.set",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::NumberCounterSet,
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -439,10 +467,14 @@ impl HostAttachment {
         AttachmentType::Http
     }
 
-    /// The operation an `admin`-only route requires. A member route
-    /// requires none.
+    /// The operation an `admin`-only or a granted route requires. A member
+    /// route requires none.
     pub fn registered_operation(&self) -> Option<&str> {
-        (self.route.authority == HostRouteAuthority::Admin).then_some(self.operation.as_str())
+        matches!(
+            self.route.authority,
+            HostRouteAuthority::Admin | HostRouteAuthority::Granted
+        )
+        .then_some(self.operation.as_str())
     }
 }
 
@@ -569,5 +601,24 @@ mod tests {
             Some("wamn-control:user/list@0.9.0")
         );
         assert_eq!(host_route_path_prefix(), "/wamn_control/");
+
+        let counter = HostRouteSet::Application
+            .attachment("wamn-control-number-counter-set-http")
+            .expect("number_counter.set is an application host route");
+        assert_eq!(counter.reference, "wamn-control:number-counter/set");
+        assert_eq!(
+            counter.registered_operation(),
+            Some("wamn-control:number-counter/set@0.9.0")
+        );
+        assert!(is_granted_host_route_operation(
+            "wamn-control:number-counter/set"
+        ));
+        assert!(is_granted_host_route_operation(
+            "wamn-control:number-counter/set@0.9.0"
+        ));
+        assert!(!is_granted_host_route_operation("wamn-control:role/create"));
+        assert!(!is_granted_host_route_operation(
+            "wamn-receiving:receipt/get"
+        ));
     }
 }

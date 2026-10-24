@@ -90,6 +90,7 @@ pub use credential_exactness::{
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
 pub use event_admission::{EventRunAdmission, EventRunAdmitted};
+pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation_transaction::{CommitFailure, OperationTransaction};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, K8sSecretProvider, ProjectConfig,

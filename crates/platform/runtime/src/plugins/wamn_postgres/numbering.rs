@@ -363,5 +363,8 @@ fn render_counter(counter: &Counter, value: i64) -> String {
     text
 }
 
+mod set;
+pub use set::{CounterSet, CounterSetError, CounterSetRefusal};
+
 #[cfg(test)]
 mod tests;

@@ -567,6 +567,12 @@ cluster.Cluster {{
             "Receiving has a {kind} {name} without an event registration"
         );
     }
+    // Env apply creates the number_sequence row of Receiving's po sequence
+    // with the package's default pattern (wamn-83eth.3).
+    ensure!(
+        number_sequence_pattern(&kubeconfig, &context, "po").await? == "PO-{seq:po,width=6}",
+        "env apply did not create the po number_sequence row"
+    );
     require_web_skip(&applied)?;
     require_platform_ui_skip(&applied)?;
     let control: Value = kubectl::get(
@@ -919,6 +925,76 @@ fn local_owner_mail(kubeconfig: &Path, context: &str) -> anyhow::Result<()> {
     ])?;
     run(&["rollout", "status", "deployment/identity", "--timeout=300s"])?;
     Ok(())
+}
+
+// The pattern of one number_sequence row in the Receiving project database,
+// read with psql in the primary pod of wamn-pg. A read only: the test holds
+// no database credential outside the cluster.
+async fn number_sequence_pattern(
+    kubeconfig: &Path,
+    context: &str,
+    sequence: &str,
+) -> anyhow::Result<String> {
+    let primary = kubectl::kubectl(
+        kubeconfig,
+        context,
+        "platform",
+        &[
+            "get",
+            "pods",
+            "-l",
+            "cnpg.io/cluster=wamn-pg,cnpg.io/instanceRole=primary",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ],
+        None,
+    )
+    .await?;
+    let psql = |database: String, sql: String| {
+        let primary = primary.trim().to_owned();
+        async move {
+            let output = kubectl::kubectl(
+                kubeconfig,
+                context,
+                "platform",
+                &[
+                    "exec",
+                    &primary,
+                    "-c",
+                    "postgres",
+                    "--",
+                    "psql",
+                    "--no-psqlrc",
+                    "--tuples-only",
+                    "--no-align",
+                    "--set",
+                    "ON_ERROR_STOP=1",
+                    "--dbname",
+                    &database,
+                    "--command",
+                    &sql,
+                ],
+                None,
+            )
+            .await?;
+            anyhow::Ok(output.trim().to_owned())
+        }
+    };
+    let database = psql(
+        "postgres".into(),
+        "SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-test--receiving--dev--%'"
+            .into(),
+    )
+    .await?;
+    ensure!(
+        !database.is_empty() && !database.contains('\n'),
+        "expected one Receiving project database, found {database:?}"
+    );
+    psql(
+        database,
+        format!("SELECT pattern FROM platform.number_sequence WHERE name = '{sequence}'"),
+    )
+    .await
 }
 
 async fn owner_mail(kubeconfig: &Path, context: &str) -> anyhow::Result<String> {

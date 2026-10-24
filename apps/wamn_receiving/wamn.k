@@ -8,9 +8,10 @@ _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"
 _claim_errors = ["idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
-    package = {id = "wamn_receiving", version = "2.2.5", predecessor_version = "2.2.4"}
+    package = {id = "wamn_receiving", version = "2.2.6", predecessor_version = "2.2.5"}
     client_package = {name = "@wamn/receiving-client"}
     required_platform_policy_contract = {id = "receiving_data_access", state = "satisfied"}
+    sequences = {purchase_order = {pattern = "PO-{seq:po,width=6}"}}
     models = {
         item = manifest.Model("item", _schema) {
             table = "item"
@@ -43,8 +44,14 @@ manifest.Package {
                 updated_at = {label = "Updated"}
                 updated_by = {label = "Updated by"}
             }
+            fields = {
+                purchase_order_number = {number = "purchase_order"}
+                created_by = {role = "actor"}
+                updated_by = {role = "actor"}
+            }
             audit_log = {columns = ["created_at", "created_by", "updated_at", "updated_by"], retention = "unlimited"}
             operations: {
+                create: {writable_fields = ["supplier_id"], label = "Add a purchase order", result = "one"}
                 get: {label = "Purchase order", result = "one"}
                 query: {
                     display_field = "purchase_order_number"

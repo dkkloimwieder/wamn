@@ -467,10 +467,13 @@ impl AuthenticatedCaller {
     /// token without its `@<version>`. The caller asks only about tokens of
     /// the serving release, so a stored reference the release does not serve
     /// grants nothing. A host route is not grantable, so a stored row that
-    /// names one grants nothing either (docs/plan/platform-ui.md §2.5).
+    /// names one grants nothing either (docs/plan/platform-ui.md §2.5), except
+    /// a granted host route such as `number_counter.set`
+    /// (docs/plan/platform-config.md, Numbering, Administration).
     pub fn permits(&self, operation: &str) -> bool {
         self.admin
-            || (!wamn_catalog::is_host_route_operation(operation)
+            || ((!wamn_catalog::is_host_route_operation(operation)
+                || wamn_catalog::is_granted_host_route_operation(operation))
                 && self
                     .permissions
                     .contains(wamn_catalog::sealed_operation_reference(operation)))

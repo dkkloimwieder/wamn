@@ -321,7 +321,7 @@ pub const NUMBER_SEQUENCE: Table = Table {
 };
 
 /// One counter of a sequence per key value. The application writes it only
-/// through `platform.bump_counter` and `platform.assign_counter`. It is the one table without a history
+/// through `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`. It is the one table without a history
 /// table ([`HISTORY_EXEMPT`]).
 pub const NUMBER_COUNTER: Table = Table {
     name: "number_counter",
