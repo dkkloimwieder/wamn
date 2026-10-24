@@ -167,7 +167,7 @@ Two specs, two agents: the `@wfe/sync` spec is this document's `@wfe/sync` secti
 
 ## Change feed (host)
 
-Every model gets one generated read, `changes`, that returns rows changed since a cursor. It rides the existing GET route layer with the same ETag, cache-control and authorization as `list`. No new service, no replication slot, no push channel in this increment.
+Every model with a feed gets one generated read, `changes`, that returns rows changed since a cursor. `changes` is the list read with its feed part (`feed: { cursor, limit }`): one operation, one export and one permission row, on the list's GET route. It has the list's authorization, `private, no-cache` and a weak ETag on `next_cursor`. No new service, no replication slot, no push channel in this increment.
 
 ### Contract
 
@@ -184,21 +184,21 @@ changes(<the same arguments as list>, cursor: string?, limit: int32?) ->
 
 ### Cursor
 
-The cursor is an opaque string: base64 of the model name and the history position the host read up to. The frontend never parses it. Postgres internals (`xid8`, history `position`) never cross into the contract; the cursor encodes them, the contract does not name them. This keeps the existing rule for paging cursors.
+The cursor is an opaque string: base64 of the model name and the snapshot xmin the host read up to (Epic 2b replaced the history position, see Assumptions). A page that stops at its limit also carries the transaction and the id of its last row. The frontend never parses it. Postgres internals (`xid8`, history `position`) never cross into the contract; the cursor encodes them, the contract does not name them. This keeps the existing rule for paging cursors.
 
 ### Snapshot handoff
 
-`list` gains a `cursor` field in its outcome: the history position as of the statement's snapshot, encoded as above. A client that stores a `list` result and then calls `changes(cursor)` sees every change committed after that snapshot and none before. This is the only ordering guarantee the feed makes and the only one the browser store needs.
+`list` gains a `cursor` field in its outcome: the snapshot xmin of the list statement, encoded as above. A client that stores a `list` result and then calls `changes(cursor)` sees every change committed after that snapshot and none before. This is the only ordering guarantee the feed makes and the only one the browser store needs.
 
-Implementation: `list` and the position read run in one statement sequence inside one read transaction (`REPEATABLE READ`), so the position is taken at the same snapshot as the rows. The generator emits both; nothing is hand-written per model.
+Implementation (Epic 2b): the list statement returns the cursor as a column, so the rows and the cursor come from one snapshot. The generator emits both; nothing is hand-written per model.
 
 ### Source
 
-The per-relation history tables and their trigger functions already exist on main. `changes` is a generated SQL statement over the model's history table: `where position > $cursor_position order by position limit $limit`, joined to the live row for `data` (or marked `deleted` when the live row is gone). The per-model version table, bumped by trigger, stays as the cheap poll signal.
+The per-relation history tables and their trigger functions already exist on main. `changes` is a generated SQL statement over the model's history table: the entries with `transaction_id` from the cursor xmin up to the statement's snapshot xmin, collapsed to one row per id in transaction and id order, with `limit`. Each row joins the live row for `data`. A row that is gone, or no longer matches the list's filters, is marked `deleted`. Migration `0021_remove_model_versions.sql` removed the per-model version table, so no cheap poll signal exists.
 
 ### Delivery
 
-Increment 1 is polling: the feed client calls `changes` when the version poll says the model moved, and on a timer (10 s) while a screen holding that model is open. Cache headers are `private, no-cache` with a weak ETag on `next_cursor`, so an unchanged feed is a 304.
+Increment 1 is polling: the feed client calls `changes` on a timer (10 s) while a screen holding that model is open. The `Feed` has no `moved` (Epic 2b ruling). Cache headers are `private, no-cache` with a weak ETag on `next_cursor`, so an unchanged feed is a 304.
 
 The feed client is written as "a trigger fires, then call `changes`". Poll is the first trigger. The second is a platform event channel to the browser (SSE or WebSocket, one connection per client, carrying "model X moved" and other platform events), which is its own design, not part of this document: it serves more than the feed, so it is specified where its other consumers are. When it exists, the feed client registers it as a trigger; the contract, the collection and the outbox do not change. Poll stays as the fallback trigger when the channel is down.
 
@@ -595,15 +595,16 @@ Testing budget follows the existing rule: build, clippy, unit per issue; live ta
 
 | Assumption | How to verify | Invalidated if false |
 | --- | --- | --- |
-| The per-relation history table carries a monotonic position that orders commits as the client needs (a change committed later has a higher position visible to a later read) | Host test: concurrent writers, assert every `changes` call after a `list` snapshot returns all later commits | The feed needs a different ordering source (a commit sequence table or a logical-decoding reader) |
-| History retention covers the longest offline period plus one day | Read the retention rule for history tables; set the floor to 7 days | `cursor_expired` becomes common; `fill` runs on every reopen |
-| `list` and the position read can share one read transaction in the generated statement sequence | Inspect the statement emitter; add the position statement to the sequence | The cursor can be off by in-flight commits; the client must overlap by one feed call (apply `row_version` rule, already safe) |
+| False (Epic 2b): the history `position` orders commits. It is an identity value that a write takes at insert time ([`record-history.sql`](../../deploy/sql/record-history.sql)), so a writer that takes a lower position and commits later is missed by a reader that passed it | Read the history table definition | Replaced: the cursor carries the snapshot xmin. `changes` reads the entries of the transactions from the cursor xmin up to its own snapshot xmin, so every entry it returns belongs to an ended transaction and none is missed. A change can arrive twice, and the client ignores an equal `row_version`. A long open transaction delays the feed. The history table has an index on `transaction_id` |
+| History retention covers the longest offline period plus one day | Retention exists: `audit_log.retention` (`none`, `unlimited` or `P<n>D`), pruned daily by the retention task ([data access](../architecture/data-access.md)). WMS packaging declares `unlimited`, so its history is unbounded today | `cursor_expired` becomes common; `fill` runs on every reopen. `cursor_expired` answers a cursor older than the oldest entry the retention keeps, only for a `P<n>D` retention |
+| Answered (Epic 2b): `list` and the cursor read share one snapshot | The cursor is a column of the list statement itself, `pg_snapshot_xmin(pg_current_snapshot())`, so one statement reads the rows and the cursor at one snapshot, with no shared transaction. An outer row carries the cursor when the page has no rows | — |
+| A model with no `row_version` cannot be synced | A model with a list read gets a feed only when it also has a history table and a revision field on that read | Epic 2b skips such models, and Epic 5 adds the build refusal and `feed = false` |
 | `@tanstack/db` collections and `db-ivm` live queries handle 100,000 rows in one collection within the measured heap ceiling | The first increment's measurement at 10k and 100k | The per-collection cap drops below the table cap; large screens stay on the page path |
 | `@tanstack/db`'s custom sync source and `subscribeChanges` deliver change batches with `insert`/`update`/`delete` and the row value, as used in the adapter | Read the vendored version's types before the adapter issue | The adapter shape changes; the contract and the outbox do not |
 | Solid 2's `createProjection` accepts a from() subscription as a seedless derive and reconciles by key; `until` inside `action` resolves on authoritative data and never on the action's own optimistic writes | Adapter tests on the pinned release | `liveList` becomes a `createStore` with manual reconcile; `until` is replaced by a resolver keyed on `row_version` |
 | The write log dedupes on the request hash the client computes, so a resend after a lost reply is harmless | Host test: send the same entry twice, assert one effect | The outbox must wait for a reply before any retry; replay slows but stays correct |
 | Chrome on the supported devices grants IndexedDB and does not evict it under normal use | Run the browser tests on the target devices | The take-offline flow must warn on every open; no design change |
-| The route layer's active-role check applies to `changes` without new code | Read the route emitter; `changes` is emitted with the same policy as `list` | A per-read policy line is added to the emitter |
+| Answered (Epic 2b): `changes` has the authorization of `list` | `changes` is the list read with its feed part, one operation and one permission row, so the check is the same by construction | — |
 
 ## Deferred
 
