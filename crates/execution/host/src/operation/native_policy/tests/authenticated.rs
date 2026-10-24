@@ -1013,9 +1013,8 @@ fn native_warm_alternating_callers_and_credentials() {
             credentials
                 .enabled
                 .store(false, std::sync::atomic::Ordering::SeqCst);
-            // The host's auth memory answers the principal check without a
-            // credential, so the call reaches the credential only after a clear.
-            postgres.auth_cache().clear();
+            // This host watches no auth bucket, so it keeps no auth answer and
+            // the principal check reaches the credential (wamn-f2qud).
             let mut request = retired.request(Instant::now() + CLEANUP);
             request.facts.caller = Some(bob.clone());
             assert!(

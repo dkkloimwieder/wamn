@@ -2,7 +2,7 @@
 //! (docs/plan/platform-ui.md §5.4, wamn-zua8.2). The host reads its row of
 //! `platform.environment` as a tenant's `wamn_app` generation, before the
 //! route's policy, so an anonymous route is refused too. The host keeps the
-//! answer until a change message clears its auth memory (wamn-stxy9.2).
+//! answer only while it watches the auth bucket (wamn-stxy9.2, wamn-f2qud).
 //!
 //! This test starts its own PostgreSQL 18 server.
 #![cfg(feature = "test-util")]
@@ -166,12 +166,8 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
             &[&TENANT],
         )
         .await?;
-    assert_eq!(
-        admitted(&route).await,
-        Ok(false),
-        "the host's auth memory answers until a change message clears it"
-    );
-    reader.auth_cache().clear();
+    // This host watches no auth bucket, so it keeps no answer and reads the
+    // row on every request (wamn-f2qud).
     assert_eq!(
         admitted(&route).await,
         Err((503, "environment-inactive".to_owned()))
@@ -179,7 +175,6 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     admin
         .execute("UPDATE platform.environment SET status = 'active'", &[])
         .await?;
-    reader.auth_cache().clear();
     assert_eq!(
         admitted(&route).await,
         Ok(false),

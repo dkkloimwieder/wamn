@@ -73,7 +73,7 @@ A get makes 7 round-trips: hops 1, 2, 4, 5, 6, 9 and 12. An update makes 10: hop
 ## Issues
 
 1. `wamn-stxy9.1`: delete `record_actor_labels` from the request path. Actor names come from the application's own SQL.
-2. `wamn-stxy9.2`: auth in host memory. The host verifies the token without Postgres. An in-host map of (tenant, role, operation) to held fills by one query on a miss, which also replaces hop 5. A NATS message from the control host on grant or revoke drops entries, with a 60 s TTL as the backstop.
+2. `wamn-stxy9.2`: auth in host memory. The host verifies the token without Postgres. An in-host map of (tenant, role, operation) to held fills by one query on a miss, which also replaces hop 5. A NATS message from the control host on grant or revoke drops entries, with a 60 s TTL as the backstop. A host with no bucket keeps no entry.
 3. `wamn-stxy9.3`: one trip per request. The SET LOCAL claims are pipelined with the application statements. A command runs the claim row, the statements, the write-log row and the commit in one transaction.
 
 At each merge, rerun get c16 and update c16 for 60 s, and record the calls per request from `pg_stat_statements` beside the span table. Target: get and update at 1 Postgres round-trip, host p50 under 10 ms.

@@ -17,8 +17,10 @@
 //! no identity key changed during its read. Only a positive identity answer
 //! is kept, so a new PAT or a new login works on its first request.
 //!
-//! A host without the bucket, such as a test host, keeps its facts locally
-//! for the TTL.
+//! A host keeps facts only while it watches the bucket, because only the
+//! watch brings the drops. A host without the bucket, such as a test host,
+//! keeps no fact and reads every request from Postgres. So does a host
+//! whose watch broke, until the watch runs again.
 //!
 //! [`BUCKET`]: wamn_platform_identity::auth_changes::BUCKET
 
@@ -104,8 +106,8 @@ struct Replica {
 pub struct AuthCache {
     ttl: Duration,
     replica: Mutex<Replica>,
-    /// The bucket, while the host watches it. Without it, the host keeps its
-    /// facts locally.
+    /// The bucket, while the host watches it. Without it, the host keeps no
+    /// fact.
     bucket: RwLock<Option<Store>>,
 }
 
@@ -142,6 +144,14 @@ impl AuthCache {
         self.replica
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The replica, while the host watches the bucket. A caller holds the
+    /// replica lock during the check, so a fact kept here falls to the clear
+    /// that follows a broken watch.
+    fn watched_replica(&self) -> Option<std::sync::MutexGuard<'_, Replica>> {
+        let replica = self.replica();
+        self.bucket().is_some().then_some(replica)
     }
 
     fn bucket(&self) -> Option<Store> {
@@ -199,7 +209,9 @@ impl AuthCache {
     }
 
     fn keep_entry(&self, key: String, revision: u64, answer: Option<Answer>) {
-        let mut replica = self.replica();
+        let Some(mut replica) = self.watched_replica() else {
+            return;
+        };
         if replica.entries.len() >= SWEEP_AT {
             let ttl = self.ttl;
             replica
@@ -220,10 +232,9 @@ impl AuthCache {
     }
 
     /// Put `answer` at `key` if the key still has the revision of `ticket`,
-    /// and keep it. Without the bucket, keep it locally.
+    /// and keep it. Without the bucket, keep nothing.
     async fn put(&self, key: String, ticket: Ticket, answer: Answer) {
         let Some(bucket) = self.bucket() else {
-            self.keep_entry(key, 0, Some(answer));
             return;
         };
         let bytes = match serde_json::to_vec(&answer) {
@@ -276,7 +287,9 @@ impl AuthCache {
         principal: &str,
         pat: Option<AuthenticatedPrincipal>,
     ) {
-        let mut replica = self.replica();
+        let Some(mut replica) = self.watched_replica() else {
+            return;
+        };
         // An identity key changed during the read, so the answer can be stale.
         if replica.identity_revision != ticket.0 {
             return;
@@ -469,31 +482,11 @@ async fn watch(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn a_fact_expires_after_the_ttl_and_a_clear_drops_it() {
-        let cache = AuthCache::with_ttl(Duration::from_millis(50));
-        let ticket = cache.environment_inactive("t").unwrap_err();
-        cache.keep_environment_inactive("t", ticket, true).await;
-        cache.keep_session_active(cache.identity_ticket(), "token", "p");
-        assert_eq!(cache.environment_inactive("t"), Ok(true));
-        assert!(cache.session_active("token"));
-        assert!(!cache.session_active("other"));
-
-        cache.clear();
-        assert!(cache.environment_inactive("t").is_err());
-        assert!(!cache.session_active("token"));
-
-        let ticket = cache.environment_inactive("t").unwrap_err();
-        cache.keep_environment_inactive("t", ticket, false).await;
-        std::thread::sleep(Duration::from_millis(60));
-        assert!(cache.environment_inactive("t").is_err());
-    }
-
     /// A `nats-server -js` on a free port, stopped with the guard.
-    struct Server(std::process::Child, std::path::PathBuf);
+    pub(crate) struct Server(std::process::Child, std::path::PathBuf);
 
     impl Drop for Server {
         fn drop(&mut self) {
@@ -503,19 +496,9 @@ mod tests {
         }
     }
 
-    async fn until(what: &str, check: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !check() {
-            assert!(Instant::now() < deadline, "{what}");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
-    async fn the_bucket_shares_kept_facts_and_every_drop_reaches_every_host() {
-        use wamn_platform_identity::auth_changes::AuthDrops;
-
+    /// A private JetStream NATS at `WAMN_NATIVE_C_NATS_BIN`, and a client of
+    /// it.
+    pub(crate) async fn nats() -> (Server, async_nats::Client) {
         let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
             .expect("set WAMN_NATIVE_C_NATS_BIN to a nats-server executable");
         let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -530,18 +513,89 @@ mod tests {
             .arg(&store)
             .spawn()
             .unwrap();
-        let _server = Server(child, store);
+        let server = Server(child, store);
         let url = format!("nats://127.0.0.1:{port}");
-        let client = {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                match async_nats::connect(&url).await {
-                    Ok(client) => break client,
-                    Err(error) => assert!(Instant::now() < deadline, "{error}"),
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match async_nats::connect(&url).await {
+                Ok(client) => break (server, client),
+                Err(error) => assert!(Instant::now() < deadline, "{error}"),
             }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Replicate the memory of `holder` from the bucket on `client`, and
+    /// wait until the watch runs.
+    pub(crate) async fn watched<H: AsRef<AuthCache> + Send + Sync + 'static>(
+        client: &async_nats::Client,
+        tenant: Option<&str>,
+        holder: Arc<H>,
+    ) -> AuthChanges {
+        let writer = replicate(client, tenant, Arc::clone(&holder));
+        until("the watch runs", || (*holder).as_ref().bucket().is_some()).await;
+        writer
+    }
+
+    pub(crate) async fn until(what: &str, check: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !check() {
+            assert!(Instant::now() < deadline, "{what}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_host_without_the_bucket_keeps_no_fact() {
+        let cache = AuthCache::default();
+        let ticket = cache.environment_inactive("t").unwrap_err();
+        cache.keep_environment_inactive("t", ticket, true).await;
+        let ticket = cache.grants("t", "p").unwrap_err();
+        let present = PrincipalGrants {
+            present: true,
+            ..PrincipalGrants::default()
         };
+        cache.keep_grants("t", "p", ticket, present).await;
+        cache.keep_session_active(cache.identity_ticket(), "token", "p");
+        assert!(cache.environment_inactive("t").is_err());
+        assert!(cache.grants("t", "p").is_err());
+        assert!(cache.provisioned("t", "p").is_err());
+        assert!(!cache.session_active("token"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    async fn a_fact_expires_after_the_ttl_and_a_clear_drops_it() {
+        let (_server, client) = nats().await;
+        let cache = Arc::new(AuthCache::with_ttl(Duration::from_millis(50)));
+        watched(&client, None, Arc::clone(&cache)).await;
+        let ticket = cache.environment_inactive("t").unwrap_err();
+        cache.keep_environment_inactive("t", ticket, true).await;
+        cache.keep_session_active(cache.identity_ticket(), "token", "p");
+        assert_eq!(cache.environment_inactive("t"), Ok(true));
+        assert!(cache.session_active("token"));
+        assert!(!cache.session_active("other"));
+
+        cache.clear();
+        assert!(cache.environment_inactive("t").is_err());
+        assert!(!cache.session_active("token"));
+
+        // The bucket still holds the key of `t`, so a put with no revision
+        // fails there. A key the bucket does not hold shows the expiry.
+        let ticket = cache.environment_inactive("u").unwrap_err();
+        cache.keep_environment_inactive("u", ticket, false).await;
+        assert_eq!(cache.environment_inactive("u"), Ok(false));
+        // The watch also delivers the put, which can renew the fact once.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(cache.environment_inactive("u").is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    async fn the_bucket_shares_kept_facts_and_every_drop_reaches_every_host() {
+        use wamn_platform_identity::auth_changes::AuthDrops;
+
+        let (_server, client) = nats().await;
         let a = Arc::new(AuthCache::default());
         let b = Arc::new(AuthCache::default());
         let other = Arc::new(AuthCache::default());
@@ -622,8 +676,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
     async fn present_grants_answer_the_provisioned_check() {
-        let cache = AuthCache::default();
+        let (_server, client) = nats().await;
+        let cache = Arc::new(AuthCache::default());
+        watched(&client, None, Arc::clone(&cache)).await;
         let ticket = cache.grants("t", "a").unwrap_err();
         cache
             .keep_grants("t", "a", ticket, PrincipalGrants::default())

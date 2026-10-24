@@ -288,14 +288,11 @@ fn assert_permission_reads(
             && query.contains("WHERE u.id = $2::text::uuid"),
         "{query}"
     );
-    assert_eq!(
-        calls, expected,
-        "one permission read per principal the memory lacks"
-    );
+    assert_eq!(calls, expected, "one permission read per admitted request");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_identity()
+async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity()
 -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[
         ("shared_preload_libraries", "pg_stat_statements"),
@@ -364,8 +361,8 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
         .batch_execute("SET ROLE session_identity_reader")
         .await?;
     let identity_reader = Arc::new(identity_reader);
-    // A raw SQL change below publishes no drop, so the test drops the memory
-    // of this reader where a writer would.
+    // This reader watches no auth bucket, so it keeps no auth answer and
+    // reads every request (wamn-f2qud).
     let reader = permission_reader(url.as_str())?;
     let authentication = Arc::new(SessionRouteAuthentication::new(
         verifier.clone(),
@@ -404,8 +401,8 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
         let caller = accepted(&route, &empty).await;
         assert!(!caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_TENANT));
     }
-    // The memory answers the first principal, and the second one reads once.
-    assert_permission_reads(&before, &statements(&admin, &generation).await?, 1);
+    // Each of the five admitted requests reads once.
+    assert_permission_reads(&before, &statements(&admin, &generation).await?, 5);
 
     // A grant stores a reference the loaded release does not serve. It holds
     // on a host whose release serves it, with no write in between.
@@ -440,7 +437,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     );
 
     // A browser sends the signed token in its cookie and the CSRF token in a header.
-    // The memory answers the admitted request, and the refused one reads nothing.
+    // The admitted request reads once, and the refused one reads nothing.
     let before = statements(&admin, &generation).await?;
     let csrf = "fixture-csrf-token";
     let mut carried = first.clone();
@@ -465,7 +462,7 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
         (401, "unauthorized".into()),
         "a cookie without its CSRF header refuses"
     );
-    assert_permission_reads(&before, &statements(&admin, &generation).await?, 0);
+    assert_permission_reads(&before, &statements(&admin, &generation).await?, 1);
     assert_eq!(
         server.count(),
         1,
@@ -497,7 +494,6 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
             &[&TENANT, &WRITE],
         )
         .await?;
-    reader.auth_cache().clear();
     let changed = accepted(&route, &first).await;
     assert!(
         changed.permits(READ) && !changed.permits(WRITE),
@@ -523,7 +519,6 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     admin
         .execute("UPDATE platform.\"user\" SET status = 'disabled'", &[])
         .await?;
-    reader.auth_cache().clear();
     let snapshot = accepted(&route, &first).await;
     assert!(
         !snapshot.permits(READ) && !snapshot.permits(WRITE),
@@ -556,7 +551,6 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
         ),
     ] {
         admin.batch_execute(revoke).await?;
-        reader.auth_cache().clear();
         assert_eq!(
             route
                 .authenticate_authorization_for_test(
@@ -585,7 +579,6 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     admin
         .batch_execute("REVOKE SELECT ON identity.password_logins FROM wamn_identity_reader")
         .await?;
-    reader.auth_cache().clear();
     assert_eq!(
         route
             .authenticate_authorization_for_test(
@@ -657,7 +650,6 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
 
     // A real blocked permission SELECT crosses token expiry before final admission.
     let before = statements(&admin, &generation).await?;
-    reader.auth_cache().clear();
     admin
         .batch_execute("BEGIN; LOCK TABLE platform.permission IN ACCESS EXCLUSIVE MODE")
         .await?;
@@ -702,7 +694,6 @@ async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_id
     // keys and admits it, because the issuer signed it (wamn-co0p).
     let before = statements(&admin, &generation).await?;
     let fetches = server.count();
-    reader.auth_cache().clear();
     admin
         .batch_execute("BEGIN; LOCK TABLE platform.permission IN ACCESS EXCLUSIVE MODE")
         .await?;

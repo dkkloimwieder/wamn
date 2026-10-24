@@ -2607,8 +2607,11 @@ async fn live_a_bind_refuses_a_principal_with_no_users_row() {
 
 /// A row removed after the credential was issued is refused on the first bind
 /// after the host's auth memory clears, and the binding that already read it
-/// is unaffected (`wamn-0h0g.9.19`, `wamn-stxy9.2`).
+/// is unaffected (`wamn-0h0g.9.19`, `wamn-stxy9.2`). The host watches the
+/// bucket, and a raw SQL write publishes no drop, so the memory answers until
+/// it clears or its TTL ends (`wamn-f2qud`).
 #[tokio::test]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
     const TENANT: &str = "removed";
     let _lock = wamn_test_postgres::lock();
@@ -2620,15 +2623,19 @@ async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
     ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
-    let pg = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 2_000,
-        statement_timeout_ms: 5_000,
-        row_limit: 1_000,
-    })
-    .expect("the plugin builds from the guest generation's url");
+    let pg = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(guest_url)),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .expect("the plugin builds from the guest generation's url"),
+    );
+    let (_nats, client) = crate::auth_cache::tests::nats().await;
+    crate::auth_cache::tests::watched(&client, Some(TENANT), Arc::clone(&pg)).await;
     let scope = "removed-instance-0";
     let claims = SessionClaims {
         tenant: TENANT.to_string(),
@@ -2662,6 +2669,83 @@ async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
         .await
         .expect_err("the bind after the clear reads again and refuses");
     assert!(refused.downcast_ref::<UnprovisionedPrincipal>().is_some());
+
+    drop(pg);
+    admin
+        .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
+        .await
+        .expect("drop the fixture");
+}
+
+/// On a host that watches the bucket, the drop of a removed user row reaches
+/// the memory, and the next bind reads again and refuses before the TTL ends
+/// (`wamn-f2qud`).
+#[tokio::test]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+async fn live_a_drop_refuses_a_removed_users_row_on_the_next_bind() {
+    const TENANT: &str = "dropped";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
+    );
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
+    let pg = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(guest_url)),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .expect("the plugin builds from the guest generation's url"),
+    );
+    let (_nats, client) = crate::auth_cache::tests::nats().await;
+    let writer = crate::auth_cache::tests::watched(&client, Some(TENANT), Arc::clone(&pg)).await;
+    let scope = "dropped-instance-0";
+    let claims = SessionClaims {
+        tenant: TENANT.to_string(),
+        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        ..SessionClaims::default()
+    };
+    pg.bind_session_claims(scope, &claims)
+        .await
+        .expect("the provisioned principal binds");
+    assert_eq!(
+        pg.auth_cache().provisioned(TENANT, LIVE_PRINCIPAL),
+        Ok(()),
+        "the memory keeps the read"
+    );
+
+    let admin = connect_raw(admin_url).await;
+    admin
+        .execute(
+            "DELETE FROM platform.\"user\" WHERE id = $1::text::uuid",
+            &[&LIVE_PRINCIPAL],
+        )
+        .await
+        .expect("remove the user row after issuance");
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    drops.principal(TENANT, LIVE_PRINCIPAL);
+    let published = std::time::Instant::now();
+    writer.publish(drops).await;
+    crate::auth_cache::tests::until("the drop reaches the memory", || {
+        pg.auth_cache().provisioned(TENANT, LIVE_PRINCIPAL).is_err()
+    })
+    .await;
+    let refused = pg
+        .bind_session_claims(scope, &claims)
+        .await
+        .expect_err("the bind after the drop reads again and refuses");
+    assert!(refused.downcast_ref::<UnprovisionedPrincipal>().is_some());
+    assert!(
+        published.elapsed() < crate::auth_cache::AUTH_TTL,
+        "the drop, not the TTL, refused the bind"
+    );
 
     drop(pg);
     admin

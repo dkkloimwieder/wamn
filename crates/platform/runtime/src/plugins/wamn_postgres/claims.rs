@@ -1539,8 +1539,10 @@ impl WamnPostgres {
     /// [`bind_item_session_claims`](Self::bind_item_session_claims), which
     /// does not check again.
     ///
-    /// A user row deleted after the check stays accepted until a change
-    /// message clears the memory or the memory's TTL ends.
+    /// On a host that watches the auth bucket, a user row deleted after the
+    /// check stays accepted until a change message clears the memory, or
+    /// until the memory's TTL ends if the message is lost. A host without
+    /// the bucket keeps no answer and reads the row on every bind.
     ///
     /// The read runs LAST, after every claim is written and validated, so a
     /// bind that is going to be refused for a malformed claim never opens a

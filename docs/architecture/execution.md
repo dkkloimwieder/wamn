@@ -533,7 +533,9 @@ It intersects signed roles with the held roles and their permissions for the act
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference (docs/plan/platform-ui.md §2.3).
 Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable identity read refuses admission with 503. The read has a five-second timeout.
-Logout, reset, account disablement, membership removal, and PAT revocation affect admission within 60 seconds, the TTL of the auth memory.
+Logout, reset, account disablement, membership removal, and PAT revocation reach an admitted PAT or session with the next drop of the [auth memory](#auth-memory).
+A host that cannot receive drops caches nothing, so it reads every request.
+The TTL of 60 seconds is the bound only if a drop is lost.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
 
 ### Auth memory
@@ -554,6 +556,7 @@ A delete of the key `=identity.<principal>` drops the PATs and sessions of the p
 A tenant name holds only `[A-Za-z0-9_-]`, so that key never meets a tenant key.
 A host does not keep a token answer when any identity key changed during its read.
 While the watch is broken, the host keeps no fact and opens the bucket again.
+A host without the bucket keeps no fact either, and reads every request from Postgres.
 
 Every function that writes one of these facts takes an [`AuthDrops`](../../crates/identity/platform/src/auth_changes.rs) and records the change in it.
 Its caller deletes the keys of the list after the commit.
