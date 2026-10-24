@@ -132,6 +132,13 @@ The owner supplies these inputs. The install stops at the first step that reads 
     Before step 4.20 creates the NEG, target only the cluster and node pools in the section 4.2 plan and apply.
     After the NEG exists, apply the full rendered project as described in section 4.20.
 
+15. Write access to `buckets.web` for the web upload of step 4.19. The upload Job runs as `hosts/wamn-host`, which acts as `wamn-blob` (item 4). A teardown keeps this grant, because it is IAM. If the grant is missing, the agent runs:
+
+    ```bash
+    gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web \
+      --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectCreator
+    ```
+
 ## 2. Project resources
 
 The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:
