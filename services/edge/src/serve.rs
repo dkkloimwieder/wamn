@@ -222,7 +222,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let delivery = Arc::new(EdgeDelivery::new(
         Arc::clone(&release),
         application,
-        intents,
+        intents.clone(),
         config.session.org.clone(),
     ));
 
@@ -241,7 +241,11 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .with_engine((*engine).clone())
         .with_plugin(Arc::new(routing))?
         .with_plugin(Arc::new(RouterDelivery::new(delivery.clone())))?
-        .with_plugin(Arc::new(EdgeOperation::new(Arc::clone(&release))))?
+        .with_plugin(Arc::new(EdgeOperation::new(
+            Arc::clone(&release),
+            intents,
+            config.session.org.clone(),
+        )))?
         .with_http_handler(ingress)
         .build()
         .context("build the host")?
