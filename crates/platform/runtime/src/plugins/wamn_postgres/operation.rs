@@ -5,14 +5,14 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use wamn_catalog::{ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType};
+use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{InvocationTrace, RequestTrace};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::DeliveryClass;
-use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
-use wash_runtime::wasmtime::component::{Accessor, Resource, ResourceTable};
+use wash_runtime::engine::ctx::ActiveCtx;
+use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
-use super::bindings::wamn::operation::operation::{self as wit, Begun, Refusal};
 use super::write_log::OpaqueBegun;
 use super::{
     CommitFailure, OperationTransaction, PreparedStatementMembers, PreparedStatementSet,
@@ -338,9 +338,15 @@ fn binding_error(kind: OperationErrorKind, scope: &str, source: anyhow::Error) -
     Refusal::Postgres(super::PgError::PermissionDenied)
 }
 
-impl wit::Host for ActiveCtx<'_> {}
+/// The `wamn:operation` host over PostgreSQL. It reaches the Store's state
+/// through [`ActiveCtx`], as the other `wamn:postgres` imports do.
+pub(super) struct PostgresOperation;
 
-impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
+impl HasData for PostgresOperation {
+    type Data<'a> = ActiveCtx<'a>;
+}
+
+impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
     async fn finish_read(
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<(), Refusal>> {
@@ -507,7 +513,7 @@ impl<T: 'static + Send> wit::HostWithStore<T> for SharedCtx {
 }
 
 async fn enter<T: 'static + Send>(
-    accessor: &Accessor<T, SharedCtx>,
+    accessor: &Accessor<T, PostgresOperation>,
     caller: Option<Resource<AuthenticatedCaller>>,
     operation: String,
     idempotency_key: String,

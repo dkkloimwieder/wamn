@@ -16,8 +16,9 @@
 //! - [`refusals`]: the `wamn-edge samples` commands, which list and resolve
 //!   refused samples while the edge is stopped.
 //! - [`status`]: the status socket of a running edge, and its reader.
-//! - [`authenticator`], [`delivery`], [`policy`] and [`application`]: the
-//!   edge side of the engine's route and operation traits.
+//! - [`authenticator`], [`delivery`], [`operation`], [`policy`] and
+//!   [`application`]: the edge side of the engine's route and operation
+//!   traits.
 //! - [`intents`]: the `wamn-edge intents` commands, which list and resolve
 //!   uncertain intents while the edge is stopped.
 //!
@@ -46,6 +47,7 @@ pub mod device;
 pub mod forward;
 pub mod grants;
 pub mod intents;
+pub mod operation;
 pub mod policy;
 pub mod refusals;
 pub mod release;

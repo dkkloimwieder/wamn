@@ -127,6 +127,9 @@ mod bindings {
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
             "wamn:flow-http-routing/routing.authenticated-caller": wamn_engine::flow_http_routing::AuthenticatedCaller,
+            // The engine owns the operation binding and the types its refusal names.
+            "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
+            "wamn:operation/operation": wamn_engine::entry_operation::operation,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -146,6 +149,9 @@ mod bindings {
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
             "wamn:flow-http-routing/routing.authenticated-caller": wamn_engine::flow_http_routing::AuthenticatedCaller,
+            // The engine owns the operation binding and the types its refusal names.
+            "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
+            "wamn:operation/operation": wamn_engine::entry_operation::operation,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -208,9 +214,6 @@ use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::statements as statement_wit;
 use bindings::wamn::postgres::types::{Column, PgError, RowSet, SqlValue};
 use statement_wit::{ContractMismatch, ContractPart, StatementError, ValueShape};
-
-#[cfg(feature = "wasm_component_model_implements")]
-impl bindings::wamn::postgres::types::Host for wash_runtime::engine::ctx::ActiveCtx<'_> {}
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
@@ -373,10 +376,10 @@ impl WamnPostgres {
         let has_client = interfaces.contains("wamn", "postgres", &["client"]);
         let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
         if interfaces.contains("wamn", "operation", &["operation"]) {
-            bindings::wamn::operation::operation::add_to_linker::<_, SharedCtx>(
-                linker,
-                extract_active_ctx,
-            )?;
+            wamn_engine::entry_operation::operation::add_to_linker::<
+                _,
+                operation::PostgresOperation,
+            >(linker, extract_active_ctx)?;
         }
         if !has_client && !has_statements {
             return Ok(());

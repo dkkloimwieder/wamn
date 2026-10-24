@@ -1,8 +1,8 @@
 //! The edge host: one release bundle served behind local routes.
 //!
 //! A plain wash-runtime host, with no cluster host and no NATS, holds the
-//! engine, the two route plugins over the edge authenticator and delivery, and
-//! an ingress. The route guest runs as its own workload, built from the bundle
+//! engine, the two route plugins over the edge authenticator and delivery, the
+//! edge's operation host, and an ingress. The route guest runs as its own workload, built from the bundle
 //! bytes. The application loads once as a native application. When the
 //! configuration names a device, the device loop calls the same delivery, and
 //! when it names a forward, the forward sends each stored sample on. The
@@ -42,6 +42,7 @@ use crate::config::EdgeConfig;
 use crate::delivery::EdgeDelivery;
 use crate::device::{self, DeviceLoop};
 use crate::forward::{self, Forward};
+use crate::operation::EdgeOperation;
 use crate::release::EdgeRelease;
 use crate::samples::SampleStore;
 use crate::status::{self, Facts};
@@ -239,6 +240,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         .with_engine((*engine).clone())
         .with_plugin(Arc::new(routing))?
         .with_plugin(Arc::new(RouterDelivery::new(delivery.clone())))?
+        .with_plugin(Arc::new(EdgeOperation::new(Arc::clone(&release))))?
         .with_http_handler(ingress)
         .build()
         .context("build the host")?
@@ -340,6 +342,7 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
                 handler,
                 WitInterface::from("wamn:flow-http-routing/routing@0.1.0"),
                 WitInterface::from("wamn:router-delivery/delivery@0.4.0"),
+                WitInterface::from("wamn:operation/operation@0.1.0"),
             ],
             volumes: Vec::new(),
         },
