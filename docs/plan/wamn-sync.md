@@ -636,6 +636,8 @@ One epic at a time per repo; a wamn epic starts only when its wfe counterpart is
 
 ## Epic 1b measurements
 
+Owner ruling: `@wfe/sync` stays, `liveRows` is the read shape for table screens, and `liveList` is the read shape for small sets.
+
 Measured on 2026-10-24 with [`web/sync-bench`](../../web/sync-bench/README.md) (bead `wamn-hhd77`).
 The ruling on the read shape per screen type, and on whether `@tanstack/db` stays, belongs to the owner.
 
