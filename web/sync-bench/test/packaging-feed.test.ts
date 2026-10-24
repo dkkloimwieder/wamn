@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JsonValue, Transport, WireRequest } from "@wamn/web-runtime";
-import { NO_CURSOR, canonicalJson, packagingFeed, packagingKey } from "../src/packaging-feed";
+import { CursorExpired } from "@wfe/sync";
+import { canonicalJson, packagingFeed, packagingKey } from "../src/packaging-feed";
 
 const wireRow = {
   created_at: "2026-01-01T00:00:00Z",
@@ -16,29 +17,48 @@ const wireRow = {
   updated_by: "00000000-0000-7000-8000-000000000001",
 };
 
-function transport(value: JsonValue, seen: WireRequest[] = []): Transport {
+/** A transport that answers each request with the next value, and records it. */
+function transport(values: JsonValue[], seen: WireRequest[] = []): Transport {
   return {
     async invoke(request) {
       seen.push(request);
+      const value = values.shift();
+      if (value === undefined) throw new Error("no answer left");
       return { status: "completed", value };
     },
   } as Transport;
 }
 
 describe("packagingFeed", () => {
-  it("lists through the generated read and carries row_version", async () => {
+  it("lists every page and returns the feed cursor of the first", async () => {
     const seen: WireRequest[] = [];
-    const feed = packagingFeed(transport({ item: [wireRow], next_cursor: null }, seen));
-    const page = await feed.list({ limit: 25, filter: { status: ["available"] } });
-    expect(page.cursor).toBe(NO_CURSOR);
-    expect(page.rows).toHaveLength(1);
+    const feed = packagingFeed(
+      transport(
+        [
+          { item: [wireRow], next_cursor: "p2", cursor: "c1" },
+          { item: [{ ...wireRow, id: "00000000-0000-7000-8000-000000000009" }], next_cursor: null, cursor: "c2" },
+        ],
+        seen,
+      ),
+    );
+    const page = await feed.list({ filter: { status: ["available"] } });
+    expect(page.cursor).toBe("c1");
+    expect(page.rows).toHaveLength(2);
     expect(page.rows[0]).toMatchObject({ id: wireRow.id, rowVersion: 4, row_version: 4, packagingCode: "PK-1" });
-    expect(seen[0]?.items).toEqual([{ limit: 25, filter: { status: ["available"] } }]);
+    expect(feed.fullyRead()).toBe(true);
+    expect(seen.map((request) => request.items)).toEqual([
+      [{ filter: { status: ["available"] }, limit: 100 }],
+      [{ filter: { status: ["available"] }, limit: 100, cursor: "p2" }],
+    ]);
   });
 
-  it("takes the cursor from the outcome when the host returns one", async () => {
-    const feed = packagingFeed(transport({ item: [], next_cursor: null, cursor: "c1" }));
-    expect((await feed.list({})).cursor).toBe("c1");
+  it("stops at the cap and reports that the full set is not read", async () => {
+    const seen: WireRequest[] = [];
+    const feed = packagingFeed(transport([{ item: [wireRow], next_cursor: "p2", cursor: "c1" }], seen), 1);
+    const page = await feed.list({});
+    expect(page.rows).toHaveLength(1);
+    expect(feed.fullyRead()).toBe(false);
+    expect(seen[0]?.items).toEqual([{ limit: 1 }]);
   });
 
   it("refuses a list that did not complete", async () => {
@@ -50,18 +70,48 @@ describe("packagingFeed", () => {
     await expect(feed.list({})).rejects.toThrow("packaging query refused");
   });
 
-  it("answers changes with no rows and the same cursor", async () => {
-    const feed = packagingFeed(transport({ item: [], next_cursor: null }));
-    expect(await feed.changes({}, "c1")).toEqual({ rows: [], next_cursor: "c1", complete: true });
+  it("reads changes through the list with its feed part", async () => {
+    const seen: WireRequest[] = [];
+    const feed = packagingFeed(
+      transport(
+        [
+          {
+            rows: [
+              { id: wireRow.id, row_version: 5, deleted: false, data: { ...wireRow, row_version: 5 } },
+              { id: "00000000-0000-7000-8000-000000000009", row_version: 2, deleted: true },
+            ],
+            next_cursor: "c2",
+            complete: true,
+          },
+        ],
+        seen,
+      ),
+    );
+    const page = await feed.changes({ filter: { status: ["held"] } }, "c1", 50);
+    expect(seen[0]?.items).toEqual([{ filter: { status: ["held"] }, feed: { cursor: "c1", limit: 50 } }]);
+    expect(seen[0]?.contract.resultClass).toBe("changes");
+    expect(page.next_cursor).toBe("c2");
+    expect(page.complete).toBe(true);
+    expect(page.rows[0]).toMatchObject({ id: wireRow.id, row_version: 5, deleted: false, data: { rowVersion: 5, row_version: 5 } });
+    expect(page.rows[1]).toEqual({ id: "00000000-0000-7000-8000-000000000009", row_version: 2, deleted: true });
+  });
+
+  it("throws CursorExpired when the host no longer holds the cursor", async () => {
+    const feed = packagingFeed({
+      async invoke() {
+        return { status: "refused", code: "cursor_expired", detail: null };
+      },
+    } as Transport);
+    await expect(feed.changes({}, "c1")).rejects.toBeInstanceOf(CursorExpired);
   });
 });
 
 describe("packagingKey", () => {
   it("encodes the list arguments as canonical JSON", () => {
-    const left = packagingKey({ limit: 25, filter: { status: ["held"], packagingCode: ["A"] } });
-    const right = packagingKey({ filter: { packagingCode: ["A"], status: ["held"] }, limit: 25 });
+    const left = packagingKey({ filter: { status: ["held"], packagingCode: ["A"] } });
+    const right = packagingKey({ filter: { packagingCode: ["A"], status: ["held"] } });
     expect(left).toBe(right);
-    expect(left).toBe('packaging:{"filter":{"packagingCode":["A"],"status":["held"]},"limit":25}');
+    expect(left).toBe('packaging:{"filter":{"packagingCode":["A"],"status":["held"]}}');
   });
 
   it("keeps array order, because the arguments are ordered", () => {
