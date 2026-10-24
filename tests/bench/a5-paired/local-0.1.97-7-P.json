@@ -1,0 +1,14 @@
+{
+  "concurrency": 16,
+  "query": {
+    "throughput_per_sec": 713.7669852688122,
+    "p50_ms": 18.209,
+    "p95_ms": 49.535,
+    "p99_ms": 75.947,
+    "calls": 42835,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 2.0,
+    "host_cpu_ms_per_request": 3.1999533092097585,
+    "lines": 1
+  }
+}

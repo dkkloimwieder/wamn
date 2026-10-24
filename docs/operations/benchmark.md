@@ -567,3 +567,28 @@ That state means that Postgres waits for the next client message inside an open 
 At 0% the read holds no transaction between messages, so each read is one trip.
 Under this load, CPU per request rose for all three calls, and by 28% for the unchanged update.
 Query throughput fell more than get and update throughput, and `wamn-cg5e4` holds the stream case.
+
+### Page read, cg5e4
+
+Issue `wamn-cg5e4` removed the row stream from the base read path, and the page read now returns one run result with a ceiling of 50,000 rows.
+The paired local run compares the parent `48a15a28d` with `5af067e69`, which carries the change `447bc696e` and the Receiving 2.2.5 and WMS 2.1.3 package bumps.
+Both sides report chart version 0.1.97.
+It ran `local.sh --no-edge --call query` four times, in the order parent, cg5e4, cg5e4, parent, on 2026-10-24 from 00:34 to 01:26 UTC.
+It used `--no-edge` on all four runs, as the runs above did.
+Other work shared the host, and the one-minute load average was 8 to 19 at the start and end of the runs.
+Each side made 2 statements per query request, the application read and `pg_current_wal_lsn()`.
+On both sides the wait sampler shows 0% of application samples idle in a transaction.
+The results are `local-0.1.97-7-P.json` to `local-0.1.97-10-P.json` in [`tests/bench/a5-paired`](../../tests/bench/a5-paired), numbered in run order.
+
+| c16, mean of 2 runs | parent 48a15a28d | cg5e4 5af067e69 | cg5e4 / parent |
+| --- | --- | --- | --- |
+| query throughput | 690/s | 940/s | 1.36 |
+| query p50, p99 | 19.53 ms, 74.1 ms | 15.55 ms, 49.0 ms | 0.80, 0.66 |
+| query statements per request | 2 | 2 | 1.00 |
+| query `host_cpu_ms_per_request` | 3.19 | 2.74 | 0.86 |
+| query errors | 0 | 0 | |
+
+The parent runs reached 714/s and 667/s.
+The cg5e4 runs reached 1094/s and 785/s.
+The two cg5e4 runs differ by 39%, so the throughput ratio carries that noise.
+The lower cg5e4 run is still above both parent runs.
