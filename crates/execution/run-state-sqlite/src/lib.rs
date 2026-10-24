@@ -7,6 +7,12 @@
 //! transaction that finishes an intent. [`SqliteIntentStore::closed`] tells the
 //! owner when the last clone drops and the file closes.
 //!
+//! The `outcome` column holds text. [`IntentStore::finish`] writes the JSON
+//! text of a [`StoredOutcome`], and [`IntentStore::begin`] parses it back.
+//! [`SqliteIntentStore::finish_text`] and [`SqliteIntentStore::begin_text`]
+//! write and answer the exact text instead, so a result that is not JSON still
+//! finishes its key, and a retry answers the same bytes.
+//!
 //! The file runs in WAL mode with `synchronous=FULL`, so a committed `begin` is
 //! on disk before the export runs. `locking_mode=EXCLUSIVE` holds the file for
 //! the process that opened it, so a second process cannot write it. Inside the
@@ -123,6 +129,38 @@ impl SqliteIntentStore {
         StoreClosed(self.writer.closed.subscribe())
     }
 
+    /// Claim the key of `intent` as [`IntentStore::begin`] does, and answer
+    /// the exact text of a finished key.
+    pub async fn begin_text(&self, intent: &Intent<'_>) -> Result<TextBegun, StoreError> {
+        let deadline_ms = i64::try_from(intent.deadline_ms).map_err(|_| {
+            contract(
+                "begin",
+                format!("deadline {} ms does not fit", intent.deadline_ms),
+            )
+        })?;
+        let row = OwnedIntent {
+            tenant: intent.tenant.to_owned(),
+            release: intent.release.to_owned(),
+            package: intent.package.to_owned(),
+            operation: intent.operation.to_owned(),
+            idempotency_key: intent.idempotency_key.to_owned(),
+            input_hash: intent.input_hash.to_owned(),
+            deadline_ms,
+        };
+        self.run("begin", move |connection| begin(connection, &row))
+            .await
+    }
+
+    /// Finish the open intent `id` with the exact text `outcome`, as
+    /// [`IntentStore::finish`] does with JSON.
+    pub async fn finish_text(&self, id: &IntentId, outcome: &str) -> Result<(), StoreError> {
+        let (id, outcome) = (id.clone(), outcome.to_owned());
+        self.transact("finish", move |transaction| {
+            finish_text_in(transaction, &id, &outcome)
+        })
+        .await
+    }
+
     /// Run `call` on the writer connection, on tokio's blocking pool.
     async fn run<T: Send + 'static>(
         &self,
@@ -163,23 +201,13 @@ impl SqliteIntentStore {
 #[async_trait]
 impl IntentStore for SqliteIntentStore {
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError> {
-        let deadline_ms = i64::try_from(intent.deadline_ms).map_err(|_| {
-            contract(
-                "begin",
-                format!("deadline {} ms does not fit", intent.deadline_ms),
-            )
-        })?;
-        let row = OwnedIntent {
-            tenant: intent.tenant.to_owned(),
-            release: intent.release.to_owned(),
-            package: intent.package.to_owned(),
-            operation: intent.operation.to_owned(),
-            idempotency_key: intent.idempotency_key.to_owned(),
-            input_hash: intent.input_hash.to_owned(),
-            deadline_ms,
-        };
-        self.run("begin", move |connection| begin(connection, &row))
-            .await
+        Ok(match self.begin_text(intent).await? {
+            TextBegun::New(id) => Begun::New(id),
+            TextBegun::Finished(outcome) => Begun::Finished(stored_outcome(&outcome)?),
+            TextBegun::Uncertain(id) => Begun::Uncertain(id),
+            TextBegun::Resolved { id, basis } => Begun::Resolved { id, basis },
+            TextBegun::Conflict(id) => Begun::Conflict(id),
+        })
     }
 
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
@@ -264,20 +292,49 @@ pub fn finish_in(
     id: &IntentId,
     outcome: &StoredOutcome,
 ) -> Result<(), StoreError> {
-    let id = row_id("finish", id)?;
     let value = serde_json::to_string(&outcome.0)
         .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
+    finish_text_in(transaction, id, &value)
+}
+
+/// Record the exact text `outcome` of the open intent `id` in `transaction`,
+/// as [`finish_in`] records JSON.
+pub fn finish_text_in(
+    transaction: &Transaction<'_>,
+    id: &IntentId,
+    outcome: &str,
+) -> Result<(), StoreError> {
+    let id = row_id("finish", id)?;
     let changed = transaction
         .execute(
             "UPDATE intents SET finished_at = ?1, outcome = ?2 \
              WHERE id = ?3 AND finished_at IS NULL AND resolved_at IS NULL",
-            params![now_ms("finish")?, value, id],
+            params![now_ms("finish")?, outcome, id],
         )
         .map_err(storage("finish"))?;
     if changed == 0 {
         return Err(contract("finish", format!("intent {id} is not open")));
     }
     Ok(())
+}
+
+/// The answer of [`SqliteIntentStore::begin_text`]: a [`Begun`] whose finished
+/// key answers the exact text that finished it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextBegun {
+    /// No record had the key. The export may run.
+    New(IntentId),
+    /// The key already finished. The stored text, byte for byte, is the answer.
+    Finished(String),
+    /// The key began and never finished. The export must not run again.
+    Uncertain(IntentId),
+    /// An operator resolved the uncertain key.
+    Resolved {
+        id: IntentId,
+        basis: OperatorActionBasis,
+    },
+    /// The key repeats with a different input. The stored intent is unchanged.
+    Conflict(IntentId),
 }
 
 /// The owned fields of one [`Intent`], moved to the blocking pool.
@@ -294,7 +351,7 @@ struct OwnedIntent {
 /// Read the key and insert it when it is new, in one committed transaction.
 ///
 /// A resolved intent answers its basis, so its call never runs again.
-fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, StoreError> {
+fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<TextBegun, StoreError> {
     let storage = storage("begin");
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -317,16 +374,16 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
         .map_err(&storage)?;
     let begun = match existing {
         Some((id, input_hash, ..)) if input_hash != intent.input_hash => {
-            Begun::Conflict(IntentId(id.to_string()))
+            TextBegun::Conflict(IntentId(id.to_string()))
         }
-        Some((_, _, Some(outcome), _)) => Begun::Finished(stored_outcome(&outcome)?),
-        Some((id, _, _, Some(basis))) => Begun::Resolved {
+        Some((_, _, Some(outcome), _)) => TextBegun::Finished(outcome),
+        Some((id, _, _, Some(basis))) => TextBegun::Resolved {
             id: IntentId(id.to_string()),
             basis: basis
                 .parse()
                 .map_err(|error| contract("begin", format!("stored basis: {error}")))?,
         },
-        Some((id, ..)) => Begun::Uncertain(IntentId(id.to_string())),
+        Some((id, ..)) => TextBegun::Uncertain(IntentId(id.to_string())),
         None => {
             transaction
                 .execute(
@@ -344,7 +401,7 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
                     ],
                 )
                 .map_err(&storage)?;
-            Begun::New(IntentId(transaction.last_insert_rowid().to_string()))
+            TextBegun::New(IntentId(transaction.last_insert_rowid().to_string()))
         }
     };
     transaction.commit().map_err(&storage)?;

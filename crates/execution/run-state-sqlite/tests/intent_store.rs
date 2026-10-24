@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_cases::{self, CaseStores, IntentStoreFixture};
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoreErrorType};
-use wamn_run_state_sqlite::SqliteIntentStore;
+use wamn_run_state_sqlite::{SqliteIntentStore, TextBegun};
 
 /// The child reads the database path from this variable.
 const CHILD_DATABASE: &str = "WAMN_INTENT_STORE_CHILD_DATABASE";
@@ -108,6 +108,29 @@ async fn a_resolved_intent_leaves_the_list_and_answers_its_basis() {
 #[tokio::test]
 async fn a_finished_intent_does_not_resolve() {
     intent_cases::a_finished_intent_does_not_resolve(&Files).await;
+}
+
+/// The text accessors keep the exact bytes, JSON or not. The JSON reader
+/// refuses a text that is not JSON.
+#[tokio::test]
+async fn a_finished_text_answers_its_exact_bytes() {
+    let store = SqliteIntentStore::open(database("text")).expect("open");
+    for (key, text) in [
+        ("k-text", "12.5 kg, not JSON {"),
+        ("k-json", "{ \"a\" :1.0 }\n"),
+    ] {
+        let id = match store.begin_text(&intent(key, "h")).await.expect("begin") {
+            TextBegun::New(id) => id,
+            other => panic!("expected a new intent, got {other:?}"),
+        };
+        store.finish_text(&id, text).await.expect("finish");
+        assert_eq!(
+            store.begin_text(&intent(key, "h")).await.expect("begin"),
+            TextBegun::Finished(text.to_owned())
+        );
+    }
+    let refused = store.begin(&intent("k-text", "h")).await.unwrap_err();
+    assert_eq!(refused.error_type(), StoreErrorType::Contract);
 }
 
 /// The kill test runs this test binary again as a child that begins one intent.

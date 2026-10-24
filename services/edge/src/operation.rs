@@ -7,12 +7,13 @@
 //! SQL; `finish-read` ends it. `begin-operation` claims the idempotency key as
 //! an intent in the SQLite intent store that the delivery and the `wamn-edge
 //! intents` commands share, with the request hash as its input hash, and mints
-//! a delivery id. A finished key answers its stored outcome, an unfinished key
-//! answers `uncertain`, a resolved key answers `resolved` with its basis, and
-//! another request hash answers `conflict`. `commit` finishes the intent with
-//! the result, and `rollback` releases it, so the key is unclaimed again. A
-//! commit that cannot record the result leaves the intent open, so it answers
-//! `uncertain` until an operator resolves it. `wal-position` returns the
+//! a delivery id. A finished key answers the exact text that its commit
+//! recorded, an unfinished key answers `uncertain`, a resolved key answers
+//! `resolved` with its basis, and another request hash answers `conflict`.
+//! `commit` finishes the intent with the exact result text, JSON or not, and
+//! `rollback` releases it, so the key is unclaimed again. A commit that cannot
+//! record the result leaves the intent open, so it answers `uncertain` until
+//! an operator resolves it. `wal-position` returns the
 //! number of finished intents in the file, a revision that only grows. One
 //! operation is open per Store, and dropping the Store releases its claim.
 //! The box has no event plane, so a commit emits no causation message.
@@ -25,10 +26,8 @@ use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::router_delivery::{authorize_registered_operation, bounded_node_deadline_ms};
 use wamn_run_state::IntentStore as _;
-use wamn_run_state::intent_store::{
-    self, Intent, IntentId, StoreError, StoreErrorType, StoredOutcome,
-};
-use wamn_run_state_sqlite::SqliteIntentStore;
+use wamn_run_state::intent_store::{Intent, IntentId, StoreError, StoreErrorType};
+use wamn_run_state_sqlite::{SqliteIntentStore, TextBegun};
 use wash_runtime::engine::ctx::{ActiveCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -207,16 +206,12 @@ struct Claim {
 }
 
 impl Claim {
-    /// Finish the intent with `result`. A result that is not recorded leaves
-    /// the intent open, so its key answers `uncertain`.
+    /// Finish the intent with the exact text `result`. A result that is not
+    /// recorded leaves the intent open, so its key answers `uncertain`.
     async fn commit(mut self, result: &str) -> Result<(), Refusal> {
         let id = self.id.take().expect("an unsettled claim holds its intent");
-        let outcome = serde_json::from_str(result).map_err(|error| {
-            tracing::warn!(intent = id.0, %error, "the operation result is not JSON; the intent stays open");
-            Refusal::Uncertain
-        })?;
         self.intents
-            .finish(&id, &StoredOutcome(outcome))
+            .finish_text(&id, result)
             .await
             .map_err(|error| {
                 tracing::warn!(intent = id.0, %error, "the commit did not record the result; the intent stays open");
@@ -274,7 +269,7 @@ async fn claim(
     request: &ClaimRequest,
 ) -> Result<(Option<Claim>, Begun), Refusal> {
     let begun = intents
-        .begin(&Intent {
+        .begin_text(&Intent {
             tenant: &request.tenant,
             release: &request.release,
             package: &request.package,
@@ -286,21 +281,17 @@ async fn claim(
         .await
         .map_err(|error| storage_refusal(&error))?;
     match begun {
-        intent_store::Begun::New(id) => Ok((
+        TextBegun::New(id) => Ok((
             Some(Claim {
                 intents: intents.clone(),
                 id: Some(id),
             }),
             Begun::New(uuid::Uuid::new_v4().to_string()),
         )),
-        intent_store::Begun::Finished(outcome) => {
-            Ok((None, Begun::Finished(outcome.0.to_string())))
-        }
-        intent_store::Begun::Uncertain(_) => Err(Refusal::Uncertain),
-        intent_store::Begun::Resolved { basis, .. } => {
-            Err(Refusal::Resolved(basis.as_str().to_owned()))
-        }
-        intent_store::Begun::Conflict(_) => Err(Refusal::Conflict),
+        TextBegun::Finished(result) => Ok((None, Begun::Finished(result))),
+        TextBegun::Uncertain(_) => Err(Refusal::Uncertain),
+        TextBegun::Resolved { basis, .. } => Err(Refusal::Resolved(basis.as_str().to_owned())),
+        TextBegun::Conflict(_) => Err(Refusal::Conflict),
     }
 }
 
@@ -531,6 +522,36 @@ mod tests {
             claim(&store, &request("k-1", "sha256:b")).await,
             Err(Refusal::Conflict)
         ));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Commit `result` on a new key, and assert that a retry answers the same
+    /// bytes.
+    async fn assert_round_trip(store: &SqliteIntentStore, key: &str, result: &str) {
+        begin(store, key, "sha256:a")
+            .await
+            .commit(result)
+            .await
+            .expect("commit");
+        match claim(store, &request(key, "sha256:a")).await {
+            Ok((None, Begun::Finished(stored))) => assert_eq!(stored.as_bytes(), result.as_bytes()),
+            other => panic!("expected the finished result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_result_that_is_not_json_finishes_the_key() {
+        let (store, directory) = store("text");
+        assert_round_trip(&store, "k-1", "12.5 kg, not JSON {").await;
+        assert!(store.uncertain(10).await.expect("uncertain").is_empty());
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn a_json_result_round_trips_byte_for_byte() {
+        let (store, directory) = store("bytes");
+        let result = "{ \"value\" :{\"frame\":  \"12.5 kg\"} ,\"b\":1.0 }\n";
+        assert_round_trip(&store, "k-1", result).await;
         let _ = std::fs::remove_dir_all(directory);
     }
 
