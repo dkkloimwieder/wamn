@@ -418,6 +418,59 @@ fn is_platform_trigger_read(path: &str, sql: &str, claim: &str, offset: usize) -
             })
 }
 
+/// The forms in which the schema generator stamps the actor of a write
+/// (`crates/schema/generator/src/sql.rs`), each as `(before, read)` in
+/// normalized SQL: the text that ends right before the read, and the read up
+/// to its cast. A create statement writes the claim as the value of an actor
+/// field, an update writes it in the `THEN` arm of the actor field's change
+/// test, and a delete writes the tombstone actor.
+const GENERATED_ACTOR_STAMPS: [(&str, &str); 4] = [
+    (", ", "current_setting('app.user_id')::"),
+    ("(", "current_setting('app.user_id')::"),
+    ("then ", "current_setting('app.user_id')::"),
+    (
+        "deleted_by = nullif(",
+        "current_setting('app.user_id', true), ')::",
+    ),
+];
+
+/// Is the read at `offset` of `sql` an actor stamp of a statement the schema
+/// generator wrote into `path`?
+///
+/// The owner ruling of 2026-10-24 (`wamn-jf1yj`) admits these readers of
+/// `app.user_id`: the spec has generated SQL read the actor with
+/// `current_setting`. The stamp records the actor of a write and takes no
+/// authorization decision. The exemption holds only for a statement file of
+/// the generator, `apps/target/wamn/<package>/sql/<model>/<operation>.sql`,
+/// and only for the forms in [`GENERATED_ACTOR_STAMPS`]. Any other read in
+/// that file, and every read elsewhere under `apps/target`, still fails.
+fn is_generated_actor_stamp(path: &str, sql: &str, claim: &str, offset: usize) -> bool {
+    let path = Path::new(path);
+    let components = path
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    let generated = matches!(
+        components.as_slice(),
+        [
+            Some("apps"),
+            Some("target"),
+            Some("wamn"),
+            Some(_),
+            Some("sql"),
+            Some(_),
+            Some(_)
+        ]
+    ) && path.extension().and_then(|value| value.to_str()) == Some("sql");
+    let normalized = normalize(sql);
+    let (before, read) = normalized.split_at(offset);
+    generated
+        && claim == "app.user_id"
+        && GENERATED_ACTOR_STAMPS
+            .iter()
+            .any(|(prefix, stamp)| before.ends_with(prefix) && read.starts_with(stamp))
+}
+
 /// The dollar-quoted body of `function <name>(` in normalized SQL.
 fn function_body(normalized: &str, name: &str) -> Option<std::ops::Range<usize>> {
     let header = normalized.find(&format!("function {name}("))?;
@@ -437,7 +490,9 @@ fn function_body(normalized: &str, name: &str) -> Option<std::ops::Range<usize>>
 ///
 /// The owner narrowing of 2026-09-13 admits the platform trigger functions in
 /// [`PLATFORM_TRIGGER_READERS`] as readers of `app.user_id` and
-/// `app.operation`. Every other reader of these claims fails.
+/// `app.operation`. The owner ruling of 2026-10-24 admits the actor stamps of
+/// generated statements as readers of `app.user_id`
+/// ([`is_generated_actor_stamp`]). Every other reader of these claims fails.
 ///
 /// Keep the existing SQL-text scope: production Rust literals, deployment SQL,
 /// and application SQL. Test modules, examples, and fixture inputs stay excluded.
@@ -452,15 +507,66 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
     };
     for (path, line, sql) in fragments {
         for (claim, call, offset) in forgeable_claim_reads(&sql) {
-            if !is_platform_trigger_read(&path, &sql, claim, offset) {
+            if !is_platform_trigger_read(&path, &sql, claim, offset)
+                && !is_generated_actor_stamp(&path, &sql, claim, offset)
+            {
                 problems.push(format!(
                     "{path}:{line} reads the session-forgeable claim {claim} ({call}). \
                      Production SQL must not read app.role, app.user_id or app.operation \
                      for authorization or row security while wamn-0h0g.22 is open. Only \
                      the platform trigger functions in PLATFORM_TRIGGER_READERS may read \
-                     app.user_id and app.operation, to record the actor of a write."
+                     app.user_id and app.operation, and the actor stamps of generated \
+                     statements may read app.user_id, to record the actor of a write."
                 ));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{forgeable_claim_reads, is_generated_actor_stamp};
+
+    const CREATE: &str = "apps/target/wamn/wamn_receiving/sql/purchase_order/create.sql";
+
+    fn admitted(path: &str, sql: &str) -> Vec<bool> {
+        forgeable_claim_reads(sql)
+            .into_iter()
+            .map(|(claim, _, offset)| is_generated_actor_stamp(path, sql, claim, offset))
+            .collect()
+    }
+
+    #[test]
+    fn the_generated_actor_stamps_are_admitted() {
+        let create = "INSERT INTO purchase_order (supplier_id, created_by)\n\
+            VALUES ($1::uuid, current_setting('app.user_id')::uuid)";
+        assert_eq!(admitted(CREATE, create), [true]);
+        let update = "updated_by = CASE\n    WHEN ($3::boolean)\n    \
+            THEN current_setting('app.user_id')::uuid\n    ELSE model.updated_by\nEND";
+        assert_eq!(admitted(CREATE, update), [true]);
+        let delete = "deleted_by = NULLIF(current_setting('app.user_id', true), '')::uuid";
+        assert_eq!(admitted(CREATE, delete), [true]);
+    }
+
+    #[test]
+    fn another_read_in_a_generated_statement_still_fails() {
+        let filter = "SELECT id FROM purchase_order \
+            WHERE created_by = current_setting('app.user_id')::uuid";
+        assert_eq!(admitted(CREATE, filter), [false]);
+        let role = "VALUES ($1::uuid, current_setting('app.role')::text)";
+        assert_eq!(admitted(CREATE, role), [false]);
+    }
+
+    #[test]
+    fn a_stamp_outside_the_generator_output_still_fails() {
+        let create = "VALUES ($1::uuid, current_setting('app.user_id')::uuid)";
+        for path in [
+            "apps/wamn_receiving/sql/purchase_order/create.sql",
+            "apps/target/wamn/wamn_receiving/purchase_order/create.sql",
+            "apps/target/wamn/wamn_receiving/sql/purchase_order/create.rs",
+            "deploy/sql/app-schema.sql",
+        ] {
+            assert_eq!(admitted(path, create), [false], "{path}");
         }
     }
 }
