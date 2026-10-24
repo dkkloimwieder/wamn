@@ -9,8 +9,8 @@ gs://wamn-dev-otel/logs/year=YYYY/month=MM/day=DD/hour=HH/logs_<uuid>.gz
 
 The hour in the path is UTC. The collector writes no metrics.
 
-The existing head sampler controls WAMN request span creation as well as trace export.
-Unsampled requests create no WAMN child spans, but retain the two upstream HTTP spans.
+The existing head sampler controls request span creation as well as trace export.
+An unsampled request creates only its upstream `handle_http_request` entry span, where the sampler decides.
 See [execution observability](../architecture/execution.md) for context propagation and behavior without an active trace.
 
 ## Query one hour

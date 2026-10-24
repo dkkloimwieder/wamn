@@ -19,6 +19,7 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 
 mod host;
+mod observability;
 
 #[derive(Parser)]
 #[command(name = "wamn-host", version, about)]
@@ -65,8 +66,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let level = tracing::Level::from_str(&cli.log_level)
         .map_err(|_| anyhow::anyhow!("invalid log level: {}", cli.log_level))?;
     // OTel exporters activate when OTEL_* env vars are present.
-    let _shutdown_observability =
-        wash_runtime::observability::initialize_observability(level, false, false)?;
+    let _shutdown_observability = observability::initialize(level)?;
 
     let result = match cli.command {
         Command::Host(args) => Box::pin(host::run(*args)).await,

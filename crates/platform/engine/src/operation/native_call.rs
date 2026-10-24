@@ -250,7 +250,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
             }
             Ok(refused)
             }
-            .instrument(crate::invocation_trace::sampled_span(|| tracing::info_span!("wamn.operation.call")))
+            .instrument(tracing::info_span!("wamn.operation.call"))
             .await
         }))
     }
@@ -325,9 +325,7 @@ pub async fn invoke_owned<P: InvocationPolicy>(
                 trace: InvocationTrace::capture(),
                 retired_after_reply: Arc::clone(&retired_after_reply),
                 scope,
-                instantiate: crate::invocation_trace::sampled_span(|| {
-                    tracing::info_span!("wamn.operation.instantiate")
-                }),
+                instantiate: tracing::info_span!("wamn.operation.instantiate"),
             })
             .await
         {

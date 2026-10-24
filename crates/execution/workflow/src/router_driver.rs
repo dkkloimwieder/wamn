@@ -459,9 +459,7 @@ impl RouterDriver {
         self.validate_request_scope(&request)?;
         let active = self
             .resolve(&request)
-            .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                tracing::info_span!("wamn.router.resolve")
-            }))
+            .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
         self.validate_wiring_closure(&request, &active)?;
         self.execute_resolved(
@@ -512,9 +510,7 @@ impl RouterDriver {
                     node_digests: &node_digests,
                 },
             )
-            .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                tracing::info_span!("wamn.router.resolve")
-            }))
+            .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
         let scope = WiringScope {
             tenant_id: &run.tenant_id,
@@ -548,9 +544,7 @@ impl RouterDriver {
         self.validate_candidate_target(&request.target)?;
         let active = self
             .resolve_candidate(&request.target, &request.binding_world)
-            .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                tracing::info_span!("wamn.router.resolve")
-            }))
+            .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
         Self::validate_candidate_closure(
             &request.target,

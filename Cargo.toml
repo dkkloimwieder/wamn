@@ -194,6 +194,7 @@ tokio-postgres = "0.7"
 tokio-rustls = "0.26"
 tower-service = "0.3"
 tracing = "0.1"
+tracing-core = "0.1"
 tracing-opentelemetry = { version = "0.32", default-features = false }
 tracing-subscriber = "0.3"
 async-trait = "0.1"

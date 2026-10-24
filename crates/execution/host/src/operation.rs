@@ -445,9 +445,10 @@ impl OperationHost {
                 let entry = self
                     .source
                     .pull_entry(&recorded.reference)
-                    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                        tracing::info_span!("wamn.component.pull", wamn.composed_entry = true)
-                    }))
+                    .instrument(tracing::info_span!(
+                        "wamn.component.pull",
+                        wamn.composed_entry = true
+                    ))
                     .await?;
                 Some(NativeEntry {
                     members,
@@ -462,12 +463,10 @@ impl OperationHost {
             async move {
                 let bytes = source
                     .pull_verified(&fact)
-                    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                        tracing::info_span!(
-                            "wamn.component.pull",
-                            wamn.component_digest = %fact.component_digest,
-                        )
-                    }))
+                    .instrument(tracing::info_span!(
+                        "wamn.component.pull",
+                        wamn.component_digest = %fact.component_digest,
+                    ))
                     .await?;
                 anyhow::Ok(NativeComponent { fact, bytes })
             }

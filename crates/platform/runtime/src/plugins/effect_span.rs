@@ -401,9 +401,6 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
 /// (`future.instrument(span).await`); entering it around a synchronous prelude
 /// would not cover the await that is the effect.
 ///
-/// An unsampled active trace creates no effect span. Without a valid trace
-/// context, span creation keeps its ordinary behavior.
-///
 /// The span is emitted through the process's global `tracing` subscriber, which
 /// the runtime's `initialize_observability` bridges to OTel and exports over OTLP
 /// when `OTEL_*` is set — so it nests under whatever span is current and threads
@@ -415,7 +412,7 @@ macro_rules! effect_span {
         $identity:expr,
         $run:expr,
         $($surface_field:tt)*
-    ) => { wamn_engine::invocation_trace::sampled_span(|| {
+    ) => {{
         // Named and typed so the macro cannot lie about what it accepts
         // (M-MACROS-DONT-LIE): a wrong second argument fails here rather than
         // inside an inscrutable `tracing` expansion.
@@ -440,7 +437,7 @@ macro_rules! effect_span {
         );
         $crate::plugins::effect_span::record_run(&span, $run);
         span
-    }) };
+    }};
 }
 
 pub(crate) use effect_span;
@@ -489,23 +486,7 @@ pub(crate) mod span_tests {
     pub(crate) struct SpanHarness {
         exporter: InMemorySpanExporter,
         provider: SdkTracerProvider,
-        created: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         _guard: tracing::subscriber::DefaultGuard,
-    }
-
-    struct CountSpans(std::sync::Arc<std::sync::atomic::AtomicUsize>);
-
-    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CountSpans {
-        fn on_new_span(
-            &self,
-            attributes: &tracing::span::Attributes<'_>,
-            _: &tracing::span::Id,
-            _: tracing_subscriber::layer::Context<'_, S>,
-        ) {
-            if attributes.metadata().name().starts_with("wamn.") {
-                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
     }
 
     impl SpanHarness {
@@ -523,16 +504,11 @@ pub(crate) mod span_tests {
                 .with_location(false)
                 .with_threads(false)
                 .with_tracked_inactivity(false);
-            let created = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let guard = tracing::subscriber::set_default(
-                tracing_subscriber::registry()
-                    .with(CountSpans(created.clone()))
-                    .with(layer),
-            );
+            let guard =
+                tracing::subscriber::set_default(tracing_subscriber::registry().with(layer));
             Self {
                 exporter,
                 provider,
-                created,
                 _guard: guard,
             }
         }
@@ -567,118 +543,6 @@ pub(crate) mod span_tests {
             let mut spans = self.every_span(name);
             assert_eq!(spans.len(), 1, "exactly one {name} span must be exported");
             spans.pop().expect("the one exported span")
-        }
-    }
-
-    #[tokio::test]
-    async fn sampling_skips_creation_and_preserves_sampled_spans_across_tasks() {
-        use super::EffectIdentity;
-        use opentelemetry::trace::{
-            SpanContext, SpanId, TraceContextExt as _, TraceFlags, TraceId, TraceState,
-        };
-        use tracing::Instrument as _;
-        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        use wamn_engine::invocation_trace::{InvocationTrace, sampled_span};
-
-        // Reuse the same call sites for both decisions and for absent context.
-        // Count registry creation separately from export: a dropped OTel span
-        // alone does not satisfy the unsampled path.
-        for sampled in [Some(true), Some(false), None] {
-            let harness = SpanHarness::install("sampling-test");
-            let root = sampled.map_or_else(tracing::Span::none, |sampled| {
-                let root = tracing::info_span!("invoke_component_handler");
-                root.set_parent(opentelemetry::Context::new().with_remote_span_context(
-                    SpanContext::new(
-                        TraceId::from_bytes([1; 16]),
-                        SpanId::from_bytes([2; 8]),
-                        if sampled {
-                            TraceFlags::SAMPLED
-                        } else {
-                            TraceFlags::NOT_SAMPLED
-                        },
-                        true,
-                        TraceState::default(),
-                    ),
-                ))
-                .expect("set incoming parent");
-                root
-            });
-            let enabled = sampled != Some(false);
-            let root_id = root.context().span().span_context().span_id();
-            async {
-                let outer = effect_span!(
-                    "wamn.sampling.effect",
-                    EffectIdentity {
-                        tenant: "tenant-a",
-                        project: "project-a",
-                        component: "component-a"
-                    },
-                    None,
-                    effect.operation = "query",
-                );
-                assert_eq!(outer.is_disabled(), !enabled);
-                async {
-                    let child =
-                        sampled_span(|| tracing::info_span!("wamn.sampling.child", answer = 42));
-                    assert_eq!(child.is_disabled(), !enabled);
-                    let trace = InvocationTrace::capture();
-                    tokio::spawn(trace.run(async move {
-                        let child =
-                            sampled_span(|| tracing::info_span!("wamn.sampling.task", answer = 43));
-                        assert_eq!(child.is_disabled(), !enabled);
-                    }))
-                    .await
-                    .expect("spawned request task");
-                }
-                .instrument(outer)
-                .await;
-            }
-            .instrument(root)
-            .await;
-
-            assert_eq!(
-                harness.created.load(std::sync::atomic::Ordering::Relaxed),
-                if enabled { 3 } else { 0 }
-            );
-            harness.provider.force_flush().expect("flush sampling test");
-            let spans = harness
-                .exporter
-                .get_finished_spans()
-                .expect("read sampling test");
-            if !enabled {
-                assert!(spans.is_empty());
-                continue;
-            }
-            let outer = spans
-                .iter()
-                .find(|span| span.name == "wamn.sampling.effect")
-                .expect("exported effect");
-            assert_eq!(outer.parent_span_id, root_id);
-            assert_eq!(
-                harness.attributes("wamn.sampling.effect"),
-                expected_attributes(&[
-                    ("effect.operation", "query"),
-                    ("wamn.tenant", "tenant-a"),
-                    ("wamn.project", "project-a"),
-                    ("wamn.component", "component-a"),
-                ])
-            );
-            for name in ["wamn.sampling.child", "wamn.sampling.task"] {
-                let child = spans
-                    .iter()
-                    .find(|span| span.name == name)
-                    .expect("exported child");
-                assert_eq!(child.parent_span_id, outer.span_context.span_id());
-                assert_eq!(child.span_context.trace_id(), outer.span_context.trace_id());
-            }
-            assert_eq!(
-                harness.attributes("wamn.sampling.child"),
-                expected_attributes(&[("answer", "42")])
-            );
-            assert_eq!(
-                harness.attributes("wamn.sampling.task"),
-                expected_attributes(&[("answer", "43")])
-            );
         }
     }
 

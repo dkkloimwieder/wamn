@@ -264,9 +264,7 @@ pub(super) async fn run_query(
             }
             Ok::<_, PgError>(rows)
         }
-        .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-            tracing::info_span!("wamn.postgres.decode_rows")
-        }))
+        .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
         .await?;
         Ok(RowSet {
             columns,
@@ -274,13 +272,11 @@ pub(super) async fn run_query(
             wal_position: None,
         })
     }
-    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-        tracing::info_span!(
-            "wamn.postgres.statement",
-            db.system = "postgresql",
-            db.operation = "query",
-        )
-    }))
+    .instrument(tracing::info_span!(
+        "wamn.postgres.statement",
+        db.system = "postgresql",
+        db.operation = "query",
+    ))
     .await
 }
 
@@ -299,13 +295,11 @@ pub(super) async fn run_execute(
             .await
             .map_err(|e| map_pg_error(&e))
     }
-    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-        tracing::info_span!(
-            "wamn.postgres.statement",
-            db.system = "postgresql",
-            db.operation = "execute",
-        )
-    }))
+    .instrument(tracing::info_span!(
+        "wamn.postgres.statement",
+        db.system = "postgresql",
+        db.operation = "execute",
+    ))
     .await
 }
 
@@ -347,9 +341,7 @@ pub(super) async fn run_verified_query(
             }
             Ok::<_, StatementError>(rows)
         }
-        .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-            tracing::info_span!("wamn.postgres.decode_rows")
-        }))
+        .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
         .await?;
         validate_statement_result(statement_path, statement, &columns, &rows)?;
         Ok(RowSet {
@@ -358,14 +350,12 @@ pub(super) async fn run_verified_query(
             wal_position: None,
         })
     }
-    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-        tracing::info_span!(
-            "wamn.postgres.statement",
-            db.system = "postgresql",
-            db.operation = "verified-query",
-            statement.path = statement_path,
-        )
-    }))
+    .instrument(tracing::info_span!(
+        "wamn.postgres.statement",
+        db.system = "postgresql",
+        db.operation = "verified-query",
+        statement.path = statement_path,
+    ))
     .await
 }
 

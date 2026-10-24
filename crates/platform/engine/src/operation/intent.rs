@@ -224,9 +224,7 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
         let transaction = application
             .policy
             .begin_item(component_id, call.operation, &call.facts)
-            .instrument(crate::invocation_trace::sampled_span(|| {
-                tracing::info_span!("wamn.operation.begin_item")
-            }))
+            .instrument(tracing::info_span!("wamn.operation.begin_item"))
             .await?;
         let facts = match &transaction {
             Some(transaction) => application.policy.item_facts(&call.facts, transaction),
@@ -291,9 +289,7 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
         answers.push(
             match transaction
                 .commit()
-                .instrument(crate::invocation_trace::sampled_span(|| {
-                    tracing::info_span!("wamn.operation.commit")
-                }))
+                .instrument(tracing::info_span!("wamn.operation.commit"))
                 .await
             {
                 Ok(()) => body,
@@ -369,9 +365,7 @@ async fn settle_item<H: ApplicationHost>(
             input_hash: &item_input_hash(hashed.as_ref().unwrap_or(item.value)),
             deadline_ms: call.deadline_ms,
         })
-        .instrument(crate::invocation_trace::sampled_span(|| {
-            tracing::info_span!("wamn.write_log.claim")
-        }))
+        .instrument(tracing::info_span!("wamn.write_log.claim"))
         .await?;
     let id = match begun {
         Begun::New(id) => id,
@@ -442,9 +436,7 @@ async fn settle_item<H: ApplicationHost>(
     intent
         .store
         .finish(&id, &StoredOutcome(body.clone()))
-        .instrument(crate::invocation_trace::sampled_span(|| {
-            tracing::info_span!("wamn.write_log.finish")
-        }))
+        .instrument(tracing::info_span!("wamn.write_log.finish"))
         .await?;
     Ok(Settled::Answer {
         body,

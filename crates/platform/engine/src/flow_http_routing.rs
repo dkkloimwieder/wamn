@@ -1429,13 +1429,11 @@ impl routing::Host for ActiveCtx<'_> {
         authority: String,
     ) -> wash_runtime::wasmtime::Result<Result<Vec<RouteDefinition>, String>> {
         let plugin = plugin_of(self)?;
-        let _span = crate::invocation_trace::sampled_span(|| {
-            tracing::info_span!(
-                target: "wamn::route",
-                "wamn.route.match",
-                wamn.method = %method,
-            )
-        })
+        let _span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.match",
+            wamn.method = %method,
+        )
         .entered();
         Ok(plugin
             .routes(&self.workload_id, &method, &authority)
@@ -1451,14 +1449,12 @@ impl routing::Host for ActiveCtx<'_> {
         payload: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), String>> {
         let plugin = plugin_of(self)?;
-        let _span = crate::invocation_trace::sampled_span(|| {
-            tracing::info_span!(
-                target: "wamn::route",
-                "wamn.route.validate_input",
-                wamn.attachment_id = %attachment_id,
-                wamn.payload_bytes = payload.len(),
-            )
-        })
+        let _span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.validate_input",
+            wamn.attachment_id = %attachment_id,
+            wamn.payload_bytes = payload.len(),
+        )
         .entered();
         Ok(plugin.validate_input(&attachment_id, &payload))
     }
@@ -1468,13 +1464,11 @@ impl routing::Host for ActiveCtx<'_> {
         attachment_id: String,
     ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<RoutePermit>>, String>> {
         let plugin = plugin_of(self)?;
-        let _span = crate::invocation_trace::sampled_span(|| {
-            tracing::info_span!(
-                target: "wamn::route",
-                "wamn.route.permit",
-                wamn.attachment_id = %attachment_id,
-            )
-        })
+        let _span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.permit",
+            wamn.attachment_id = %attachment_id,
+        )
         .entered();
         match plugin.carries_route(&attachment_id) {
             Ok(true) => {}

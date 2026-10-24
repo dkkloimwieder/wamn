@@ -352,9 +352,7 @@ impl PlatformRouteAuthenticator {
                 &session.claims().roles,
                 &principal,
             )
-            .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                tracing::info_span!("wamn.auth.permissions")
-            }))
+            .instrument(tracing::info_span!("wamn.auth.permissions"))
             .await
             .map_err(|error| {
                 tracing::warn!(error = %error, "route operation grants unavailable");
@@ -445,13 +443,11 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .await
                 .map(Some);
         }
-        let span = wamn_engine::invocation_trace::sampled_span(|| {
-            tracing::info_span!(
-                target: "wamn::route",
-                "wamn.route.authenticate",
-                wamn.attachment_id = %attachment_id,
-            )
-        });
+        let span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.authenticate",
+            wamn.attachment_id = %attachment_id,
+        );
         async {
             let authentication = self
                 .authentication
@@ -473,9 +469,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         &scope.environment,
                         &[ADMIN_ROLE],
                     )
-                    .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                        tracing::info_span!("wamn.auth.identity")
-                    }))
+                    .instrument(tracing::info_span!("wamn.auth.identity"))
                     .await
                     .map_err(|error| {
                         tracing::warn!(error = %error, "route PAT authentication unavailable");
@@ -504,9 +498,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     &scope.tenant_id,
                     principal.id(),
                 )
-                .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                    tracing::info_span!("wamn.auth.permissions")
-                }))
+                .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "route operation grants unavailable");

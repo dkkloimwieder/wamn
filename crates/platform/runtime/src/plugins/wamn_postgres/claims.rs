@@ -1711,9 +1711,7 @@ impl WamnPostgres {
         };
         let rows = connection
             .query(&statement, &[&principal_id])
-            .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                tracing::info_span!("wamn.claims.principal.query")
-            }))
+            .instrument(tracing::info_span!("wamn.claims.principal.query"))
             .await
             .context("read the executing principal's platform.\"user\" row")?;
         if rows.is_empty() {
@@ -2140,9 +2138,7 @@ impl WamnPostgres {
         };
         let rows = connection
             .query(&statement, &[&tenant, &principal.as_str()])
-            .instrument(wamn_engine::invocation_trace::sampled_span(|| {
-                tracing::info_span!("wamn.auth.perm.query")
-            }))
+            .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read the principal grants")?;
         let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;

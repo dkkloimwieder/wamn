@@ -30,13 +30,19 @@ clap = { workspace = true, features = ["derive", "env"] }
 # side that has no second provider to own, so the process-global meter is handed
 # in at the one construction site here — which is why this dep edge belongs to
 # the host and not to the bridge's crate.
-opentelemetry = { workspace = true, features = ["metrics"] }
+# `trace` reads the sampler's decision from the active context (src/observability.rs).
+opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util", "process"] }
 tokio-postgres = { workspace = true }
 tracing = { workspace = true }
+# `tracing` does not re-export the `Current` that a wrapping subscriber returns.
+tracing-core = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url = { workspace = true }
 
 [dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
+tracing-opentelemetry = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 rcgen = { workspace = true }

@@ -38,28 +38,6 @@ pub fn request_trace(headers: &[(String, String)]) -> InvocationTrace {
     span.in_scope(InvocationTrace::capture)
 }
 
-/// Create a span unless the active OpenTelemetry trace is unsampled.
-///
-/// The entered upstream span already activates its sampled context. Borrowing
-/// that context avoids a registry lookup, context clone, or another span.
-/// Without a valid context, preserve ordinary startup and local tracing.
-/// Call `create` after releasing the borrow: entering a span can attach context.
-#[inline]
-pub fn sampled_span(create: impl FnOnce() -> tracing::Span) -> tracing::Span {
-    use opentelemetry::trace::TraceContextExt as _;
-
-    let enabled = opentelemetry::Context::map_current(|context| {
-        let span = context.span();
-        let context = span.span_context();
-        !context.is_valid() || context.is_sampled()
-    });
-    if enabled {
-        create()
-    } else {
-        tracing::Span::none()
-    }
-}
-
 /// The coordinates of one `wamn.component.invoke` span.
 ///
 /// A route has no wiring position, so it names the empty wiring, version 0
@@ -84,24 +62,22 @@ pub fn invocation_span(
     site: &InvocationSite<'_>,
     remote_parent: Option<&opentelemetry::Context>,
 ) -> tracing::Span {
-    let span = sampled_span(|| {
-        tracing::info_span!(
-            target: "wamn::router",
-            "wamn.component.invoke",
-            wamn.tenant = %site.tenant_id,
-            wamn.project = %site.project,
-            wamn.environment = %site.environment,
-            wamn.wiring_id = %site.wiring_id,
-            wamn.wiring_version = site.wiring_version,
-            wamn.component_digest = %site.component_digest,
-            wamn.node_id = %site.node_id,
-            wamn.operation = %site.operation,
-            wamn.caller_principal_id = tracing::field::Empty,
-            wamn.caller_credential_type = tracing::field::Empty,
-            wamn.input_port = tracing::field::Empty,
-            wamn.attachment_id = tracing::field::Empty,
-        )
-    });
+    let span = tracing::info_span!(
+        target: "wamn::router",
+        "wamn.component.invoke",
+        wamn.tenant = %site.tenant_id,
+        wamn.project = %site.project,
+        wamn.environment = %site.environment,
+        wamn.wiring_id = %site.wiring_id,
+        wamn.wiring_version = site.wiring_version,
+        wamn.component_digest = %site.component_digest,
+        wamn.node_id = %site.node_id,
+        wamn.operation = %site.operation,
+        wamn.caller_principal_id = tracing::field::Empty,
+        wamn.caller_credential_type = tracing::field::Empty,
+        wamn.input_port = tracing::field::Empty,
+        wamn.attachment_id = tracing::field::Empty,
+    );
     if let Some(caller) = site.caller {
         span.record("wamn.caller_principal_id", caller.principal_id());
         span.record(
