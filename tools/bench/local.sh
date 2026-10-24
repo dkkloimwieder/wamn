@@ -224,11 +224,14 @@ if $profile; then
   guest_target="$profile_target/guests"
   guest_flags+=" -C strip=none"
 fi
-for guest in http-route materializer; do
-  CARGO_TARGET_DIR="$guest_target" RUSTFLAGS="$(RUSTFLAGS="$guest_flags" tools/guest-rustflags)" cargo build --offline --release \
-    --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p "$guest"
-done
-http_route_sha256=$(sha256sum "$guest_target/wasm32-wasip2/release/http_route.wasm" | cut -d ' ' -f 1)
+# The route guest must match its pin (compose_control_entry in
+# crates/platform/component-composer/src/lib.rs), so it keeps no symbols in profile mode.
+route_target=$CARGO_TARGET_DIR
+CARGO_TARGET_DIR="$route_target" RUSTFLAGS="$(RUSTFLAGS="${RUSTFLAGS:-}" tools/guest-rustflags)" cargo build --offline --release \
+  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p http-route
+CARGO_TARGET_DIR="$guest_target" RUSTFLAGS="$(RUSTFLAGS="$guest_flags" tools/guest-rustflags)" cargo build --offline --release \
+  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p materializer
+http_route_sha256=$(sha256sum "$route_target/wasm32-wasip2/release/http_route.wasm" | cut -d ' ' -f 1)
 materializer_sha256=$(sha256sum "$guest_target/wasm32-wasip2/release/materializer.wasm" | cut -d ' ' -f 1)
 echo "http_route_sha256=$http_route_sha256"
 echo "materializer_sha256=$materializer_sha256"
@@ -328,7 +331,7 @@ chmod +x "$work/host"
   --otel-exporter-otlp-endpoint "http://127.0.0.1:$otlp_port" \
   --route-host receiving.localhost --platform-domain example.invalid \
   --host-binary "$work/host" --cdc-reader-binary "$bin/wamn-cdc-reader" \
-  --flow-http-component "$guest_target/wasm32-wasip2/release/http_route.wasm" \
+  --flow-http-component "$route_target/wasm32-wasip2/release/http_route.wasm" \
   --materializer-component "$guest_target/wasm32-wasip2/release/materializer.wasm" \
   >"$work/up.log" 2>&1 || { cat "$work/up.log" >&2; exit 1; }
 CARGO_TARGET_DIR="$guest_target" RUSTFLAGS="$guest_flags" "$bin/wamn" dev --config "$root/dev.json" \
