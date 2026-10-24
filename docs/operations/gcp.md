@@ -86,7 +86,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
    gcloud artifacts repositories add-iam-policy-binding wamn --project=wamn-dev --location=us-central1 --member="serviceAccount:$(gcloud builds get-default-service-account --project=wamn-dev --region=us-central1)" --role=roles/artifactregistry.writer
    ```
 
-10. A monthly USD 30 budget for Cloud Build in `wamn-dev`, with alerts at 10%, 50%, and 90%. The billing account is the account recorded in [install history](../history/gcp-install-history.md). The [Cloud Build billing service](https://cloud.google.com/skus/sku-groups/deprecate-global-skus) is `8B5D-EF7D-EB12`. If the budget is missing, the owner runs:
+10. A monthly USD 30 budget for Cloud Build in `wamn-dev`, with alerts at 10%, 50%, and 90%. The billing account is `01E392-13CC0D-277806`. The [Cloud Build billing service](https://cloud.google.com/skus/sku-groups/deprecate-global-skus) is `8B5D-EF7D-EB12`. If the budget is missing, the owner runs:
 
     ```bash
     gcloud billing budgets create --billing-account=01E392-13CC0D-277806 --billing-project=wamn-dev --display-name=wamn-dev-cloud-build --budget-amount=30USD --calendar-period=month --filter-projects=projects/wamn-dev --filter-services=services/8B5D-EF7D-EB12 --threshold-rule=percent=0.10 --threshold-rule=percent=0.50 --threshold-rule=percent=0.90
@@ -141,7 +141,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
 
 ## 2. Project resources
 
-The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:
+The teardown keeps these resources, and the install expects them. The owner makes them once, with the commands below:
 
 - The APIs, the quotas and the daily guard that sets every pool to 0 nodes at 03:00 New York time (07:00 UTC).
 - The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself.
@@ -153,6 +153,141 @@ The teardown keeps these resources, and the install expects them. [Install histo
 - The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone.
 - The Google service account `wamn-blob`, its bucket binding and its `roles/artifactregistry.reader` binding on `wamn`.
 - The firewall rule that permits load balancer traffic to nginx on TCP port 8443. OpenTofu owns the load balancer objects in section 4.20.
+
+Run every command as the project owner, with `--project wamn-dev`. The default project of the gcloud configuration can be another project, so a command without `--project` acts on the wrong one.
+
+Enable the APIs:
+
+```bash
+gcloud services enable --project wamn-dev \
+  compute.googleapis.com container.googleapis.com storage.googleapis.com \
+  artifactregistry.googleapis.com iam.googleapis.com cloudquotas.googleapis.com \
+  billingbudgets.googleapis.com cloudbilling.googleapis.com pubsub.googleapis.com \
+  cloudfunctions.googleapis.com run.googleapis.com cloudbuild.googleapis.com \
+  eventarc.googleapis.com cloudscheduler.googleapis.com logging.googleapis.com
+```
+
+Set the quota caps. Google refuses a decrease of more than 10 percent without `--allow-high-percentage-quota-decrease`. Owner input 2 sets the SSD quota:
+
+```bash
+lower() {
+  gcloud beta quotas preferences create --project=wamn-dev \
+    --service=compute.googleapis.com --quota-id="$1" --preferred-value="$2" \
+    --preference-id="$3" $4 --justification="wamn-dev test deployment cost cap" \
+    --email=<owner email> --allow-high-percentage-quota-decrease
+}
+lower CPUS-ALL-REGIONS-per-project 8 wamn-cpus-all-regions ""
+lower CPUS-per-project-region 8 wamn-cpus-us-central1 --dimensions=region=us-central1
+lower STATIC-ADDRESSES-per-project 1 wamn-global-static-addresses ""
+lower DISKS-TOTAL-GB-per-project-region 200 wamn-disks-us-central1 --dimensions=region=us-central1
+gcloud beta quotas preferences list --project wamn-dev --format="value(quotaId,quotaConfig.grantedValue)"
+```
+
+To change a cap, run `gcloud beta quotas preferences update` with the same preference id.
+
+Make the network and the node service account. `deploy/gcp/project.k` names both:
+
+```bash
+gcloud compute networks create wamn --project wamn-dev --subnet-mode=custom
+gcloud compute networks subnets create wamn-us-central1 --project wamn-dev \
+  --network wamn --region us-central1 --range 10.10.0.0/24 \
+  --secondary-range pods=10.20.0.0/16,services=10.30.0.0/20
+gcloud iam service-accounts create wamn-nodes --project wamn-dev --display-name="wamn GKE nodes"
+NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
+for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader; do
+  gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$NSA --role=$role --condition=None
+done
+```
+
+Make the firewall rule for the load balancer health checks (owner input 14):
+
+```bash
+gcloud compute firewall-rules create wamn-edge-health-check --project wamn-dev --network wamn --direction INGRESS \
+  --allow tcp:8443 --source-ranges 35.191.0.0/16,130.211.0.0/22
+```
+
+Make the registry and the buckets. The labels bucket has no public read:
+
+```bash
+gcloud artifacts repositories create wamn --project wamn-dev --location us-central1 \
+  --repository-format=docker --description="wamn images and OCI artifacts"
+gcloud storage buckets create gs://wamn-dev-web --project wamn-dev \
+  --location us-central1 --uniform-bucket-level-access
+gcloud storage buckets create gs://wamn-dev-backups --project wamn-dev \
+  --location us-central1 --uniform-bucket-level-access
+gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location us-central1 \
+  --uniform-bucket-level-access --public-access-prevention
+```
+
+Make the Google service account `wamn-blob`. It holds `roles/storage.objectAdmin` on the labels bucket and `roles/artifactregistry.reader` on `wamn`. Owner input 4 binds it to `hosts/wamn-host`, and the host values annotate that Kubernetes account with `iam.gke.io/gcp-service-account: wamn-blob@wamn-dev.iam.gserviceaccount.com`. If a binding answers that the account does not exist, run it again after `gcloud iam service-accounts describe` shows the account:
+
+```bash
+gcloud iam service-accounts create wamn-blob --project wamn-dev --display-name "wamn host blob store"
+gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels --project wamn-dev \
+  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectAdmin
+gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
+  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/artifactregistry.reader
+```
+
+Point the DNS name of each route host (`receiving.wamn.dev.` and `wms.wamn.dev.`) at the global address that OpenTofu creates in section 4.20:
+
+```bash
+gcloud dns record-sets create receiving.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 \
+  --rrdatas "$(gcloud compute addresses describe wamn-edge --project wamn-dev --global --format='value(address)')"
+```
+
+Make the cost guard. The source is in `deploy/gcp/guard`, and its `config.json` names the project, the zone, the cluster and the state bucket. Run its test first:
+
+```bash
+(cd deploy/gcp/guard && python3 -m unittest)
+```
+
+Make the topic, the service account and its two grants:
+
+```bash
+gcloud pubsub topics create wamn-guard --project wamn-dev
+gcloud iam service-accounts create wamn-guard --project wamn-dev --display-name="wamn cost guard"
+gcloud iam roles create wamnGuard --project wamn-dev --title="wamn cost guard" \
+  --description="Read cluster wamn and set its node pool sizes" --stage=GA \
+  --permissions=container.clusters.get,container.clusters.update,container.operations.get
+SA=wamn-guard@wamn-dev.iam.gserviceaccount.com
+gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$SA \
+  --role=projects/wamn-dev/roles/wamnGuard --condition=None
+gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$SA \
+  --role=roles/billing.projectManager --condition=None
+```
+
+The guard reads and writes `guard/state.json` in the state bucket, so give `$SA` object access on `gs://wamn-dev-tofu-state`. Deploy the function. The Pub/Sub trigger calls it as the same service account, which needs the invoker role on the function. The grant takes about a minute to apply, and until then the log shows `403` answers:
+
+```bash
+gcloud functions deploy wamn-guard --gen2 --project wamn-dev --region us-central1 \
+  --runtime python314 --source deploy/gcp/guard --entry-point on_message \
+  --trigger-topic wamn-guard --service-account $SA --trigger-service-account $SA --quiet
+gcloud run services add-iam-policy-binding wamn-guard --project wamn-dev \
+  --region us-central1 --member=serviceAccount:$SA --role=roles/run.invoker
+```
+
+Make the budget that sends its threshold messages to the topic, and the daily job. The job sends `{"action":"scale-to-zero"}`:
+
+```bash
+gcloud billing budgets create --billing-account=01E392-13CC0D-277806 \
+  --billing-project=wamn-dev --display-name="wamn-dev" --budget-amount=150USD \
+  --filter-projects=projects/wamn-dev \
+  --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
+  --notifications-rule-pubsub-topic=projects/wamn-dev/topics/wamn-guard \
+  --credit-types-treatment=exclude-all-credits
+gcloud scheduler jobs create pubsub wamn-guard --project wamn-dev --location us-central1 \
+  --schedule="0 3 * * *" --time-zone="America/New_York" --topic=wamn-guard \
+  --message-body='{"action":"scale-to-zero"}'
+```
+
+Run the daily job once, and read the guard log:
+
+```bash
+gcloud scheduler jobs run wamn-guard --project wamn-dev --location us-central1
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="wamn-guard"' \
+  --project wamn-dev --freshness=10m --format="value(timestamp,textPayload)"
+```
 
 Make sure that they exist:
 
@@ -1209,8 +1344,35 @@ For a local host benchmark, use the [local run](benchmark.md#local-run).
 The tier 2 benchmark runs from `wamn-bench-client` in project `wamn-dev`, zone `us-central1-a`.
 The Receiving host runs alone on pool `bench`, and PostgreSQL runs alone on pool `pg`.
 Every other pod runs on pool `main`.
-Prepare the VM and its `~/wamn/target/release/wamn-bench` binary with [install history](../history/gcp-install-history.md#64-bench-client-and-pat), section 6.4.
-Use the 1000-order Receiving seed from [install history](../history/gcp-install-history.md#61-morning-start-and-the-1000-seed), section 6.1.
+Make the VM, copy the source of the commit to it, and build `wamn-bench`. `tier.sh` expects the source in `~/wamn`, the binary at `~/wamn/target/release/wamn-bench` and a mode 0700 directory `~/pat`:
+
+```bash
+gcloud compute instances create wamn-bench-client --project wamn-dev --zone us-central1-a --machine-type e2-small \
+  --image-family debian-13 --image-project debian-cloud --boot-disk-size 30GB --boot-disk-type pd-standard \
+  --no-service-account --no-scopes --labels purpose=bench
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile && sudo apt-get update && sudo apt-get install -y clang mold build-essential cmake pkg-config curl && curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none'
+git archive --format=tar.gz -o src.tar.gz HEAD
+gcloud compute scp src.tar.gz wamn-bench-client:src.tar.gz --project wamn-dev --zone us-central1-a
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'mkdir -p wamn && tar -xzf src.tar.gz -C wamn && umask 077 && mkdir -p ~/pat'
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'cd wamn && . ~/.cargo/env && cargo build --release -j 2 -p wamn-bench'
+```
+
+The VM counts 1 CPU against the quota of 8. `tier.sh` copies the PAT file to `~/pat` itself. After the runs, delete the PAT on the VM, the VM, and the local copy of the PAT:
+
+```bash
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'shred -u ~/pat/* && rmdir ~/pat'
+gcloud compute instances delete wamn-bench-client --project wamn-dev --zone us-central1-a --quiet
+shred -u $G/operator-pat.json
+```
+
+Load the 1000-order Receiving seed as the superuser, inside the database pod, because a port-forward drops at times. The reset empties every Receiving table. The platform file from section 4.10 defines `suffix`:
+
+```bash
+. $HOME/.cache/wamn-install/platform.sh
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "wamn-db-dkk--receiving--dev--$(suffix receiving)" \
+  -v ON_ERROR_STOP=1 -v reset=1 -v scale=1000 -q < apps/wamn_receiving/tests/fixtures/receiving-seed.sql
+```
+
 Use the platform file from section 4.10. Section 4.15.1 says how to make the operator PAT file.
 Install Python 3 on the repository machine.
 Keep the PostgreSQL forward on local port 15432 open for the VM's reverse SSH tunnel.
