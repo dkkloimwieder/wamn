@@ -15,6 +15,7 @@ pub mod job;
 pub mod lock;
 pub mod manifests;
 mod packages;
+pub mod pools;
 pub mod project;
 pub mod provider;
 mod releases;

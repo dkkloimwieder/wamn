@@ -186,7 +186,7 @@ fn context_name(provider: Provider, document: &ClusterDocument) -> String {
     }
 }
 
-async fn run(command: &mut Command) -> anyhow::Result<Output> {
+pub(super) async fn run(command: &mut Command) -> anyhow::Result<Output> {
     let name = std::iter::once(command.as_std().get_program())
         .chain(command.as_std().get_args())
         .map(|part| part.to_string_lossy())

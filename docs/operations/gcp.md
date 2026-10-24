@@ -143,7 +143,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
 
 The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:
 
-- The APIs, the quotas and the daily guard that sets pool `main` to 0 nodes at 03:00 New York time.
+- The APIs, the quotas and the daily guard that sets every pool to 0 nodes at 03:00 New York time (07:00 UTC).
 - The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself (owner ruling 2026-10-23).
 - The Google service account `wamn-edge`, its `roles/storage.objectViewer` binding on `gs://wamn-dev-web`, and the Workload Identity binding of `edge/wamn-edge-web` (section 4.20).
 - The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
@@ -1102,31 +1102,25 @@ The verb retains Job logs under the work directory's `jobs` directory, including
 
 ### 5.1 Pool after the daily guard
 
-The guard sets pool `main` to 0 nodes every day. Scale `pg`, `main` and `bench` back to 1 node each. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`.:
+The guard sets every pool to 0 nodes at 03:00 New York time (07:00 UTC) every day. Run the wake verb to set every pool back to the size that `deploy/gcp/project.k` declares:
 
 ```bash
-gcloud container clusters resize wamn --node-pool pg --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
-gcloud container clusters resize wamn --node-pool main --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
-gcloud container clusters resize wamn --node-pool bench --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
-until kubectl -n platform get pod wamn-pg-1 >/dev/null 2>&1; do sleep 5; done
-kubectl -n platform wait pod/wamn-pg-1 --for=condition=Ready --timeout=900s
-kubectl -n platform rollout status statefulset/evt-nats --timeout=600s
+wamn-ctl platform wake deploy/gcp/cluster.k
 ```
+
+The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `evt-nats` to roll out.
 
 The port-forwards end with their pods, so start them again (sections 4.5 and 4.8).
 
 ### 5.2 Pause
 
-Set pools `main`, `bench` and `pg` to 0 nodes. The PostgreSQL volume keeps the data:
+Run the sleep verb to set every pool to 0 nodes. The PostgreSQL volume keeps the data:
 
 ```bash
-gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool main --num-nodes 0 --quiet
-gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool bench --num-nodes 0 --quiet
-gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool pg --num-nodes 0 --quiet
-gcloud compute instances list --project wamn-dev
+wamn-ctl platform sleep deploy/gcp/cluster.k
 ```
 
-The list must be empty.
+The verb prints one line for each pool, and then the names of the pools that it set to 0. Run section 5.1 to start the cluster again.
 
 ### 5.3 Invite a user
 
