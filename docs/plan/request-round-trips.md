@@ -4,7 +4,7 @@ Updated through: 2026-10-16, `main` at `fe6d74a4d`. Epic `wamn-stxy9`, closed. N
 
 ## Result
 
-Platform 0.1.25, Receiving host alone on pool `bench`, warm reuse pool 16, concurrency 16, 60 s. Source: [benchmark](../operations/benchmark.md#request-round-trips).
+Platform 0.1.25, Receiving host alone on pool `bench`, warm reuse pool 16, concurrency 16, 60 s. Source: [benchmark](../operations/benchmark.md).
 
 | Run | get | update | get statements | update statements |
 | --- | --- | --- | --- | --- |
@@ -22,7 +22,7 @@ A get sends only its read. An update sends BEGIN, the claims and the write-log c
 
 ## Measured hops
 
-Platform 0.1.19, concurrency 16, host p50 in ms. The p50 values do not add up to the total. Source: [benchmark](../operations/benchmark.md#named-parts).
+Platform 0.1.19, concurrency 16, host p50 in ms. The p50 values do not add up to the total. Source: [benchmark](../operations/benchmark.md).
 
 | Part | get | update |
 | --- | --- | --- |

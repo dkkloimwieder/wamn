@@ -1384,7 +1384,7 @@ Each call records throughput, p50, p95, p99, calls, errors, and `pg_stat_stateme
 The script resets database statement counts before each call.
 It divides each statement count by the request count, rounds each ratio, and sums the ratios.
 This excludes setup queries and background polling from the per-request count.
-The [benchmark page](benchmark.md) holds the measurements and the span breakdown.
+The [benchmark page](benchmark.md) holds the current baselines.
 
 The conformance test `benchmark::platform_benchmark_gate` compares the newest two result files in semantic version order.
 It fails if get or update `throughput_per_sec` drops more than 20% at c16.

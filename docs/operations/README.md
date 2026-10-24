@@ -11,7 +11,7 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [gcp.md](gcp.md): the Google Cloud deployment in project `wamn-dev`, step by step.
 - [backup-and-recovery.md](backup-and-recovery.md): cluster backup, point-in-time recovery, and one-table recovery.
 - [observability.md](observability.md): the trace bucket layout and the DuckDB queries of one hour.
-- [benchmark.md](benchmark.md): the tier 2 benchmark of Receiving with the collector, beside the baseline.
+- [benchmark.md](benchmark.md): the local run, and the current tier 2, local, and PostgreSQL floor baselines.
 - [delivery.md](delivery.md): release qualification, publication, selection, and deployment.
 - [edge.md](edge.md): serve the edge box, read its status, and resolve refused samples and uncertain intents.
 - [queued-automation.md](queued-automation.md): start, park, release, and list queued workflow runs.

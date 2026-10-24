@@ -1,0 +1,25 @@
+{
+  "concurrency": 16,
+  "get": {
+    "throughput_per_sec": 2009.5136721193699,
+    "p50_ms": 6.859,
+    "p95_ms": 16.83,
+    "p99_ms": 25.295,
+    "calls": 120578,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 1.0,
+    "host_cpu_ms_per_request": 1.507903597671217,
+    "lines": 1
+  },
+  "update": {
+    "throughput_per_sec": 815.2517239593526,
+    "p50_ms": 18.164,
+    "p95_ms": 32.33,
+    "p99_ms": 47.067,
+    "calls": 48923,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 7.0,
+    "host_cpu_ms_per_request": 2.219610408192466,
+    "lines": 1
+  }
+}
