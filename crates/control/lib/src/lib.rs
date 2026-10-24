@@ -9,6 +9,7 @@
 
 pub mod apply_package;
 pub mod author_wiring;
+pub mod author_workflow;
 pub mod bind_connection;
 pub mod capture_gap;
 pub mod component_admission;
@@ -60,3 +61,4 @@ pub mod user_roles;
 pub mod verification_policy;
 pub mod web_scope;
 pub mod web_upload;
+pub mod workflow_lifecycle;

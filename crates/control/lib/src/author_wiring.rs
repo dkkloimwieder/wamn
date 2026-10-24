@@ -349,7 +349,7 @@ pub fn gate_wiring_document(
 /// one answer a never-gated document, a gate-refused document, and a green
 /// report over different bytes all produce, because the gate writes one row per
 /// document it judges and keys it by that document's own hash.
-async fn read_gate_verdict(
+pub(crate) async fn read_gate_verdict(
     control: &Client,
     tenant_id: &str,
     wiring_hash: &DefinitionHash,
@@ -372,7 +372,7 @@ async fn read_gate_verdict(
 /// answered for that exact key, so a green report belonging to another document
 /// cannot reach here as `Some(true)` — it is not under this key at all, and
 /// arrives as the same `None` a never-gated document does.
-fn require_green_report(
+pub(crate) fn require_green_report(
     verdict: Option<bool>,
     document: &WiringDocument,
     wiring_hash: &DefinitionHash,

@@ -384,6 +384,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0031_org_boundary.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0031_org_boundary.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0032_workflows.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0032_workflows.sql"),
+    },
 ];
 
 #[cfg(test)]

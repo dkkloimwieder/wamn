@@ -67,6 +67,20 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
     Ok(document)
 }
 
+/// The release an environment serves, as [`show`] derives it: the digest of
+/// the newest successful Helm revision.
+///
+/// # Errors
+///
+/// When Helm cannot be read, or the environment serves no release.
+pub async fn serving_release(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
+    let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
+    read_revision(platform, &name)
+        .await?
+        .and_then(|revision| revision.manifest_digest().map(str::to_owned))
+        .with_context(|| format!("environment {triple} serves no release"))
+}
+
 /// Reconstruct the source form used by show and rollback.
 fn connection_definition(
     existing: &super::analyse::Instance,

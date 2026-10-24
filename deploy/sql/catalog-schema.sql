@@ -303,6 +303,59 @@ CREATE TABLE catalog.wiring_tombstones (
         PRIMARY KEY (tenant_id, package_id, environment, wiring_id)
 );
 
+-- One version of one workflow of an environment (docs/plan/workflows.md R8).
+-- The control connection writes it after `author_workflow` gates the graph
+-- against the serving release. A version row is immutable except `enabled`,
+-- and at most one version of a workflow is enabled.
+CREATE TABLE catalog.workflows (
+    tenant_id      text        NOT NULL CHECK (tenant_id <> ''),
+    environment    text        NOT NULL CHECK (environment <> ''),
+    application    text        NOT NULL CHECK (application <> ''),
+    workflow_id    text        NOT NULL CHECK (workflow_id <> ''),
+    version        int         NOT NULL CHECK (version > 0),
+    graph_json     jsonb       NOT NULL,
+    wiring_hash    text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
+    trigger        text        NOT NULL CHECK (trigger = 'manual'),
+    execution_type text        NOT NULL CHECK (execution_type IN ('role', 'invoker')),
+    execution_role text        CHECK (execution_role <> ''),
+    enabled        boolean     NOT NULL DEFAULT false,
+    created_by     uuid        NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT workflows_pkey
+        PRIMARY KEY (tenant_id, environment, application, workflow_id, version),
+    CONSTRAINT workflows_execution_identity_check
+        CHECK ((execution_type = 'role') = (execution_role IS NOT NULL))
+);
+CREATE UNIQUE INDEX workflows_one_enabled
+    ON catalog.workflows (tenant_id, environment, application, workflow_id)
+    WHERE enabled;
+
+CREATE FUNCTION catalog.guard_workflow_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF ROW(NEW.tenant_id, NEW.environment, NEW.application, NEW.workflow_id,
+           NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger,
+           NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
+       IS DISTINCT FROM
+       ROW(OLD.tenant_id, OLD.environment, OLD.application, OLD.workflow_id,
+           OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger,
+           OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
+        RAISE EXCEPTION USING ERRCODE = '55000',
+            MESSAGE = 'workflow-version-immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.guard_workflow_update() FROM PUBLIC;
+CREATE TRIGGER workflows_controlled_update
+    BEFORE UPDATE ON catalog.workflows
+    FOR EACH ROW EXECUTE FUNCTION catalog.guard_workflow_update();
+CREATE TRIGGER workflows_delete_immutable
+    BEFORE DELETE ON catalog.workflows
+    FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
 CREATE TABLE catalog.package_upgrade_qualifications (
     tenant_id                   text        NOT NULL CHECK (tenant_id <> ''),
     package_id                  text        NOT NULL CHECK (package_id <> ''),
@@ -436,7 +489,7 @@ BEGIN
         'connection_requirements',
         'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
-        'wiring_tombstones',
+        'wiring_tombstones', 'workflows',
         'package_upgrade_qualifications',
         'event_registrations', 'package_upgrade_stages', 'package_floors'
     ] LOOP
@@ -493,6 +546,7 @@ GRANT SELECT ON catalog.packages,
     catalog.connection_bindings,
     catalog.wirings,
     catalog.wiring_tombstones,
+    catalog.workflows,
     catalog.event_registrations
 TO wamn_app;
 

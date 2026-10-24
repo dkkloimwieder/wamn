@@ -563,7 +563,9 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         .to_vec();
     rows.sort();
     expected.extend(rows);
-    expected.push("2".to_owned());
+    // The two fixture users and the `workflow` service user
+    // (docs/plan/workflows.md R3) are the rows that are not platform rows.
+    expected.push("3".to_owned());
     assert_eq!(output.lines().collect::<Vec<_>>(), expected);
 }
 

@@ -699,6 +699,7 @@ async fn converge_tenant_identity(
     if !apply
         || (app_schema_present
             && missing_platform.is_empty()
+            && present_users.contains(&wamn_project_state::workflow_user_id().to_string())
             && missing_services.is_empty()
             && missing_users.is_empty()
             && stale_users.is_empty()
