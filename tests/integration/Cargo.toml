@@ -35,7 +35,7 @@ tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
-wamn-control = { workspace = true }
+wamn-control = { workspace = true, features = ["ops"] }
 wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-control-registry = { workspace = true }
 wamn-catalog = { workspace = true }

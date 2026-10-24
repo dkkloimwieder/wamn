@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
+use base64::Engine as _;
 use serde_json::{Value, json};
 use wamn_catalog::{AttachmentTarget, ServingAttachment, WiringDocument};
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -233,6 +234,7 @@ async fn start(
     system_url: &str,
     project_url: &str,
     scratch: &ScratchRoot,
+    caller_role: &str,
 ) -> anyhow::Result<(LocalApplication, Paths)> {
     let app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps/platform_fixture")
@@ -251,7 +253,7 @@ async fn start(
         project: "fixture",
         environment: "dev",
         schema: "inventory",
-        caller_role: "admin",
+        caller_role,
         route_host: "fixture.local.test",
         packages: &[LocalPackage {
             root: &app,
@@ -284,7 +286,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
 
     // CREATE. The route replays the command the wiring created, from the same
     // write log record: the same id and the same creation time.
@@ -581,7 +583,7 @@ async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let load = json!([{"limit": 100_000}]);
 
     // The projection declares no limit, so the ceiling refuses the load.
@@ -642,7 +644,7 @@ async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::R
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let (database, connection) =
         tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
@@ -739,7 +741,7 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
     let system = server.create_database("statement_system")?;
     let project = server.create_database("statement_project")?;
     let scratch = ScratchRoot::create()?;
-    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let result = async {
         let (database, connection) =
             tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
@@ -812,6 +814,291 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
                 wal / REQUESTS
             );
         }
+        drop(database);
+        connection.await??;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
+/// One feed read of the widget list: the changes in the scope of `filter`
+/// since `cursor`.
+async fn widget_changes(paths: &Paths, filter: &Value, cursor: &str) -> anyhow::Result<Value> {
+    let answer = paths
+        .route(
+            "/widget/query",
+            &json!([{"filter": filter, "feed": {"cursor": cursor}}]),
+        )
+        .await?;
+    Ok(value(&answer)?.clone())
+}
+
+/// The change of one id in a feed answer, which must carry it once.
+fn change_of<'a>(changes: &'a Value, id: &Value) -> anyhow::Result<&'a Value> {
+    let rows = changes["rows"]
+        .as_array()
+        .with_context(|| format!("the changes carry rows: {changes}"))?;
+    let found = rows.iter().filter(|row| &row["id"] == id).collect::<Vec<_>>();
+    match found.as_slice() {
+        [change] => Ok(change),
+        _ => anyhow::bail!("{id} appears once in the changes, not {}: {changes}", found.len()),
+    }
+}
+
+/// A widget the route creates, and its revision.
+async fn create_widget(paths: &Paths, code: &str, note: &str) -> anyhow::Result<(Value, i64)> {
+    let key = format!("{code}-{note}");
+    let created = paths
+        .route(
+            "/widget/create",
+            &json!([{"request_id": key, "idempotency_key": key, "code": code, "note": note}]),
+        )
+        .await?;
+    Ok((value(&created)?["id"].clone(), edit_version(&created)?))
+}
+
+/// Update the note of a widget at `version`, and return the next version.
+async fn note_widget(paths: &Paths, id: &Value, version: i64, note: &str) -> anyhow::Result<i64> {
+    let updated = paths
+        .route(
+            "/widget/update",
+            &json!([{
+                "request_id": format!("note-{note}-{version}"), "id": id,
+                "expected_edit_version": version.to_string(),
+                "change": {"note": note},
+            }]),
+        )
+        .await?;
+    edit_version(&updated)
+}
+
+/// The change feed of a list read (`docs/plan/wamn-sync.md`, Epic 2b). The
+/// fixture allows two widget codes, so the test works with two rows.
+///
+/// A feed read right after a list returns no rows, because every write came
+/// before the list. Two writes after the list arrive with their revisions. A
+/// row changed three times appears once, at its latest revision. An unchanged
+/// feed keeps its cursor, and its weak tag answers 304. A row that leaves the
+/// list's filter, and a deleted row, arrive as deleted with no data. A cursor
+/// of another model is refused. After a real pruning run of the P30D
+/// retention, the first cursor is older than the oldest entry kept, and the
+/// feed refuses it with `cursor_expired`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let result = async {
+        let all = json!({});
+        let (first, first_version) = create_widget(&paths, "standard", "kept").await?;
+        let (second, second_version) = create_widget(&paths, "priority", "kept").await?;
+
+        // FEED AFTER SNAPSHOT. The list returns the cursor of its snapshot,
+        // and the writes before it do not appear.
+        let page = paths.route("/widget/query", &json!([{}])).await?;
+        let cursor = value(&page)?["cursor"]
+            .as_str()
+            .with_context(|| format!("a list page carries its feed cursor: {page}"))?
+            .to_owned();
+        let before = widget_changes(&paths, &all, &cursor).await?;
+        anyhow::ensure!(
+            before["rows"] == json!([]) && before["complete"] == json!(true),
+            "the writes before the list do not appear: {before}"
+        );
+        let w1 = note_widget(&paths, &first, first_version, "w1").await?;
+        let w2 = note_widget(&paths, &second, second_version, "w2").await?;
+        let changes = widget_changes(&paths, &all, &cursor).await?;
+        let one = change_of(&changes, &first)?;
+        anyhow::ensure!(
+            one["row_version"] == json!(w1)
+                && one["deleted"] == json!(false)
+                && one["data"]["note"] == json!("w1"),
+            "W1 arrives with its revision and data: {one}"
+        );
+        anyhow::ensure!(
+            change_of(&changes, &second)?["row_version"] == json!(w2),
+            "W2 arrives with its revision: {changes}"
+        );
+
+        // FEED COLLAPSES. A row changed three times appears once, at its
+        // latest revision.
+        let next = changes["next_cursor"].as_str().context("a next cursor")?.to_owned();
+        let mut version = w1;
+        for note in ["c1", "c2", "kept-c3"] {
+            version = note_widget(&paths, &first, version, note).await?;
+        }
+        let collapsed = widget_changes(&paths, &all, &next).await?;
+        let latest = change_of(&collapsed, &first)?;
+        anyhow::ensure!(
+            latest["row_version"] == json!(version) && latest["data"]["note"] == json!("kept-c3"),
+            "a row changed three times appears once, at its latest revision: {collapsed}"
+        );
+
+        // UNCHANGED. A feed with nothing new returns its cursor unchanged, and
+        // the same read with its tag answers 304.
+        let idle = collapsed["next_cursor"].as_str().context("a next cursor")?.to_owned();
+        let quiet = widget_changes(&paths, &all, &idle).await?;
+        anyhow::ensure!(
+            quiet["rows"] == json!([]) && quiet["next_cursor"] == json!(idle),
+            "an unchanged feed keeps its cursor: {quiet}"
+        );
+        let feed_path = format!(
+            "/widget/query?{}",
+            wamn_execution_contract::encode_read_query(
+                json!({"feed": {"cursor": idle}}).as_object().context("an item")?
+            )
+        );
+        let (status, tag, _) = paths.conditional(&feed_path, None).await?;
+        let tag = tag
+            .filter(|tag| status == 200 && tag.starts_with("W/\""))
+            .with_context(|| format!("a feed read answers a weak ETag: {status}"))?;
+        let (status, again, body) = paths.conditional(&feed_path, Some(&tag)).await?;
+        anyhow::ensure!(
+            status == 304 && again.as_deref() == Some(tag.as_str()) && body.is_empty(),
+            "an unchanged feed answers 304: {status} {again:?} {body}"
+        );
+
+        // SCOPE. A row updated out of the list's filter arrives as deleted.
+        let kept = json!({"note": ["kept"]});
+        let scoped = paths
+            .route("/widget/query", &json!([{"filter": kept}]))
+            .await?;
+        let scoped_cursor = value(&scoped)?["cursor"].as_str().context("a cursor")?.to_owned();
+        let left = note_widget(&paths, &first, version, "gone").await?;
+        let scope_changes = widget_changes(&paths, &kept, &scoped_cursor).await?;
+        let gone = change_of(&scope_changes, &first)?;
+        anyhow::ensure!(
+            gone["deleted"] == json!(true)
+                && gone.get("data").is_none()
+                && gone["row_version"] == json!(left),
+            "a row that left the filter arrives as deleted: {gone}"
+        );
+
+        // DELETE. A deleted row arrives as deleted, with no data and the
+        // revision it had.
+        let deleted_cursor = scope_changes["next_cursor"].as_str().context("a cursor")?.to_owned();
+        value(
+            &paths
+                .route(
+                    "/widget/delete",
+                    &json!([{
+                        "request_id": "feed-delete", "id": second,
+                        "expected_edit_version": w2.to_string(),
+                    }]),
+                )
+                .await?,
+        )?;
+        let removed = widget_changes(&paths, &all, &deleted_cursor).await?;
+        let removal = change_of(&removed, &second)?;
+        anyhow::ensure!(
+            removal["deleted"] == json!(true)
+                && removal.get("data").is_none()
+                && removal["row_version"] == json!(w2),
+            "a deleted row arrives as deleted with no data: {removal}"
+        );
+
+        // CURSOR OPAQUE. A cursor of another model, and one that does not
+        // decode, are refused as invalid input.
+        let foreign = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("widget_maker:1");
+        for bad in [foreign.as_str(), "not-a-cursor"] {
+            refused(
+                &paths
+                    .route("/widget/query", &json!([{"feed": {"cursor": bad}}]))
+                    .await?,
+                "invalid_input",
+                &json!({"field": "cursor"}),
+            )?;
+        }
+
+        // CURSOR EXPIRED. Every entry so far is older than the retention, and
+        // a real pruning run removes them. One newer entry stays, so the first
+        // cursor is older than the oldest entry kept.
+        let (mut database, connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        database
+            .execute(
+                "UPDATE inventory.widget_history SET changed_at = now() - interval '31 days'",
+                &[],
+            )
+            .await?;
+        create_widget(&paths, "priority", "after").await?;
+        let pruned = wamn_control::prune_record_history::prune(&mut database).await?;
+        anyhow::ensure!(
+            pruned
+                .iter()
+                .any(|history| history.history == "widget_history" && history.removed > 0),
+            "the pruning run removes the backdated widget entries: {pruned:?}"
+        );
+        refused(
+            &paths
+                .route("/widget/query", &json!([{"feed": {"cursor": cursor}}]))
+                .await?,
+            "cursor_expired",
+            &json!({}),
+        )?;
+        drop(database);
+        connection.await??;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
+/// A role without the widget list's permission is refused the feed exactly as
+/// it is refused the list: the feed is the list read with its feed part.
+///
+/// A PAT route admits only a project admin, so the caller starts as `admin`
+/// and then holds the application role `reader`, which has no permission row.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let result = async {
+        let (database, connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        database
+            .batch_execute(
+                "BEGIN;
+                 SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
+                        set_config('app.operation', 'admin:feed-reader', true);
+                 INSERT INTO platform.role (tenant_id, name)
+                     SELECT tenant_id, 'reader' FROM platform.user_role WHERE role_name = 'admin';
+                 UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
+                 COMMIT;",
+            )
+            .await
+            .context("move the caller to a role with no permission")?;
+        let path = format!("{ROUTE_PREFIX}/widget/query");
+        let (list, list_body) = paths.get(&path, &json!([{}])).await?;
+        let (feed, feed_body) = paths
+            .get(&path, &json!([{"feed": {"cursor": "d2lkZ2V0OjE"}}]))
+            .await?;
+        anyhow::ensure!(
+            list == 403 && feed == 403 && list_body == feed_body,
+            "the list and its feed are refused alike: {list} {list_body} / {feed} {feed_body}"
+        );
         drop(database);
         connection.await??;
         Ok::<_, anyhow::Error>(())
