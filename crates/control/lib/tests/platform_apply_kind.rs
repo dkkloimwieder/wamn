@@ -567,11 +567,12 @@ cluster.Cluster {{
             "Receiving has a {kind} {name} without an event registration"
         );
     }
-    // Env apply creates the number_sequence row of Receiving's po sequence
-    // with the package's default pattern (wamn-83eth.3).
+    // Env apply creates the number_sequence row of Receiving's purchase_order
+    // sequence with the package's default pattern (wamn-83eth.3).
+    let pattern = number_sequence_pattern(&kubeconfig, &context, "purchase_order").await?;
     ensure!(
-        number_sequence_pattern(&kubeconfig, &context, "po").await? == "PO-{seq:po,width=6}",
-        "env apply did not create the po number_sequence row"
+        pattern == "PO-{seq:po,width=6}",
+        "env apply did not create the purchase_order number_sequence row, found {pattern:?}"
     );
     require_web_skip(&applied)?;
     require_platform_ui_skip(&applied)?;
