@@ -24,6 +24,11 @@ const TENANT: &str = "rest--publication--test";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.0";
 const PASSWORD: &str = "rest-consumer-live-test";
 
+/// The released schedule start this test used is gone with epic 2.
+fn released_schedule_run() -> anyhow::Result<String> {
+    anyhow::bail!("the rest_connector schedule is not yet a workflow row (wamn-o763w.3)")
+}
+
 pub async fn install(
     admin: &Client,
     database: &wamn_test_postgres::Database,
@@ -150,7 +155,6 @@ pub async fn invoke(
     };
     use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
-    use wamn_workflow::Workflows as _;
 
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
@@ -236,36 +240,9 @@ pub async fn invoke(
         manifest,
     )
     .await?;
-    let schedule = manifest
-        .workflow
-        .schedules
-        .values()
-        .find(|schedule| schedule.package_id == "rest_connector")
-        .unwrap();
-    let due =
-        chrono::DateTime::parse_from_rfc3339("2026-10-21T12:02:00Z")?.with_timezone(&chrono::Utc);
-    let (client, connection) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
-    let workflows = wamn_workflow::PostgresWorkflows::new(client, "wamn_run", TENANT, "test");
-    let run = workflows
-        .start(&wamn_workflow::StartRequest {
-            manifest_digest: digest.to_string(),
-            package_id: "rest_connector".into(),
-            wiring_id: schedule.wiring_id.clone(),
-            wiring_version: schedule.wiring_version,
-            idempotency_key: wamn_workflow::schedule::idempotency_key(
-                "rest_connector",
-                &schedule.workflow_id,
-                due,
-            ),
-            input: json!({"due": wamn_workflow::schedule::due_text(due)}),
-            trigger: wamn_workflow::Trigger::Schedule {
-                workflow_id: schedule.workflow_id.clone(),
-                due,
-            },
-        })
-        .await?;
+    // No release declares a schedule (docs/plan/workflows.md epic 2). E2.3
+    // authors the rest_connector schedule as a workflow row and admits it here.
+    let run = released_schedule_run()?;
     let principal: String = admin
         .query_one(
             "SELECT service_principal_id::text FROM wamn_run.runs WHERE run_id=$1",

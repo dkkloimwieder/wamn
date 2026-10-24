@@ -1003,11 +1003,16 @@ Use the application delivery journeys for deployed startup, readiness, authentic
 
 ### Workflow schedules
 
-The schedule admission test starts a disposable PostgreSQL 18 server through the shared test fixture.
-It connects two callers with executor credentials, starts one due moment concurrently, and requires exactly one listed run.
-It also requires a registered operation to refuse the application principal when that principal lacks its permission.
-Run it from the repository root:
+The schedule task's unit tests run with paused time: the first tick after a restart, a row enabled or disabled between ticks, and ticks missed during a slow admission.
 
 ```bash
-TMPDIR=/var/tmp cargo test -p wamn-workflow --lib schedule_replicas_admit_one_run_as_the_application -- --ignored --nocapture
+cargo test -p wamn-workflow --lib schedule::
+```
+
+The live test authors schedule workflows on a disposable PostgreSQL 18 database, admits due moments, and drains the runs through the real queue.
+One case runs the host's schedule task in real time: a row enabled after the task starts fires at its next tick, and a disabled row fires at no later tick.
+That case takes up to about three minutes.
+
+```bash
+cargo test -p wamn-control --test workflow_schedule_live -- --nocapture
 ```

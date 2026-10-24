@@ -331,9 +331,6 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             .context("the selected release is not installed")?;
             let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
             tx.commit().await?;
-            for schedule in manifest.workflow.schedules.values() {
-                println!("{}", serde_json::to_string(schedule)?);
-            }
             for (id, registration) in &manifest.workflow.registrations {
                 if registration.delivery == wamn_catalog::RegistrationDelivery::Queue {
                     let (_, workflow_id) = id

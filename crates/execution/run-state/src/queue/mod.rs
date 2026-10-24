@@ -71,8 +71,7 @@ pub use sql::{
 };
 pub use workflow::{
     insert_automation_run_sql, insert_event_run_sql, insert_manual_run_sql, insert_run_queue_sql,
-    insert_schedule_run_sql, insert_workflow_schedule_run_sql, list_workflow_runs_sql,
-    park_queued_run_sql, release_parked_run_sql, select_automation_run_sql, select_event_run_sql,
-    select_manual_run_sql, select_run_queue_state_sql, select_schedule_run_sql,
-    select_workflow_schedule_run_sql,
+    insert_workflow_schedule_run_sql, list_workflow_runs_sql, park_queued_run_sql,
+    release_parked_run_sql, select_automation_run_sql, select_event_run_sql, select_manual_run_sql,
+    select_run_queue_state_sql, select_workflow_schedule_run_sql,
 };

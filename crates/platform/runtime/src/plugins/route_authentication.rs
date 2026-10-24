@@ -52,9 +52,9 @@ const QUEUED_RUN_CALLER_SQL: &str = "SELECT users.id::text, users.type, user_rol
 /// its permissions are the rows of `role` only, and it is `admin` only when
 /// `role` is `admin`. A principal that does not hold `role` refuses.
 ///
-/// Without `role`, the run is an operator-admitted automation or a schedule
-/// run: the principal is an active service, and its permissions are the rows
-/// of every role it holds.
+/// Without `role`, the run is an operator-admitted automation run: the
+/// principal is an active service, and its permissions are the rows of every
+/// role it holds.
 pub async fn queued_run_caller(
     client: &(impl tokio_postgres::GenericClient + Sync),
     tenant: &str,

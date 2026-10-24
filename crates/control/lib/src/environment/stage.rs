@@ -184,7 +184,7 @@ pub async fn stage(
         .collect())
 }
 
-/// Create each scheduled or integration application principal and its declared dependency role.
+/// Create each integration application principal and its declared dependency role.
 /// An identical apply writes no rows.
 ///
 /// # Errors
@@ -204,12 +204,7 @@ pub async fn materialize_application_principals(
     let applications = packages
         .iter()
         .filter(|package| {
-            manifest
-                .workflow
-                .schedules
-                .values()
-                .any(|schedule| schedule.package_id == package.package.id)
-                || crate::publish_release::composes_integration(package, &manifest.components)
+            crate::publish_release::composes_integration(package, &manifest.components)
         })
         .collect::<Vec<_>>();
     if applications.is_empty() {
@@ -651,7 +646,6 @@ mod tests {
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
             workflow: WorkflowSection {
-                schedules: BTreeMap::new(),
                 wirings: BTreeSet::new(),
                 attachments: BTreeMap::new(),
                 registrations: BTreeMap::new(),

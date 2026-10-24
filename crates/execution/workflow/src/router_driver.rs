@@ -1624,7 +1624,6 @@ mod tests {
             routes: BTreeSet::new(),
             attachments,
             workflow: wamn_catalog::WorkflowSection {
-                schedules: BTreeMap::new(),
                 wirings: BTreeSet::new(),
                 attachments: workflow_attachments,
                 registrations: BTreeMap::from([(

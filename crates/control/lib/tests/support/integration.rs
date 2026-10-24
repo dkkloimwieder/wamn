@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use chrono::Timelike as _;
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
@@ -406,21 +405,11 @@ async fn publish(
             })
             .collect(),
     };
-    let bytes = assemble_local_release(&request, roots, &admissions, documents)?
-        .published
-        .canonical_bytes;
-    if connector != "netsuite" {
-        return Ok(bytes);
-    }
-    // Leave time for rollout and seeding. The next daily tick cannot race the assertions.
-    let due = chrono::Utc::now() + chrono::Duration::minutes(5);
-    let (mut manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    for schedule in manifest.workflow.schedules.values_mut() {
-        schedule.schedule = format!("{} {} * * *", due.minute(), due.hour());
-    }
-    let bytes = manifest.canonical_bytes();
-    wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    Ok(bytes)
+    Ok(
+        assemble_local_release(&request, roots, &admissions, documents)?
+            .published
+            .canonical_bytes,
+    )
 }
 
 async fn start_broker(run: &Run, broker: &event_broker::EventBroker) -> anyhow::Result<String> {

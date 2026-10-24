@@ -6690,7 +6690,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-execution-host",
- "wamn-platform-identity",
  "wamn-project-state",
  "wamn-router",
  "wamn-run-state",

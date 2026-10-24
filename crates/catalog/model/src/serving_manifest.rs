@@ -989,17 +989,12 @@ pub struct WorkflowSection {
     pub attachments: BTreeMap<String, WiringAttachment>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub registrations: BTreeMap<String, ServingRegistration>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub schedules: BTreeMap<String, ServingSchedule>,
 }
 
 impl WorkflowSection {
     /// Whether this release has no workflow fact.
     pub fn is_empty(&self) -> bool {
-        self.wirings.is_empty()
-            && self.attachments.is_empty()
-            && self.registrations.is_empty()
-            && self.schedules.is_empty()
+        self.wirings.is_empty() && self.attachments.is_empty() && self.registrations.is_empty()
     }
 }
 
@@ -1066,18 +1061,6 @@ pub fn parse_workflow_schedule(text: &str) -> Result<croner::Cron, CatalogIdenti
         .map_err(|error| CatalogIdentityError::InvalidDefinition {
             message: format!("workflow-schedule-invalid: {error}"),
         })
-}
-
-/// One declared schedule targeting an exact released wiring.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ServingSchedule {
-    pub package_id: String,
-    pub workflow_id: String,
-    pub wiring_id: String,
-    pub wiring_version: u32,
-    /// Five-field cron, evaluated in UTC.
-    pub schedule: String,
 }
 
 /// An application member whose exact bytes participate in the HTTP entry.
@@ -1150,7 +1133,6 @@ impl ServingManifest {
                 wirings,
                 attachments: workflow_attachments,
                 registrations,
-                schedules: BTreeMap::new(),
             },
             host_routes: BTreeSet::new(),
         };
@@ -1293,16 +1275,28 @@ impl ServingManifest {
             }
         })?;
         validate_format_version(&document)?;
-        let manifest = serde_json::from_value::<Self>(document).map_err(|error| {
+        // A release published before the schedules left the manifest
+        // (docs/plan/workflows.md epic 2) may carry `workflow.schedules`. It
+        // is read with the field ignored; its bytes and digest stay the ones
+        // stored.
+        let mut current = document.clone();
+        if let Some(workflow) = current.get_mut("workflow").and_then(Value::as_object_mut) {
+            workflow.remove("schedules");
+        }
+        let manifest = serde_json::from_value::<Self>(current.clone()).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
                 message: format!("serving manifest JSON is invalid: {error}"),
             }
         })?;
         manifest.validate()?;
-        if manifest.canonical_bytes() != bytes {
+        if manifest.as_value() != current
+            || wamn_execution_contract::canonical_json_bytes(&document) != bytes
+        {
             return Err(CatalogIdentityError::NonCanonicalJson);
         }
-        let digest = manifest.digest();
+        let digest =
+            ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(&document))
+                .expect("the shared canonicalizer emits a canonical sha256 digest");
         Ok((manifest, digest))
     }
 
@@ -1543,25 +1537,6 @@ impl ServingManifest {
             )?;
         }
 
-        for (key, schedule) in &self.workflow.schedules {
-            validate_package_member(&package_versions, &schedule.package_id)?;
-            validate_text(&schedule.workflow_id, "workflow-id")?;
-            if key != &format!("{}::{}", schedule.package_id, schedule.workflow_id)
-                || schedule.workflow_id.contains("::")
-                || self.workflow.registrations.contains_key(key)
-            {
-                return invalid(format!(
-                    "schedule key {key:?} must name one declared workflow"
-                ));
-            }
-            validate_wiring_target(
-                &targets,
-                &schedule.package_id,
-                &schedule.wiring_id,
-                schedule.wiring_version,
-            )?;
-            parse_workflow_schedule(&schedule.schedule)?;
-        }
         for (registration_id, registration) in &self.workflow.registrations {
             validate_package_member(&package_versions, &registration.package_id)?;
             validate_package_member(&package_versions, &registration.source_package_id)?;
@@ -2097,52 +2072,29 @@ mod tests {
     }
 
     #[test]
-    fn schedules_are_canonical_and_require_a_released_wiring() {
-        let mut manifest = manifest();
-        manifest.workflow.schedules.insert(
-            "base::hourly".into(),
-            ServingSchedule {
-                package_id: "base".into(),
-                workflow_id: "hourly".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 3,
-                schedule: "0 * * * *".into(),
+    fn stored_schedules_are_read_with_the_field_ignored() {
+        let manifest = manifest();
+        let mut document = serde_json::to_value(&manifest).unwrap();
+        document["workflow"]["schedules"] = serde_json::json!({
+            "base::hourly": {
+                "package-id": "base",
+                "workflow-id": "hourly",
+                "wiring-id": "orders",
+                "wiring-version": 3,
+                "schedule": "0 * * * *",
             },
-        );
-        let bytes = manifest.canonical_bytes();
-        let (decoded, _) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
+        });
+        let bytes = wamn_execution_contract::canonical_json_bytes(&document);
+        let (decoded, digest) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
         assert_eq!(decoded, manifest);
-        let mut invalid = manifest.clone();
-        invalid
-            .workflow
-            .schedules
-            .get_mut("base::hourly")
-            .unwrap()
-            .wiring_version = 99;
-        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
-        let mut invalid = manifest.clone();
-        invalid
-            .workflow
-            .schedules
-            .get_mut("base::hourly")
-            .unwrap()
-            .package_id = "absent".into();
-        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
-        let mut invalid = manifest.clone();
-        invalid
-            .workflow
-            .schedules
-            .get_mut("base::hourly")
-            .unwrap()
-            .schedule = "* * * * * *".into();
-        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
-        let mut invalid = manifest;
-        let schedule = invalid.workflow.schedules.remove("base::hourly").unwrap();
-        invalid
-            .workflow
-            .schedules
-            .insert("base::other".into(), schedule);
-        assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
+        assert_eq!(
+            digest.as_str(),
+            wamn_execution_contract::canonical_json_sha256(&document)
+        );
+        assert_ne!(digest, manifest.digest());
+        let mut spaced = bytes.clone();
+        spaced.push(b' ');
+        assert!(ServingManifest::from_canonical_bytes(&spaced).is_err());
     }
 
     #[test]

@@ -553,7 +553,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "catalog.package_migrations",
         "catalog.wiring_tombstones",
         "catalog.event_registrations",
-        "catalog.workflow_schedules",
         "wamn_run.operator_run_actions",
         "wamn_run.effect_attempt_dispatches",
         "wamn_run.effect_attempt_outcomes",

@@ -5,14 +5,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use chrono::{Timelike as _, Utc};
 use serde_json::{Value, json};
 
 use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
 use wamn_catalog::{
     AttachmentType, ComponentDescriptor, ComponentPackageScope, DefinitionHash, ServingComponent,
-    ServingManifest, ServingSchedule, ServingWiring, WiringAttachment, WiringDocument,
-    WorkflowSection,
+    ServingManifest, ServingWiring, WiringAttachment, WiringDocument, WorkflowSection,
 };
 
 pub const SERVICE: &str = "http-fixture";
@@ -422,17 +420,6 @@ pub fn release(
         ]
         .into(),
         attachments,
-        schedules: [(
-            format!("{PACKAGE}::{SCHEDULE}"),
-            ServingSchedule {
-                package_id: PACKAGE.to_owned(),
-                workflow_id: SCHEDULE.to_owned(),
-                wiring_id: SCHEDULE.to_owned(),
-                wiring_version: 1,
-                schedule: "* * * * *".to_owned(),
-            },
-        )]
-        .into(),
         ..WorkflowSection::default()
     };
     manifest.workflow.wirings.extend(
@@ -577,8 +564,6 @@ pub async fn request_log(run: &Run) -> anyhow::Result<String> {
 
 pub async fn assert_triggers(
     run: &mut Run,
-    database: &tokio_postgres::Client,
-    tenant: &str,
     release_name: &str,
     route_host: &str,
     unsigned_status: u16,
@@ -680,85 +665,7 @@ pub async fn assert_triggers(
 
     assert_oauth(run, &base, route_host).await?;
     assert_paged(run, &base, route_host).await?;
-    let result =
-        tokio::time::timeout(Duration::from_secs(150), scheduled_runs(database, tenant)).await;
-    let result = result
-        .context("schedule did not complete two due moments within 150 seconds")
-        .and_then(std::convert::identity);
-    run.pass("schedule starts exactly one run per due key under its application principal",
-        "SELECT schedule runs from wamn_run.runs",
-        json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
-        result.is_ok());
-    result?;
     Ok(())
-}
-
-async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyhow::Result<Value> {
-    let subject = wamn_platform_identity::application_subject(tenant, PACKAGE)?;
-    let email = format!("{subject}@{}", super::PLATFORM_DOMAIN);
-    let principal: String = database
-        .query_one(
-            "SELECT id::text FROM platform.\"user\" WHERE email=$1",
-            &[&email],
-        )
-        .await?
-        .get(0);
-    let first_due = Utc::now()
-        .with_second(0)
-        .unwrap()
-        .with_nanosecond(0)
-        .unwrap()
-        + chrono::Duration::minutes(1);
-    let dues = [first_due, first_due + chrono::Duration::minutes(1)]
-        .map(|due| due.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-    let keys = dues.map(|due| format!("schedule:{PACKAGE}/{SCHEDULE}:{due}"));
-    loop {
-        let rows: Value = database.query_one(
-            "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
-                'idempotency_key', idempotency_key, 'trigger_source', trigger_source, \
-                'service_principal_id', service_principal_id, 'invocation_context', invocation_context, \
-                'input_json', input_json, 'status', status, 'manifest_digest', manifest_digest, \
-                'package_id', package_id, 'wiring_id', wiring_id, 'wiring_version', wiring_version) \
-                ORDER BY idempotency_key), '[]'::jsonb) FROM wamn_run.runs \
-                WHERE tenant_id = $1 AND idempotency_key = ANY($2)",
-            &[&tenant, &keys.as_slice()],
-        ).await?.get(0);
-        let runs = rows.as_array().context("schedule run rows")?;
-        for key in &keys {
-            let matching: Vec<_> = runs
-                .iter()
-                .filter(|row| row["idempotency_key"] == *key)
-                .collect();
-            ensure!(
-                matching.len() <= 1,
-                "multiple schedule runs for {key}: {rows}"
-            );
-            if let Some(row) = matching.first() {
-                ensure!(
-                    row["trigger_source"] == "schedule"
-                        && row["service_principal_id"] == principal
-                        && row["invocation_context"] == json!({})
-                        && row["package_id"] == PACKAGE
-                        && row["wiring_id"] == SCHEDULE
-                        && row["wiring_version"] == 1
-                        && row["input_json"]
-                            == json!({"due": key.strip_prefix(&format!("schedule:{PACKAGE}/{SCHEDULE}:")).unwrap()}),
-                    "schedule run has wrong identity, input or principal: {row}"
-                );
-                ensure!(
-                    !matches!(
-                        row["status"].as_str(),
-                        Some("failed" | "infrastructure-failure" | "effect-uncertain")
-                    ),
-                    "scheduled workflow failed: {row}"
-                );
-            }
-        }
-        if runs.len() == 2 && runs.iter().all(|row| row["status"] == "completed") {
-            return Ok(rows);
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
 }
 
 async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Result<()> {

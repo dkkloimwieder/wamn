@@ -1,6 +1,7 @@
 //! Schedule workflows from rows, live (docs/plan/workflows.md R3, R8, epic 2
-//! issue 1): a schedule trigger authored with its cron, the enable rule of a
-//! schedule, and the host-owned admission of a due moment.
+//! issues 1 and 2): a schedule trigger authored with its cron, the enable rule
+//! of a schedule, the host-owned admission of a due moment, and the host's
+//! schedule task, which reads the enabled rows at each tick.
 //!
 //! The fixture release carries one application, `orders`, with one read
 //! operation (a WAT component that answers fixed rows and writes nothing). A
@@ -26,7 +27,8 @@ use wamn_control::author_workflow::{
     WorkflowTrigger, author_workflow_in_databases,
 };
 use wamn_control::workflow_lifecycle::{
-    WorkflowLifecycleError, WorkflowLifecycleErrorType, WorkflowVersion, enable_workflow,
+    WorkflowLifecycleError, WorkflowLifecycleErrorType, WorkflowVersion, disable_workflow,
+    enable_workflow,
 };
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
@@ -177,6 +179,8 @@ struct Fixture {
     control_url: String,
     engine: Arc<wash_runtime::engine::Engine>,
     postgres: Arc<WamnPostgres>,
+    /// The executor login, which the host's schedule task connects with.
+    executor_url: String,
     logging: Arc<WamnLogging>,
     scratch: wamn_test_infrastructure::scratch::ScratchRoot,
     read: wamn_catalog::AdmittedComponent,
@@ -285,7 +289,7 @@ async fn fixture() -> Fixture {
         .await
         .expect("install the serving release");
 
-    let postgres = scoped_postgres(&admin, &url).await;
+    let (postgres, executor_url) = scoped_postgres(&admin, &url).await;
     let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
     let control = connect(control_database.url()).await;
     control
@@ -300,6 +304,7 @@ async fn fixture() -> Fixture {
         control_url: control_database.url().to_owned(),
         engine,
         postgres,
+        executor_url,
         logging: Arc::new(logging),
         scratch,
         read,
@@ -311,14 +316,15 @@ async fn fixture() -> Fixture {
 
 /// The host's database access under the scoped logins of its families: the
 /// application login for guest SQL, the executor for admission and the
-/// queue, and the admitter for permission reads.
-async fn scoped_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
+/// queue, and the admitter for permission reads. Also the executor login.
+async fn scoped_postgres(admin: &Client, url: &str) -> (Arc<WamnPostgres>, String) {
     let database: String = admin
         .query_one("SELECT current_database()", &[])
         .await
         .unwrap()
         .get(0);
     let mut credentials = ClassCredentials::default();
+    let mut executor_url = String::new();
     for (family, class) in [
         (WorkloadRoleFamily::App, AuthorityClass::GuestSql),
         (
@@ -363,9 +369,12 @@ async fn scoped_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
         let mut login = url::Url::parse(url).unwrap();
         login.set_username(&role).unwrap();
         login.set_password(Some(PASSWORD)).unwrap();
+        if family == WorkloadRoleFamily::ExecutorPlatform {
+            executor_url = login.to_string();
+        }
         credentials = credentials.with_class(class, login.to_string());
     }
-    Arc::new(
+    let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(credentials),
             guest_pool_max_size: 2,
@@ -375,7 +384,8 @@ async fn scoped_postgres(admin: &Client, url: &str) -> Arc<WamnPostgres> {
             row_limit: 100,
         })
         .unwrap(),
-    )
+    );
+    (postgres, executor_url)
 }
 
 impl Fixture {
@@ -430,6 +440,37 @@ impl Fixture {
             &self.digest,
         )
         .await
+    }
+
+    async fn disable(&mut self, id: &str) -> Result<(), WorkflowLifecycleError> {
+        disable_workflow(
+            &self.url,
+            &Triple::new("acme", APPLICATION, ENVIRONMENT),
+            &mut self.admin,
+            &WorkflowVersion {
+                tenant_id: TENANT,
+                environment: ENVIRONMENT,
+                application: APPLICATION,
+                workflow_id: id,
+                version: 1,
+            },
+        )
+        .await
+    }
+
+    /// The due moments of the schedule runs of `id`, oldest first.
+    async fn dues(&self, id: &str) -> Vec<DateTime<Utc>> {
+        self.admin
+            .query(
+                "SELECT input_json->>'due' FROM wamn_run.runs \
+                  WHERE trigger_source = 'schedule' AND wiring_id = $1 ORDER BY 1",
+                &[&id],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| due(&row.get::<_, String>(0)))
+            .collect()
     }
 
     async fn grant_workflow_user(&self, role: &str) {
@@ -834,4 +875,93 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
         "a disabled version has no schedule run"
     );
     assert_eq!(fixture.runs().await, 0);
+}
+
+/// The first minute boundary strictly after `after`.
+fn next_minute(after: DateTime<Utc>) -> DateTime<Utc> {
+    DateTime::from_timestamp(after.timestamp().div_euclid(60) * 60 + 60, 0).unwrap()
+}
+
+/// The host's schedule task reads the enabled rows at each tick: a row
+/// enabled after the task started fires at its next tick, and a row disabled
+/// fires at no later tick. It runs in real time, one or two minute ticks.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disable() {
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = fixture().await;
+    fixture.grant_workflow_user("reader").await;
+    fixture
+        .author(
+            "minutely",
+            WorkflowTrigger::Schedule("* * * * *"),
+            WorkflowExecution::Role("reader"),
+        )
+        .await
+        .expect("author the schedule workflow");
+
+    let schedules = wamn_workflow::schedule::PostgresSchedules::new(
+        connect(&fixture.executor_url).await,
+        Arc::clone(&fixture.postgres),
+        PROJECT,
+        TENANT,
+        ENVIRONMENT,
+        APPLICATION,
+        &fixture.digest,
+    );
+    let (stop, stopping) = tokio::sync::watch::channel(false);
+    let task =
+        tokio::spawn(async move { wamn_workflow::schedule::serve(&schedules, stopping).await });
+
+    fixture
+        .enable("minutely", READER)
+        .await
+        .expect("an enabler holding the role enables");
+    let enabled = Utc::now();
+    let fired = tokio::time::timeout(Duration::from_secs(130), async {
+        loop {
+            let dues = fixture.dues("minutely").await;
+            if !dues.is_empty() {
+                return dues;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .expect("the enabled row fires within two ticks");
+    assert_eq!(fired.len(), 1, "{fired:?}");
+    assert!(
+        fired[0] > enabled - chrono::Duration::seconds(5)
+            && fired[0] <= next_minute(next_minute(enabled)),
+        "the first run is due at a tick after the enable: {fired:?}, enabled at {enabled}"
+    );
+
+    fixture
+        .disable("minutely")
+        .await
+        .expect("the enabled version disables");
+    let disabled = Utc::now();
+    let quiet = next_minute(disabled) + chrono::Duration::seconds(10);
+    tokio::time::sleep((quiet - Utc::now()).to_std().unwrap_or_default()).await;
+    let dues = fixture.dues("minutely").await;
+    assert!(
+        dues.iter().all(|due| *due <= disabled),
+        "a disabled row fires at no later tick: {dues:?}, disabled at {disabled}"
+    );
+    assert!(!task.is_finished(), "the schedule task keeps serving");
+
+    stop.send(true).unwrap();
+    task.await
+        .unwrap()
+        .expect("the schedule task stops at shutdown");
+    fixture.drain().await;
+    let run: String = fixture
+        .admin
+        .query_one(
+            "SELECT run_id FROM wamn_run.runs WHERE wiring_id = 'minutely' ORDER BY created_at LIMIT 1",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(fixture.outcome(&run).await.0, "completed");
 }

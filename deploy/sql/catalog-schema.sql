@@ -445,27 +445,6 @@ CREATE TABLE catalog.event_registrations (
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, package_id, entity_id);
 
--- The exact schedule projection of each installed package, like registrations.
-CREATE TABLE catalog.workflow_schedules (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
-    package_id  text NOT NULL CHECK (package_id <> ''),
-    workflow_id text NOT NULL CHECK (workflow_id <> ''),
-    schedule    text NOT NULL CHECK (schedule <> ''),
-    PRIMARY KEY (tenant_id, package_id, workflow_id)
-);
--- Keep the complete table section together: reconcile-run-plane uses this
--- section when an existing catalog lacks the table.
-ALTER TABLE catalog.workflow_schedules ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catalog.workflow_schedules FORCE ROW LEVEL SECURITY;
-CREATE POLICY workflow_schedules_tenant ON catalog.workflow_schedules TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY workflow_schedules_platform ON catalog.workflow_schedules
-    AS PERMISSIVE FOR ALL TO wamn_platform USING (true) WITH CHECK (true);
-CREATE INDEX workflow_schedules_tkey ON catalog.workflow_schedules ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT ON catalog.workflow_schedules TO wamn_app;
-REVOKE ALL ON catalog.workflow_schedules FROM PUBLIC;
-
 -- The recorded floor of each installed package (docs/plan/platform-deploy.md
 -- R13, R16): the version `env apply` contracted it to at step 9. A floor only
 -- advances along `predecessor_version`; `apply` refuses a document that omits

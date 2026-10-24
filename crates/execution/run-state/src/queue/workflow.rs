@@ -74,29 +74,6 @@ pub fn select_event_run_sql() -> &'static str {
         AND input_json = $10::text::jsonb"
 }
 
-/// Admit a scheduled run as its application. Binds match automation admission.
-pub fn insert_schedule_run_sql() -> String {
-    format!(
-        "INSERT INTO runs (tenant_id, package_id, manifest_digest, environment, \
-             wiring_id, wiring_version, wiring_hash, trigger_source, service_principal_id, \
-             idempotency_key, input_json, status, durability_class) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'schedule', $8::text::uuid, $9, \
-                 $10::text::jsonb, '{dispatched}', $11) \
-         ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
-         RETURNING run_id",
-        dispatched = RunStatus::Dispatched.as_sql(),
-    )
-}
-
-/// Read a repeated scheduled start. Binds match its insert without durability.
-pub fn select_schedule_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE tenant_id = $1 AND package_id = $2 \
-        AND manifest_digest = $3 AND environment = $4 AND wiring_id = $5 \
-        AND wiring_version = $6 AND wiring_hash = $7 AND trigger_source = 'schedule' \
-        AND service_principal_id = $8::text::uuid AND idempotency_key = $9 \
-        AND input_json = $10::text::jsonb"
-}
-
 /// Admit one manual run of an environment workflow (docs/plan/workflows.md
 /// R3, epic 1): the host admits it against the release it serves, and the run
 /// carries its executing principal and active role, its caller and the
@@ -167,8 +144,7 @@ pub fn insert_workflow_schedule_run_sql() -> String {
 /// Binds: `$1` tenant, `$2` idempotency key, `$3` input JSON text.
 pub fn select_workflow_schedule_run_sql() -> &'static str {
     "SELECT run_id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2 \
-        AND trigger_source = 'schedule' AND invoked_by = 'schedule' \
-        AND input_json = $3::text::jsonb"
+        AND trigger_source = 'schedule' AND input_json = $3::text::jsonb"
 }
 
 /// Queue one admitted run. Binds: `$1` tenant, `$2` run id.

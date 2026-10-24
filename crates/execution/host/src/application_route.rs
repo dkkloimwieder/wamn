@@ -156,7 +156,7 @@ fn start_refusal(code: &'static str, field: &str) -> Refusal {
 
 /// The application package of a release: the member that composes its
 /// entry, or its one package when it has no composed entry.
-fn release_application(manifest: &ServingManifest) -> Option<&str> {
+pub fn release_application(manifest: &ServingManifest) -> Option<&str> {
     if let Some(composing) = manifest.composing_member() {
         return Some(&composing.package_id);
     }

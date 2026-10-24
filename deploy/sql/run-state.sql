@@ -434,9 +434,8 @@ CREATE TABLE wamn_run.runs (
     -- explicit IS NOT NULL arms keep PostgreSQL CHECK's NULL truth value from
     -- admitting a half-record. Existing flow rows stay truthful; they are not
     -- backfilled with an identity that was never recorded. The later arms admit
-    -- event runs with no caller, schedules under their application principal,
-    -- and manual and schedule workflow runs under their executing principal
-    -- and role.
+    -- event runs with no caller, and manual and schedule workflow runs under
+    -- their executing principal and role.
     CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
        AND flow_id <> '' AND flow_version > 0
@@ -463,15 +462,6 @@ CREATE TABLE wamn_run.runs (
        AND trigger_source IS NOT DISTINCT FROM 'event'
        AND registration_id IS NOT NULL AND registration_id <> ''
        AND service_principal_id IS NULL
-       AND wiring_id IS NOT NULL AND wiring_id <> ''
-       AND wiring_version IS NOT NULL AND wiring_version > 0
-       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
-       AND binding_world_json IS NULL)
-      OR
-      (flow_id IS NULL AND flow_version IS NULL
-       AND trigger_source IS NOT DISTINCT FROM 'schedule'
-       AND registration_id IS NULL
-       AND service_principal_id IS NOT NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
        AND wiring_version IS NOT NULL AND wiring_version > 0
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
@@ -510,18 +500,16 @@ CREATE TABLE wamn_run.runs (
        AND binding_world_json IS NULL)
     ),
     -- Only a manual or a schedule workflow run carries an execution identity,
-    -- an invoker and frozen node digests. A released schedule run carries a
-    -- service principal instead.
+    -- an invoker and frozen node digests.
     CONSTRAINT runs_execution_identity_check CHECK (
       trigger_source IS NOT DISTINCT FROM 'manual'
-      OR (trigger_source IS NOT DISTINCT FROM 'schedule' AND service_principal_id IS NULL)
+      OR trigger_source IS NOT DISTINCT FROM 'schedule'
       OR (execution_principal_id IS NULL AND execution_role IS NULL
           AND invoked_by IS NULL AND invoked_by_user_id IS NULL
           AND node_digests_json IS NULL)
     ),
     CONSTRAINT runs_service_principal_check CHECK (
-      (trigger_source IS NOT DISTINCT FROM 'automation'
-       OR (trigger_source IS NOT DISTINCT FROM 'schedule' AND invoked_by IS NULL))
+      (trigger_source IS NOT DISTINCT FROM 'automation')
       = (service_principal_id IS NOT NULL)
     ),
     PRIMARY KEY (tenant_id, run_id),

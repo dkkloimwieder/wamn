@@ -1526,21 +1526,26 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut schedule_tasks = tokio::task::JoinSet::new();
-    if let Some(release) = &release
-        && !release.manifest().workflow.schedules.is_empty()
-    {
+    // Every application host serves the enabled schedule workflows of its
+    // application, read from `catalog.workflows` at each tick
+    // (docs/plan/workflows.md epic 2).
+    let schedule_application = application.and_then(|release| {
+        let served = wamn_execution_host::release_application(release.manifest());
+        if served.is_none() {
+            tracing::warn!(
+                "the serving release names no application package; no workflow schedule task"
+            );
+        }
+        served.map(|application| (release, application.to_owned()))
+    });
+    if let Some((release, schedule_application)) = schedule_application {
         let url = executor_platform_url
             .clone()
-            .context("scheduled workflows require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
+            .context("workflow schedules require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
         let scope = release_scope(&args)?;
-        let schedules = release
-            .manifest()
-            .workflow
-            .schedules
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
         let digest = release.release().manifest_digest.as_str().to_owned();
+        let schedule_postgres = Arc::clone(&postgres);
+        let schedule_project = args.project.clone();
         let mut stopped = stopping.clone();
         let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let task_connected = Arc::clone(&connected);
@@ -1553,13 +1558,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 };
                 match connection {
                     Ok((client, connection)) => {
-                        let workflows = wamn_workflow::PostgresWorkflows::new(client, "wamn_run", &scope.tenant_id, &scope.environment);
+                        let schedules = wamn_workflow::schedule::PostgresSchedules::new(
+                            client,
+                            Arc::clone(&schedule_postgres),
+                            &schedule_project,
+                            &scope.tenant_id,
+                            &scope.environment,
+                            &schedule_application,
+                            &digest,
+                        );
                         task_connected.store(true, std::sync::atomic::Ordering::Relaxed);
                         let schedule_stopping = stopped.clone();
                         tokio::select! {
                             _ = stopped.changed() => return,
                             result = connection => tracing::warn!(?result, "workflow schedule database connection stopped"),
-                            result = wamn_workflow::schedule::serve(&workflows, &digest, &schedules, schedule_stopping) => tracing::warn!(?result, "workflow schedule task stopped"),
+                            result = wamn_workflow::schedule::serve(&schedules, schedule_stopping) => tracing::warn!(?result, "workflow schedule task stopped"),
                         }
                     }
                     Err(error) => tracing::warn!(%error, "connect workflow schedule admission"),

@@ -1491,9 +1491,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
 }
 
 /// The frozen execution of a manual or schedule workflow run, or none for
-/// every other grain, which carries none of its columns. A schedule run is a
-/// workflow run when it carries an executing principal; a released schedule
-/// run carries a service principal instead.
+/// every other grain, which carries none of its columns.
 fn decode_workflow(
     wiring_hash: Option<String>,
     trigger_source: Option<&str>,
@@ -1508,10 +1506,8 @@ fn decode_workflow(
             "run-workflow-execution-corrupt",
         )
     };
-    let workflow_grain = trigger_source == Some("manual")
-        || (trigger_source == Some("schedule") && execution_principal_id.is_some());
     match (
-        workflow_grain,
+        matches!(trigger_source, Some("manual" | "schedule")),
         wiring_hash,
         execution_principal_id,
         execution_role,

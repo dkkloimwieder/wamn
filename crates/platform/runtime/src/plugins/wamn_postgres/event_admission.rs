@@ -356,9 +356,9 @@ pub enum ScheduleRunAdmitted {
     Conflict,
 }
 
-/// The canonical UTC spelling of a due moment, as the schedule task spells
-/// it in its keys and input.
-fn due_text(due: DateTime<Utc>) -> String {
+/// The canonical UTC spelling of a due moment, in schedule keys and input
+/// and in the schedule task's logs.
+pub fn due_text(due: DateTime<Utc>) -> String {
     due.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
@@ -539,8 +539,7 @@ impl WamnPostgres {
 mod tests {
     use super::*;
 
-    /// The due spelling is the schedule task's
-    /// (`wamn_workflow::schedule::due_text`).
+    /// A due moment is spelled in whole seconds in UTC.
     #[test]
     fn due_text_is_whole_seconds_in_utc() {
         let due = DateTime::parse_from_rfc3339("2026-10-20T10:15:00-04:00")

@@ -32,7 +32,6 @@ manifest.Package {
     connections = ["postgres"]
     components = {netsuite = {connections = ["postgres"]}}
     workflows = {
-        pull = {wiring = "netsuite_pull", schedule = "* * * * *"}
         push = {
             wiring = "netsuite_push"
             registration = {source_package = "rest_consumer_fixture", entity = "item", ops = ["insert"]}

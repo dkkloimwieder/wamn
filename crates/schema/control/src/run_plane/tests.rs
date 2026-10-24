@@ -528,18 +528,14 @@ fn runs_manual_grain_check_mirrors_are_exact() {
         check("runs_execution_identity_check"),
         "CHECK (NOT trigger_source IS DISTINCT FROM 'manual'::text \
          OR NOT trigger_source IS DISTINCT FROM 'schedule'::text \
-         AND service_principal_id IS NULL \
          OR execution_principal_id IS NULL AND execution_role IS NULL \
          AND invoked_by IS NULL AND invoked_by_user_id IS NULL \
          AND node_digests_json IS NULL)"
     );
-    // A manual or schedule workflow run never needs a service principal; a
-    // released schedule run still does.
+    // Only an automation run carries a service principal.
     assert_eq!(
         check("runs_service_principal_check"),
-        "CHECK ((NOT trigger_source IS DISTINCT FROM 'automation'::text \
-         OR NOT trigger_source IS DISTINCT FROM 'schedule'::text \
-         AND invoked_by IS NULL) \
+        "CHECK ((NOT trigger_source IS DISTINCT FROM 'automation'::text) \
          = (service_principal_id IS NOT NULL))"
     );
     for pinned in [

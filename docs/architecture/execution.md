@@ -441,12 +441,12 @@ That refusal carries SQLSTATE `55000` and the message `actor-required`, as the s
 A workflow is a released wiring that runs off the request path.
 The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wamn-workflow` is the trait `Workflows`, with four operations.
 
-- `start` admits one released wiring under a service principal or a declared schedule. It writes the run and queue row together. A repeated key returns the first run.
+- `start` admits one released wiring under a service principal. It writes the run and queue row together. A repeated key returns the first run.
 - `park` moves the `available_at` of a queued run to `infinity`, so no claim takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
 - `release` returns a parked run to the queue.
 - `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
 
-`PostgresWorkflows` admits automation with project-admin authority and schedules with executor authority.
+`PostgresWorkflows` admits automation with project-admin authority.
 The `wamn-ctl workflow park`, `release` and `runs` commands call it ([queued automation](../operations/queued-automation.md)).
 Its SQL lives in `wamn-run-state` beside the claim SQL.
 
@@ -461,34 +461,32 @@ The queue runs the wiring with no caller, and an event handler's wiring still wa
 A node that needs an operation grant refuses, so an event workflow runs palette nodes.
 `list` shows an event run with the trigger `event`, and `park` and `release` act on it.
 
-A package can instead declare `workflows.<id>.schedule` in `wamn.k`.
-Each workflow declares exactly one of `registration` and `schedule`.
-The schedule is a five-field cron expression in UTC, parsed by `croner`.
-Apply-package reconciles `catalog.workflow_schedules`, and publish freezes schedules and wiring versions in the release manifest.
-A schedule must name a workflow wiring in that release.
+A package declares no schedule (docs/plan/workflows.md R9).
+A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and a five-field cron in UTC, parsed by `croner`.
+A release published before this change may carry `workflow.schedules` in its manifest; the host reads it with the field ignored.
 
-One host task serves all schedules of its environment's loaded release.
-Its first due moment is strictly after startup.
-At each due moment, it calls `Workflows::start` with input `{"due":"<due RFC 3339>"}`.
-The key is `schedule:<package id>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
-Replicas use the same key, so concurrent starts return one run.
+Every application host runs one schedule task, which wakes at each minute boundary.
+Its first tick is strictly after startup.
+At each tick it reads the enabled schedule rows of its application with one `SELECT`, and calls `WamnPostgres::admit_schedule_run` for each row whose cron names that minute.
+An enable or a disable between ticks takes effect at the next tick.
+The run has input `{"due":"<due RFC 3339>"}` and key `schedule:<application>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
+Replicas use the same key, so concurrent admissions return one run.
+The run executes as the `workflow` user with its execution role, or with `admin` for type `invoker`.
 
-Apply creates one service principal per application that declares a schedule or composes `wamn_integration`, in each environment.
+Apply creates one service principal per application that composes `wamn_integration`, in each environment.
 Its subject is `wamn-app-<org>--<project>--<env>--<package id>`.
 The tenant service row uses `<subject>@<platform-domain>` as its email.
 Repeated applies retain its identity and grants.
 
 Publish authorizes the operations that the application declares as dependencies.
 Apply assigns a role with those permissions. Repeated applies write no principal or role rows.
-The executor resolves the application principal when it admits the schedule run.
-Its database role reads only `id`, `type`, `status`, and `email` from `platform."user"`.
+The executor's database role reads only `id`, `type`, `status`, and `email` from `platform."user"`.
 It can insert the principal into a run but cannot change that identity afterward.
 
 The queue reads its current permissions, and the router authorizes each registered consumer command through the existing operation check.
 A missing permission refuses that command.
 
 Missed or refused ticks produce a log entry without catch-up, and host shutdown cancels the task.
-A host with no schedules starts no schedule task.
 
 The [JSONata node](../../apps/platform/execution/jsonata/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.

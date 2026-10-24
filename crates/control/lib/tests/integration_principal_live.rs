@@ -1,4 +1,4 @@
-//! Application principals through apply's release stage, schedule admission, and authorization.
+//! Application principals through apply's release stage and authorization.
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
@@ -8,7 +8,6 @@ use wamn_engine::router_delivery::authorize_registered_operation;
 use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_runtime::plugins::route_authentication::queued_run_caller;
 use wamn_schema_control::BareSchemaName;
-use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
 
 const TENANT: &str = "acme--erp--dev";
 const OPERATION: &str = "consumer:item/import@1.0.0";
@@ -66,11 +65,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             {"package-id": "integration", "package-version": "1.0.0"}
         ]},
         "components": [], "routes": [], "attachments": {},
-        "workflow": {"wirings": [ServingWiring::new("integration", wamn_catalog::fixture_graph("pull", 1))],
-            "schedules": {
-                "integration::hourly": {"package-id":"integration", "workflow-id":"hourly", "wiring-id":"pull", "wiring-version":1, "schedule":"0 * * * *"},
-                "integration::daily": {"package-id":"integration", "workflow-id":"daily", "wiring-id":"pull", "wiring-version":1, "schedule":"0 0 * * *"}
-            }}
+        "workflow": {"wirings": [ServingWiring::new("integration", wamn_catalog::fixture_graph("pull", 1))]}
     }))?;
     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
         "consumer",
@@ -136,14 +131,12 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         .custom_operations
         .insert("item.import".into(), operation);
     let packages = vec![package, declaration_only, consumer];
-    // Composition alone must materialize the principal, before schedules exist.
-    let mut unscheduled = manifest.clone();
-    unscheduled.workflow.schedules.clear();
+    // Composition alone materializes the principal, before the release is written.
     materialize_application_principals(
         system.url(),
         project.url(),
         TENANT,
-        &unscheduled,
+        &manifest,
         &packages,
         &AuthChanges::default(),
     )
@@ -197,34 +190,6 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             .get::<_, i64>(0),
         1
     );
-    let workflows =
-        PostgresWorkflows::new(connect(project.url()).await?, "wamn_run", TENANT, "dev");
-    let due =
-        chrono::DateTime::parse_from_rfc3339("2026-10-21T12:00:00Z")?.with_timezone(&chrono::Utc);
-    let request = StartRequest {
-        manifest_digest: digest.to_string(),
-        package_id: "integration".to_owned(),
-        wiring_id: "pull".to_owned(),
-        wiring_version: 1,
-        idempotency_key: wamn_workflow::schedule::idempotency_key("integration", "hourly", due),
-        input: json!({"due": wamn_workflow::schedule::due_text(due)}),
-        trigger: Trigger::Schedule {
-            workflow_id: "hourly".to_owned(),
-            due,
-        },
-    };
-    let run = workflows.start(&request).await?;
-    assert_eq!(workflows.start(&request).await?, run);
-    assert_eq!(
-        admin
-            .query_one(
-                "SELECT service_principal_id::text FROM wamn_run.runs WHERE run_id=$1",
-                &[&run]
-            )
-            .await?
-            .get::<_, String>(0),
-        principal
-    );
     let caller = queued_run_caller(&admin, TENANT, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
@@ -239,91 +204,10 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .await?;
     let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     assert_eq!(before, after, "reapplying must write no application rows");
-    let mut unscheduled = manifest.clone();
-    unscheduled.workflow.schedules.clear();
-    materialize_application_principals(
-        system.url(),
-        project.url(),
-        TENANT,
-        &unscheduled,
-        &packages,
-        &AuthChanges::default(),
-    )
-    .await?;
     let caller = queued_run_caller(&admin, TENANT, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     assert!(
         authorize_registered_operation(Some(&caller), Some("consumer:item/delete@1.0.0")).is_err()
-    );
-    // A scheduled application needs no dependencies to retain its own private operations.
-    let mut scheduled = packages[0].clone();
-    scheduled.package.id = "scheduled".into();
-    scheduled.base_dependencies.clear();
-    let mut schedule_only = manifest.clone();
-    schedule_only
-        .release
-        .packages
-        .insert(wamn_catalog::PackageCoordinate::new("scheduled", "1.0.0")?);
-    schedule_only.workflow.wirings.insert(ServingWiring::new(
-        "scheduled",
-        wamn_catalog::fixture_graph("pull", 1),
-    ));
-    let mut schedule = schedule_only
-        .workflow
-        .schedules
-        .values()
-        .next()
-        .unwrap()
-        .clone();
-    schedule.package_id = "scheduled".into();
-    schedule.workflow_id = "hourly".into();
-    schedule_only
-        .workflow
-        .schedules
-        .insert("scheduled::hourly".into(), schedule);
-    admin.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ($1,'scheduled','1.0.0',$2)", &[&TENANT, &format!("sha256:{}", "a".repeat(64))]).await?;
-    let (_, scheduled_digest) =
-        ServingManifest::from_canonical_bytes(&schedule_only.canonical_bytes())?;
-    write_release(
-        project.url(),
-        TENANT,
-        scheduled_digest.as_str(),
-        &schedule_only,
-    )
-    .await?;
-    materialize_application_principals(
-        system.url(),
-        project.url(),
-        TENANT,
-        &schedule_only,
-        &[scheduled],
-        &AuthChanges::default(),
-    )
-    .await?;
-    let mut scheduled_request = request.clone();
-    scheduled_request.manifest_digest = scheduled_digest.to_string();
-    scheduled_request.package_id = "scheduled".into();
-    scheduled_request.idempotency_key =
-        wamn_workflow::schedule::idempotency_key("scheduled", "hourly", due);
-    let scheduled_run = workflows.start(&scheduled_request).await?;
-    let scheduled_principal: String = admin
-        .query_one(
-            "SELECT service_principal_id::text FROM wamn_run.runs WHERE run_id=$1",
-            &[&scheduled_run],
-        )
-        .await?
-        .get(0);
-    let own_caller = queued_run_caller(&admin, TENANT, &scheduled_principal, None).await?;
-    authorize_registered_operation(Some(&own_caller), None)?;
-    assert_eq!(
-        admin
-            .query_one(
-                "SELECT count(*) FROM platform.permission WHERE role_name='application-scheduled'",
-                &[]
-            )
-            .await?
-            .get::<_, i64>(0),
-        0
     );
     Ok(())
 }

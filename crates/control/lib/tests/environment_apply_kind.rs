@@ -24,7 +24,6 @@
 //!    The server sees one bearer header and the guest returns status 200.
 //!    A signed inbound POST delivers inline like the unsigned route and sends once.
 //!    Wrong and missing signatures return 401 with an empty body and no fixture request.
-//!    Two minute ticks each leave one completed schedule run under the application principal.
 //!    A second wiring sends a POST that the fixture verifies with its HMAC secret.
 //!    OAuth2 reuses one token for two sends, and the fixture verifies OAuth1 signatures.
 //!    The REST schedule retries page two after 429 and stores each item once.
@@ -1453,16 +1452,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         assertion.is_ok(),
     );
     assertion?;
-    http_connection::assert_triggers(
-        run,
-        &http_project,
-        &http_tenant,
-        &http_name,
-        &http.route_host,
-        status,
-        &body,
-    )
-    .await?;
+    http_connection::assert_triggers(run, &http_name, &http.route_host, status, &body).await?;
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;
@@ -2445,10 +2435,6 @@ fn the_fixture_releases_are_canonical_manifests() {
         http.workflow.attachments["http-signed-send"].wiring_id,
         "http-signed-send"
     );
-    let schedule = &http.workflow.schedules[&format!("{PACKAGE}::{}", http_connection::SCHEDULE)];
-    assert_eq!(schedule.schedule, "* * * * *");
-    assert_eq!(schedule.wiring_id, http_connection::SCHEDULE);
-    assert_eq!(schedule.wiring_version, 1);
     let scheduled = serde_json::to_value(http_connection::scheduled_wiring().unwrap()).unwrap();
     assert_eq!(scheduled["nodes"].as_object().unwrap().len(), 2);
     assert!(

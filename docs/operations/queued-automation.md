@@ -87,19 +87,13 @@ Pass the database URL as above, then select the installed release with the requi
 wamn-ctl workflow declared --tenant acme --environment dev --release-digest "$RELEASE_DIGEST"
 ```
 
-The command prints each declared workflow with its schedule or event registration.
+The command prints each declared workflow with its event registration.
 `workflow runs` prints runs, and `workflow list` prints the workflow versions authored in the environment.
-Author schedules in `wamn.k` under `workflows.<id>.schedule`, then run `wamn build` for the package.
-Use five-field cron in UTC and omit `registration` for that workflow.
-Apply the package and publish the release before the host loads it.
+A package declares no schedule.
+Author a schedule workflow in the environment with `wamn-ctl workflow author --schedule '<cron>'`, then enable it.
 
-Apply the release with `wamn-ctl env apply` to create each scheduled application's service principal.
-Its name is `wamn-app-<org>--<project>--<env>--<package id>`.
-Its tenant email is `<name>@<platform-domain>`.
-Use `create-role`, `grant-permission`, and `grant-role` from [role administration](deployment.md) to grant the consumer command.
-For `grant-role`, use that email as `--user`.
-Apply creates no grants, and repeated applies retain the principal and its grants.
-
-The host uses `WAMN_EXECUTOR_PLATFORM_PG_URL` to admit scheduled runs under that principal.
-The normal registered-operation check refuses a consumer command without its permission.
+Every application host runs one schedule task.
+At each minute it reads the enabled schedule workflows of its application and admits a run for each one whose cron names that minute.
+The task uses `WAMN_EXECUTOR_PLATFORM_PG_URL`.
+An enable or a disable takes effect at the next minute.
 See [workflows](../architecture/execution.md#workflows) for timing and retry behavior.

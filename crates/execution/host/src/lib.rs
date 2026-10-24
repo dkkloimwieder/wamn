@@ -16,6 +16,7 @@ mod readiness;
 mod route;
 mod router_delivery;
 
+pub use application_route::release_application;
 pub use host_route::{HostRouteDelivery, HostRouteHandlers};
 pub use operation::{
     CallIntents, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,

@@ -22,9 +22,7 @@ use package_version::{
     current_package_version, predecessor_not_current_error, predecessor_prefix_error,
 };
 use record_history::{create_history_tables, reconcile_record_history_triggers};
-use registrations::{
-    derive_catalog_registrations, reconcile_package_registrations, reconcile_package_schedules,
-};
+use registrations::{derive_catalog_registrations, reconcile_package_registrations};
 use roles::{assert_host_role, reset_host_role, set_package_owner_role};
 
 mod abandon;
@@ -703,7 +701,6 @@ async fn apply_prepared(
     let admin_role_changed = ensure_admin_role(tx, tenant).await?;
     let registrations_changed =
         reconcile_package_registrations(tx, tenant, &package_id, &registrations).await?;
-    let schedules_changed = reconcile_package_schedules(tx, tenant, manifest).await?;
     if let Some(schema) = stage_schema
         && !crate::qualify_upgrade::stage::whole_row_grants(manifest.upgrade_stage.as_ref())
     {
@@ -750,7 +747,6 @@ async fn apply_prepared(
             || triggers_changed
             || admin_role_changed
             || registrations_changed
-            || schedules_changed
             || comment_changed,
     })
 }
@@ -809,7 +805,6 @@ pub async fn reconcile_local_package_configuration(
         &derive_catalog_registrations(&manifest),
     )
     .await?;
-    reconcile_package_schedules(tx, tenant, &manifest).await?;
     Ok(())
 }
 
