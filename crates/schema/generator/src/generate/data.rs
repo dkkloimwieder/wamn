@@ -716,6 +716,17 @@ fn emit_feed(
     binds: &str,
     arguments: &str,
 ) {
+    let key = key_type(table).expect("validated model key");
+    let (feed, id, id_type, cloned) = match key {
+        KeyType::Uuid => ("feed", "id.0.clone()", "", ".clone()"),
+        KeyType::Int32 => ("feed::id", "id", ", i32", ""),
+        KeyType::Int64 => ("feed::id", "id", ", i64", ""),
+    };
+    let cursor_type = if key == KeyType::Uuid {
+        String::new()
+    } else {
+        format!("::<{}>", request_type(key.column_type()))
+    };
     let members = table
         .columns()
         .iter()
@@ -764,7 +775,7 @@ fn emit_feed(
          }}\n\
          }}\n\
          let transaction = end.ok_or_else(Error::internal)?;\n\
-         let cursor = feed::encode(MODEL, &feed::Cursor {{ transaction, after: None }}).map_err(|Invalid| Error::internal())?;\n\
+         let cursor = {feed}::encode{cursor_type}(MODEL, &{feed}::Cursor {{ transaction, after: None }}).map_err(|Invalid| Error::internal())?;\n\
          Ok((cursor, page))\n\
          }}\n\n\
          /// The feed part of a `{model_name}.query` request, after its codec\n\
@@ -778,8 +789,8 @@ fn emit_feed(
          /// scope of the list's filters since the cursor, one entry per row.\n\
          ///\n/// A row that left the scope, or was deleted, is a change with no data.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn changes(connection: &mut Connection, input: QueryInput, part: FeedInput) -> Result<feed::Changes<{model_type}Row>, Error> {{\n\
-         let cursor = part.cursor.as_deref().map(|encoded| feed::decode(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\
+         pub async fn changes(connection: &mut Connection, input: QueryInput, part: FeedInput) -> Result<{feed}::Changes<{model_type}Row{id_type}>, Error> {{\n\
+         let cursor = part.cursor.as_deref().map(|encoded| {feed}::decode{cursor_type}(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\
          {binds}\
          let (cursor_transaction, cursor_id) = match cursor {{\n\
          Some(cursor) => (Some(cursor.transaction), cursor.after),\n\
@@ -793,21 +804,21 @@ fn emit_feed(
          return Err(Error::cursor_expired());\n\
          }}\n\
          end = end.or(row.feed_end);\n\
-         let (Some(id), Some(transaction)) = (row.change_id.clone(), row.change_transaction) else {{\n\
+         let (Some(id), Some(transaction)) = (row.change_id{cloned}, row.change_transaction) else {{\n\
          continue;\n\
          }};\n\
          let present = row.present == Some(true);\n\
          let deleted_version = row.deleted_version;\n\
          let change = match live_row!(row) {{\n\
-         Some(data) if present => feed::Change {{ id: id.0.clone(), row_version: {version}, data: Some(data) }},\n\
+         Some(data) if present => {feed}::Change {{ id: {id}, row_version: {version}, data: Some(data) }},\n\
          // A row that left the scope carries its live revision, and a\n\
          // deleted row the revision its delete entry left.\n\
-         live => feed::Change {{ id: id.0.clone(), row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
+         live => {feed}::Change {{ id: {id}, row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
          }};\n\
-         changed.push(feed::Changed {{ transaction, id, change }});\n\
+         changed.push({feed}::Changed {{ transaction, id, change }});\n\
          }}\n\
          let end = end.ok_or_else(Error::internal)?;\n\
-         feed::Changes::new(MODEL, part.cursor.as_deref(), end, changed, part.limit).map_err(|Invalid| Error::internal())\n\
+         {feed}::Changes::new(MODEL, part.cursor.as_deref(), end, changed, part.limit).map_err(|Invalid| Error::internal())\n\
          }}"
     )
     .expect("writing to a String cannot fail");

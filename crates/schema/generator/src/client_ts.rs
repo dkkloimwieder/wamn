@@ -626,11 +626,20 @@ fn write_changes(
     fields: &[FieldIr],
     used: &mut BTreeSet<&'static str>,
 ) -> Result<(), ClientTsError> {
-    used.insert("Uuid");
+    let id_type = ts_type(
+        &fields
+            .iter()
+            .find(|field| field.path == "id")
+            .expect("a feed row has its model key")
+            .type_name,
+    )?;
+    if ALIASES.contains(&id_type) {
+        used.insert(id_type);
+    }
     let stem = route_const.trim_end_matches("_ROUTE");
     writeln!(
         source,
-        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: Uuid;\n  readonly rowVersion: number;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"rowVersion\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
+        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: {id_type};\n  readonly rowVersion: number;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"rowVersion\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
     )
     .expect("write");
     write_map_members(source, fields, 5)?;

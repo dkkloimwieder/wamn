@@ -86,8 +86,34 @@ fn main() -> Result<()> {
         std::fs::write(root.join(name), file.bytes())?;
     }
 
+    // Exercise the same binding surfaces with each integer key wire type.
+    for ty in ["int32", "int64"] {
+        let mut release = fixture::client_release();
+        for model in &mut release.models {
+            integer_ids(&mut model.fields, ty);
+            for operation in &mut model.operations {
+                integer_ids(&mut operation.input_fields, ty);
+                integer_ids(&mut operation.result_fields, ty);
+                if let Some(route) = &mut operation.route {
+                    integer_ids(&mut route.response.fields, ty);
+                }
+            }
+        }
+        let directory = root.join(ty);
+        std::fs::create_dir(&directory)?;
+        for file in emit_ts_client(&release)? {
+            let name = Path::new(file.path())
+                .file_name()
+                .context("an emitted path names a file")?;
+            std::fs::write(directory.join(name), file.bytes())?;
+        }
+    }
+
     println!("tsc {version}");
-    println!("checking {} modules in {}", files.len(), root.display());
+    println!(
+        "checking UUID, int32, and int64 modules in {}",
+        root.display()
+    );
     let status = Command::new("tsc")
         .arg("--project")
         .arg(&root)
@@ -123,4 +149,13 @@ fn tsc_version() -> Result<String> {
         bail!("`tsc --version` failed with {}", output.status);
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn integer_ids(fields: &mut [wamn_schema_generator::client_ir::FieldIr], ty: &str) {
+    for field in fields {
+        if field.path.rsplit('.').next() == Some("id") {
+            ty.clone_into(&mut field.type_name);
+        }
+        integer_ids(&mut field.children, ty);
+    }
 }

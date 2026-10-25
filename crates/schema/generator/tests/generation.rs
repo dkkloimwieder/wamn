@@ -1538,7 +1538,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
 ///
 /// The codec is generated source, so the test that states its behavior runs
 /// inside the scratch crate that compiles it.
-fn compile_inventory_item_component(package: &GeneratedPackage) {
+fn compile_inventory_item_component(package: &GeneratedPackage, codec_tests: &str) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -1636,6 +1636,11 @@ macro_rules! operation {{
         node.display(),
         scratch.join("wit").display()
     );
+    let codec_tests = if codec_tests.is_empty() {
+        CODEC_TESTS
+    } else {
+        codec_tests
+    };
     let lib = format!(
         "{lib}\noperation!(create_codec, create, create_handler, CreateRequest, CreateResult, CreateError);\n\
          operation!(update_codec, update, update_handler, UpdateRequest, UpdateResult, UpdateError);\n\
@@ -1643,7 +1648,7 @@ macro_rules! operation {{
          create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, create_handler, create_codec);\n\
          update_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, update_handler, update_codec);\n\
          delete_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, delete_handler, delete_codec);\n\n\
-         export!(Component);\n\n{CODEC_TESTS}"
+         export!(Component);\n\n{codec_tests}"
     );
     std::fs::write(scratch.join("src/lib.rs"), lib).expect("write fixture component");
 
@@ -1795,7 +1800,95 @@ fn typed_crud_contracts_follow_a_second_model_declaration() {
         delete["expected_sequence_number"],
         json!({"field": "sequence_number", "type": "int64", "required": true, "revision": true})
     );
-    compile_inventory_item_component(&package);
+    compile_inventory_item_component(&package, "");
+    for (ty, id, wrong) in [
+        (ColumnType::Int32, "2147483647", "\"2147483647\""),
+        (
+            ColumnType::Int64,
+            "\"9007199254740993\"",
+            "9007199254740993",
+        ),
+    ] {
+        let model = table(&catalog, "inventory_item");
+        let columns = model
+            .columns()
+            .iter()
+            .map(|column| {
+                if column.name() == "id" {
+                    Column::new("id", ty, false, None, None)
+                } else {
+                    column.clone()
+                }
+            })
+            .collect();
+        let catalog = replacing_table(
+            &catalog,
+            rebuilt_table(model, columns, model.constraints().to_vec()),
+        );
+        let package = run(&catalog, &manifest, &[]).unwrap();
+        let tests = r##"
+#[cfg(test)]
+mod integer_codec_tests {
+    #[test]
+    fn ids_use_the_declared_wire_type() {
+        let valid = r#"[{"request_id":"r","id":ID,"idempotency_key":"k","sku":"BOX"}]"#;
+        assert_eq!(super::create_codec::decode(valid).unwrap().remove(0).input.unwrap().id.to_string(), "DECIMAL");
+        for invalid in [
+            r#"[{"request_id":"r","id":WRONG,"idempotency_key":"k","sku":"BOX"}]"#,
+            r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#,
+        ] {
+            assert!(super::create_codec::decode(invalid).unwrap().remove(0).input.is_err());
+        }
+        let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1"}]"#;
+        let items = super::delete_codec::decode(valid).unwrap();
+        assert_eq!(items.into_iter().next().unwrap().input.unwrap().id.to_string(), "DECIMAL");
+        let invalid = r#"[{"request_id":"r","id":WRONG,"expected_sequence_number":"1"}]"#;
+        assert!(super::delete_codec::decode(invalid).unwrap().remove(0).input.is_err());
+        let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1","change":{}}]"#;
+        assert_eq!(super::update_codec::decode(valid).unwrap().remove(0).input.unwrap().id.to_string(), "DECIMAL");
+    }
+}
+"##.replace("DECIMAL", id.trim_matches('"')).replace("ID", id).replace("WRONG", wrong);
+        compile_inventory_item_component(&package, &tests);
+        let columns = model
+            .columns()
+            .iter()
+            .map(|column| {
+                if column.name() == "id" {
+                    Column::new(
+                        "id",
+                        ty,
+                        false,
+                        None,
+                        Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                            mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                        }),
+                    )
+                } else {
+                    column.clone()
+                }
+            })
+            .collect();
+        let generated = replacing_table(
+            &catalog,
+            rebuilt_table(model, columns, model.constraints().to_vec()),
+        );
+        let package = run(&generated, &manifest, &[]).unwrap();
+        compile_inventory_item_component(
+            &package,
+            r##"
+#[test]
+fn identity_create_refuses_a_client_id() {
+    let valid = r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#;
+    assert!(create_codec::decode(valid).unwrap().remove(0).input.is_ok());
+    for id in ["42", "\"9007199254740993\""] {
+        let invalid = format!(r#"[{{"request_id":"r","idempotency_key":"k","sku":"BOX","id":{id}}}]"#);
+        assert!(create_codec::decode(&invalid).unwrap().remove(0).input.is_err());
+    }
+}
+"##,
+        );
+    }
 }
 
 fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
@@ -2967,6 +3060,32 @@ fn integer_keys_use_typed_data_and_server_generated_create_ids() {
             let (insert, returning) = create.split_once("RETURNING").unwrap();
             assert_eq!(insert, "INSERT INTO gadget (stock_id)\nVALUES ($1::uuid)\n");
             assert!(returning.contains("\n    id,"), "{create}");
+            let input = artifact_json(&package, "generated/contracts/gadget/create.input.json");
+            assert!(input.get("id").is_none());
+            assert_eq!(input["request"]["over"], "writable_fields");
+            for declared in [false, true] {
+                manifest["models"]["gadget"]["server_owned_fields"] =
+                    if declared { json!(["id"]) } else { json!([]) };
+                let package = run(&catalog, &manifest, &[])
+                    .expect("the database owns a generated integer key");
+                for action in ["create", "get", "update", "delete", "query"] {
+                    let input = artifact_json(
+                        &package,
+                        &format!("generated/contracts/gadget/{action}.input.json"),
+                    );
+                    assert_eq!(
+                        input["server_owned_fields"]["fields"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!("id")),
+                        action == "create",
+                        "{action}: {input}"
+                    );
+                    if matches!(action, "get" | "update" | "delete") {
+                        assert_eq!(input["id"]["required"], true, "{action}: {input}");
+                    }
+                }
+            }
             manifest["models"]["gadget"]["operations"]["create"]["writable_fields"] =
                 json!(["id", "stock_id"]);
             let error = run(&catalog, &manifest, &[]).unwrap_err();
@@ -3160,4 +3279,111 @@ fn generated_update_counts_a_numeric_scale_only_change() {
             "LEFT JOIN updated ON TRUE;\n",
         )
     );
+}
+
+#[test]
+fn integer_keys_reach_contracts_routes_and_feed_bindings() {
+    let base = all_stamps_catalog();
+    let model = table(&base, "gadget");
+    for (ty, rust, wit, json_type) in [
+        (ColumnType::Int32, "i32", "s32", "integer"),
+        (ColumnType::Int64, "i64", "s64", "string"),
+    ] {
+        let columns = model
+            .columns()
+            .iter()
+            .map(|column| {
+                if column.name() == "id" {
+                    Column::new("id", ty, false, None, None)
+                } else {
+                    column.clone()
+                }
+            })
+            .collect();
+        let catalog = replacing_table(
+            &base,
+            rebuilt_table(model, columns, model.constraints().to_vec()),
+        );
+        let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "P30D");
+        manifest["models"]["gadget"]["operations"]["query"]
+            .as_object_mut()
+            .unwrap()
+            .remove("authored_sql");
+        let package = run(&catalog, &manifest, &[]).unwrap();
+        let input = artifact_json(&package, "generated/contracts/gadget/get.input.json");
+        assert_eq!(input["id"]["type"], ty.as_str());
+        let route = artifact_json(&package, "generated/routes/gadget/get.json");
+        assert_eq!(route["items"]["properties"]["id"]["type"], json_type);
+        let text = |path| std::str::from_utf8(package.file(path).unwrap().bytes()).unwrap();
+        let data = text("generated/data/gadget.rs");
+        assert!(
+            data.contains(&format!("feed::id::Changes<GadgetRow, {rust}>")),
+            "{data}"
+        );
+        assert!(
+            data.contains(&format!("feed::id::decode::<{rust}>")),
+            "{data}"
+        );
+        assert!(!data.contains("id.0.clone()"));
+        let codec = text("generated/wit/gadget_query_codec.rs");
+        assert_eq!(
+            codec.contains("change.id.to_string()"),
+            ty == ColumnType::Int64
+        );
+        let wit_source = package
+            .files()
+            .iter()
+            .find(|file| file.path().ends_with("gadget/package.wit"))
+            .unwrap();
+        let wit_source = std::str::from_utf8(wit_source.bytes()).unwrap();
+        assert!(
+            wit_source.contains(&format!("record query-change {{\n    id: {wit},")),
+            "{wit_source}"
+        );
+        let source_map = artifact_json(&package, "generated/source-map/gadget.json");
+        let binds = wamn_accessor(&source_map, "changes")["binds"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            binds
+                .iter()
+                .find(|bind| bind["parameter"] == "cursor_id")
+                .unwrap()["wamn_rust"],
+            format!("Option<{rust}>")
+        );
+        // Intent identity is independent of the record id: reads have none,
+        // while a create still claims its declared text key.
+        assert_eq!(
+            wamn_schema_generator::client_plan::idempotency_field(&input),
+            None
+        );
+        let mut create = manifest.clone();
+        create["models"]["gadget"]["operations"]["create"] =
+            create_manifest()["models"]["gadget"]["operations"]["create"].clone();
+        create["models"]["gadget"]["operations"]["query"]
+            .as_object_mut()
+            .unwrap()
+            .remove("authored_sql");
+        let created = run(&catalog, &create, &[]).unwrap();
+        let input = artifact_json(&created, "generated/contracts/gadget/create.input.json");
+        assert_eq!(input["id"]["type"], ty.as_str());
+        assert_eq!(input["id"]["required"], true);
+        assert_eq!(input["request"]["over"], "id_and_writable_fields");
+        let sql = generated_create_sql(&created, "create");
+        let cast = if ty == ColumnType::Int32 {
+            "int4"
+        } else {
+            "int8"
+        };
+        assert!(
+            sql.starts_with(&format!(
+                "INSERT INTO gadget (id, stock_id)\nVALUES ($1::{cast}, $2::uuid)"
+            )),
+            "{sql}"
+        );
+        assert_eq!(
+            wamn_schema_generator::client_plan::idempotency_field(&input).as_deref(),
+            Some("idempotency_key")
+        );
+    }
 }

@@ -49,6 +49,7 @@ pub(super) fn emit_model_component(
     manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
+    table: &wamn_schema_introspection::ir::Table,
 ) -> Result<(), GenerateError> {
     if model.operations.is_empty() {
         return Ok(());
@@ -75,6 +76,8 @@ pub(super) fn emit_model_component(
             &contract,
             operation,
             model.feed_revision().is_some(),
+            crate::key::key_type(table)?,
+            crate::key::database_generated(table),
         );
         // A change works in the host's operation transaction, so its export
         // takes no state.
@@ -119,7 +122,14 @@ fn handler(
     contract: &str,
     operation: &OperationDeclaration,
     feed: bool,
+    key: crate::key::KeyType,
+    database_generated: bool,
 ) -> (&'static str, String) {
+    let id = if key == crate::key::KeyType::Uuid {
+        "&request.id"
+    } else {
+        "request.id"
+    };
     let connection = "connection: &mut Connection";
     let transaction = "transaction: &mut Transaction";
     let revision = || {
@@ -133,11 +143,12 @@ fn handler(
         CrudAction::Get => (
             connection,
             format!(
-                "model::get(connection, &request.id).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n"
+                "model::get(connection, {id}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n"
             ),
         ),
         CrudAction::Create => {
-            let arguments = std::iter::once("&request.id".to_owned())
+            let arguments = std::iter::once(id.to_owned())
+                .filter(|_| !database_generated)
                 .chain(
                     operation
                         .writable_fields
@@ -154,7 +165,7 @@ fn handler(
             )
         }
         CrudAction::Update => {
-            let mut arguments = format!("&request.id, {}", revision());
+            let mut arguments = format!("{id}, {}", revision());
             for field in &operation.writable_fields {
                 write!(arguments, ", request.change.{}", member_name(field))
                     .expect("writing to a String cannot fail");
@@ -169,7 +180,7 @@ fn handler(
         CrudAction::Delete => (
             transaction,
             format!(
-                "model::delete(transaction, &request.id, {}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n",
+                "model::delete(transaction, {id}, {}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n",
                 revision()
             ),
         ),

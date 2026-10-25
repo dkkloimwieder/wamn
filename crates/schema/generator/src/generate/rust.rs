@@ -304,7 +304,13 @@ pub(super) fn wamn_api(
                 if let Some(changes_row) = feed_rows.get(1) {
                     let mut binds = scope_binds(operation);
                     binds.push(accessor_bind("cursor_transaction", ColumnType::Int64, true));
-                    binds.push(accessor_bind("cursor_id", ColumnType::Uuid, true));
+                    binds.push(accessor_bind(
+                        "cursor_id",
+                        crate::key::key_type(table)
+                            .expect("validated model key")
+                            .column_type(),
+                        true,
+                    ));
                     binds.push(accessor_bind("limit", ColumnType::Int64, false));
                     let index = paths.len() - 1;
                     accessors.push(WamnAccessor {
@@ -572,7 +578,12 @@ fn feed_rows(
             fields: [
                 member("feed_end", ColumnType::Int64),
                 member("expired", ColumnType::Boolean),
-                member("change_id", ColumnType::Uuid),
+                member(
+                    "change_id",
+                    crate::key::key_type(table)
+                        .expect("validated model key")
+                        .column_type(),
+                ),
                 member("change_transaction", ColumnType::Int64),
                 member("present", ColumnType::Boolean),
                 member("deleted_version", ColumnType::Int64),

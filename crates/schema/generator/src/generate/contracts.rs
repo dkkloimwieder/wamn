@@ -67,7 +67,7 @@ pub(super) fn emit_model(
     }
     emit_model_wit(files, catalog, manifest, model_name, model, table)?;
     super::data::emit_model_data(files, manifest, model_name, model, table, &wamn_api)?;
-    super::component::emit_model_component(files, manifest, model_name, model)?;
+    super::component::emit_model_component(files, manifest, model_name, model, table)?;
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
     emit_projection(
         files,
@@ -1053,9 +1053,14 @@ fn input_contract(
             declared
         })
         .collect::<Vec<_>>();
+    let mut server_owned = server_owned_fields(model, table);
+    if action != CrudAction::Create {
+        // A row locator is an input even when the database generated it.
+        server_owned.retain(|field| *field != "id");
+    }
     let mut common = json!({
         "server_owned_fields": {
-            "fields": server_owned_fields(model, table),
+            "fields": server_owned,
             "if_supplied": "invalid_input",
         },
         "writable_fields": writable,
@@ -1137,18 +1142,24 @@ fn input_contract(
                 }),
             ),
         ),
-        CrudAction::Create => merge_json(
-            common,
-            &json!({
-                "id": key,
+        CrudAction::Create => {
+            let generated = crate::key::database_generated(table);
+            let mut create = json!({
                 CREATE_KEY_FIELD: {"type": "text", "required": true},
                 "request": {
-                    "over": "id_and_writable_fields",
+                    "over": if generated { "writable_fields" } else { "id_and_writable_fields" },
                     "payload": "canonical_compact_json",
                     "changed": "idempotency_conflict",
                 },
-            }),
-        ),
+            });
+            if !generated {
+                create
+                    .as_object_mut()
+                    .expect("create input is an object")
+                    .insert("id".to_owned(), key);
+            }
+            merge_json(common, &create)
+        }
         CrudAction::Update | CrudAction::Delete => {
             let revision = operation
                 .revision_field

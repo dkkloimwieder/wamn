@@ -144,9 +144,26 @@ fn emit_crud_interface(
     }
     writeln!(source, "  record {name}-request {{").expect("writing to a String cannot fail");
     match action {
-        CrudAction::Get | CrudAction::Delete => source.push_str("    id: string,\n"),
+        CrudAction::Get | CrudAction::Delete => writeln!(
+            source,
+            "    id: {},",
+            wit_type(
+                crate::key::key_type(table)
+                    .expect("validated model key")
+                    .column_type()
+            )
+        )
+        .expect("writing to a String cannot fail"),
         CrudAction::Create => {
-            source.push_str("    id: string,\n    idempotency-key: string,\n");
+            if !crate::key::database_generated(table) {
+                writeln!(
+                    source,
+                    "    id: {},",
+                    wit_type(model_column(table, "id").column_type())
+                )
+                .expect("writing to a String cannot fail");
+            }
+            source.push_str("    idempotency-key: string,\n");
             emit_writable_fields(source, table, operation);
         }
         CrudAction::Query => {
@@ -199,7 +216,7 @@ fn emit_crud_interface(
     source.push_str("  }\n\n");
     emit_operation_errors(source, name, details, revision_width(table, operation));
     if action == CrudAction::Query {
-        emit_query_page(source, fields, feed);
+        emit_query_page(source, fields, feed, table);
         return;
     }
     let key = request_key_field(crud_is_keyed(action));
@@ -218,7 +235,12 @@ fn emit_crud_interface(
 /// A query returns its page as one result: the rows and the cursor that
 /// continues the read, or the error that ended it. `read-json` also returns
 /// the WAL position for a list ETag.
-fn emit_query_page(source: &mut String, fields: &[ContractFieldDeclaration], feed: bool) {
+fn emit_query_page(
+    source: &mut String,
+    fields: &[ContractFieldDeclaration],
+    feed: bool,
+    table: &Table,
+) {
     source.push_str("  record query-row {\n");
     for column in fields {
         let mut ty = wit_type(column.ty);
@@ -232,7 +254,7 @@ fn emit_query_page(source: &mut String, fields: &[ContractFieldDeclaration], fee
     if feed {
         // A list read with a feed answers a page, with the cursor its feed
         // starts from, or the changes since a cursor (docs/plan/wamn-sync.md).
-        source.push_str("  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the scope of the read.\n  record query-change {\n    id: string,\n    row-version: s64,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
+        source.push_str(&"  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the scope of the read.\n  record query-change {\n    id: string,\n    row-version: s64,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n".replace("id: string", &format!("id: {}", wit_type(crate::key::key_type(table).expect("validated model key").column_type()))));
     } else {
         source.push_str("  /// One page. A cursor means more rows follow.\n  record query-result {\n    item: list<query-row>,\n    next-cursor: option<string>,\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
     }
@@ -326,7 +348,16 @@ fn emit_update_interface(
         .revision_field
         .as_deref()
         .expect("validated update revision exists");
-    source.push_str("  }\n\n  record update-request {\n    id: string,\n");
+    writeln!(
+        source,
+        "  }}\n\n  record update-request {{\n    id: {},",
+        wit_type(
+            crate::key::key_type(table)
+                .expect("validated model key")
+                .column_type()
+        )
+    )
+    .expect("writing to a String cannot fail");
     writeln!(
         source,
         "    expected-{}: {},",
@@ -425,6 +456,18 @@ fn emit_update_codec(
         };
     source.push_str(
         &UPDATE_CODEC_HEADER
+            .replace(
+                "id: String",
+                &format!(
+                    "id: {}",
+                    codec_rust_type(
+                        crate::key::key_type(table)
+                            .expect("validated model key")
+                            .column_type(),
+                        false
+                    )
+                ),
+            )
             .replace("REVISION_JSON_TYPE", revision_json_type)
             .replace("expected_revision", &expected_revision),
     );
@@ -440,6 +483,19 @@ fn emit_update_codec(
     }
     source.push_str(
         &UPDATE_CODEC_DECODE_PREFIX
+            .replace(
+                "id: request.id",
+                &format!(
+                    "id: {}",
+                    if crate::key::key_type(table).expect("validated model key")
+                        == crate::key::KeyType::Int64
+                    {
+                        "request.id.0"
+                    } else {
+                        "request.id"
+                    }
+                ),
+            )
             .replace("REVISION_CONVERSION", revision_conversion)
             .replace("expected_revision", &expected_revision),
     );
@@ -587,7 +643,7 @@ fn emit_query_codec(
     emit_json_row_fields(&mut source, fields, "row");
     source.push_str("    })\n}\n\n");
     if feed {
-        source.push_str("fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version, \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n");
+        source.push_str(&"fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version, \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n".replace("change.id,", if crate::key::key_type(table).expect("validated model key").column_type() == ColumnType::Int64 { "change.id.to_string()," } else { "change.id," }));
         source.push_str("/// The page or the changes, or the error, as the outcome list a read reply\n/// carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(contract::QueryResult::Page(page)) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor, \"cursor\": page.cursor } }]),\n        Ok(contract::QueryResult::Changes(changes)) => json!([{ \"value\": { \"rows\": changes.rows.iter().map(change_json).collect::<Vec<_>>(), \"next_cursor\": changes.next_cursor, \"complete\": changes.complete } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
     } else {
         source.push_str("/// The page, or the error, as the outcome list a read reply carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(page) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
@@ -775,7 +831,17 @@ fn emit_crud_json_codec(
     let mut source = String::from("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
     match action {
         CrudAction::Get | CrudAction::Delete => {
-            source.push_str("struct JsonRequest { id: String");
+            write!(
+                source,
+                "struct JsonRequest {{ id: {}",
+                codec_rust_type(
+                    crate::key::key_type(table)
+                        .expect("validated model key")
+                        .column_type(),
+                    false
+                )
+            )
+            .expect("writing to a String cannot fail");
             if action == CrudAction::Delete {
                 let revision = rust_identifier(
                     operation
@@ -802,7 +868,16 @@ fn emit_crud_json_codec(
             source.push_str(" }\n\n");
         }
         CrudAction::Create => {
-            source.push_str("struct JsonRequest { id: String, idempotency_key: String,\n");
+            source.push_str("struct JsonRequest { ");
+            if !crate::key::database_generated(table) {
+                write!(
+                    source,
+                    "id: {}, ",
+                    codec_rust_type(model_column(table, "id").column_type(), false)
+                )
+                .expect("writing to a String cannot fail");
+            }
+            source.push_str("idempotency_key: String,\n");
             emit_json_columns(&mut source, table, &operation.writable_fields);
             source.push_str("}\n\n");
         }
@@ -915,7 +990,9 @@ fn emit_update_normalizer(
         &mut source,
         "request.id",
         "id",
-        ColumnType::Uuid,
+        crate::key::key_type(table)
+            .expect("validated model key")
+            .column_type(),
         &[],
         false,
     );
@@ -944,15 +1021,16 @@ fn emit_crud_normalizer(
         "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
     );
     source.push_str("    let _ = &request;\n");
-    if matches!(
-        action,
-        CrudAction::Get | CrudAction::Create | CrudAction::Delete
-    ) {
+    if matches!(action, CrudAction::Get | CrudAction::Delete)
+        || (action == CrudAction::Create && !crate::key::database_generated(table))
+    {
         emit_scalar_validation(
             &mut source,
             "request.id",
             "id",
-            ColumnType::Uuid,
+            crate::key::key_type(table)
+                .expect("validated model key")
+                .column_type(),
             &[],
             false,
         );
@@ -1102,9 +1180,31 @@ fn emit_crud_request_assignments(
     operation: &OperationDeclaration,
 ) {
     match action {
-        CrudAction::Get => source.push_str("            id: request.id,\n"),
+        CrudAction::Get => writeln!(
+            source,
+            "            id: {},",
+            if crate::key::key_type(table).expect("validated model key")
+                == crate::key::KeyType::Int64
+            {
+                "request.id.0"
+            } else {
+                "request.id"
+            }
+        )
+        .expect("writing to a String cannot fail"),
         CrudAction::Delete => {
-            source.push_str("            id: request.id,\n");
+            writeln!(
+                source,
+                "            id: {},",
+                if crate::key::key_type(table).expect("validated model key")
+                    == crate::key::KeyType::Int64
+                {
+                    "request.id.0"
+                } else {
+                    "request.id"
+                }
+            )
+            .expect("writing to a String cannot fail");
             let revision = rust_identifier(
                 operation
                     .revision_field
@@ -1133,7 +1233,16 @@ fn emit_crud_request_assignments(
             .expect("writing to a String cannot fail");
         }
         CrudAction::Create => {
-            source.push_str("            id: request.id,\n            idempotency_key: request.idempotency_key,\n");
+            if !crate::key::database_generated(table) {
+                let unwrap = if model_column(table, "id").column_type() == ColumnType::Int64 {
+                    ".0"
+                } else {
+                    ""
+                };
+                writeln!(source, "            id: request.id{unwrap},")
+                    .expect("writing to a String cannot fail");
+            }
+            source.push_str("            idempotency_key: request.idempotency_key,\n");
             for field in &operation.writable_fields {
                 let column = model_column(table, field);
                 let name = rust_identifier(field).expect("validated field has a Rust name");

@@ -673,3 +673,38 @@ fn the_host_route_clients_are_written_below_the_output_root() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn integer_record_ids_follow_the_wire_type_in_requests_rows_and_changes() {
+    use wamn_schema_generator::client_ir::FieldIr;
+    fn keys(fields: &mut [FieldIr], ty: &str) {
+        for field in fields {
+            if field.path.rsplit('.').next() == Some("id") {
+                ty.clone_into(&mut field.type_name);
+            }
+            keys(&mut field.children, ty);
+        }
+    }
+    for (ty, ts) in [("int32", "number"), ("int64", "Int64")] {
+        let mut ir = release();
+        for model in &mut ir.models {
+            keys(&mut model.fields, ty);
+            for operation in &mut model.operations {
+                keys(&mut operation.input_fields, ty);
+                keys(&mut operation.result_fields, ty);
+                if let Some(route) = &mut operation.route {
+                    keys(&mut route.response.fields, ty);
+                }
+            }
+        }
+        let files = emit_ts_client(&ir).unwrap();
+        let text = widget(&files);
+        assert!(text.contains(&format!("readonly id: {ts};")), "{text}");
+        assert!(
+            text.contains(&format!(
+                "interface WidgetQueryChange {{\n  readonly id: {ts};"
+            )),
+            "{text}"
+        );
+    }
+}
