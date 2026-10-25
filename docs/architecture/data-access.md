@@ -488,15 +488,19 @@ The package declares numbering in `wamn.k`:
 - `number = "<sequence>"` on a model field makes the generated insert fill that field with the next number.
 - `role = "actor"` on a model field makes the generated insert fill it from `app.user_id`. The generated update fills a field named `updated_by` in the same way and never changes another actor field.
 
+An overlay is a model whose `owner` is another package. It inherits the owner's `number` and actor declarations, even when it declares no `fields`. The build reads them, and the sequence patterns, from the compiled manifest of the base build. The generated overlay insert numbers and stamps the inherited fields, and the generated overlay update fills an inherited `updated_by`.
+
 Generation refuses these declarations:
 
 - A pattern that does not parse, and a sequence name that is not an identifier.
 - A field that names an undeclared sequence, a field that has both `number` and `role`, and a model with two numbered fields.
-- A sequence that no field numbers and that is not callable.
-- A pattern that names a record field which is not a column of every model that uses the sequence. The column cannot be `bytes` or `json`, and the `create` operation must write it.
-- A numbered key field whose pattern uses `reset=` or `per=`. A numbered integer key takes a bare `{seq:<counter>}` pattern only.
+- A numbered field that is not `text`, `int32` or `int64`. An integer numbered field takes a bare `{seq:<counter>}` pattern only.
+- An actor field that is not a `uuid` field named `created_by` or `updated_by`.
+- A pattern key that is not a field of the numbered model. The field cannot be `bytes` or `json`, and the `create` operation must write it.
+- A numbered key field whose pattern uses `reset=` or `per=`.
 - A counter with `per=` on the key field of its model.
-- A write that supplies a `number` or `actor` field, in a generated operation or in a custom operation statement.
+- A write that supplies a `number` or `actor` field, inherited or not, in a generated operation or in a custom operation statement.
+- In an overlay, a numbered field, an actor field or a pattern key that the relation owner does not own, and a declaration or sequence pattern that differs from the owner's.
 - A package with models that lists `local` in `targets`.
 
 ### Pattern
@@ -516,12 +520,15 @@ A pattern is literal text and tokens:
 
 A `<key>` is a field of the record, another counter of the same pattern, or `date:FMT`.
 Date parts use the `timezone` setting of the application scope, and UTC when no setting exists.
+When a pattern holds `WW`, its `YYYY` and `YY` parts, and its `reset=date:YYYY` and `reset=date:YY` keys, use the ISO year: the year that holds the ISO week.
+For example, 2027-01-01 is in ISO week 53 of 2026, so it renders `2026` and `53`.
 For example, `B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}` gives `B0001-001` and `B0001-002` for the first batch.
 
 ### Rendering
 
-The guest calls `next-number(name, record)` or `peek-number(name, record)` of `wamn:postgres` 0.4.0.
-`record` is one JSON object that holds the fields the pattern names, each as text or null.
+The guest calls `next-number(name, keys)` or `peek-number(name, keys)` of `wamn:postgres` 0.4.0.
+`keys` maps each value that the pattern names (`per=`, `reset=` and `{field:}`) to its text, or to none for a null.
+The keys are not a record, so any command can call the function with values of its choice.
 The plugin reads the application from host state and resolves the sequence by that application and the name.
 It never reads the `app.application` claim, because guest SQL can rewrite that claim.
 Both calls run only in an open operation transaction, and they return `permission-denied` outside one.
@@ -536,10 +543,12 @@ If the row is absent, the plugin calls `platform.assign_counter`.
 The calls refuse with a `query-error` and these SQLSTATE values:
 
 - `42704` for a sequence that the application does not own.
-- `22023` for a record that is not one JSON object of text and nulls, a missing record field, an empty `per=` key, and a stored pattern that does not parse.
-- `22004` for a null record field.
+- `22023` for an empty key, a missing key, a key given twice, a stored pattern that does not parse, and a `timezone` setting that is not a JSON string or names no time zone that Postgres knows.
+- `22004` for a null key.
 - `P0002` for a `peek-number` of a counter that issued no number.
 
+The plugin checks every key and, for a pattern that reads the date, the `timezone` setting before the first counter call, so a refused call advances no counter.
+The time zone check runs in a savepoint, so its refusal leaves the operation transaction usable.
 The generated `sequences::<name>::next` and `peek` take a key struct that holds exactly the fields the pattern names.
 
 ### Counters
@@ -556,6 +565,10 @@ Its statement admission refuses guest SQL that names a counter function or write
 Env apply creates the `platform.number_sequence` row of each sequence that a package declares.
 The row belongs to the application that runs the package's operations.
 A row that exists keeps its pattern, so an edited pattern survives every apply.
+Two packages of one application can declare one sequence name only with one default pattern.
+If the patterns differ, env apply refuses before it writes anything, and the refusal names the application, the sequence, and the two packages.
+The `applications` map of `environment.k` decides which packages form one application.
+The check reads only the package declarations, so a row with an edited pattern does not refuse.
 
 ### Setting a counter
 
