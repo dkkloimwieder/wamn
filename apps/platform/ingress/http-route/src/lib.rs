@@ -370,6 +370,15 @@ async fn try_handle(
         .ok_or_else(|| error_response(400, "invalid-authority"))?;
     let (path, query) =
         split_target(&head.target).ok_or_else(|| error_response(400, "invalid-target"))?;
+    if method == "HEAD" && path == "/api/health" {
+        return Ok(HttpResponse {
+            status: 204,
+            content_type: "application/json",
+            body: Vec::new(),
+            deadline_adjustments: Vec::new(),
+            read: None,
+        });
+    }
     let routes = backend
         .routes(&method, &authority)
         .map_err(|_| error_response(503, "routing-provider-failed"))?;

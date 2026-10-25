@@ -16,6 +16,48 @@ use http_route::{
 
 const AUTHENTICATED_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
 
+#[test]
+fn health_head_needs_no_route_authentication_or_body() {
+    let mut backend = FakeBackend::new(route());
+    backend.fault = Fault::Routes;
+    backend.auth = Err(AuthRejection {
+        status: 401,
+        code: "unauthenticated".to_string(),
+    });
+    let mut request = head();
+    request.method = "HEAD".to_string();
+    request.target = "/api/health".to_string();
+    request.headers.clear();
+    let mut body = Chunks::json(&[]);
+    let response = block_on(handle_request(
+        &mut backend,
+        &mut body,
+        &request,
+        AdapterLimits::default(),
+    ));
+    assert_eq!(response.status, 204);
+    assert!(response.body.is_empty());
+    assert_eq!(
+        response.cache_headers(),
+        vec![("cache-control", "no-store".to_string())]
+    );
+    assert_eq!(body.reads, 0);
+    assert!(backend.authenticated_attachments.is_empty());
+    assert!(backend.deliveries.is_empty());
+
+    backend.fault = Fault::None;
+    for method in ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+        request.method = method.to_string();
+        let response = block_on(handle_request(
+            &mut backend,
+            &mut body,
+            &request,
+            AdapterLimits::default(),
+        ));
+        assert_eq!(response.status, 404, "{method}");
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,

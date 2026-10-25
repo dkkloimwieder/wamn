@@ -17,6 +17,7 @@
     "@typescript/native": "npm:typescript@^7.0.2"
   },
   "dependencies": {
+    "@wfe/sync": "workspace:*",
     "zod": "^4.6.5"
   }
 }

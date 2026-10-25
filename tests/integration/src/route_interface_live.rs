@@ -280,6 +280,32 @@ async fn start(
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn health_head_needs_no_credential() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let response = paths
+        .client
+        .head(format!("{}/api/health", paths.endpoint))
+        .header("Host", &paths.host)
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert!(response.bytes().await?.is_empty());
+    application.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",

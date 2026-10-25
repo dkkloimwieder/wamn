@@ -401,6 +401,11 @@ const KNOWN_SOURCES: readonly string[] = [
   "exclusion_violation",
   "not_null_violation",
   "permission_denied",
+  "query_error",
+  "row_limit_exceeded",
+  "connection_unavailable",
+  "serialization_failure",
+  "statement_timeout",
 ];
 
 /** Whether the refusal states a schema pointer and nothing else. */
@@ -452,7 +457,7 @@ function classifyPartial(
  * It owns the URL, the credential and the envelope. The bindings state what to
  * send, and this states where and how.
  */
-export function createTransport(options: TransportOptions): Transport {
+export function createTransport(options: TransportOptions): Transport & Required<Pick<Transport, "probe">> {
   const call = options.fetch ?? globalThis.fetch;
   // The store belongs to this transport and to one session, so one caller's
   // reads never answer another's.
@@ -542,6 +547,27 @@ export function createTransport(options: TransportOptions): Transport {
     return reply;
   };
   return {
+    async probe(signal?: AbortSignal): Promise<boolean> {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      if (signal?.aborted) return false;
+      signal?.addEventListener("abort", abort, { once: true });
+      const timer = setTimeout(abort, 3_000);
+      try {
+        const response = await call(`${options.baseUrl}/api/health`, {
+          method: "HEAD",
+          cache: "no-store",
+          credentials: "omit",
+          signal: controller.signal,
+        });
+        return response.ok;
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+      }
+    },
     async invoke(request: WireRequest): Promise<Outcome<JsonValue>> {
       const requestId = request.method === "GET" ? null : submittedRequestId(request);
       const reply = await exchange(request);

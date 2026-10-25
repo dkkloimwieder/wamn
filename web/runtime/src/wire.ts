@@ -114,6 +114,8 @@ export type OperationRoute = Omit<WireRequest, "items">;
  */
 export interface Transport {
   invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
+  /** Whether the application origin answers its health probe within three seconds. */
+  probe?(signal?: AbortSignal): Promise<boolean>;
   /**
    * Sends one write that carries many items, each with its own request
    * identity, and returns one outcome for each item, in order. The release
