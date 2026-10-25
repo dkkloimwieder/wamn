@@ -124,7 +124,7 @@ environment = {
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
 - `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern; after that the admin owns the pattern. A sequence is independent of the records: it needs no model field and no declared caller, and its keys need not be fields of any model (owner ruling 2026-10-24).
 - `number = "<sequence>"` on a field names one caller of the sequence. The generated insert calls `next_number` with the model fields that the pattern names. A write that supplies this field is a build refusal. The model must contain every field named by `per=`, `reset=` or `{field:}`. A numbered field must be `text`, `int32` or `int64`. Integer fields take only a bare `{seq}` pattern.
-- A key field can declare `number`, with the limits under Numbering.
+- A key field never declares `number`. Every record id is client-generated, and a number is a separate host-assigned field.
 - `role = "actor"` on a field: the host fills it from the operation caller. The generated insert fills every actor field from `app.user_id`. The generated update fills `updated_by` from `app.user_id` and never touches `created_by`. An update that changes no field leaves `updated_by` as it leaves the revision. An actor field is `uuid` and is named `created_by` or `updated_by`. Any other name or type is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - An overlay is a model whose `owner` differs from `package.id`. It inherits the owner’s `number` and `role = "actor"` declarations, even when it declares no `fields`. The build reads these facts and the sequence pattern from the base build’s compiled manifest. A conflicting number, actor declaration or sequence pattern is a build refusal.
 - Generated overlay inserts number and stamp inherited fields. Generated overlay updates fill inherited `updated_by` from `app.user_id`. A write that supplies an inherited number or actor field is a build refusal. Numbered fields, actor fields and pattern keys must belong to the relation owner. The owner’s inserts and updates do not fill fields that an overlay adds through `field_owners`.
@@ -257,11 +257,11 @@ pub fn release_picks(batch_id: Uuid, lines: Vec<PickLine>) -> Result<Vec<Pick>, 
 
 The application and the actor are transaction claims the host sets at `begin-operation` (`wamn:operation`) with `set_config`: `app.application`, `app.user_id`. Generated SQL reads `app.user_id` with `current_setting`; nothing is passed as a parameter. Numbering does not read `app.application`: the plugin takes the application from host state.
 
-### Sequence as the record id
+### Sequence and the record id
 
-A key field can declare `number = "<sequence>"`. The generated insert fills `id`. The key’s counters cannot use `reset=` or `per=` because two records can collide. An integer key takes only a bare `{seq:<counter>}` pattern. The build refuses either violation.
+A key field never declares `number = "<sequence>"`, and the build refuses it. Every record id is client-generated (wamn-sync.md, Ids and numbers).
 
-Text or integer keys require foreign keys of the same type and prevent renumbering. A uuid `id` with a separate unique `number` column avoids these limits.
+A number is a separate host-assigned field, for example a unique `number` column beside the uuid `id`.
 
 ### Administration
 
@@ -607,7 +607,7 @@ Rulings for C2 as filed:
 - `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
 - `role = "actor"` fills from `app.user_id`. An insert fills every actor field. An update fills `updated_by` and never touches `created_by` (owner ruling 2026-10-23). A payload that supplies an actor field is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
-- Build refusals: a write cannot supply a `number` or `actor` field, including an inherited field. A counter cannot use `per=` on the model’s key field. A sequence bound to a key field cannot use `reset=` or `per=`. A numbered field must be `text`, `int32` or `int64`. Integer numbered fields take only a bare `{seq}` (C2.4.12). The model must contain every field that its number pattern names.
+- Build refusals: a write cannot supply a `number` or `actor` field, including an inherited field. A counter cannot use `per=` on the model’s key field. A key field cannot be numbered. A numbered field must be `text`, `int32` or `int64`. Integer numbered fields take only a bare `{seq}` (C2.4.12). The model must contain every field that its number pattern names.
 - An actor field must be `uuid` and must be named `created_by` or `updated_by` (C2.4.13). An overlay inherits the relation owner’s number and actor declarations. Conflicting declarations or sequence patterns are build refusals. Numbered fields, actor fields and pattern keys must belong to the relation owner (C2.4.11).
 - C2.4 allows a sequence with no field and no caller. A sequence key need not belong to every model that uses the sequence (owner ruling 2026-10-24).
 - `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `EXECUTE` for the application role; the route resolves the sequence by the application it checked against the release and the sequence name) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It never touches a `per=` mapping. C2.4 removed the dry render: the set reads and writes counter rows only, and a model's `UQ` catches a live number (owner ruling 2026-10-24).

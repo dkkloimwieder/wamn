@@ -497,7 +497,7 @@ Generation refuses these declarations:
 - A numbered field that is not `text`, `int32` or `int64`. An integer numbered field takes a bare `{seq:<counter>}` pattern only.
 - An actor field that is not a `uuid` field named `created_by` or `updated_by`.
 - A pattern key that is not a field of the numbered model. The field cannot be `bytes` or `json`, and the `create` operation must write it.
-- A numbered key field whose pattern uses `reset=` or `per=`.
+- A numbered key field. Every record id is client-generated.
 - A counter with `per=` on the key field of its model.
 - A write that supplies a `number` or `actor` field, inherited or not, in a generated operation or in a custom operation statement.
 - In an overlay, a numbered field, an actor field or a pattern key that the relation owner does not own, and a declaration or sequence pattern that differs from the owner's.
