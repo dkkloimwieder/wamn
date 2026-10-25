@@ -73,6 +73,11 @@ fn the_keys_carry_every_value_the_pattern_names_as_text() {
     };
     let null = keys(&[("facility", None), ("year", Some("26"))]).unwrap();
     assert_eq!(code(key_values(&pattern, &null).unwrap_err()), NULL_FIELD);
+    let empty = keys(&[("facility", Some("")), ("year", Some("26"))]).unwrap();
+    assert_eq!(
+        code(key_values(&pattern, &empty).unwrap_err()),
+        INVALID_INPUT
+    );
     let missing = keys(&[("facility", Some("DAY"))]).unwrap();
     assert_eq!(
         code(key_values(&pattern, &missing).unwrap_err()),
@@ -83,6 +88,18 @@ fn the_keys_carry_every_value_the_pattern_names_as_text() {
     // A bare pattern takes no keys.
     let bare = wamn_number_pattern::parse("P-{seq:po}").unwrap();
     assert!(key_values(&bare, &keys(&[]).unwrap()).unwrap().is_empty());
+}
+
+#[test]
+fn the_date_formats_name_every_date_token_and_date_key() {
+    let formats = |pattern: &str| {
+        date_formats(&wamn_number_pattern::parse(pattern).unwrap()).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        formats("{date:YYYY}-{date:WW}-{seq:n,reset=date:YY}"),
+        [DateFormat::Year, DateFormat::Week, DateFormat::ShortYear]
+    );
+    assert!(formats("P-{seq:po}-{field:dock}").is_empty());
 }
 
 mod live;

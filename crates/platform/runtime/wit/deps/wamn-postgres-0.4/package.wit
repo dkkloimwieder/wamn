@@ -211,6 +211,13 @@ interface statements {
   /// the `app.application` claim, which guest SQL can rewrite. Outside an
   /// open operation transaction the host refuses. Added to 0.4.0 in place,
   /// with no version bump (docs/plan/platform-config.md, "Issues for C2").
+  ///
+  /// Refusals: `postgres(permission-denied)` outside an open operation
+  /// transaction. `postgres(query-error)` with SQLSTATE `42704` for a
+  /// sequence that the application does not own, `22004` for a null key,
+  /// and `22023` for an empty key, a missing key, a key given twice, a
+  /// stored pattern that does not parse, or a `timezone` setting that is
+  /// not a time zone. A refused call advances no counter.
   next-number: async func(name: string, keys: list<tuple<string, option<string>>>) -> result<string, statement-error>;
 
   /// Render the current number of sequence `name` of the composing

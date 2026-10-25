@@ -31,6 +31,7 @@
 use std::collections::BTreeMap;
 
 use deadpool_postgres::Object;
+use tokio_postgres::error::SqlState;
 use tracing::Instrument as _;
 use wamn_number_pattern::{Counter, DateFormat, Key, Part, Pattern, Scope};
 use wash_runtime::engine::ctx::SharedCtx;
@@ -71,19 +72,28 @@ const INVALID_INPUT: &str = "22023";
 const NULL_FIELD: &str = "22004";
 
 /// The sequence id and pattern of sequence `$2` of application `$1`, and the
-/// `timezone` setting at the scope of `$1`. The host binds `$1` from host
-/// state. A sequence that `$1` does not own reads as null.
-const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, \
-    (SELECT t.value #>> '{}' FROM platform.setting AS t \
-      WHERE t.scope_type = 'application' AND t.scope_id = c.application \
-        AND t.key = 'timezone') \
+/// text and JSON type of the `timezone` setting at the scope of `$1`. The
+/// host binds `$1` from host state. A sequence that `$1` does not own reads
+/// as null, and so does a setting row that does not exist.
+const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', jsonb_typeof(t.value) \
     FROM (SELECT $1::text AS application) AS c \
     LEFT JOIN platform.number_sequence AS s \
-      ON s.application = c.application AND s.name = $2";
-/// The transaction time in one time zone, in every format of the renderer,
-/// in the order of [`DateFormat::ALL`].
-const DATE_SQL: &str =
-    "SELECT to_char(transaction_timestamp() AT TIME ZONE $1, 'YYYY|YY|MM|DD|IW|Q')";
+      ON s.application = c.application AND s.name = $2 \
+    LEFT JOIN platform.setting AS t \
+      ON t.scope_type = 'application' AND t.scope_id = c.application \
+        AND t.key = 'timezone'";
+/// The transaction time in time zone `$1`, in every format of the renderer,
+/// in the order of [`DateFormat::ALL`]. When `$2` is true, `YYYY` and `YY`
+/// are the ISO year: the year that holds the ISO week.
+const DATE_SQL: &str = "SELECT to_char(transaction_timestamp() AT TIME ZONE $1, \
+    CASE WHEN $2 THEN 'IYYY|IY|MM|DD|IW|Q' ELSE 'YYYY|YY|MM|DD|IW|Q' END)";
+/// The savepoint around [`DATE_SQL`] for a `timezone` setting. A time zone
+/// that Postgres does not know fails the statement, and the rollback to the
+/// savepoint keeps the operation transaction usable.
+const TIMEZONE_SAVEPOINT_SQL: &str = "SAVEPOINT wamn_number_timezone";
+const TIMEZONE_RELEASE_SQL: &str = "RELEASE SAVEPOINT wamn_number_timezone";
+const TIMEZONE_ROLLBACK_SQL: &str =
+    "ROLLBACK TO SAVEPOINT wamn_number_timezone; RELEASE SAVEPOINT wamn_number_timezone";
 const BUMP_SQL: &str = "SELECT platform.bump_counter($1::text::uuid, $2, $3)";
 const ASSIGN_SQL: &str = "SELECT platform.assign_counter($1::text::uuid, $2, $3)";
 const COUNTER_SQL: &str = "SELECT value FROM platform.number_counter \
@@ -120,8 +130,9 @@ pub(super) async fn statement_number<T: 'static>(
 ///
 /// `postgres(permission-denied)` outside an open operation transaction or
 /// when host state holds no application for it; `query-error` with SQLSTATE `42704` for a
-/// sequence the application does not own, `22023` for keys or a stored
-/// pattern the renderer cannot use, `22004` for a null key, and
+/// sequence the application does not own, `22023` for keys, a stored
+/// pattern or a `timezone` setting the renderer cannot use, `22004` for a
+/// null key, and
 /// [`NO_NUMBER_ISSUED`] for a `peek-number` before any number; and the error
 /// of any statement.
 async fn render_number(
@@ -203,9 +214,11 @@ async fn render(
         )
         .into());
     };
-    let timezone = row
-        .get::<_, Option<String>>(2)
-        .unwrap_or_else(|| "UTC".to_owned());
+    let timezone = match row.get::<_, Option<String>>(3).as_deref() {
+        None => Timezone::Unset,
+        Some("string") => Timezone::Text(row.get(2)),
+        Some(_) => Timezone::NotText,
+    };
     let pattern = wamn_number_pattern::parse(&pattern).map_err(|error| {
         refusal(
             INVALID_INPUT,
@@ -213,10 +226,9 @@ async fn render(
         )
     })?;
     let fields = key_values(&pattern, keys)?;
-    let dates = if uses_date(&pattern) {
-        let statement = connection.prepare_cached(DATE_SQL).await?;
-        let text: String = connection.query_one(&statement, &[&timezone]).await?.get(0);
-        Some(text.split('|').map(str::to_owned).collect::<Vec<_>>())
+    let dates = if date_formats(&pattern).next().is_some() {
+        let iso_year = date_formats(&pattern).any(|format| format == DateFormat::Week);
+        Some(read_dates(connection, application, timezone, iso_year).await?)
     } else {
         None
     };
@@ -237,16 +249,6 @@ async fn render(
             Some(Key::Date(format)) => date(*format),
         };
         let per = matches!(counter.scope(), Scope::Per(_));
-        if per && key.is_empty() {
-            return Err(refusal(
-                INVALID_INPUT,
-                format!(
-                    "counter {} of number sequence {name} has an empty per= key",
-                    counter.name()
-                ),
-            )
-            .into());
-        }
         let value = counter_value(connection, &sequence, counter, &key, per, call).await?;
         let Some(value) = value else {
             return Err(refusal(
@@ -271,6 +273,60 @@ async fn render(
             Part::Date(format) => date(*format),
         })
         .collect())
+}
+
+/// The `timezone` setting of one application.
+enum Timezone {
+    /// No setting row: the renderer uses UTC.
+    Unset,
+    /// A JSON string, which may or may not name a time zone.
+    Text(String),
+    /// A JSON value that is not a string, which no time zone is.
+    NotText,
+}
+
+/// The transaction date in every format of [`DateFormat::ALL`], in the
+/// `timezone` setting of `application`, or in UTC when it has none. With
+/// `iso_year`, `YYYY` and `YY` are the ISO year.
+async fn read_dates(
+    connection: &Object,
+    application: &str,
+    timezone: Timezone,
+    iso_year: bool,
+) -> Result<Vec<String>, Failure> {
+    let split = |text: String| text.split('|').map(str::to_owned).collect::<Vec<_>>();
+    let statement = connection.prepare_cached(DATE_SQL).await?;
+    let invalid = || {
+        refusal(
+            INVALID_INPUT,
+            format!("the timezone setting of application {application} is not a time zone"),
+        )
+    };
+    let timezone = match timezone {
+        Timezone::Unset => {
+            let row = connection
+                .query_one(&statement, &[&"UTC", &iso_year])
+                .await?;
+            return Ok(split(row.get(0)));
+        }
+        Timezone::NotText => return Err(invalid().into()),
+        Timezone::Text(timezone) => timezone,
+    };
+    connection.batch_execute(TIMEZONE_SAVEPOINT_SQL).await?;
+    match connection
+        .query_one(&statement, &[&timezone, &iso_year])
+        .await
+    {
+        Ok(row) => {
+            connection.batch_execute(TIMEZONE_RELEASE_SQL).await?;
+            Ok(split(row.get(0)))
+        }
+        Err(error) if error.code() == Some(&SqlState::INVALID_PARAMETER_VALUE) => {
+            connection.batch_execute(TIMEZONE_ROLLBACK_SQL).await?;
+            Err(invalid().into())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// The value of one counter for one key: advanced for [`NumberCall::Next`],
@@ -323,7 +379,8 @@ fn key_map(
 }
 
 /// The text of each key the pattern names. A key the pattern does not name
-/// is not read.
+/// is not read. A null or empty key is refused here, before any counter
+/// moves.
 fn key_values<'a>(
     pattern: &Pattern,
     keys: &'a BTreeMap<String, Option<String>>,
@@ -332,6 +389,9 @@ fn key_values<'a>(
         .fields()
         .into_iter()
         .map(|field| match keys.get_key_value(field) {
+            Some((_, Some(value))) if value.is_empty() => {
+                Err(refusal(INVALID_INPUT, format!("key {field} is empty")))
+            }
             Some((name, Some(value))) => Ok((name.as_str(), value.as_str())),
             Some((_, None)) => Err(refusal(NULL_FIELD, format!("key {field} is null"))),
             None => Err(refusal(INVALID_INPUT, format!("no key {field} is given"))),
@@ -339,11 +399,16 @@ fn key_values<'a>(
         .collect()
 }
 
-fn uses_date(pattern: &Pattern) -> bool {
-    pattern.parts().iter().any(|part| match part {
-        Part::Date(_) => true,
-        Part::Counter(counter) => matches!(counter.scope().key(), Some(Key::Date(_))),
-        Part::Literal(_) | Part::Field(_) => false,
+/// The date formats the pattern reads: every `{date:}` token and every
+/// `date:` key.
+fn date_formats(pattern: &Pattern) -> impl Iterator<Item = DateFormat> + '_ {
+    pattern.parts().iter().filter_map(|part| match part {
+        Part::Date(format) => Some(*format),
+        Part::Counter(counter) => match counter.scope().key() {
+            Some(Key::Date(format)) => Some(*format),
+            _ => None,
+        },
+        Part::Literal(_) | Part::Field(_) => None,
     })
 }
 

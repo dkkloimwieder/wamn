@@ -11,7 +11,8 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::super::{
-    CounterSet, CounterSetError, CounterSetRefusal, NO_NUMBER_ISSUED, NumberCall, render_number,
+    CounterSet, CounterSetError, CounterSetRefusal, DATE_SQL, NO_NUMBER_ISSUED, NumberCall,
+    render_number,
 };
 use crate::plugins::wamn_postgres::claims::tests::{LIVE_PRINCIPAL, live_guest_url};
 use crate::plugins::wamn_postgres::{
@@ -53,6 +54,7 @@ fn owned(keys: Keys<'_>) -> Vec<(String, Option<String>)> {
 /// How a call leaves its operation transaction.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Finish {
+    /// Commit, also after a refusal, as a guest that handles it does.
     Commit,
     Rollback,
     /// No operation transaction is open.
@@ -196,7 +198,7 @@ impl Live {
             .expect("the transaction binds");
         let result = render_number(&self.plugin, &scope, name.to_owned(), owned(keys), call).await;
         self.plugin.revoke_operation_transaction(&scope);
-        if finish == Finish::Commit && result.is_ok() {
+        if finish == Finish::Commit {
             transaction.commit().await.expect("the transaction commits");
         } else {
             transaction
@@ -615,6 +617,168 @@ async fn live_the_date_uses_the_application_timezone_else_utc() {
             "{application}: {number} is not {before}-1 or {after}-1"
         );
     }
+}
+
+/// Every counter row of the database, in key order.
+async fn counter_rows(client: &tokio_postgres::Client) -> Vec<(String, String, i64)> {
+    client
+        .query(
+            "SELECT counter, key_value, value FROM platform.number_counter \
+             ORDER BY sequence_id, counter, key_value",
+            &[],
+        )
+        .await
+        .expect("read the counter rows")
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect()
+}
+
+/// An empty or null key is refused before the first `bump_counter` or
+/// `assign_counter`: counter `a` comes before the keyed counters in lock
+/// order, and a refused call that the guest commits leaves every counter
+/// row unchanged.
+#[tokio::test]
+async fn live_a_refused_key_moves_no_counter() {
+    let live = Live::new().await;
+    live.sequence(
+        APPLICATION,
+        "pick_label",
+        "{seq:a}-{seq:b,per=batch_id}-{field:dock}{seq:c,reset=dock}",
+    )
+    .await;
+    let superuser = connect(live.database.url()).await;
+    let good = &[("batch_id", Some("x")), ("dock", Some("D"))];
+    assert_eq!(live.next("pick_label", good).await, "1-1-D1");
+    let before = counter_rows(&superuser).await;
+    for (keys, code) in [
+        (&[("batch_id", Some("")), ("dock", Some("D"))], "22023"),
+        (&[("batch_id", Some("y")), ("dock", Some(""))], "22023"),
+        (&[("batch_id", None), ("dock", Some("D"))], "22004"),
+        (&[("batch_id", Some("y")), ("dock", None)], "22004"),
+    ] {
+        let refused = live
+            .call(
+                APPLICATION,
+                "pick_label",
+                keys,
+                NumberCall::Next,
+                Finish::Commit,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(sqlstate(&refused), code, "{keys:?}");
+        assert_eq!(counter_rows(&superuser).await, before, "{keys:?}");
+    }
+    assert_eq!(live.next("pick_label", good).await, "2-1-D2");
+}
+
+/// A `timezone` setting that is not a time zone is a refusal with SQLSTATE
+/// `22023` for a pattern that reads the date. The refusal leaves the
+/// operation transaction usable, and a pattern with no date still renders.
+#[tokio::test]
+async fn live_an_invalid_timezone_setting_is_refused() {
+    let live = Live::new().await;
+    for (application, value) in [(APPLICATION, "\"Mars/Olympus\""), (OTHER_APPLICATION, "5")] {
+        live.sequence(application, "stamp", "{date:YY}-{seq:n,reset=date:YY}")
+            .await;
+        live.sequence(application, "label", "L-{seq:n}").await;
+        live.administer(&format!(
+            "INSERT INTO platform.setting (scope_type, scope_id, key, value) \
+             VALUES ('application', '{application}', 'timezone', '{value}');"
+        ))
+        .await;
+        let scope = format!("numbering-timezone-{application}");
+        live.plugin
+            .bind_session_claims(
+                &scope,
+                &SessionClaims {
+                    tenant: TENANT.to_owned(),
+                    user_id: Some(LIVE_PRINCIPAL.to_owned()),
+                    application: Some(application.to_owned()),
+                    ..SessionClaims::default()
+                },
+            )
+            .await
+            .expect("the claims bind");
+        let transaction = live
+            .plugin
+            .begin_operation_transaction(&scope)
+            .await
+            .expect("the operation transaction begins");
+        live.plugin
+            .bind_operation_transaction(&scope, &transaction)
+            .expect("the transaction binds");
+        let render = |name: &str| {
+            render_number(
+                &live.plugin,
+                &scope,
+                name.to_owned(),
+                Vec::new(),
+                NumberCall::Next,
+            )
+        };
+        let refused = render("stamp").await.unwrap_err();
+        assert_eq!(sqlstate(&refused), "22023", "{application}: {refused:?}");
+        assert_eq!(render("label").await.unwrap(), "L-1", "{application}");
+        live.plugin.revoke_operation_transaction(&scope);
+        transaction.commit().await.expect("the transaction commits");
+        let next = live
+            .call(
+                application,
+                "label",
+                NO_KEYS,
+                NumberCall::Next,
+                Finish::Commit,
+            )
+            .await
+            .unwrap();
+        assert_eq!(next, "L-2", "{application}: the first call committed");
+    }
+}
+
+/// When a pattern holds `WW`, `YYYY` and `YY` are the ISO year, the year
+/// that holds the ISO week: 2027-01-01 is in week 53 of 2026. A
+/// `reset=date:YY` key in such a pattern keys on the ISO year too.
+#[tokio::test]
+async fn live_a_week_pattern_renders_the_iso_year() {
+    let live = Live::new().await;
+    let superuser = connect(live.database.url()).await;
+    let boundary = DATE_SQL.replace(
+        "transaction_timestamp()",
+        "timestamptz '2027-01-01 12:00:00+00'",
+    );
+    for (iso_year, dates) in [(true, "2026|26|01|01|53|1"), (false, "2027|27|01|01|53|1")] {
+        let text: String = superuser
+            .query_one(&boundary, &[&"UTC", &iso_year])
+            .await
+            .expect("render the boundary date")
+            .get(0);
+        assert_eq!(text, dates, "iso year {iso_year}");
+    }
+    live.sequence(
+        APPLICATION,
+        "weekly",
+        "{date:YYYY}-{date:WW}-{seq:n,reset=date:YY}",
+    )
+    .await;
+    let now = chrono::Utc::now();
+    let iso = chrono::Datelike::iso_week(&now);
+    let number = live.next("weekly", NO_KEYS).await;
+    assert_eq!(
+        number,
+        format!("{}-{:02}-1", iso.year(), iso.week()),
+        "rendered at {now}"
+    );
+    let key: String = superuser
+        .query_one(
+            "SELECT key_value FROM platform.number_counter WHERE counter = 'n'",
+            &[],
+        )
+        .await
+        .expect("the reset counter row")
+        .get(0);
+    assert_eq!(key, format!("{:02}", iso.year() % 100));
 }
 
 /// The operation id of the `number_counter.set` host route, as the host

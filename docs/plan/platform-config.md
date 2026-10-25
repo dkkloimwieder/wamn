@@ -162,7 +162,7 @@ Literal text plus tokens. Options are comma-separated, order free.
 | `pad=_` | pad character other than `0` | `____17` |
 | `hex` | render in hex | `11` |
 | `{field:<name>}` | the key `<name>`, as text | `DAY` |
-| `{date:FMT}` | the renderer's own set, on the transaction time in the environment's `timezone` setting: `YYYY`, `YY`, `MM`, `DD`, `WW` (ISO week), `Q`; anything else is a pattern refusal | `26`, `2610` |
+| `{date:FMT}` | the renderer's own set, on the transaction time in the environment's `timezone` setting: `YYYY`, `YY`, `MM`, `DD`, `WW` (ISO week), `Q`; anything else is a pattern refusal. When the pattern holds `WW`, `YYYY` and `YY` are the ISO year: the year that holds the ISO week | `26`, `2610` |
 
 `<key>` is a key the caller passes, another counter's name in the same pattern, or `date:FMT`.
 
@@ -184,7 +184,9 @@ B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}
 
 - Rendering, preview and validation all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere. `set_counter` renders nothing.
 - Name-order locking within one call means two patterns on one sequence cannot deadlock each other. Two operations that insert into two models in opposite order can still deadlock on two sequences; Postgres detects it and one retries. The plugin guarantees no more than that.
-- A null key is a refusal. `per=` on a model's key field is a build refusal (same key would mean same id).
+- A null key is a refusal with SQLSTATE `22004`. An empty key is a refusal with SQLSTATE `22023`. The renderer checks every key the pattern names before the first `bump_counter` or `assign_counter`, so a refused call advances no counter. `per=` on a model's key field is a build refusal (same key would mean same id).
+- A `timezone` setting that is not a JSON string, or that names no time zone Postgres knows, is a refusal with SQLSTATE `22023`. The renderer checks it only for a pattern that reads the date. The check runs in a savepoint, so the refusal leaves the operation transaction usable.
+- When a pattern holds `WW`, `YYYY` and `YY` render the ISO year. This also applies to a `reset=date:YYYY` or `reset=date:YY` key in that pattern. So 2027-01-01, which is in ISO week 53 of 2026, renders `2026` and `53`.
 - Uniqueness of the rendered number is the model's `UQ` on `number`; a pattern with no per-record counter fails there on the second insert, never silently.
 - Cost: locks hold until commit, so creates of one document type (or one key) serialize for the SQL of one operation. There are no outbound calls inside a transaction, so that is milliseconds. Acceptable at document rates. A Postgres sequence was rejected: non-blocking but gaps on rollback.
 
