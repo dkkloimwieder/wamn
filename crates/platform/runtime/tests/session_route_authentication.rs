@@ -453,7 +453,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         signed(&header(), &carried)
     );
     let by_cookie = route
-        .authenticate_headers_for_test(ATTACHMENT, &[("cookie", &cookie), ("x-wamn-csrf", csrf)])
+        .authenticate_headers_for_test(WRITE_ROUTE, &[("cookie", &cookie), ("x-wamn-csrf", csrf)])
         .await
         .expect("a cookie with its CSRF header is admitted")
         .expect("host-owned caller");
@@ -462,7 +462,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert!(by_cookie.permits(READ) && by_cookie.permits(WRITE));
     assert_eq!(
         route
-            .authenticate_headers_for_test(ATTACHMENT, &[("cookie", &cookie)])
+            .authenticate_headers_for_test(WRITE_ROUTE, &[("cookie", &cookie)])
             .await
             .unwrap_err(),
         (401, "unauthorized".into()),

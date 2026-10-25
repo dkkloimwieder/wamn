@@ -415,7 +415,6 @@ fn expected_executor_grants() -> Vec<String> {
         "connection_instances",
         "connection_requirements",
         "releases",
-        "wirings",
         "workflows",
     ] {
         rows.push(format!("relation|catalog|{relation}|SELECT"));

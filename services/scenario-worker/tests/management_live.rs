@@ -1258,8 +1258,8 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
         .expect("push the package artifacts");
     let surface = start_management_surface(url, &artifacts).await;
 
-    // A package with no artifact in the registry is a typed refusal in the gate and
-    // in publish, never an internal error (wamn-vavs4.6).
+    // A package with no artifact in the registry is a typed Gate refusal,
+    // never an internal error (wamn-vavs4.6). Publish is retired.
     let absent = candidate_graph(CANDIDATE_WIRING, "entity", "create");
     let gate = post(
         "/authoring",
@@ -1268,37 +1268,27 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
         &gate_document_for_package_in("gate-absent-package", PROJECT, "absent_package", &absent),
     )
     .await;
-    let publish = post(
-        "/authoring",
-        Some(principal.token()),
-        &[],
-        &publish_document_in("publish-absent-package", PROJECT, &absent)
-            .replace(CANDIDATE_PACKAGE, "absent_package"),
-    )
-    .await;
-    for (command, response) in [("gate", gate), ("publish", publish)] {
-        assert_eq!(response.status, 200, "{}", response.body);
-        let refusal = outcome(&response.body)["value"].clone();
-        assert_eq!(
-            refusal["command"],
-            serde_json::json!(command),
-            "{}",
-            response.body
-        );
-        assert_eq!(
-            refusal["reason"]["type"],
-            serde_json::json!("invalid-document"),
-            "{}",
-            response.body
-        );
-        assert!(
-            refusal["reason"]["detail"]
-                .as_str()
-                .is_some_and(|detail| detail.contains("has no package artifact in the registry")),
-            "{}",
-            response.body
-        );
-    }
+    assert_eq!(gate.status, 200, "{}", gate.body);
+    let refusal = outcome(&gate.body)["value"].clone();
+    assert_eq!(
+        refusal["command"],
+        serde_json::json!("gate"),
+        "{}",
+        gate.body
+    );
+    assert_eq!(
+        refusal["reason"]["type"],
+        serde_json::json!("invalid-document"),
+        "{}",
+        gate.body
+    );
+    assert!(
+        refusal["reason"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("has no package artifact in the registry")),
+        "{}",
+        gate.body
+    );
 
     match case {
         ConnectionGateCase::EmptyCases => {

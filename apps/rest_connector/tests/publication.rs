@@ -108,16 +108,15 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         )
         .is_err()
     );
+    // Environment workflows resolve the node operation against the release,
+    // not the package-local operation-dependency alias.
     let mut wrong_dependency = documents;
     wrong_dependency[0]
         .1
         .nodes
         .get_mut("record")
         .unwrap()
-        .operation_dependency
-        .as_mut()
-        .unwrap()
-        .operation = "item.other".into();
+        .operation = "rest-consumer-fixture:item/other@0.1.0".into();
     assert!(
         wamn_catalog::gate_workflow_document(
             &scope.tenant_id,

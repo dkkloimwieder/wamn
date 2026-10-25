@@ -1182,12 +1182,17 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 6] = [
+// Dropping catalog.wirings removed ManagementAdmitter's INSERT surface.
+// Its remaining tenant_key grant is shared by administration, app and executor.
+const CONTAINED_PAIRS: [(&str, &str); 9] = [
+    ("administration", "management-admitter"),
     ("administration", "session-role-reader"),
     ("app", "event-materializer"),
     ("app", "http-admitter"),
+    ("app", "management-admitter"),
     ("app", "retention"),
     ("app", "session-role-reader"),
+    ("executor-platform", "management-admitter"),
     ("http-admitter", "session-role-reader"),
 ];
 

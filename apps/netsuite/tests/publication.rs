@@ -156,16 +156,15 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         .unwrap()
         .from_port = "main".into();
     assert!(gate_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
+    // Environment workflows resolve the node operation against the release,
+    // not the package-local operation-dependency alias.
     let mut wrong_dependency = documents;
     wrong_dependency[0]
         .1
         .nodes
         .get_mut("record")
         .unwrap()
-        .operation_dependency
-        .as_mut()
-        .unwrap()
-        .operation = "item.other".into();
+        .operation = "rest-consumer-fixture:item/other@0.1.0".into();
     assert!(gate_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
 }
 
