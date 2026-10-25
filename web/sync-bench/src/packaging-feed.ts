@@ -3,7 +3,7 @@
  * generated bindings. This is the one file per model that the generator will
  * emit later (docs/plan/wamn-sync.md, "Generator and bindings").
  */
-import { CursorExpired, collection, type Change, type Feed, type Row } from "@wfe/sync";
+import { CursorExpired, collection, type Change, type Feed, type Persistence } from "@wfe/sync";
 import type { Transport } from "@wamn/web-runtime";
 import {
   changes,
@@ -13,12 +13,8 @@ import {
   type PackagingQueryRow,
 } from "@wamn/wms-client/packaging.js";
 
-/**
- * A packaging row as the collection holds it. The bindings name the version
- * `rowVersion`, and `@wfe/sync` reads `row_version`, so each row carries both
- * (wfe finding (i), bead wamn-7e86p).
- */
-export type PackagingRow = PackagingQueryRow & Row;
+/** A packaging row as the generated binding returns it. */
+export type PackagingRow = PackagingQueryRow;
 
 /** The list arguments that a collection covers: the filters, without paging. */
 export type PackagingScope = Omit<PackagingQueryRequest, "cursor" | "limit" | "sort" | "feed">;
@@ -29,22 +25,11 @@ export const RECORD_CAP = 1000;
 /** The largest page the packaging list read serves. */
 const PAGE_MAXIMUM = 100;
 
-/** Adds `row_version` beside `rowVersion`. This costs one object per row on every `list`. */
-export function withRowVersion(row: PackagingQueryRow): PackagingRow {
-  return { ...row, row_version: row.rowVersion };
-}
-
 /** One host change as a `@wfe/sync` change. */
 function toChange(change: PackagingQueryChange): Change<PackagingRow> {
   return change.deleted || change.data === undefined
     ? { id: change.id, row_version: change.rowVersion, deleted: true }
-    : { id: change.id, row_version: change.rowVersion, deleted: false, data: withRowVersion(change.data) };
-}
-
-/** The packaging feed, and whether its last list read every row of its scope. */
-export interface PackagingFeed extends Feed<PackagingRow, PackagingScope> {
-  /** False when the last list stopped at the cap: "Full dataset cannot be loaded". */
-  fullyRead(): boolean;
+    : { id: change.id, row_version: change.rowVersion, deleted: false, data: change.data };
 }
 
 /**
@@ -54,12 +39,11 @@ export interface PackagingFeed extends Feed<PackagingRow, PackagingScope> {
  * feed part. The feed has no `moved`: the package calls `changes` on its
  * timer, and an unchanged feed is a 304.
  */
-export function packagingFeed(transport: Transport, cap: number = RECORD_CAP): PackagingFeed {
-  let fullyRead = true;
+export function packagingFeed(transport: Transport, cap: number = RECORD_CAP): Feed<PackagingRow, PackagingScope> {
   return {
-    fullyRead: () => fullyRead,
     async list(scope) {
       const rows: PackagingRow[] = [];
+      let complete = true;
       let cursor: string | undefined;
       let page: string | undefined;
       for (;;) {
@@ -67,14 +51,14 @@ export function packagingFeed(transport: Transport, cap: number = RECORD_CAP): P
         const outcome = await query(transport, [page === undefined ? { ...scope, limit } : { ...scope, limit, cursor: page }]);
         if (outcome.status !== "completed") throw new Error(`packaging query ${outcome.status}`);
         cursor ??= outcome.value.cursor;
-        rows.push(...outcome.value.item.map(withRowVersion));
+        rows.push(...outcome.value.item);
         const next = outcome.value.nextCursor;
-        fullyRead = next === null;
+        complete = next === null;
         if (next === null || rows.length >= cap) break;
         page = next;
       }
       if (cursor === undefined) throw new Error("packaging query returned no feed cursor");
-      return { rows, cursor };
+      return { rows, cursor, complete };
     },
     async changes(scope, cursor, limit) {
       const outcome = await changes(transport, scope, cursor, limit);
@@ -110,7 +94,7 @@ export function packagingKey(scope: PackagingScope): string {
 export function packagingCollection(
   feed: Feed<PackagingRow, PackagingScope>,
   scope: PackagingScope,
-  follow: { readonly pollMs?: number } = {},
+  follow: { readonly pollMs?: number; readonly persistence?: Persistence } = {},
 ) {
-  return collection(feed, scope, { key: packagingKey(scope), ...follow });
+  return collection(feed, scope, { key: packagingKey(scope), version: (row) => row.rowVersion, ...follow });
 }

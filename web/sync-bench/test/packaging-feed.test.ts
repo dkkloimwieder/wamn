@@ -44,8 +44,8 @@ describe("packagingFeed", () => {
     const page = await feed.list({ filter: { status: ["available"] } });
     expect(page.cursor).toBe("c1");
     expect(page.rows).toHaveLength(2);
-    expect(page.rows[0]).toMatchObject({ id: wireRow.id, rowVersion: 4, row_version: 4, packagingCode: "PK-1" });
-    expect(feed.fullyRead()).toBe(true);
+    expect(page.rows[0]).toMatchObject({ id: wireRow.id, rowVersion: 4, packagingCode: "PK-1" });
+    expect(page.complete).toBe(true);
     expect(seen.map((request) => request.items)).toEqual([
       [{ filter: { status: ["available"] }, limit: 100 }],
       [{ filter: { status: ["available"] }, limit: 100, cursor: "p2" }],
@@ -57,7 +57,7 @@ describe("packagingFeed", () => {
     const feed = packagingFeed(transport([{ item: [wireRow], next_cursor: "p2", cursor: "c1" }], seen), 1);
     const page = await feed.list({});
     expect(page.rows).toHaveLength(1);
-    expect(feed.fullyRead()).toBe(false);
+    expect(page.complete).toBe(false);
     expect(seen[0]?.items).toEqual([{ limit: 1 }]);
   });
 
@@ -92,7 +92,7 @@ describe("packagingFeed", () => {
     expect(seen[0]?.contract.resultClass).toBe("changes");
     expect(page.next_cursor).toBe("c2");
     expect(page.complete).toBe(true);
-    expect(page.rows[0]).toMatchObject({ id: wireRow.id, row_version: 5, deleted: false, data: { rowVersion: 5, row_version: 5 } });
+    expect(page.rows[0]).toMatchObject({ id: wireRow.id, row_version: 5, deleted: false, data: { rowVersion: 5 } });
     expect(page.rows[1]).toEqual({ id: "00000000-0000-7000-8000-000000000009", row_version: 2, deleted: true });
   });
 

@@ -86,10 +86,10 @@ describe("shapes A and B", () => {
     }));
     await settle();
     const row = rows[0]!;
-    b.apply([{ id: row.id, row_version: 3, deleted: false, data: { ...row, row_version: 3, rowVersion: 3 } }]);
-    b.apply([{ id: row.id, row_version: 2, deleted: false, data: { ...row, row_version: 2, rowVersion: 2 } }]);
+    b.apply([{ id: row.id, row_version: 3, deleted: false, data: { ...row, rowVersion: 3 } }]);
+    b.apply([{ id: row.id, row_version: 2, deleted: false, data: { ...row, rowVersion: 2 } }]);
     await settle();
-    expect(b.get(row.id)?.row_version).toBe(3);
+    expect(b.get(row.id)?.rowVersion).toBe(3);
     b.apply([{ id: "missing", row_version: 1, deleted: true }]);
     await settle();
     expect(b.totals().count).toBe(3);

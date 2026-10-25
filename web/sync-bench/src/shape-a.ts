@@ -1,15 +1,9 @@
 import { createMemo, onCleanup, type Accessor } from "solid-js";
 import { count, createLiveQueryCollection, sum } from "@tanstack/db";
-import { liveRows, syncStatus, type Row } from "@wfe/sync";
+import { liveRows, syncStatus } from "@wfe/sync";
 import type { packagingCollection } from "./packaging-feed";
 import { orderedIds, type StatusFilter } from "./order";
-import type { GroupRow, ViewSource } from "./view";
-
-/**
- * wfe finding (ii): `liveRows` accepts only a collection of rows with `id` and
- * `row_version`. A live query result has neither, so this cast reads it.
- */
-const queryRows = <T>(result: unknown) => liveRows(result as Parameters<typeof liveRows<T & Row>>[0]);
+import type { ViewSource } from "./view";
 
 /**
  * Shape A: the rows through `liveRows` on the collection, and the groups and
@@ -35,8 +29,8 @@ export function shapeA(
     void grouped.cleanup();
     void whole.cleanup();
   });
-  const groupRows = queryRows<GroupRow>(grouped);
-  const totalRows = queryRows<{ count: number; total: number }>(whole);
+  const groupRows = liveRows(grouped);
+  const totalRows = liveRows(whole);
   const ids = createMemo(() => orderedIds(rows, filter()));
   const groups = createMemo(() =>
     Object.values(groupRows).sort((left, right) =>

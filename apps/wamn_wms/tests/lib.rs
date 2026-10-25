@@ -44,3 +44,6 @@ mod local_business;
 
 #[cfg(test)]
 mod local_feed;
+
+#[cfg(test)]
+mod local_outbox;

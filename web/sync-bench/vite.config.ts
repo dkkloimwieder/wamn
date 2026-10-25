@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 import { applicationConfig } from "../shell/vite";
 
 /** Serve the live page at the same audience path that an application uses. */
@@ -10,6 +11,20 @@ function livePage(request: IncomingMessage, _response: ServerResponse, next: () 
     request.url = request.url!.replace(/^\/[^/]+\/live\.html/, "/live.html");
   }
   next();
+}
+
+/** The @wfe/sync worker recipe, with both bench pages in the manifest. */
+function precacheManifest(): Plugin {
+  return {
+    name: "precache-manifest",
+    enforce: "post",
+    generateBundle(_options, bundle) {
+      const chunk = bundle["sw.js"];
+      if (chunk?.type !== "chunk") throw new Error("sw.js was not built");
+      const files = Object.keys(bundle).filter((name) => name !== "sw.js");
+      chunk.code = chunk.code.replace("__PRECACHE_MANIFEST__", JSON.stringify(["./", ...files]));
+    },
+  };
 }
 
 export default defineConfig(() => {
@@ -30,12 +45,15 @@ export default defineConfig(() => {
         input: {
           main: fileURLToPath(new URL("index.html", import.meta.url)),
           live: fileURLToPath(new URL("live.html", import.meta.url)),
+          sw: fileURLToPath(new URL("src/sw.ts", import.meta.url)),
         },
+        output: { entryFileNames: (chunk) => chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js" },
       },
     },
     plugins: [
       solid({ performanceTracks: false }),
       ...application.plugins,
+      precacheManifest(),
       {
         name: "packaging-live-page",
         configureServer(server) {

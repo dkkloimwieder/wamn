@@ -3,10 +3,10 @@ import { webcrypto } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@solidjs/testing-library";
 import { Loading, flush } from "solid-js";
-import { outbox, type Change, type Reply } from "@wfe/sync";
-import { createSend, createTransport, outboxDatabase, requestHash } from "@wamn/web-runtime";
+import { outbox, type Change, type OperationCall, type Reply } from "@wfe/sync";
+import { createCall, createSend, createTransport, outboxDatabase, requestHash, rowsPersistence } from "@wamn/web-runtime";
 import { create, PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import { packagingCollection, type PackagingRow } from "../src/packaging-feed";
+import { packagingCollection, packagingKey, type PackagingRow } from "../src/packaging-feed";
 import { packagingAddress } from "../src/packaging-writes";
 import { PackagingScreen } from "../src/packaging-screen";
 import { makeRows } from "../src/fake";
@@ -19,7 +19,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mounted() {
+async function mounted(restored?: { call: OperationCall; row: PackagingRow; list: Promise<never> }) {
   vi.stubGlobal("crypto", webcrypto);
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
     return this.tagName === "THEAD" ? 32 : 480;
@@ -48,22 +48,35 @@ async function mounted() {
   const persist = vi.fn();
   Object.defineProperty(navigator, "storage", { configurable: true, value: { persisted, persist } });
   const changes: Change<PackagingRow>[] = [];
+  let readFailure: Error | undefined;
+  const persistence = rowsPersistence(`rows-${crypto.randomUUID()}`);
+  if (restored) await persistence.save(packagingKey({}), [restored.row], "saved");
   const c = packagingCollection(
     {
       async list() {
+        if (restored) return restored.list;
         return { rows: [], cursor: "first" };
       },
       async changes() {
+        if (readFailure) throw readFailure;
         return { rows: changes.splice(0), next_cursor: "next", complete: true };
       },
     },
     {},
+    { persistence },
   );
   await c.preload();
   const net = { up: false };
   let answer: Reply = { ok: true };
   const send = vi.fn(async () => answer);
-  const o = outbox({ database: `packaging-${crypto.randomUUID()}`, send, probe: async () => net.up });
+  const database = `packaging-${crypto.randomUUID()}`;
+  if (restored) {
+    const previous = outbox({ database, send, probe: async () => false });
+    await previous.enqueue(restored.call);
+    await previous.replay();
+    previous.close();
+  }
+  const o = outbox({ database, send, probe: async () => net.up });
   await o.replay();
   const view = render(() => (
     <Loading>
@@ -91,6 +104,7 @@ async function mounted() {
     row,
     submit,
     changes,
+    failRead: (error: Error | undefined) => { readFailure = error; },
     net,
     send,
     persisted,
@@ -167,6 +181,20 @@ it("shows a refused request beside the current row and discards it", async () =>
   await waitFor(() => expect(h.o.entries()).toHaveLength(0));
   await waitFor(() => expect(panel.queryByText("Packaging code already exists")).toBeNull());
   expect(h.row(data.id)?.textContent).toContain("CURRENT");
+});
+
+it("keeps a create tentative when its feed echo arrives before the successful retry", async () => {
+  const h = await mounted();
+  const entry = await h.submit("LOST-REPLY");
+  const id = entry.expect.id;
+  const data = { ...makeRows(1)[0]!, ...(entry.request as object), id };
+  h.changes.push({ id, row_version: 1, deleted: false, data });
+  await h.c.utils.pull();
+  await waitFor(() => expect(h.row(id)?.textContent).toContain("LOST-REPLY (tentative)"));
+  expect(h.o.entries()).toHaveLength(1);
+  h.net.up = true;
+  await h.o.replay();
+  await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
 });
 
 it("records the edited create with the same id before discarding the refusal, without losing the row", async () => {
@@ -262,4 +290,37 @@ it("keeps the refused entry if recording the correction fails", async () => {
   expect(h.o.entries()).toHaveLength(1);
   expect(h.o.entries()[0]!.seq).toBe(old.seq);
   expect(discard).not.toHaveBeenCalled();
+});
+
+it("paints saved rows and recovered tentative creates before the list resolves, then waits for send and echo", async () => {
+  const row = makeRows(1)[0]!;
+  const { call, id } = await createCall<PackagingCreateRequest>({
+    operation: PACKAGING_CREATE_ROUTE.operation,
+    model: "packaging",
+    request: { packagingCode: "RECOVERED", locationId: row.locationId, type: "pallet", status: "available" },
+    append_only: true,
+  });
+  let failList!: (reason: Error) => void;
+  const list = new Promise<never>((_resolve, reject) => { failList = reject; });
+  const h = await mounted({ call, row, list });
+  await waitFor(() => expect(h.row(row.id)?.textContent).toContain(row.packagingCode));
+  await waitFor(() => expect(h.row(id)?.textContent).toContain("RECOVERED (tentative)"));
+  expect(h.send).not.toHaveBeenCalled();
+  expect(h.c.utils.currentAt()).toBeUndefined();
+  failList(new Error("offline"));
+  h.failRead(new Error("offline"));
+  await h.c.utils.pull();
+  await waitFor(() => expect(h.row(row.id)?.textContent).toContain(row.packagingCode));
+  expect(h.row(id)?.textContent).toContain("RECOVERED (tentative)");
+  h.failRead(undefined);
+  h.changes.push({ id, row_version: 1, deleted: false, data: { ...row, ...(call.request as object), id } });
+  await h.c.utils.pull();
+  await waitFor(() => expect(h.row(id)?.textContent).toContain("tentative"));
+  h.net.up = true;
+  await h.o.replay();
+  await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
+  expect(h.send).toHaveBeenCalledOnce();
+  h.changes.push({ id, row_version: 2, deleted: true });
+  await h.c.utils.pull();
+  await waitFor(() => expect(h.row(id)).toBeNull());
 });

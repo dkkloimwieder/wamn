@@ -27,7 +27,7 @@ export function shapeB(
         const stored = draft[change.id];
         if (change.deleted) {
           if (stored) delete draft[change.id];
-        } else if (!stored || change.row_version > stored.row_version) draft[change.id] = change.data;
+        } else if (!stored || change.row_version > stored.rowVersion) draft[change.id] = change.data;
       }
     });
   feed.list(scope).then(
@@ -37,7 +37,7 @@ export function shapeB(
         for (const row of page.rows) {
           incoming.add(row.id);
           const stored = draft[row.id];
-          if (!stored || row.row_version > stored.row_version) draft[row.id] = row;
+          if (!stored || row.rowVersion > stored.rowVersion) draft[row.id] = row;
         }
         for (const id of Object.keys(draft)) if (!incoming.has(id)) delete draft[id];
       });
