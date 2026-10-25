@@ -36,18 +36,13 @@ fn numbered() -> Value {
     manifest
 }
 
-/// The gadget catalog with one more uuid column, `checked_by`, for the actor.
-fn actor_catalog() -> CatalogIr {
+/// The gadget catalog with one more column, such as `created_by` for the
+/// actor.
+fn actor_catalog(name: &str, ty: ColumnType) -> CatalogIr {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
     let mut columns = gadget.columns().to_vec();
-    columns.push(Column::new(
-        "checked_by",
-        ColumnType::Uuid,
-        false,
-        None,
-        None,
-    ));
+    columns.push(Column::new(name, ty, false, None, None));
     replacing_table(
         &base,
         rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
@@ -128,14 +123,20 @@ fn text(package: &GeneratedPackage, path: &str) -> String {
 #[test]
 fn the_generated_insert_numbers_from_the_host_and_reads_the_actor_claim() {
     let mut manifest = numbered();
-    manifest["models"]["gadget"]["fields"]["checked_by"] = json!({"role": "actor"});
-    let package = run(&actor_catalog(), &manifest, &QUERY_SOURCES).unwrap();
+    manifest["models"]["gadget"]["fields"]["created_by"] = json!({"role": "actor"});
+    manifest["models"]["gadget"]["audit_log"]["columns"] = json!(["created_at", "created_by"]);
+    let package = run(
+        &actor_catalog("created_by", ColumnType::Uuid),
+        &manifest,
+        &QUERY_SOURCES,
+    )
+    .unwrap();
     assert_eq!(
         text(&package, "generated/sql/gadget/create.sql"),
-        "INSERT INTO gadget (stock_id, part_code, checked_by)\n\
+        "INSERT INTO gadget (stock_id, part_code, created_by)\n\
          VALUES ($1::uuid, $2::text, current_setting('app.user_id')::uuid)\n\
          RETURNING\n    \
-         checked_by,\n    created_at,\n    id,\n    part_code,\n    row_version,\n    status,\n    stock_id;\n",
+         created_at,\n    created_by,\n    id,\n    part_code,\n    row_version,\n    status,\n    stock_id;\n",
     );
     // The first statement: next-number with exactly the fields the pattern
     // names, then the insert with the text it returned.
@@ -151,20 +152,20 @@ fn the_generated_insert_numbers_from_the_host_and_reads_the_actor_claim() {
     let signature = &data[data.find("pubasyncfncreate(").unwrap()..];
     let signature = &signature[..signature.find('{').unwrap()];
     assert!(
-        !signature.contains("part_code") && !signature.contains("checked_by"),
+        !signature.contains("part_code") && !signature.contains("created_by"),
         "{signature}"
     );
     let wit = text(
         &package,
         "generated/wit/deps/platform-gadget-gadget/package.wit",
     );
-    assert!(!wit.contains("part-code: option") && !wit.contains("checked-by: option"));
+    assert!(!wit.contains("part-code: option") && !wit.contains("created-by: option"));
 
     let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
     let model = object_named(overlay["relations"].as_array().unwrap(), "table", "gadget");
     assert_eq!(
         model["insert_fields"],
-        json!(["checked_by", "part_code", "stock_id"])
+        json!(["created_by", "part_code", "stock_id"])
     );
     // The numbered field is one caller: commands can call the sequence too.
     assert!(
@@ -274,7 +275,9 @@ fn a_create_that_supplies_a_number_field_is_refused() {
 #[test]
 fn a_command_that_writes_an_actor_field_is_refused() {
     let mut manifest = manifest();
-    manifest["models"]["gadget"]["fields"] = json!({"checked_by": {"role": "actor"}});
+    manifest["models"]["gadget"]["fields"] = json!({"updated_by": {"role": "actor"}});
+    manifest["models"]["gadget"]["audit_log"]["columns"] =
+        json!(["created_at", "created_by", "updated_at", "updated_by"]);
     let mut command = support::projection_operation();
     command["type"] = json!("command");
     command["permission"] = json!("quality.check_gadget");
@@ -285,12 +288,12 @@ fn a_command_that_writes_an_actor_field_is_refused() {
         .push(json!({"path": "idempotency_key", "type": "text", "nullable": false}));
     command["transaction"] = json!("explicit_per_input");
     command["automatic_retry"] = json!(false);
-    command["relations"][0]["update_fields"] = json!(["checked_by"]);
+    command["relations"][0]["update_fields"] = json!(["updated_by"]);
     manifest["custom_operations"] = json!({"quality.check_gadget": command});
-    let (kind, message) = refusal(&actor_catalog(), &manifest);
+    let (kind, message) = refusal(&stamped_catalog(), &manifest);
     assert_eq!(kind, GenerateErrorType::InvalidOperation, "{message}");
     assert!(
-        message.contains("quality.check_gadget writes gadget.checked_by"),
+        message.contains("quality.check_gadget writes gadget.updated_by"),
         "{message}"
     );
 }
@@ -407,4 +410,131 @@ fn a_model_on_a_local_target_is_refused() {
 
     manifest["targets"] = json!(["cloud"]);
     run(&catalog(false), &manifest, &QUERY_SOURCES).unwrap();
+}
+
+/// A numbered field that is not text takes only a bare `{seq}`, key or not.
+#[test]
+fn a_numbered_field_that_is_not_text_takes_only_a_bare_counter() {
+    let mut manifest = numbered();
+    manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n,width=4}");
+    manifest["models"]["gadget"]["fields"] = json!({"line_no": {"number": "gadget_number"}});
+    manifest["models"]["gadget"]["server_owned_fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("line_no"));
+    let catalog = actor_catalog("line_no", ColumnType::Int64);
+    for pattern in ["{seq:n,width=4}", "L{seq:n}", "{seq:n,reset=stock_id}"] {
+        manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
+        let (kind, message) = refusal(&catalog, &manifest);
+        assert_eq!(
+            kind,
+            GenerateErrorType::InvalidModel,
+            "{pattern}: {message}"
+        );
+        assert!(
+            message.contains(
+                "gadget.line_no is int64, not text, so sequence gadget_number takes a bare {seq:<counter>} pattern only"
+            ),
+            "{pattern}: {message}"
+        );
+    }
+
+    manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
+    run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+}
+
+/// An actor field is a uuid field named `created_by` or `updated_by`.
+#[test]
+fn an_actor_field_is_a_uuid_created_by_or_updated_by() {
+    let mut manifest = manifest();
+    manifest["models"]["gadget"]["fields"] = json!({"checked_by": {"role": "actor"}});
+    let (kind, message) = refusal(&actor_catalog("checked_by", ColumnType::Uuid), &manifest);
+    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    assert!(
+        message.contains(
+            "gadget.checked_by is an actor field, which must be a uuid field named created_by or updated_by"
+        ),
+        "{message}"
+    );
+    // The audit log refuses a text created_by that it selects. An overlay
+    // selects no base column, so the actor rule refuses it.
+    let mut text_actor = overlay(manifest.clone());
+    text_actor["models"]["gadget"]["fields"] = json!({"created_by": {"role": "actor"}});
+    let (kind, message) = refusal(&actor_catalog("created_by", ColumnType::Text), &text_actor);
+    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    assert!(
+        message.contains(
+            "gadget.created_by is an actor field, which must be a uuid field named created_by or updated_by"
+        ),
+        "{message}"
+    );
+
+    manifest["models"]["gadget"]["fields"] =
+        json!({"created_by": {"role": "actor"}, "updated_by": {"role": "actor"}});
+    manifest["models"]["gadget"]["audit_log"]["columns"] =
+        json!(["created_at", "created_by", "updated_at", "updated_by"]);
+    run(&stamped_catalog(), &manifest, &QUERY_SOURCES).unwrap();
+}
+
+/// The manifest as an overlay: `acme_inventory` declares the model of the
+/// `platform_gadget` relation.
+fn overlay(mut manifest: Value) -> Value {
+    manifest["package"]["id"] = json!("acme_inventory");
+    manifest["base_dependencies"] = json!({"base_inventory": {
+        "package": "platform_gadget",
+        "version": "1.0.0",
+        "digest": format!("sha256:{}", "a".repeat(64)),
+        "operations": ["gadget.get"]
+    }});
+    manifest["models"]["gadget"]
+        .as_object_mut()
+        .unwrap()
+        .remove("audit_log");
+    manifest
+}
+
+/// An overlay numbers and keys only the relation owner's fields: the owner's
+/// inserts never fill a column the overlay added. An actor field is always a
+/// reserved column, which an overlay cannot add without an audit log.
+#[test]
+fn an_overlay_is_checked_against_the_relation_owners_fields() {
+    let note = actor_catalog("note", ColumnType::Text);
+    let mut numbered = overlay(numbered());
+    numbered["models"]["gadget"]["field_owners"] = json!({"note": "acme_inventory"});
+    // The overlay numbers the owner's field by the owner's key.
+    run(&note, &numbered, &QUERY_SOURCES).unwrap();
+
+    let mut own_number = numbered.clone();
+    own_number["models"]["gadget"]["fields"] = json!({"note": {"number": "gadget_number"}});
+    let (kind, message) = refusal(&note, &own_number);
+    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    assert!(
+        message.contains(
+            "gadget.note belongs to acme_inventory, not to the relation owner platform_gadget"
+        ),
+        "{message}"
+    );
+
+    let mut own_key = numbered;
+    own_key["sequences"]["gadget_number"]["pattern"] = json!("{field:note}-{seq:n,reset=note}");
+    own_key["models"]["gadget"]["operations"]["create"]["writable_fields"] =
+        json!(["stock_id", "note"]);
+    let (kind, message) = refusal(&note, &own_key);
+    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+    assert!(
+        message.contains(
+            "whose pattern names key note, but gadget.note belongs to acme_inventory, not to the relation owner platform_gadget"
+        ),
+        "{message}"
+    );
+
+    // The owner's actor field is the overlay's to stamp.
+    let mut base_actor = overlay(manifest());
+    base_actor["models"]["gadget"]["fields"] = json!({"updated_by": {"role": "actor"}});
+    run(
+        &actor_catalog("updated_by", ColumnType::Uuid),
+        &base_actor,
+        &QUERY_SOURCES,
+    )
+    .unwrap();
 }

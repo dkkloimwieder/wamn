@@ -189,7 +189,7 @@ impl Pattern {
     }
 
     /// Whether the pattern is one bare counter, `{seq:<counter>}`, and nothing
-    /// else: the only pattern an integer key takes.
+    /// else: the only pattern a numbered field that is not text takes.
     pub fn is_bare_counter(&self) -> bool {
         matches!(&*self.parts, [Part::Counter(counter)] if counter.is_bare())
     }

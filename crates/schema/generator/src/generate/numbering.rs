@@ -6,7 +6,8 @@
 //! write may supply either. A sequence is independent of the records: any
 //! command can call it through the generated `sequences::<name>::next`, and a
 //! numbered field is one caller, whose model must have a field for each key
-//! the pattern names. A package with models runs on `cloud` only.
+//! the pattern names. A package with models runs on `cloud` only. An
+//! overlay numbers, stamps and keys only the relation owner's fields.
 
 use wamn_number_pattern::{Key, Pattern, Scope};
 
@@ -14,7 +15,7 @@ use super::{
     BTreeMap, CatalogIr, ColumnType, ConstraintType, CrudAction, GenerateError, GenerateErrorType,
     ModelDeclaration, PackageManifest, Table, column, relation, validate_identifier,
 };
-use crate::manifest::Target;
+use crate::manifest::{FieldRole, Target};
 
 /// Refuse what the package's numbering declarations cannot mean.
 ///
@@ -86,6 +87,28 @@ fn validate_model_fields(
                 field.as_str(),
             ));
         }
+        if declaration.number.is_none() && declaration.role.is_none() {
+            continue;
+        }
+        // The relation owner's inserts and updates fill the column too, so a
+        // column it does not have is never numbered or stamped.
+        if model.field_owner(field) != model.owner {
+            return Err(invalid(format!(
+                "{model_name}.{field} belongs to {}, not to the relation owner {}; only the relation owner's fields are numbered or stamped",
+                model.field_owner(field),
+                model.owner
+            )));
+        }
+        if declaration.role == Some(FieldRole::Actor) {
+            let ty = column(table, field)
+                .expect("the field was resolved")
+                .column_type();
+            if !matches!(field.as_str(), "created_by" | "updated_by") || ty != ColumnType::Uuid {
+                return Err(invalid(format!(
+                    "{model_name}.{field} is an actor field, which must be a uuid field named created_by or updated_by"
+                )));
+            }
+        }
         let Some(sequence) = &declaration.number else {
             continue;
         };
@@ -120,23 +143,23 @@ fn validate_numbered_field(
 ) -> Result<(), GenerateError> {
     let invalid = |detail: String| GenerateError::new(GenerateErrorType::InvalidModel, detail);
     let key = primary_key(table);
-    if key == Some(field) {
-        if pattern
+    if key == Some(field)
+        && pattern
             .counters()
             .any(|counter| counter.scope().key().is_some())
-        {
-            return Err(invalid(format!(
-                "{model_name}.{field} is the key and numbers from sequence {sequence}, whose pattern uses reset= or per=; a key's counters may not, because two records would collide"
-            )));
-        }
-        let ty = column(table, field)
-            .expect("model fields were validated")
-            .column_type();
-        if matches!(ty, ColumnType::Int32 | ColumnType::Int64) && !pattern.is_bare_counter() {
-            return Err(invalid(format!(
-                "{model_name}.{field} is an integer key, so sequence {sequence} takes a bare {{seq:<counter>}} pattern only"
-            )));
-        }
+    {
+        return Err(invalid(format!(
+            "{model_name}.{field} is the key and numbers from sequence {sequence}, whose pattern uses reset= or per=; a key's counters may not, because two records would collide"
+        )));
+    }
+    let ty = column(table, field)
+        .expect("model fields were validated")
+        .column_type();
+    if ty != ColumnType::Text && !pattern.is_bare_counter() {
+        return Err(invalid(format!(
+            "{model_name}.{field} is {}, not text, so sequence {sequence} takes a bare {{seq:<counter>}} pattern only",
+            ty.as_str()
+        )));
     }
     for counter in pattern.counters() {
         if let Scope::Per(Key::Field(name)) = counter.scope()
@@ -160,6 +183,13 @@ fn validate_numbered_field(
                 "{model_name}.{field} numbers from sequence {sequence}, whose pattern names key {name}, but {model_name} has no field {name}: the generated insert passes the model's fields as the keys"
             )));
         };
+        if model.field_owner(name) != model.owner {
+            return Err(invalid(format!(
+                "{model_name}.{field} numbers from sequence {sequence}, whose pattern names key {name}, but {model_name}.{name} belongs to {}, not to the relation owner {}",
+                model.field_owner(name),
+                model.owner
+            )));
+        }
         if matches!(named.column_type(), ColumnType::Bytes | ColumnType::Json) {
             return Err(invalid(format!(
                 "sequence {sequence} names {model_name}.{name}, a {} field, which has no text to render or key by",
