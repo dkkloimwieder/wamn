@@ -167,7 +167,12 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "composed entry fixture",
-            ReleaseScope::new("tenant-a", "test"),
+            ReleaseScope::new("tenant-a", "test").with_applications(
+                serde_json::from_value(
+                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                )
+                .unwrap(),
+            ),
         )
         .expect("admit the exact release manifest"),
     );

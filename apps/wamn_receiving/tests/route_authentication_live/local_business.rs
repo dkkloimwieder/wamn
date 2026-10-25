@@ -212,15 +212,13 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
                 &[&supplier],
             )
             .await?;
-        for owner in ["wamn_receiving", "client_acme_receiving"] {
-            client
-                .execute(
-                    "INSERT INTO platform.number_sequence (application, name, pattern) \
-                     VALUES ($1, 'purchase_order', 'PO-{seq:po,width=6}')",
-                    &[&owner],
-                )
-                .await?;
-        }
+        client
+            .execute(
+                "INSERT INTO platform.number_sequence (application, name, pattern) \
+                 VALUES ('receiving', 'purchase_order', 'PO-{seq:po,width=6}')",
+                &[],
+            )
+            .await?;
         let http = reqwest::Client::new();
         let mut numbers = Vec::new();
         for key in ["numbered-1", "numbered-2"] {
@@ -460,6 +458,10 @@ async fn start_with(
             attachments.insert(name, attachment);
         }
     }
+    std::fs::write(
+        scratch.join("environment.k"),
+        include_str!("../../../../tests/integration/fixtures/local-environments/acme-receiving.k"),
+    )?;
     LocalApplication::start(LocalApplicationConfig {
         system_database_url: system,
         database_url: project,

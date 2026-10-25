@@ -269,7 +269,9 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "native session route test",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT).with_applications(
+            serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,
+        ),
     )?);
     let route = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
@@ -1339,7 +1341,9 @@ async fn pat_caller(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "warm PAT test",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT).with_applications(
+            serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,
+        ),
     )?);
     let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(

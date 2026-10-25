@@ -68,7 +68,7 @@ struct ComponentPolicy {
     /// The set of each named `statements` import, one per member.
     members: PreparedStatementMembers,
     runtime_schema: Option<String>,
-    /// The package id of the application that composes this component, which
+    /// The environment map name of the application that holds this component, which
     /// every call binds as `app.application`.
     application: String,
 }
@@ -149,14 +149,24 @@ pub(super) fn new_native_policy(
     };
     let policy =
         |fact: &AdmittedComponent, served: &ServingComponent, members: PreparedStatementMembers| {
-            Arc::new(ComponentPolicy {
+            Ok::<_, anyhow::Error>(Arc::new(ComponentPolicy {
                 fact: fact.clone(),
                 operations: served.operations.clone(),
                 statements: prepare_statement_sets(served, &manifest.routes),
                 members,
                 runtime_schema: served.runtime_schema.clone(),
-                application: manifest.composing_application(served).to_owned(),
-            })
+                application: wamn_catalog::application_for_package(
+                    &resources.release.scope().applications,
+                    &served.package_id,
+                )
+                .with_context(|| {
+                    format!(
+                        "package {} must belong to exactly one declared application",
+                        served.package_id
+                    )
+                })?
+                .to_owned(),
+            }))
         };
     let mut facts = BTreeMap::new();
     for NativeComponent { fact, bytes } in components {
@@ -168,7 +178,7 @@ pub(super) fn new_native_policy(
         let instances = wamn_engine::statement_instances::statement_instances(bytes)
             .context("statement-instance-wiring")?;
         let members = prepare_statement_members(&instances, served)?;
-        facts.insert(name, ServedPolicies::from([policy(fact, served, members)]));
+        facts.insert(name, ServedPolicies::from([policy(fact, served, members)?]));
     }
     // Each member runs in the entry under its own facts, through the
     // statement instances that the entry carries.
@@ -182,7 +192,7 @@ pub(super) fn new_native_policy(
         let served = entry
             .members
             .iter()
-            .map(|fact| Ok(policy(fact, served_of(fact)?, members.clone())))
+            .map(|fact| policy(fact, served_of(fact)?, members.clone()))
             .collect::<anyhow::Result<ServedPolicies>>()?;
         facts.insert(native_entry_name(&entry.digest), served);
     }
@@ -238,7 +248,7 @@ impl NativePolicy {
     ///
     /// Every claims transaction binds its executing principal as
     /// `app.user_id` and the admitted operation token as `app.operation`,
-    /// which the record-history triggers record, and the composing
+    /// which the record-history triggers record, and the declared
     /// application of the component as `app.application`.
     ///
     /// The bind also reads the executing principal's `platform."user"` row in

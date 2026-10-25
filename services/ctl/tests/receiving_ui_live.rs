@@ -68,6 +68,7 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
     let mut application = None;
     let result = async {
         run(&mut up).await?;
+        std::fs::write(root.join("environment.k"), include_str!("../../../tests/integration/fixtures/local-environments/receiving.k"))?;
         let mut child = Command::new(&wamn)
             .current_dir(&repository)
             .args(["dev", "--config"])

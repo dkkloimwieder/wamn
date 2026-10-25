@@ -128,7 +128,39 @@ It leaves externally supplied PostgreSQL, NATS, and telemetry services running.
 Stop the environment before running `dev up` again against the same directory.
 Local identity certificates last 30 days. A new disposable environment creates new certificates.
 
-Use its emitted configuration:
+Write `environment.k` beside the emitted `dev.json` before you start the loop.
+Use the same KCL format as deployed environments.
+Declare every candidate package in exactly one application.
+For Acme Receiving, the file can contain:
+
+```kcl
+import environment
+
+environment.Environment {
+    org = "acme"
+    project = "receiving"
+    env = "dev"
+    release = "none"
+    route_host = "receiving.localhost"
+    policy = "dev"
+    applications = {
+        receiving = {packages = ["wamn_receiving", "client_acme_receiving"]}
+    }
+    connections = {}
+    floors = {}
+}
+```
+
+Edit the coordinate and route host to match your local environment.
+For Receiving alone, remove `client_acme_receiving` from the package list.
+The loop reads the application map from this file and passes it to the host through `--applications`.
+The candidate build supplies the local release.
+
+If the file is missing, `wamn dev` refuses and names its expected path.
+The loop never derives an application name from a package or writes this file for you.
+Changes to this file trigger a new run in watch mode.
+
+Use the emitted configuration:
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \

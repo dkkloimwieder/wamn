@@ -176,6 +176,10 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     );
     println!();
     println!("run the loop from the repository root, in another terminal:");
+    println!(
+        "  write {} before starting the loop",
+        config.with_file_name("environment.k").display()
+    );
     println!("  wamn dev --config {}{overlay} --hold", config.display());
     Ok(())
 }

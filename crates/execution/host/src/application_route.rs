@@ -434,7 +434,7 @@ impl ApplicationRoutes<'_> {
     /// operation transaction of the guest authority, logged in the write log
     /// under the route's operation and the request id
     /// (docs/plan/platform-config.md, Numbering, Administration). The
-    /// application is a composing application of the release.
+    /// application is a declared application of the release.
     async fn set_counter(
         &self,
         attachment: &HostAttachment,
@@ -442,16 +442,8 @@ impl ApplicationRoutes<'_> {
         request_id: Option<&str>,
         request: CounterSetRequest,
     ) -> Result<Value, Refusal> {
-        let manifest = self.release.manifest();
-        if !manifest
-            .components
-            .iter()
-            .any(|component| manifest.composing_application(component) == request.application)
-        {
-            return Err(counter_set_refusal(&CounterSetRefusal::InvalidInput {
-                field: "application",
-            }));
-        }
+        require_counter_application(&self.release.scope().applications, &request.application)
+            .map_err(|refusal| counter_set_refusal(&refusal))?;
         let set = CounterSet {
             application: request.application,
             sequence: request.sequence,
@@ -560,9 +552,39 @@ impl ApplicationRoutes<'_> {
     }
 }
 
+fn require_counter_application(
+    applications: &wamn_catalog::EnvironmentApplications,
+    application: &str,
+) -> Result<(), CounterSetRefusal> {
+    if applications.contains_key(application) {
+        Ok(())
+    } else {
+        Err(CounterSetRefusal::InvalidInput {
+            field: "application",
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counter_set_accepts_only_a_declared_application_name() {
+        let applications = serde_json::from_value(json!({
+            "receiving": {"packages": ["base", "overlay"]}
+        }))
+        .unwrap();
+        assert!(require_counter_application(&applications, "receiving").is_ok());
+        for name in ["base", "overlay", "unknown", ""] {
+            assert!(matches!(
+                require_counter_application(&applications, name),
+                Err(CounterSetRefusal::InvalidInput {
+                    field: "application"
+                })
+            ));
+        }
+    }
 
     /// `workflow.start` takes no user id: the caller is the authenticated one
     /// (docs/plan/workflows.md R3).

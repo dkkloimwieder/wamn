@@ -1678,7 +1678,16 @@ mod tests {
             Arc::new(
                 LoadedRelease::load_from(
                     &self.root,
-                    crate::release_manifest::ReleaseScope::new("tenant-a", "prod"),
+                    crate::release_manifest::ReleaseScope::new("tenant-a", "prod")
+                        .with_applications(
+                            [(
+                                "catalog".to_owned(),
+                                wamn_catalog::ApplicationDefinition {
+                                    packages: ["cat".to_owned()].into(),
+                                },
+                            )]
+                            .into(),
+                        ),
                 )
                 .expect("fixture mount loads"),
             )

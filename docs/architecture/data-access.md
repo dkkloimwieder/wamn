@@ -529,6 +529,8 @@ For example, `B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}` 
 The guest calls `next-number(name, keys)` or `peek-number(name, keys)` of `wamn:postgres` 0.4.0.
 `keys` maps each value that the pattern names (`per=`, `reset=` and `{field:}`) to its text, or to none for a null.
 The keys are not a record, so any command can call the function with values of its choice.
+The application is the name that the `applications` map of `environment.k` gives the package of the operation.
+The host binds that name to `app.application` for each operation, and it refuses a package that belongs to no application or to two.
 The plugin reads the application from host state and resolves the sequence by that application and the name.
 It never reads the `app.application` claim, because guest SQL can rewrite that claim.
 Both calls run only in an open operation transaction, and they return `permission-denied` outside one.
@@ -563,18 +565,22 @@ The plugin resolves that id from host state.
 Its statement admission refuses guest SQL that names a counter function or writes a `platform.*` relation.
 
 Env apply creates the `platform.number_sequence` row of each sequence that a package declares.
-The row belongs to the application that runs the package's operations.
+The row belongs to the application that the `applications` map of `environment.k` names for the package.
+Two packages of one application that declare one sequence with one default pattern share one row.
 A row that exists keeps its pattern, so an edited pattern survives every apply.
 Two packages of one application can declare one sequence name only with one default pattern.
 If the patterns differ, env apply refuses before it writes anything, and the refusal names the application, the sequence, and the two packages.
 The `applications` map of `environment.k` decides which packages form one application.
 The check reads only the package declarations, so a row with an edited pattern does not refuse.
+`wamn dev` reads the `environment.k` beside `dev.json` and creates the same rows.
+If the file is missing, `wamn dev` refuses and names the path that it expects.
 
 ### Setting a counter
 
 The application host route `number_counter.set` sets the next value of one counter.
 A holder of `admin` can call it, and so can a role that holds the operation as a permission row.
 The request names the application, the sequence, the counter, the key, and the value, and it carries a request id.
+The application must be a name in the `applications` map, and the route answers `invalid_input` for another name.
 The value is 1 or more.
 The route runs in one operation transaction under the caller, claims the request id in the write log, and writes through `platform.set_counter` under the row lock.
 A retry of a committed set answers the stored `next_number`.

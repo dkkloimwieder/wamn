@@ -119,6 +119,13 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         &[],
     )
     .await?;
+    std::fs::write(
+        root.join("environment.k"),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
+        )),
+    )?;
     let config = write_dev_config(
         root,
         &system_url,

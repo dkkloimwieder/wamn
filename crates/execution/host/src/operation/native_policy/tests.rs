@@ -746,7 +746,13 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "native policy fixture",
-                wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test"),
+                wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test")
+                    .with_applications(
+                        serde_json::from_value(
+                            serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                        )
+                        .unwrap(),
+                    ),
             )
             .expect("admit the exact release manifest"),
         );
@@ -785,6 +791,16 @@ impl Fixture {
             },
         )
         .expect("prepare immutable component policy");
+        for component in policy
+            .components
+            .values()
+            .flat_map(|policies| policies.iter())
+        {
+            assert_eq!(
+                component.application, "receiving",
+                "the claim uses the environment map name"
+            );
+        }
         let events = Arc::default();
         let entered = Arc::new(Notify::new());
         let observer = Arc::new(Observe {
@@ -1552,7 +1568,12 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "validation fixture",
-            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test"),
+            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test").with_applications(
+                serde_json::from_value(
+                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap(),
     );
@@ -1601,7 +1622,12 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &next_manifest.canonical_bytes(),
             "another release",
-            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test"),
+            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test").with_applications(
+                serde_json::from_value(
+                    serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap(),
     );

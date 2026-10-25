@@ -29,7 +29,7 @@ use super::SEQUENCE_SQL;
 /// One set of one counter of a number sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CounterSet {
-    /// The composing application that owns the sequence.
+    /// The declared application that owns the sequence.
     pub application: String,
     /// The sequence name.
     pub sequence: String,

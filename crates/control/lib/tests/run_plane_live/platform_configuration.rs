@@ -211,8 +211,7 @@ async fn platform_configuration_live() {
 /// the pattern creates nothing and keeps the edited pattern.
 #[tokio::test]
 async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
-    use wamn_control::environment::stage::create_number_sequences;
-    use wamn_platform_identity::configuration::SequenceDefault;
+    use wamn_control::environment::stage::{create_number_sequences, sequence_defaults};
 
     let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
@@ -241,11 +240,29 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
         mint_administration_generation(&target, &target_url, &database).await;
     drop(administration);
 
-    let defaults = [SequenceDefault {
-        application: "wamn_receiving".to_owned(),
-        name: "purchase_order".to_owned(),
-        pattern: "PO-{seq:po,width=6}".to_owned(),
-    }];
+    let mut base =
+        wamn_schema_generator::PackageManifest::from_slice(&wamn_fixture_package::manifest_bytes())
+            .unwrap();
+    base.package.id = "wamn_receiving".into();
+    base.sequences = serde_json::from_value(
+        serde_json::json!({"purchase_order": {"pattern": "PO-{seq:po,width=6}"}}),
+    )
+    .unwrap();
+    let mut overlay = base.clone();
+    overlay.package.id = "client_acme_receiving".into();
+    let applications = serde_json::from_value(
+        serde_json::json!({"receiving": {"packages": ["wamn_receiving", "client_acme_receiving"]}}),
+    )
+    .unwrap();
+    let defaults = sequence_defaults(&applications, [&base, &overlay]).unwrap();
+    assert_eq!(
+        target
+            .query_one("SELECT count(*) FROM platform.number_sequence", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
     let rows = async || -> Vec<String> {
         target
             .query(
@@ -271,7 +288,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
     assert_eq!(
         rows().await,
         [format!(
-            "wamn_receiving purchase_order PO-{{seq:po,width=6}} {provisioning}"
+            "receiving purchase_order PO-{{seq:po,width=6}} {provisioning}"
         )],
         "the row carries the package default, stamped by wamn:provisioning"
     );
@@ -296,7 +313,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
     assert_eq!(
         rows().await,
         [format!(
-            "wamn_receiving purchase_order P-{{seq:po,width=8}} {provisioning}"
+            "receiving purchase_order P-{{seq:po,width=8}} {provisioning}"
         )],
         "the edited pattern stays"
     );

@@ -277,7 +277,15 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "automation-live",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "test"),
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "test").with_applications(
+            [(
+                "automation".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: ["automation".to_owned()].into(),
+                },
+            )]
+            .into(),
+        ),
     )?);
     admin.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT,&release.release().manifest_digest.as_str(),&canonical]).await?;

@@ -181,7 +181,16 @@ async fn build_with_credentials(
         LoadedRelease::load_canonical_bytes(
             &wamn_execution_contract::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
-            wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
+            wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT)
+                .with_applications(
+                    [(
+                        "orders".to_owned(),
+                        wamn_catalog::ApplicationDefinition {
+                            packages: [PACKAGE.to_owned()].into(),
+                        },
+                    )]
+                    .into(),
+                ),
         )
         .context("load the fixture serving manifest")?,
     );

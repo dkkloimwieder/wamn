@@ -107,7 +107,9 @@ fn release() -> Arc<LoadedRelease> {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "entry fixture",
-            ReleaseScope::new(TENANT, "test"),
+            ReleaseScope::new(TENANT, "test").with_applications(
+                serde_json::from_value(json!({"receiving": {"packages": ["base"]}})).unwrap(),
+            ),
         )
         .unwrap(),
     )
@@ -192,6 +194,14 @@ impl GuestCall for Run {
                 if mode == 8 || mode == 9 {
                     let delivery = accessor.with(|mut access| {
                         let ctx = &access.get().active_ctx;
+                        assert_eq!(
+                            ctx.get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
+                                .operation_transaction_for(&ctx.component_id)
+                                .expect("open operation has a host transaction")
+                                .application
+                                .as_deref(),
+                            Some("receiving"),
+                        );
                         ctx.get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
                             .current_run_for(&ctx.component_id)
                             .expect("open operation has a delivery")
@@ -250,7 +260,8 @@ async fn fixture() -> (
         "DO $$ BEGIN CREATE ROLE wamn_db_owner; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
         include_str!("../../../../../../../deploy/sql/record-history.sql"),
         include_str!("../../../../../../../deploy/sql/record-history-app-grants.sql"),
-        "CREATE TABLE widget(id int PRIMARY KEY, value int NOT NULL); \
+        "CREATE TABLE widget(id int PRIMARY KEY, value int NOT NULL, \
+           CONSTRAINT application_claim CHECK (value = 1 OR current_setting('app.application', true) IS NOT DISTINCT FROM 'receiving')); \
          INSERT INTO widget VALUES (1, 1); \
          SELECT wamn_history.create_history_table('public', 'widget', false); \
          CREATE TRIGGER widget_history AFTER UPDATE ON widget FOR EACH ROW \
@@ -687,6 +698,67 @@ fn entry_start(release: &LoadedRelease) -> String {
 }
 
 #[test]
+fn entry_operations_use_the_application_of_their_own_package() {
+    let original = release();
+    let mut manifest = original.manifest().clone();
+    let mut other = manifest.components.first().unwrap().clone();
+    other.package_id = "other".into();
+    let mut operation = other.operations.remove(OPERATION).unwrap();
+    other.operations.clear();
+    let other_operation = "other:widget/update@1.0.0";
+    operation.registered_operation = Some(other_operation.into());
+    operation.permissions = BTreeSet::from([other_operation.into()]);
+    other.operations.insert(other_operation.into(), operation);
+    manifest
+        .release
+        .packages
+        .insert(PackageCoordinate::new("other", "1.0.0").unwrap());
+    manifest
+        .composed_entry
+        .as_mut()
+        .unwrap()
+        .members
+        .insert(wamn_catalog::ServingEntryMember {
+            package_id: "other".into(),
+            component: other.descriptor.component.clone(),
+            digest: other.descriptor.component_digest.clone(),
+        });
+    manifest.components.insert(other);
+    let release = Arc::new(
+        LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "two applications",
+            ReleaseScope::new(TENANT, "test").with_applications(
+                serde_json::from_value(json!({
+                    "receiving": {"packages": ["base"]}, "orders": {"packages": ["other"]}
+                }))
+                .unwrap(),
+            ),
+        )
+        .unwrap(),
+    );
+    let postgres = WamnPostgres::with_provider(Arc::new(
+        super::super::StaticCredentialProvider::new(HashMap::new(), None),
+    ));
+    postgres
+        .bind_operation_workload(
+            WORKLOAD,
+            Arc::clone(&release),
+            &entry_start(&release),
+            "entry",
+            SessionClaims {
+                tenant: TENANT.into(),
+                release: Some(ReleaseIdentity::from_loaded(&release)),
+                ..SessionClaims::default()
+            },
+        )
+        .unwrap();
+    let workloads = postgres.operation_workloads.read().unwrap();
+    assert_eq!(workloads[WORKLOAD].applications[OPERATION], "receiving");
+    assert_eq!(workloads[WORKLOAD].applications[other_operation], "orders");
+}
+
+#[test]
 fn entry_binding_requires_the_started_reference_and_component_name() {
     let release = release();
     let postgres = WamnPostgres::new(WamnPostgresConfig {
@@ -723,8 +795,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             claims,
         )
         .unwrap();
-    // Every operation of the entry binds the composing application, here the
-    // entry's one member, as `app.application`.
+    // Every operation binds its package's name from the environment map.
     assert_eq!(
         postgres
             .operation_workloads
@@ -732,8 +803,8 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
             .unwrap()
             .get(WORKLOAD)
             .unwrap()
-            .application,
-        "base"
+            .applications[OPERATION],
+        "receiving"
     );
     assert!(
         postgres

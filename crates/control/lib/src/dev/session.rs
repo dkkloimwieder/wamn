@@ -63,11 +63,13 @@ impl Error for CommandInvalidationError {
 struct NativeInvalidations {
     filesystem: FilesystemInvalidationSource,
     config: DevConfig,
+    environment_file: PathBuf,
 }
 
-fn local_configuration_files(config: &DevConfig) -> Vec<PathBuf> {
+fn local_configuration_files(config: &DevConfig, environment_file: &Path) -> Vec<PathBuf> {
     let local = config.local_artifacts();
     let mut files = vec![
+        environment_file.to_owned(),
         config.target_privileges_file().to_owned(),
         config.target_database_acl_file().to_owned(),
         local.flow_http_component.clone(),
@@ -95,7 +97,10 @@ impl DevInvalidationSource for NativeInvalidations {
 
     async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
         self.filesystem
-            .replace_configuration_files(local_configuration_files(&self.config))
+            .replace_configuration_files(local_configuration_files(
+                &self.config,
+                &self.environment_file,
+            ))
             .map_err(|source| {
                 CommandInvalidationError::new("watch local configuration files", source)
             })?;
@@ -200,6 +205,14 @@ pub struct DevSession {
     last_served: Option<DevRuntimeEndpoint>,
 }
 
+pub(super) fn read_environment(
+    file: &Path,
+) -> anyhow::Result<crate::environment::document::EnvironmentDocument> {
+    anyhow::ensure!(file.is_file(), "wamn dev requires {}", file.display());
+    crate::environment::document::EnvironmentDocument::compile(file)
+        .with_context(|| format!("read local environment {}", file.display()))
+}
+
 impl DevSession {
     /// Validate every input and connect the read-only observation sources.
     pub async fn prepare(
@@ -209,6 +222,9 @@ impl DevSession {
         let bytes = fs::read(&args.config)
             .with_context(|| format!("read development config {}", args.config.display()))?;
         let config = parse_config(&bytes).context("validate development config")?;
+        let environment_file = args.config.with_file_name("environment.k");
+        let environment = read_environment(&environment_file)?;
+        let environment_file = environment_file.canonicalize()?;
         preflight_config(&config)
             .await
             .context("reach configured development endpoints")?;
@@ -216,8 +232,13 @@ impl DevSession {
         let git = GitSource::discover(&args.overlay_root)
             .await
             .context("discover the originating Git worktree")?;
-        let mut runner =
-            ProductionDevStageRunner::new(config.clone(), args.overlay_root.clone(), git.clone());
+        let mut runner = ProductionDevStageRunner::new(
+            config.clone(),
+            args.overlay_root.clone(),
+            git.clone(),
+            environment_file,
+            environment,
+        );
         let shutdown_receiver = control.shutdown.subscribe();
         runner
             .start_observations()
@@ -334,11 +355,12 @@ async fn run_watch_command(
             .await
             .context("watch package and component inputs")?;
     filesystem
-        .replace_configuration_files(local_configuration_files(config))
+        .replace_configuration_files(local_configuration_files(config, &runner.environment_file))
         .context("watch local configuration files")?;
     let native = NativeInvalidations {
         filesystem,
         config: config.clone(),
+        environment_file: runner.environment_file.clone(),
     };
     let mut source = CommandInvalidations {
         initial: Some(DevInvalidation::Rerun {
@@ -397,6 +419,40 @@ mod tests {
     use std::convert::Infallible;
 
     use super::*;
+
+    #[test]
+    fn a_missing_environment_file_refuses_with_its_path() {
+        let root = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let file = root.path().join("environment.k");
+        let error = read_environment(&file).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("wamn dev requires {}", file.display())
+        );
+    }
+
+    #[test]
+    fn local_candidates_read_the_authored_kcl_application_map() {
+        let root = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let file = root.path().join("environment.k");
+        fs::write(
+            &file,
+            include_str!(
+                "../../../../../tests/integration/fixtures/local-environments/acme-receiving.k"
+            ),
+        )
+        .unwrap();
+        let document = read_environment(&file).unwrap();
+        assert_eq!(
+            document.applications["receiving"].packages,
+            [
+                "wamn_receiving".to_owned(),
+                "client_acme_receiving".to_owned()
+            ]
+            .into()
+        );
+        assert!(!document.applications.contains_key("client_acme_receiving"));
+    }
 
     struct QueueSource(VecDeque<DevInvalidation>);
 

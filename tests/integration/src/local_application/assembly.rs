@@ -58,6 +58,9 @@ pub struct LocalPackage<'a> {
 pub(super) async fn assemble(
     input: LocalApplicationConfig<'_>,
 ) -> anyhow::Result<PreparedLocalApplication> {
+    let environment = wamn_control::environment::document::EnvironmentDocument::compile(
+        &input.scratch.join("environment.k"),
+    )?;
     let (system, system_connection) = tokio_postgres::connect(input.system_database_url, NoTls)
         .await
         .context("connect to the disposable identity database")?;
@@ -312,7 +315,8 @@ pub(super) async fn assemble(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "local application",
-        wamn_engine::release_manifest::ReleaseScope::new(input.tenant, input.environment),
+        wamn_engine::release_manifest::ReleaseScope::new(input.tenant, input.environment)
+            .with_applications(environment.applications),
     )?);
     project.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.tenant,&release.release().manifest_digest.as_str(),&canonical]).await?;
 

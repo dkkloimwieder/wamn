@@ -220,7 +220,15 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "session route test",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev"),
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev").with_applications(
+            [(
+                "purchasing".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: ["session_test".to_owned()].into(),
+                },
+            )]
+            .into(),
+        ),
     )?))
 }
 

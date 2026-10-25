@@ -35,7 +35,7 @@ pub struct OperationTransaction {
     pub(super) claims: Arc<Mutex<Option<super::claims::transactions::BoundClaims>>>,
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
     causation: Option<wamn_event_wire::Causation>,
-    /// The composing application that the transaction binds as
+    /// The declared application that the transaction binds as
     /// `app.application`, read from host state at begin. Numbering resolves
     /// its sequences by it, never by the claim.
     pub(super) application: Option<String>,

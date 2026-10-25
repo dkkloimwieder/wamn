@@ -202,6 +202,8 @@ struct PreparedLocalGrants {
 /// Concrete runner carrying production-owner outputs through all ten stages.
 pub struct ProductionDevStageRunner {
     config: DevConfig,
+    pub(super) environment_file: PathBuf,
+    environment: crate::environment::document::EnvironmentDocument,
     overlay_root: PathBuf,
     git: GitSource,
     packages: Option<ResolvedDevPackages>,
@@ -271,10 +273,18 @@ impl fmt::Debug for ProductionDevStageRunner {
 
 impl ProductionDevStageRunner {
     /// Bind one strict request to its Git source.
-    pub fn new(config: DevConfig, overlay_root: PathBuf, git: GitSource) -> Self {
+    pub fn new(
+        config: DevConfig,
+        overlay_root: PathBuf,
+        git: GitSource,
+        environment_file: PathBuf,
+        environment: crate::environment::document::EnvironmentDocument,
+    ) -> Self {
         let (read_publisher, read_handle) = dev_read_channel();
         Self {
             config,
+            environment_file,
+            environment,
             overlay_root,
             git,
             packages: None,
@@ -918,6 +928,21 @@ impl ProductionDevStageRunner {
         )
         .await
         .map_err(|source| ProductionDevStageError::owner("install local release", source))?;
+        let defaults = crate::environment::stage::sequence_defaults(
+            &self.environment.applications,
+            self.package_inputs()?
+                .iter()
+                .map(|package| &package.manifest),
+        )
+        .map_err(|source| ProductionDevStageError::owner("read local sequence defaults", source))?;
+        crate::environment::stage::create_number_sequences(
+            self.config.target_database_url(),
+            &defaults,
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("create local number sequences", source)
+        })?;
         let binding_inputs =
             prepare_local_bindings(&self.config, &self.admissions).map_err(|source| {
                 ProductionDevStageError::owner("prepare local connection selections", source)
@@ -992,6 +1017,7 @@ impl ProductionDevStageRunner {
         };
         activation::prepare_local(&DevActivationRequest {
             config: &self.config,
+            applications: &self.environment.applications,
             release: &carrier,
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
@@ -1047,6 +1073,7 @@ impl ProductionDevStageRunner {
         })?;
         let activation = activation::activate(DevActivationRequest {
             config: &self.config,
+            applications: &self.environment.applications,
             release,
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
@@ -1349,6 +1376,8 @@ impl DevStageRunner for ProductionDevStageRunner {
     }
 
     async fn prepare_run(&mut self) -> Result<(), Self::Error> {
+        self.environment = super::session::read_environment(&self.environment_file)
+            .map_err(|source| ProductionDevStageError::owner("read local environment", source))?;
         self.packages = Some(
             super::config::resolve_dev_packages(&self.config, &self.overlay_root).map_err(
                 |source| {
@@ -1357,6 +1386,23 @@ impl DevStageRunner for ProductionDevStageRunner {
             )?,
         );
         let packages = self.package_inputs()?;
+        let refusals = crate::environment::analyse::application_refusals(
+            &self.environment.applications,
+            packages
+                .iter()
+                .map(|package| package.manifest.package.id.as_str()),
+        );
+        if !refusals.is_empty() {
+            return Err(ProductionDevStageError::invalid(
+                "read local applications",
+                refusals.join("; "),
+            ));
+        }
+        crate::environment::stage::sequence_defaults(
+            &self.environment.applications,
+            packages.iter().map(|package| &package.manifest),
+        )
+        .map_err(|source| ProductionDevStageError::owner("read local sequence defaults", source))?;
         let inputs = build_inputs(&packages)?;
         if self.target_lease.is_none() {
             self.target_lease = Some(target_database::acquire(&self.config).await.map_err(

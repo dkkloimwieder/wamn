@@ -561,7 +561,18 @@ mod tests {
             workflow: wamn_catalog::WorkflowSection::default(),
             host_routes: BTreeSet::new(),
         };
-        (manifest, ReleaseScope::new(tenant, "warehouse-eu-3"))
+        (
+            manifest,
+            ReleaseScope::new(tenant, "warehouse-eu-3").with_applications(
+                [(
+                    "warehouse".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        packages: [package.to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
+        )
     }
 
     /// A candidate closure states its own coordinates and needs no manifest.

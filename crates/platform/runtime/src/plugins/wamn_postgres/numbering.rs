@@ -2,8 +2,8 @@
 //! (`docs/plan/platform-config.md`, "Numbering").
 //!
 //! `next-number` and `peek-number` render the pattern of one sequence of the
-//! composing application, never an argument and never a claim. The plugin
-//! reads the application from host state: the operation transaction holds
+//! declared application, never an argument and never a claim. The plugin
+//! reads the environment map name from host state: the operation transaction holds
 //! the application it was begun for. The plugin resolves (application,
 //! sequence name) to the sequence id, so a sequence of another application is
 //! not found. The `app.application` claim stays set for logging only; guest
@@ -61,7 +61,7 @@ impl NumberCall {
 /// The SQLSTATE of a `peek-number` for a counter that has issued no number
 /// yet: `no_data_found`.
 pub(super) const NO_NUMBER_ISSUED: &str = "P0002";
-/// A sequence that the composing application does not own:
+/// A sequence that the declared application does not own:
 /// `undefined_object`.
 const UNKNOWN_SEQUENCE: &str = "42704";
 /// Keys or a stored pattern that the renderer cannot use:
@@ -99,7 +99,7 @@ const ASSIGN_SQL: &str = "SELECT platform.assign_counter($1::text::uuid, $2, $3)
 const COUNTER_SQL: &str = "SELECT value FROM platform.number_counter \
     WHERE sequence_id = $1::text::uuid AND counter = $2 AND key_value = $3";
 
-/// Render one number of the composing application in the operation
+/// Render one number of the declared application in the operation
 /// transaction of the invocation. A member's named import renders in the
 /// same transaction, for the same application.
 pub(super) async fn statement_number<T: 'static>(

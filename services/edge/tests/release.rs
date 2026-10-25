@@ -136,8 +136,20 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
     std::fs::write(directory.join(name), bytes).expect("write a bundle file");
 }
 
+fn scope() -> ReleaseScope {
+    ReleaseScope::new(TENANT, "edge").with_applications(
+        [(
+            "weighing".to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: [PACKAGE.to_owned()].into(),
+            },
+        )]
+        .into(),
+    )
+}
+
 async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
-    EdgeRelease::load(directory, digest, ReleaseScope::new(TENANT, "edge"))
+    EdgeRelease::load(directory, digest, scope())
         .await
         .expect_err("the bundle is refused")
         .error_type()
@@ -146,7 +158,7 @@ async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
 #[tokio::test]
 async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
     let (directory, digest) = Bundle::valid().write();
-    let release = EdgeRelease::load(&directory, &digest, ReleaseScope::new(TENANT, "edge"))
+    let release = EdgeRelease::load(&directory, &digest, scope())
         .await
         .expect("load");
     assert_eq!(release.bundle_digest(), digest);

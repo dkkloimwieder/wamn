@@ -19,3 +19,39 @@ pub struct ApplicationDefinition {
 
 /// Application name to its definition.
 pub type EnvironmentApplications = BTreeMap<String, ApplicationDefinition>;
+
+/// The sole application that holds `package`, or `None` for an absent or ambiguous owner.
+pub fn application_for_package<'a>(
+    applications: &'a EnvironmentApplications,
+    package: &str,
+) -> Option<&'a str> {
+    let mut owners = applications
+        .iter()
+        .filter(|(_, definition)| definition.packages.contains(package))
+        .map(|(name, _)| name.as_str());
+    let application = owners.next()?;
+    owners.next().is_none().then_some(application)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_package_has_one_declared_application_without_a_fallback() {
+        let definition = ApplicationDefinition {
+            packages: ["base".to_owned(), "overlay".to_owned()].into(),
+        };
+        let mut applications =
+            EnvironmentApplications::from([("receiving".into(), definition.clone())]);
+        for package in ["base", "overlay"] {
+            assert_eq!(
+                application_for_package(&applications, package),
+                Some("receiving")
+            );
+        }
+        assert_eq!(application_for_package(&applications, "missing"), None);
+        applications.insert("other".into(), definition);
+        assert_eq!(application_for_package(&applications, "base"), None);
+    }
+}

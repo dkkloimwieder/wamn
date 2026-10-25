@@ -435,7 +435,7 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "consumer live",
-        ReleaseScope::new(TENANT, "test"),
+        ReleaseScope::new(TENANT, "test").with_applications(declared("rest_connector", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(

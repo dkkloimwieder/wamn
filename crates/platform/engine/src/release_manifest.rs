@@ -380,7 +380,15 @@ mod tests {
     }
 
     fn scope() -> ReleaseScope {
-        ReleaseScope::new("t1", "prod")
+        ReleaseScope::new("t1", "prod").with_applications(
+            [(
+                "catalog".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: ["cat".to_owned()].into(),
+                },
+            )]
+            .into(),
+        )
     }
 
     /// A private scratch mount, named for its test so runs cannot collide.

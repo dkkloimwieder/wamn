@@ -679,7 +679,15 @@ mod tests {
         let release = LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "fixture",
-            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "prod"),
+            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "prod").with_applications(
+                [(
+                    "catalog".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        packages: ["cat".to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
         )
         .expect("fixture manifest loads");
         FlowHttpRouting::new(Some(Arc::new(release)), RouteInFlightLimit::default())

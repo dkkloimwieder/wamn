@@ -102,6 +102,10 @@ async fn start(
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
     let attachments = wamn_schema_generator::route_schema::read_package_attachments(&app)?;
+    std::fs::write(
+        scratch.path().join("environment.k"),
+        include_str!("../fixtures/local-environments/platform.k"),
+    )?;
     let application = LocalApplication::start(LocalApplicationConfig {
         system_database_url: system_url,
         database_url: project_url,

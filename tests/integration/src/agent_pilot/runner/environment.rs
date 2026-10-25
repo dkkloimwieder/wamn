@@ -122,6 +122,11 @@ impl Run {
     }
 
     pub(super) async fn standup(&self, broker: &Broker) -> anyhow::Result<()> {
+        std::fs::create_dir_all(self.directory.join("env"))?;
+        std::fs::copy(
+            self.directory.join("fixture/environment.k"),
+            self.directory.join("env/environment.k"),
+        )?;
         for (field, value) in [
             ("org", "acme"),
             ("project", "receiving"),

@@ -36,7 +36,8 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "NetSuite checkpoint live",
-        ReleaseScope::new(TENANT, "test"),
+        ReleaseScope::new(TENANT, "test")
+            .with_applications(super::consumer_live::declared("erp", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(

@@ -220,7 +220,9 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&manifest)?),
         "host route test",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev"),
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev").with_applications(
+            serde_json::from_value(json!({"receiving": {"packages": ["session_test"]}}))?,
+        ),
     )?))
 }
 

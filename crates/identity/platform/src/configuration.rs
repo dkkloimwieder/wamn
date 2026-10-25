@@ -251,8 +251,8 @@ pub async fn write_configuration(
 }
 
 /// One sequence default of a package (`docs/plan/platform-config.md`,
-/// "Declaration in wamn.k"): the application whose operations number from it,
-/// the sequence name and the default pattern.
+/// "Declaration in wamn.k"): its application name from the environment map,
+/// its sequence name and its default pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequenceDefault {
     pub application: String,

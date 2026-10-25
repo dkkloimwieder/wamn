@@ -11,9 +11,10 @@ use wamn_control::dev::session::{DevSession, DevSessionControl, DevSessionReques
 use wamn_control::dev::{DevRunResult, DevWatchObserver, DevWatchOutcome};
 
 /// Inputs owned by the literal `wamn dev` product command.
+/// The selected configuration requires an authored `environment.k` beside it.
 #[derive(Clone, Debug, Args)]
 pub struct DevCommandArgs {
-    /// Strict deployment configuration document.
+    /// Strict deployment configuration document. Requires environment.k beside it.
     #[arg(long, value_name = "FILE")]
     config: PathBuf,
 

@@ -39,6 +39,10 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     };
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
+    std::fs::write(
+        scratch.path().join("environment.k"),
+        include_str!("../../../tests/integration/fixtures/local-environments/wms.k"),
+    )?;
     let application = LocalApplication::start(LocalApplicationConfig {
         system_database_url: system.url(),
         database_url: project.url(),

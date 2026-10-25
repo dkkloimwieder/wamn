@@ -85,9 +85,9 @@ pub(in super::super) async fn finish_transaction(
 ///   operation. The record-history log records it as the source of a write.
 ///   It binds unconditionally like `$6`. An absent operation binds `''`, so a
 ///   pooled connection never carries the operation of an earlier request.
-/// - `$8` `app.application` is the composing application that runs the
-///   operation, named by its package id. A base operation reached through a
-///   composed entry binds the composing application. It is for logging only:
+/// - `$8` `app.application` is the declared application that runs the
+///   operation, named by the environment map entry that holds its package.
+///   Base operations use that map too. It is for logging only:
 ///   guest SQL can rewrite it, so numbering reads the application from host
 ///   state instead (`docs/plan/platform-config.md`, Numbering). It binds
 ///   unconditionally like `$7`, and an absent application binds `''`.

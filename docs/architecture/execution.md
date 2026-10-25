@@ -416,11 +416,12 @@ A host queue claim, reap, renew, or complete transaction binds the `wamn:executo
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
-The same transaction binds the composing application that runs the operation as `app.application`.
-One application is one composed workload, so the value is the package id of the composed entry's composing member.
-A base operation reached through the composed entry binds the composing application, not the base package.
-A component outside the composed entry binds its own package id.
-A host queue transaction, a host route transaction, and a platform read bind no application.
+The same transaction binds the operation's application name from the `environment.k` map as `app.application`.
+A base operation uses the map application that holds its declaring package.
+A component outside the composed entry uses the same map.
+The `number_counter.set` route binds the requested application after it finds the name in that map.
+Other host routes, host queue transactions, and platform reads bind no application.
+
 An absent application binds an empty value, so a pooled connection keeps no earlier application.
 The claim is for logs only. [Numbering](data-access.md#numbering) takes the application from host state, not from this claim.
 

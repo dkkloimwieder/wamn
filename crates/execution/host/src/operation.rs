@@ -323,7 +323,7 @@ impl OperationHost {
             // Activation binds the operation token of `invocation`, so a
             // nested call binds its own operation.
             operation: None,
-            // Activation binds the composing application of the component
+            // Activation binds the declared application of the component
             // that runs.
             application: None,
             release,
@@ -633,7 +633,7 @@ impl NodeAcquisition {
 
     /// The claims that activation binds: [`Self::claims`] with the executing
     /// principal as `app.user_id`, the operation token that this acquisition
-    /// executes as `app.operation`, and `application`, the composing
+    /// executes as `app.operation`, and `application`, the declared
     /// application of the component that runs it, as `app.application`.
     fn executing_claims(
         &self,

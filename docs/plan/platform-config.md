@@ -135,6 +135,16 @@ environment = {
 
 ## Numbering
 
+An application is a name in the `applications` map of `environment.k`.
+Each sequence belongs to the map application that holds its declaring package.
+The host sets `app.application` to that same name for each operation.
+The numbering plugin reads the name from the operation transaction's host state.
+The `number_counter.set` route accepts only names in that map.
+
+Local candidates require an authored `environment.k` beside `dev.json` and pass the same map to the host.
+A missing file refuses startup and names the expected path.
+No runtime derives an application name from a package or composed entry.
+
 Document numbers are gapless, rendered once in the host, and advanced inside the operation transaction through counters the application cannot write. Every counter is keyed by a value; the key decides when it resets or whether a key gets the same number again.
 
 `keys` maps each value the pattern names (`per=`, `reset=` and `{field:}`) to its text. A bare `{seq}` or `{date:}` pattern takes none. The keys are not a record: any command can call either function with values of its choice, and the generated insert of a numbered field is one such caller. The renderer reads only the keys the pattern names, and refuses a key given twice.
@@ -541,6 +551,11 @@ Order inside each agent's queue:
 Nothing in C1–C4 blocks the UI or install epics; C5 needs C1–C3 merged.
 
 ### C2 numbering
+
+The owner ruling of 2026-10-24 (`wamn-83eth.28`) uses the environment map name throughout numbering.
+Local development requires the same authored KCL map as deployment.
+Equal defaults from two packages create one sequence row.
+Env apply and `wamn dev` refuse different defaults before any sequence write.
 
 C1 is done: `wamn-aqd0m` merged at `3bb4c488e`, and its epic-close kind run passed.
 

@@ -70,6 +70,7 @@ pub struct DevActivationIdentity {
 /// Inputs produced by earlier stages and deployment-owned config.
 pub struct DevActivationRequest<'a> {
     pub config: &'a DevConfig,
+    pub applications: &'a wamn_catalog::EnvironmentApplications,
     pub release: &'a ReleaseCarrier,
     pub identity: &'a DevActivationIdentity,
     pub host_binary: &'a Path,
@@ -913,6 +914,8 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         identity.runner.clone(),
         "--environment".to_owned(),
         identity.environment.clone(),
+        "--applications".to_owned(),
+        serde_json::to_string(request.applications).expect("application map serializes"),
         "--http-addr".to_owned(),
         LOOPBACK_HTTP_BIND.to_owned(),
         "--local-application".to_owned(),
@@ -1671,6 +1674,11 @@ mod tests {
     use super::*;
     use crate::dev::config::parse_config;
 
+    fn test_applications() -> wamn_catalog::EnvironmentApplications {
+        serde_json::from_value(serde_json::json!({"receiving": {"packages": ["base", "overlay"]}}))
+            .unwrap()
+    }
+
     static HOST_LOG_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     struct HostLogFixture(PathBuf);
@@ -2092,7 +2100,7 @@ mod tests {
             manifest_digest: digest.clone(),
             artifact_base: "local/releases".into(),
             route_host: "receiving.localhost".into(),
-            applications: std::collections::BTreeMap::new(),
+            applications: test_applications(),
             roles: vec![release_chart::Role {
                 entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
                 statements: Vec::new(),
@@ -2176,6 +2184,7 @@ mod tests {
         let identity = config.activation_identity();
         let release = release();
         let request = DevActivationRequest {
+            applications: &test_applications(),
             config: &config,
             release: &release,
             identity,
@@ -2230,7 +2239,6 @@ mod tests {
             "--release-manifest-digest", // Deployed releases use a registry.
             "--local-application", // Local releases use staged files.
             "--local-application-digest", // Local releases use staged files.
-            "--applications", // Local candidates have no environment document.
             "DOCKER_CONFIG", // Local releases require no registry credentials.
             "WAMN_COMPONENT_ARTIFACT_BASE", // Local components use staged files.
             "WAMN_REGISTRY_TOKEN_METADATA", // Local releases require no registry token.
@@ -2268,6 +2276,7 @@ mod tests {
         let release = release();
         let identity = identity();
         let request = DevActivationRequest {
+            applications: &test_applications(),
             config: &config,
             release: &release,
             identity: &identity,
@@ -2299,6 +2308,7 @@ mod tests {
         let release = release();
         let identity = identity();
         let request = DevActivationRequest {
+            applications: &test_applications(),
             config: &config,
             release: &release,
             identity: &identity,
@@ -2406,6 +2416,7 @@ mod tests {
             manifest_digest,
         };
         let request = DevActivationRequest {
+            applications: &test_applications(),
             config: &config,
             release: &release,
             identity: &identity,
@@ -2534,6 +2545,7 @@ mod tests {
         let identity = identity();
         let release = release();
         let request = DevActivationRequest {
+            applications: &test_applications(),
             config: &config,
             release: &release,
             identity: &identity,
@@ -2613,6 +2625,8 @@ mod tests {
             "wamn-dev-fixture-1",
             "--environment",
             "fixture-dev",
+            "--applications",
+            r#"{"receiving":{"packages":["base","overlay"]}}"#,
             "--http-addr",
             "127.0.0.1:0",
             "--local-application",
@@ -2859,6 +2873,7 @@ mod tests {
         let identity = identity();
         let release = release();
         let request = DevActivationRequest {
+            applications: &test_applications(),
             config: &config,
             release: &release,
             identity: &identity,
@@ -2908,6 +2923,7 @@ mod tests {
         identity.org.clear();
         let release = release();
         let request = DevActivationRequest {
+            applications: &test_applications(),
             config: &config,
             release: &release,
             identity: &identity,

@@ -316,13 +316,13 @@ async fn read_floor_artifacts(
     Ok(artifacts)
 }
 
-/// The sequences that each package of the release declares, read from its
-/// verified artifact: package id to sequence name to default pattern.
+/// The package manifests of the release, read from their verified artifacts
+/// for their sequence defaults.
 async fn read_release_sequences(
     platform: &Platform,
     manifest: &ServingManifest,
-) -> anyhow::Result<BTreeMap<String, BTreeMap<String, String>>> {
-    let mut sequences = BTreeMap::new();
+) -> anyhow::Result<Vec<wamn_schema_generator::PackageManifest>> {
+    let mut packages = Vec::new();
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
         let opened = super::stage::open(platform, id, version).await?;
@@ -331,50 +331,24 @@ async fn read_release_sequences(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )
         .with_context(|| format!("parse {}", path.display()))?;
-        sequences.insert(
-            id.to_owned(),
-            package_manifest
-                .sequences
-                .into_iter()
-                .map(|(name, declaration)| (name, declaration.pattern))
-                .collect(),
-        );
+        packages.push(package_manifest);
     }
-    Ok(sequences)
+    Ok(packages)
 }
 
 /// The refusals of the sequences that the packages of one application
 /// declare (docs/plan/platform-config.md, Numbering): two packages of one
 /// application that declare one sequence name declare one default pattern.
-/// `sequences` is package id to sequence name to default pattern. The check
-/// reads only the declarations, so a `number_sequence` row whose pattern the
+/// This reads only the declarations, so a `number_sequence` row whose pattern the
 /// admin edited never refuses.
 fn sequence_refusals(
     applications: &wamn_catalog::EnvironmentApplications,
-    sequences: &BTreeMap<String, BTreeMap<String, String>>,
+    packages: &[wamn_schema_generator::PackageManifest],
 ) -> Vec<String> {
-    let mut refusals = Vec::new();
-    for (application, definition) in applications {
-        let mut first: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
-        for package in &definition.packages {
-            for (name, pattern) in sequences.get(package).into_iter().flatten() {
-                match first.get(name.as_str()) {
-                    None => {
-                        first.insert(name, (package, pattern));
-                    }
-                    Some((other, other_pattern)) if other_pattern != pattern => {
-                        refusals.push(format!(
-                            "application {application}: packages {other} and {package} \
-                             declare sequence {name} with different patterns \
-                             {other_pattern:?} and {pattern:?}"
-                        ));
-                    }
-                    Some(_) => {}
-                }
-            }
-        }
+    match super::stage::sequence_defaults(applications, packages) {
+        Ok(_) => Vec::new(),
+        Err(error) => vec![error.to_string()],
     }
-    refusals
 }
 
 /// The actor: the identity principal the CLI authenticates as, or `$USER`
@@ -971,7 +945,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
 /// release (docs/plan/platform-config.md): each package of the release
 /// belongs to exactly one application, and each assigned package is in the
 /// release.
-fn application_refusals<'a>(
+pub(crate) fn application_refusals<'a>(
     applications: &wamn_catalog::EnvironmentApplications,
     release_packages: impl IntoIterator<Item = &'a str>,
 ) -> Vec<String> {
@@ -1446,17 +1420,27 @@ mod tests {
 
     fn sequences(
         entries: &[(&str, &[(&str, &str)])],
-    ) -> BTreeMap<String, BTreeMap<String, String>> {
+    ) -> Vec<wamn_schema_generator::PackageManifest> {
         entries
             .iter()
             .map(|(package, declared)| {
-                (
-                    (*package).to_owned(),
-                    declared
-                        .iter()
-                        .map(|(name, pattern)| ((*name).to_owned(), (*pattern).to_owned()))
-                        .collect(),
+                let mut manifest = wamn_schema_generator::PackageManifest::from_slice(
+                    &wamn_fixture_package::manifest_bytes(),
                 )
+                .unwrap();
+                manifest.package.id = (*package).to_owned();
+                manifest.sequences = declared
+                    .iter()
+                    .map(|(name, pattern)| {
+                        (
+                            (*name).to_owned(),
+                            wamn_schema_generator::SequenceDeclaration {
+                                pattern: (*pattern).to_owned(),
+                            },
+                        )
+                    })
+                    .collect();
+                manifest
             })
             .collect()
     }
@@ -1475,8 +1459,7 @@ mod tests {
             sequence_refusals(&declared, &declarations),
             [
                 "application receiving: packages acme_receiving and wamn_receiving declare \
-                 sequence purchase_order with different patterns \"ACME-{seq:po}\" and \
-                 \"PO-{seq:po,width=6}\""
+                 sequence purchase_order with different patterns"
             ]
         );
     }

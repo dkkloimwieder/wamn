@@ -289,7 +289,15 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &bytes,
         "route-authentication-live fixture",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT).with_applications(
+            [(
+                "inventory".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: [FIXTURE_PACKAGE_ID.to_owned()].into(),
+                },
+            )]
+            .into(),
+        ),
     )?))
 }
 

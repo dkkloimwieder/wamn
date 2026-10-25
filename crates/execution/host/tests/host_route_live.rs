@@ -577,7 +577,7 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
     admin
         .execute(
             "INSERT INTO platform.number_sequence (application, name, pattern) \
-             VALUES ('session_test', 'purchase_order', 'P-{seq:po}')",
+             VALUES ('receiving', 'purchase_order', 'P-{seq:po}')",
             &[],
         )
         .await?;
@@ -619,7 +619,7 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         Ok::<_, DeliveryError>(item)
     };
     let request = |counter: &str, value: i64| {
-        json!({"application": "session_test", "sequence": "purchase_order",
+        json!({"application": "receiving", "sequence": "purchase_order",
                "counter": counter, "key": "", "value": value})
     };
 
@@ -647,6 +647,18 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
     .await
     .expect("the grant answers");
     assert_eq!(granted["value"], json!({"rows_added": 1}), "{granted}");
+
+    for application in ["session_test", "unknown"] {
+        let mut invalid = request("po", 7);
+        invalid["application"] = json!(application);
+        let refused = call(&member_claims, set, application, invalid)
+            .await
+            .expect("the refusal answers");
+        assert_eq!(
+            refused["error"],
+            json!({"code": "invalid_input", "detail": {"field": "application"}})
+        );
+    }
 
     assert_eq!(
         call(&member_claims, set, "set-7", request("po", 7))

@@ -62,10 +62,8 @@ pub(super) struct OperationWorkload {
     schemas: BTreeMap<String, String>,
     /// The digest of the member component that owns each operation.
     digests: BTreeMap<String, String>,
-    /// The package id of the composing application, bound as
-    /// `app.application` for every operation of the entry, base operations
-    /// included.
-    application: String,
+    /// Operation to its package's application name in the environment map.
+    applications: BTreeMap<String, String>,
     members: PreparedStatementMembers,
 }
 
@@ -113,8 +111,20 @@ impl WamnPostgres {
         let mut grants = BTreeMap::new();
         let mut schemas = BTreeMap::new();
         let mut digests = BTreeMap::new();
+        let mut applications = BTreeMap::new();
         for component in &components {
+            let application = wamn_catalog::application_for_package(
+                &release.scope().applications,
+                &component.package_id,
+            )
+            .with_context(|| {
+                format!(
+                    "package {} must belong to exactly one declared application",
+                    component.package_id
+                )
+            })?;
             for (id, fact) in &component.operations {
+                applications.insert(id.clone(), application.to_owned());
                 let read = release
                     .manifest()
                     .routes
@@ -156,7 +166,6 @@ impl WamnPostgres {
                 );
             }
         }
-        let application = application.package_id.clone();
         let mut workloads = self
             .operation_workloads
             .write()
@@ -175,7 +184,7 @@ impl WamnPostgres {
                 grants,
                 schemas,
                 digests,
-                application,
+                applications,
                 members: Self::prepare_statement_members(members),
             }),
         );
@@ -717,7 +726,7 @@ async fn begin(
             .or_else(|| facts.claims.schema.clone()),
         user_id: caller.map(|caller| caller.principal_id().to_owned()),
         operation: Some(open.operation.clone()),
-        application: Some(facts.application.clone()),
+        application: Some(facts.applications[&open.operation].clone()),
         ..facts.claims.clone()
     };
     if authorize_only {

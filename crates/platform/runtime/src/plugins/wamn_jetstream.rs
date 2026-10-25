@@ -1361,7 +1361,15 @@ mod tests {
         let manifest = LoadedRelease::load_canonical_bytes(
             &release_registering("widgets", &["insert"]).canonical_bytes(),
             "fixture",
-            wamn_engine::release_manifest::ReleaseScope::new("tenant", "prod"),
+            wamn_engine::release_manifest::ReleaseScope::new("tenant", "prod").with_applications(
+                [(
+                    "catalog".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        packages: ["cat".to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
         )
         .expect("the fixture release loads");
         let coordinates = EventCoordinates {

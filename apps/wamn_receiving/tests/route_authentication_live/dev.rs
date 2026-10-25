@@ -452,6 +452,13 @@ pub(super) async fn assert_dev_command(
         &[],
     )
     .await?;
+    std::fs::write(
+        root.join("environment.k"),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
+        )),
+    )?;
     let config = write_dev_config(
         root,
         system_url,

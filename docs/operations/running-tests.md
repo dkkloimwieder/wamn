@@ -796,6 +796,10 @@ pnpm --filter @wamn/platform-ui build
 
 ### Local platform sign-in
 
+Local fixtures that run `wamn dev` must write an authored `environment.k` beside `dev.json`.
+The examples in `tests/integration/fixtures/local-environments` declare application names separately from package IDs.
+The loop refuses a missing file before it connects to services.
+
 `local_control_projects_and_membership` runs the built platform UI in headless Chrome.
 It starts `wamn dev up` on disposable services through the existing `delivery_timings` fixture.
 

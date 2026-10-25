@@ -120,13 +120,13 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
         Some(PlatformComponent::Executor.principal_id().to_string())
     );
     // The call binds the token of the operation that it executes and the
-    // composing application that its policy names.
+    // declared application that its policy names.
     assert_eq!(
-        original.executing_claims(None, "platform_fixture_overlay"),
+        original.executing_claims(None, "receiving"),
         SessionClaims {
             user_id: Some(materializer),
             operation: Some("platform-fixture-overlay:widget/record-batch@2.1.0".to_owned()),
-            application: Some("platform_fixture_overlay".to_owned()),
+            application: Some("receiving".to_owned()),
             ..original.claims.clone()
         }
     );

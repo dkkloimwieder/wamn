@@ -148,9 +148,9 @@ pub async fn stage(
     create_number_sequences(
         project_url,
         &sequence_defaults(
-            manifest,
+            &document.applications,
             packages.iter().map(|(_, _, _, manifest)| manifest),
-        ),
+        )?,
     )
     .await
     .context("create the number sequences of the release's packages")?;
@@ -286,30 +286,40 @@ pub async fn materialize_application_principals(
 }
 
 /// The sequence defaults of `packages`, each under the application that
-/// numbers from it: the application that runs the package's operations,
-/// which is the composing application of its components in `manifest`, or
-/// the package itself when the release serves none of its components.
+/// holds the declaring package in `environment.k`.
 pub fn sequence_defaults<'a>(
-    manifest: &wamn_catalog::ServingManifest,
+    applications: &wamn_catalog::EnvironmentApplications,
     packages: impl IntoIterator<Item = &'a PackageManifest>,
-) -> Vec<wamn_platform_identity::configuration::SequenceDefault> {
-    let mut defaults = Vec::new();
+) -> anyhow::Result<Vec<wamn_platform_identity::configuration::SequenceDefault>> {
+    let mut defaults = BTreeMap::new();
     for package in packages {
         let id = package.package.id.as_str();
-        let application = manifest
-            .components
-            .iter()
-            .find(|component| component.package_id == id)
-            .map_or(id, |component| manifest.composing_application(component));
-        defaults.extend(package.sequences.iter().map(|(name, declaration)| {
-            wamn_platform_identity::configuration::SequenceDefault {
-                application: application.to_owned(),
-                name: name.clone(),
-                pattern: declaration.pattern.clone(),
+        let application =
+            wamn_catalog::application_for_package(applications, id).with_context(|| {
+                format!("package {id} must belong to exactly one declared application")
+            })?;
+        for (name, declaration) in &package.sequences {
+            let key = (application.to_owned(), name.clone());
+            if let Some((other, pattern)) = defaults.get(&key) {
+                anyhow::ensure!(
+                    pattern == &declaration.pattern,
+                    "application {application}: packages {other} and {id} declare sequence {name} with different patterns"
+                );
+            } else {
+                defaults.insert(key, (id, declaration.pattern.clone()));
             }
-        }));
+        }
     }
-    defaults
+    Ok(defaults
+        .into_iter()
+        .map(|((application, name), (_, pattern))| {
+            wamn_platform_identity::configuration::SequenceDefault {
+                application,
+                name,
+                pattern,
+            }
+        })
+        .collect())
 }
 
 /// Create the `platform.number_sequence` row of each default the database at
@@ -574,6 +584,50 @@ mod tests {
     };
 
     use super::{apply_order, release_requirements, schema_request};
+
+    #[test]
+    fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {
+        let mut base = wamn_schema_generator::PackageManifest::from_slice(
+            &wamn_fixture_package::manifest_bytes(),
+        )
+        .unwrap();
+        base.package.id = "base".into();
+        base.sequences = serde_json::from_value(serde_json::json!({
+            "order": {"pattern": "PO-{seq:po}"}
+        }))
+        .unwrap();
+        let mut overlay = base.clone();
+        overlay.package.id = "overlay".into();
+        let applications = serde_json::from_value(serde_json::json!({
+            "receiving": {"packages": ["base", "overlay"]}
+        }))
+        .unwrap();
+        let defaults = super::sequence_defaults(&applications, [&base, &overlay]).unwrap();
+        assert_eq!(
+            defaults,
+            [wamn_platform_identity::configuration::SequenceDefault {
+                application: "receiving".into(),
+                name: "order".into(),
+                pattern: "PO-{seq:po}".into(),
+            }]
+        );
+        overlay.sequences.get_mut("order").unwrap().pattern = "ACME-{seq:po}".into();
+        let error = super::sequence_defaults(&applications, [&base, &overlay]).unwrap_err();
+        for name in ["receiving", "order", "base", "overlay"] {
+            assert!(error.to_string().contains(name), "{error}");
+        }
+        assert!(super::sequence_defaults(&BTreeMap::new(), [&base]).is_err());
+        let separate = serde_json::from_value(serde_json::json!({
+            "receiving": {"packages": ["base"]}, "orders": {"packages": ["overlay"]}
+        }))
+        .unwrap();
+        assert_eq!(
+            super::sequence_defaults(&separate, [&base, &overlay])
+                .unwrap()
+                .len(),
+            2
+        );
+    }
 
     /// The stage applies the pending project migrations of the binary to
     /// the project database, never as a plan and never with a baseline

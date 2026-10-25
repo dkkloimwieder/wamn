@@ -209,8 +209,8 @@ pub struct WamnPostgres {
     /// of a write. Absent (the default) binds the empty string. Modified
     /// application SQL can forge it, as it can forge `app.user_id`.
     operations: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `app.application` claim: the composing application
-    /// that runs the operation, named by its package id. Numbering keys its
+    /// component id → the `app.application` claim: the application name
+    /// from the environment map for the operation's package. Numbering keys its
     /// sequences on this host state, which the operation transaction keeps,
     /// never on the claim (`docs/plan/platform-config.md`). Absent (the
     /// default) binds the empty string.
@@ -331,8 +331,8 @@ pub struct SessionClaims {
     /// `app.operation`: the executing operation token, or `wamn:<component>`
     /// for a platform component outside a registered operation.
     pub operation: Option<String>,
-    /// `app.application`: the package id of the composing application that
-    /// runs the operation.
+    /// `app.application`: the environment map name of the application that
+    /// holds the operation's package.
     pub application: Option<String>,
     /// The release digest the claiming pod carries.
     pub release: Option<ReleaseIdentity>,
@@ -974,7 +974,7 @@ fn valid_operation(operation: &str) -> bool {
     !operation.is_empty()
 }
 
-/// An `app.application`: a non-empty package id. The value binds as a
+/// An `app.application`: a non-empty application name. The value binds as a
 /// parameter, so no charset rule applies. `''` is the unbound value, so it is
 /// not a claim.
 fn valid_application(application: &str) -> bool {
@@ -1370,12 +1370,12 @@ impl WamnPostgres {
 
     /// Register the `app.application` claim for a component id. When set,
     /// every transaction the plugin opens for that component binds
-    /// `app.application`, the composing application that runs the operation.
+    /// `app.application`, the declared application that runs the operation.
     /// Host-injected identity like the tenant.
     pub fn set_application(&self, component_id: &str, application: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_application(application),
-            "invalid executing application {application:?}: a non-empty package id is required"
+            "invalid executing application {application:?}: a non-empty application name is required"
         );
         self.applications
             .write()
