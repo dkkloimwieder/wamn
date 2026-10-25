@@ -706,7 +706,7 @@ async fn create_history_tables(
                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app NOLOGIN; \
                END IF; \
-             EXCEPTION WHEN duplicate_object THEN NULL; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; \
              END $application_role$",
         )
         .await
