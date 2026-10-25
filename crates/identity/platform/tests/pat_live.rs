@@ -258,9 +258,14 @@ async fn platform_pat_round_trip_on_postgres() {
     );
 
     // Service principals get tokens through the same trusted-context path.
-    let service = create_service(&client, "agent-ci", "CI Agent")
-        .await
-        .expect("create service principal");
+    let service = create_service(
+        &client,
+        "agent-ci",
+        "CI Agent",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("create service principal");
     let service_token = issue_pat(&client, service.id(), "ci", TTL)
         .await
         .expect("issue service token");

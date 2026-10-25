@@ -1,6 +1,7 @@
 //! Provisioning PAT issuance, revocation, and Secret documents.
 
 use anyhow::Context as _;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 
 use super::{
     Client, Duration, IdentityErrorType, NoTls, PatClient, Path, PathBuf, Principal,
@@ -80,6 +81,7 @@ pub(super) async fn issue_pat_secrets(
     namespace: &str,
     management_author_path: Option<&Path>,
     operator_path: Option<&Path>,
+    changes: &AuthChanges,
 ) -> anyhow::Result<Vec<IssuedPatSecret>> {
     let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -100,14 +102,23 @@ pub(super) async fn issue_pat_secrets(
                     namespace,
                     MANAGEMENT_AUTHOR,
                     path,
+                    changes,
                 )
                 .await?,
             );
         }
         if let Some(path) = operator_path {
             issued.push(
-                issue_pat_secret(&mut client, pat_client, triple, namespace, OPERATOR, path)
-                    .await?,
+                issue_pat_secret(
+                    &mut client,
+                    pat_client,
+                    triple,
+                    namespace,
+                    OPERATOR,
+                    path,
+                    changes,
+                )
+                .await?,
             );
         }
         Ok::<_, anyhow::Error>(issued)
@@ -125,8 +136,9 @@ async fn issue_pat_secret(
     namespace: &str,
     purpose: PatPurpose,
     path: &Path,
+    changes: &AuthChanges,
 ) -> anyhow::Result<IssuedPatSecret> {
-    let (principal, issued) = mint_pat(client, pat_client, triple, purpose).await?;
+    let (principal, issued) = mint_pat(client, pat_client, triple, purpose, changes).await?;
     let secret = render_pat_secret(
         triple,
         namespace,
@@ -148,21 +160,24 @@ async fn mint_pat(
     pat_client: &PatClient,
     triple: &Triple,
     purpose: PatPurpose,
+    changes: &AuthChanges,
 ) -> anyhow::Result<(Principal, crate::pat_client::PatResponse)> {
     let subject = purpose.subject(triple)?;
     let display_name = purpose.display_name(triple);
-    let principal = resolve_or_create_service(client, &subject, &display_name).await?;
+    let principal = resolve_or_create_service(client, &subject, &display_name, changes).await?;
     anyhow::ensure!(
         principal.status() == PrincipalStatus::Active,
         "service principal {subject:?} is disabled"
     );
     let transaction = provisioning_transaction(client).await?;
+    let mut drops = AuthDrops::default();
     assign_project_role(
         &transaction,
         principal.id(),
         &triple.org,
         &triple.project,
         purpose.role,
+        &mut drops,
     )
     .await
     .with_context(|| format!("assign {} role", purpose.role))?;
@@ -170,6 +185,7 @@ async fn mint_pat(
         .commit()
         .await
         .with_context(|| format!("commit {} role", purpose.role))?;
+    changes.publish(drops).await;
 
     let issued = pat_client
         .issue(principal.id(), purpose.purpose, PAT_TTL)
@@ -197,6 +213,7 @@ pub async fn mint_management_author_pat(
     system_url: &str,
     issuer: &crate::pat_client::PatIssuerConfig,
     triple: &Triple,
+    changes: &AuthChanges,
 ) -> anyhow::Result<crate::pat_client::PatResponse> {
     let pat_client = PatClient::new(issuer)?;
     super::validate_project_env(&triple.org, &triple.project, triple.env.as_str())?;
@@ -207,7 +224,8 @@ pub async fn mint_management_author_pat(
     let connection_task = tokio::spawn(connection);
     let result = async {
         client.batch_execute("SET ROLE wamn_system").await?;
-        let (_, pat) = mint_pat(&mut client, &pat_client, triple, MANAGEMENT_AUTHOR).await?;
+        let (_, pat) =
+            mint_pat(&mut client, &pat_client, triple, MANAGEMENT_AUTHOR, changes).await?;
         Ok(pat)
     }
     .await;
@@ -220,6 +238,7 @@ pub(crate) async fn resolve_or_create_service(
     client: &mut Client,
     subject: &str,
     display_name: &str,
+    changes: &AuthChanges,
 ) -> anyhow::Result<Principal> {
     if let Some(principal) = resolve_subject(&*client, PrincipalType::Service, subject)
         .await
@@ -229,12 +248,14 @@ pub(crate) async fn resolve_or_create_service(
     }
 
     let transaction = provisioning_transaction(client).await?;
-    match create_service(&transaction, subject, display_name).await {
+    let mut drops = AuthDrops::default();
+    match create_service(&transaction, subject, display_name, &mut drops).await {
         Ok(principal) => {
             transaction
                 .commit()
                 .await
                 .context("commit service principal")?;
+            changes.publish(drops).await;
             Ok(principal)
         }
         Err(error) if error.error_type() == IdentityErrorType::Conflict => {
@@ -333,3 +354,6 @@ pub fn parse_pat_prefix(value: &str) -> Result<String, String> {
     }
     Ok(value.to_owned())
 }
+
+#[cfg(test)]
+mod tests;

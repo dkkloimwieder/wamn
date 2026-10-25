@@ -190,6 +190,7 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> String {
     .await
     .expect("provision the org");
     let outcome = provision_project_env(&ProvisionProjectEnvRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENV.into(),

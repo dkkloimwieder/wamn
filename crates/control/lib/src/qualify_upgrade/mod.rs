@@ -612,6 +612,7 @@ async fn prove_connected_copy(
         .context("apply base and overlay successors atomically on the owned predecessor copy")?;
     } else {
         apply_qualification_package(ApplyPackageRequest {
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: candidate.root.clone(),
             database_url: database_url.to_owned(),
             tenant: request.tenant.clone(),

@@ -32,6 +32,7 @@ async fn main() -> anyhow::Result<()> {
         .context("the PAT Secret file names its private directory")?;
     let issuer = pat_issuer::start(&system_url, directory).await?;
     let request = ProvisionProjectEnvRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         org: arguments[0].clone(),
         project: arguments[1].clone(),
         env: arguments[2].clone(),

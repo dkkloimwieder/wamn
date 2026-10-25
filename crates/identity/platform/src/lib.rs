@@ -631,6 +631,7 @@ pub async fn create_service(
     client: &(impl GenericClient + Sync),
     subject: &str,
     display_name: &str,
+    drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let subject = canonical_subject(subject)?;
     let display_name = checked_display_name(display_name)?;
@@ -638,7 +639,9 @@ pub async fn create_service(
         .query_one(INSERT_SERVICE_SQL, &[&subject, &display_name])
         .await
         .map_err(|error| database_error(&error))?;
-    decode_principal(&row)
+    let principal = decode_principal(&row)?;
+    drops.identity(principal.id().as_str());
+    Ok(principal)
 }
 
 /// Resolve a principal by its opaque ID without authenticating the caller.
@@ -828,17 +831,21 @@ pub async fn assign_project_role(
     org: &str,
     project: &str,
     role: &str,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
     let role = canonical_role(role)?;
-    client
+    let written = client
         .execute(
             ASSIGN_PROJECT_ROLE_SQL,
             &[&principal_id.as_str(), &org, &project, &role],
         )
         .await
         .map_err(|error| database_error(&error))?;
+    if written > 0 {
+        drops.identity(principal_id.as_str());
+    }
     Ok(())
 }
 

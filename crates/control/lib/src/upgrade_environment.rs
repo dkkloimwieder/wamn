@@ -555,7 +555,9 @@ impl Run {
         use crate::apply_package::{ApplyPackageRequest, apply_package};
         use crate::qualify_upgrade::{presented_root_identity, read_current_packages};
 
+        let auth_changes = platform(environment)?.auth_changes().await?;
         let request = |root: &crate::apply_package::PackageRoot| ApplyPackageRequest {
+            changes: auth_changes.clone(),
             package: root.clone(),
             database_url: databases.project_url(),
             tenant: databases.tenant.clone(),

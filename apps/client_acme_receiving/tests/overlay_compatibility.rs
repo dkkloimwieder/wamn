@@ -375,6 +375,7 @@ async fn install_fresh(
         .collect::<anyhow::Result<Vec<_>>>()?;
     for package in &roots {
         apply_package::apply_package(ApplyPackageRequest {
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: package.clone(),
             database_url: url.clone(),
             tenant: identity().tenant.clone(),

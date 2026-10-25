@@ -119,6 +119,7 @@ pub async fn stage(
         };
         if applies {
             crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
+                changes: platform.auth_changes().await?,
                 package: opened.package_root(),
                 database_url: project_url.to_owned(),
                 tenant: tenant.clone(),
@@ -236,6 +237,7 @@ pub async fn materialize_application_principals(
             &mut system,
             &subject,
             &subject,
+            changes,
         )
         .await?;
         ensure!(

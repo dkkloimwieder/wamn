@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, bail, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_schema_control::plan_package_migrations;
 
 use crate::apply_package::PackageRoot;
@@ -152,6 +153,7 @@ pub async fn reconcile_package_data_access(
         &packages,
         ReconcileMode::Production,
         true,
+        &AuthChanges::default(),
     )
     .await
 }
@@ -175,6 +177,7 @@ pub async fn reconcile_local(
     tenant: &str,
     environment: &str,
     apply: bool,
+    changes: &AuthChanges,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     wamn_runtime::local_application::require_local_target(database_url, tenant, environment)
         .await?;
@@ -184,6 +187,7 @@ pub async fn reconcile_local(
         &prepared.0,
         ReconcileMode::Local(environment),
         apply,
+        changes,
     )
     .await
 }
@@ -247,13 +251,14 @@ async fn execute_prepared(
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
+    changes: &AuthChanges,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     ensure!(!tenant.is_empty(), "tenant must not be empty");
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = reconcile_mode(&mut client, tenant, packages, mode, apply).await;
+    let result = reconcile_mode(&mut client, tenant, packages, mode, apply, changes).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -272,16 +277,19 @@ async fn reconcile_mode(
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
+    changes: &AuthChanges,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     let tx = client
         .transaction()
         .await
         .context("begin package data-access reconciliation")?;
-    let result = reconcile_in_transaction(&tx, tenant, packages, mode, apply).await?;
+    let mut drops = AuthDrops::default();
+    let result = reconcile_in_transaction(&tx, tenant, packages, mode, apply, &mut drops).await?;
     if apply {
         tx.commit()
             .await
             .context("commit package data-access reconciliation")?;
+        changes.publish(drops).await;
     } else {
         tx.rollback()
             .await
@@ -297,6 +305,7 @@ async fn reconcile_in_transaction(
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
+    drops: &mut AuthDrops,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     let local = match mode {
         ReconcileMode::Local(environment) => Some(environment),
@@ -314,6 +323,7 @@ async fn reconcile_in_transaction(
                 tx,
                 tenant,
                 &package.directory,
+                drops,
             )
             .await?;
         }

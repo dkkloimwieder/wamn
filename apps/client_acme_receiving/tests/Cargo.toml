@@ -11,6 +11,7 @@ autotests = false
 path = "lib.rs"
 
 [dev-dependencies]
+wamn-platform-identity = { workspace = true }
 serde_json = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control = { workspace = true }

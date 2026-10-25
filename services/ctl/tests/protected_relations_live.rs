@@ -196,6 +196,7 @@ async fn install_project_database(client: &Client, url: &str) {
     );
 
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: wamn_fixture_package::package_root(),
             artifact_digest: Some(

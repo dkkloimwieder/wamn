@@ -211,6 +211,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .await
         .expect("install application authorization floor");
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: fixture_package_root(),
             artifact_digest: Some(
@@ -226,6 +227,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     .await
     .expect("apply the fixture package before policy");
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: overlay_package_root(),
             artifact_digest: Some(
@@ -552,6 +554,7 @@ async fn install_lineage_fixture(url: &str) -> Client {
 
 async fn apply(url: &str, package: PathBuf) {
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
@@ -982,6 +985,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
                 TENANT,
                 ENVIRONMENT,
                 apply,
+                &wamn_platform_identity::auth_changes::AuthChanges::default(),
             )
             .await
         }

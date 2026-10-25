@@ -5687,6 +5687,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control",
  "wamn-execution-contract",
+ "wamn-platform-identity",
  "wamn-schema-generator",
  "wamn-test-infrastructure",
 ]
@@ -6634,6 +6635,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
+ "wamn-platform-identity",
  "wamn-schema-generator",
  "wamn-test-postgres",
 ]

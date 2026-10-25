@@ -173,6 +173,7 @@ pub async fn provision_project(
     })
     .await?;
     let args = ProvisionProjectEnvRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         org: identity().org.clone(),
         project: identity().project.clone(),
         env: identity().environment.clone(),
@@ -577,6 +578,7 @@ pub async fn publish(
         artifact_digest: Some(pushed.digest),
     };
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: installed.clone(),
         database_url: route.database_url.clone(),
         tenant: identity().tenant.clone(),

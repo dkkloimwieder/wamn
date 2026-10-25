@@ -173,6 +173,7 @@ async fn publish_through_publish_release(
         .await
         .expect("open the verified package artifact");
     apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: opened.package_root(),
         database_url: project.to_owned(),
         tenant: tenant.clone(),

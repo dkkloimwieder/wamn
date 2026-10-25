@@ -315,6 +315,7 @@ fn provisioning_args(
     management_secret: Option<&Path>,
 ) -> ProvisionProjectEnvRequest {
     ProvisionProjectEnvRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         org: scope.org.clone(),
         project: scope.project.clone(),
         env: scope.environment.clone(),

@@ -66,6 +66,9 @@ pub struct ApplyPackageRequest {
     /// digest of the verified artifact it was opened from.
     pub package: PackageRoot,
 
+    /// Publisher for auth facts after the package transaction commits.
+    pub changes: wamn_platform_identity::auth_changes::AuthChanges,
+
     /// Owner connection to the target project-environment database.
     pub database_url: String,
 
@@ -87,6 +90,8 @@ pub struct ApplyOutcome {
 
     /// Whether this application changed the database.
     pub changed: bool,
+
+    pub(crate) drops: wamn_platform_identity::auth_changes::AuthDrops,
 }
 
 /// Package bytes and migration policy prepared before database mutation.
@@ -290,6 +295,9 @@ async fn apply_request(
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
     let result = Box::pin(apply(&mut client, &request.tenant, &package, mode)).await;
+    if let Ok(outcome) = &result {
+        request.changes.publish(outcome.drops.clone()).await;
+    }
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -698,7 +706,8 @@ async fn apply_prepared(
     reconcile_entity_maps(tx, &plan, manifest).await?;
     let triggers_changed =
         reconcile_record_history_triggers(tx, manifest, synchronizations).await?;
-    let admin_role_changed = ensure_admin_role(tx, tenant).await?;
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let admin_role_changed = ensure_admin_role(tx, tenant, &mut drops).await?;
     let registrations_changed =
         reconcile_package_registrations(tx, tenant, &package_id, &registrations).await?;
     if let Some(schema) = stage_schema
@@ -737,6 +746,7 @@ async fn apply_prepared(
         crate::package_upgrade::persist(tx, evidence, artifact_digest).await?;
     }
     Ok(ApplyOutcome {
+        drops,
         package_id,
         package_version,
         migrations_applied: applied_count,
@@ -756,6 +766,7 @@ pub async fn reconcile_local_package_configuration(
     tx: &Transaction<'_>,
     tenant: &str,
     directory: &PackageDirectory,
+    drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
 ) -> anyhow::Result<()> {
     bind_apply_package_principal(tx).await?;
     let plan = plan_package_migrations(directory, None)?;
@@ -797,7 +808,7 @@ pub async fn reconcile_local_package_configuration(
     create_history_tables(tx, &manifest).await?;
     reconcile_entity_maps(tx, &plan, &manifest).await?;
     reconcile_record_history_triggers(tx, &manifest, &policy.synchronizations).await?;
-    ensure_admin_role(tx, tenant).await?;
+    ensure_admin_role(tx, tenant, drops).await?;
     reconcile_package_registrations(
         tx,
         tenant,

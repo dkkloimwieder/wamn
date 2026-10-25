@@ -742,7 +742,17 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         "--emit-control-administration-patch is valid only for an administration prepare"
     );
 
-    let request = provisioning_request(args);
+    let mut request = provisioning_request(args);
+    if request.emit_management_author_pat_secret.is_some()
+        || request.emit_operator_pat_secret.is_some()
+    {
+        // Preserve transport validation before opening any external connection.
+        wamn_control::pat_client::PatClient::new(&request.pat_issuer)?;
+        request.changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
+            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        )
+        .await?;
+    }
     let outcome = provision_project_env::provision_project_env(&request).await?;
     print_provisioned(&request, &outcome)
 }
@@ -792,6 +802,7 @@ fn workload_action_request(
 
 fn provisioning_request(args: ProvisionProjectEnvArgs) -> ProvisionProjectEnvRequest {
     ProvisionProjectEnvRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         org: args.org.expect(
             "clap parser invariant: --org is required unless --revoke-pat-prefix is present",
         ),

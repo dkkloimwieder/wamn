@@ -276,6 +276,10 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let opened = open(&registry, args.package_artifact).await?;
     let presented = open_all(&registry, args.presented_packages).await?;
     let request = ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::connect(
+            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        )
+        .await?,
         package: opened.package_root(),
         database_url: args.database_url,
         tenant: args.tenant,

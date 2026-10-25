@@ -88,6 +88,10 @@ pub async fn publish_wired_release(
         &request.release.control_database_url,
         &request.issuer,
         &triple,
+        &wamn_platform_identity::auth_changes::AuthChanges::connect(
+            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        )
+        .await?,
     )
     .await
     .map_err(|_| anyhow::anyhow!("mint management-author PAT failed"))?;

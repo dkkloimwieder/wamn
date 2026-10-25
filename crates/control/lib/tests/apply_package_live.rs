@@ -405,6 +405,7 @@ async fn apply_as(
     digest: &str,
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: apply_package::PackageRoot {
             path: package.to_path_buf(),
             artifact_digest: Some(digest.to_owned()),
@@ -423,6 +424,7 @@ async fn apply_for_tenant(
     // A release apply takes a verified artifact. The fixture tree stands in
     // for one under a digest of its own bytes.
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: package.to_path_buf(),
             artifact_digest: Some(
@@ -2111,6 +2113,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     let apply_local = || {
         apply_package::apply_local_package(
             ApplyPackageRequest {
+                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
                 package: apply_package::PackageRoot {
                     path: package.clone(),
                     artifact_digest: None,

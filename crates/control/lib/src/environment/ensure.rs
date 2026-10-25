@@ -86,6 +86,7 @@ pub async fn ensure(
     let database_secret = private.path("database.json");
     let pat_secret = private.path("management-author-pat.json");
     let outcome = provision_project_env(&ProvisionProjectEnvRequest {
+        changes: platform.auth_changes().await?,
         org: document.org.clone(),
         project: document.project.clone(),
         env: document.env.clone(),

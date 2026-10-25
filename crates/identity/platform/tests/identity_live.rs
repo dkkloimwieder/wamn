@@ -87,13 +87,23 @@ async fn platform_identity_round_trip_on_postgres() {
 
     one_address_admits_one_user(&client).await;
 
-    let service = create_service(&client, "agent-ci", "CI Agent")
-        .await
-        .expect("create service principal");
+    let service = create_service(
+        &client,
+        "agent-ci",
+        "CI Agent",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("create service principal");
     assert_eq!(service.principal_type(), PrincipalType::Service);
-    let duplicate_service = create_service(&client, "agent-ci", "Second CI Agent")
-        .await
-        .expect_err("one subject admits one service");
+    let duplicate_service = create_service(
+        &client,
+        "agent-ci",
+        "Second CI Agent",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect_err("one subject admits one service");
     assert_eq!(duplicate_service.error_type(), IdentityErrorType::Conflict);
     assert!(
         resolve_subject(&client, PrincipalType::Service, "agent-ci")
@@ -102,12 +112,26 @@ async fn platform_identity_round_trip_on_postgres() {
             .is_some()
     );
 
-    assign_project_role(&client, user.id(), "demo", "widgets", "project-author")
-        .await
-        .expect("assign author role");
-    assign_project_role(&client, user.id(), "demo", "widgets", "project-promoter")
-        .await
-        .expect("assign promoter role");
+    assign_project_role(
+        &client,
+        user.id(),
+        "demo",
+        "widgets",
+        "project-author",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("assign author role");
+    assign_project_role(
+        &client,
+        user.id(),
+        "demo",
+        "widgets",
+        "project-promoter",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("assign promoter role");
     let roles = project_roles(&client, user.id(), "demo", "widgets")
         .await
         .expect("read project roles");
@@ -207,9 +231,16 @@ async fn project_delete_removes_its_roles_and_memberships(
     client: &tokio_postgres::Client,
     user: &Principal,
 ) {
-    assign_project_role(client, user.id(), "demo", "inventory", "project-author")
-        .await
-        .expect("assign a role on the project to delete");
+    assign_project_role(
+        client,
+        user.id(),
+        "demo",
+        "inventory",
+        "project-author",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("assign a role on the project to delete");
     grant_project_env_membership(client, user.id(), "demo", "inventory", "dev")
         .await
         .expect("grant a membership on the project to delete");
@@ -337,9 +368,16 @@ async fn project_environment_membership_round_trip(
         Some(user.id().as_str().to_owned()),
         "user membership must not require a project management role"
     );
-    assign_project_role(client, service.id(), "demo", "widgets", "operator")
-        .await
-        .expect("assign the service operator role");
+    assign_project_role(
+        client,
+        service.id(),
+        "demo",
+        "widgets",
+        "operator",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("assign the service operator role");
     assert_eq!(
         route_principal_id(
             &reads,

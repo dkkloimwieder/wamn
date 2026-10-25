@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     apply_local_package(
         ApplyPackageRequest {
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: PackageRoot {
                 path: package.clone(),
                 artifact_digest: None,
@@ -67,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         TENANT,
         ENVIRONMENT,
         true,
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
     )
     .await?;
     Ok(())

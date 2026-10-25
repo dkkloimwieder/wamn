@@ -7,7 +7,11 @@ use wamn_control_provision::operation_grants::{
 
 /// Create the tenant's built-in `admin` role when it is absent, and return
 /// whether a row was written. `admin` has no permission rows.
-pub(super) async fn ensure_admin_role(tx: &Transaction<'_>, tenant: &str) -> anyhow::Result<bool> {
+pub(super) async fn ensure_admin_role(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
+) -> anyhow::Result<bool> {
     tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&tenant])
         .await
         .context("lock the tenant operation-grant carrier")?;
@@ -21,5 +25,8 @@ pub(super) async fn ensure_admin_role(tx: &Transaction<'_>, tenant: &str) -> any
         .execute(ENSURE_ADMIN_ROLE_SQL, &[&tenant])
         .await
         .context("create the admin role")?;
+    if written > 0 {
+        drops.tenant(tenant);
+    }
     Ok(written > 0)
 }

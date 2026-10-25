@@ -183,6 +183,7 @@ fn upgrade_retention(root: &Path, table: &str, retention: &str) {
 /// stands in for one under a digest of its own bytes.
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: package.to_path_buf(),
             artifact_digest: Some(

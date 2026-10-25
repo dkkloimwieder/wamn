@@ -3775,12 +3775,24 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
          INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); \
          INSERT INTO registry.projects (org, id) VALUES ('org', 'project');"
     )).await.unwrap();
-    let principal = create_service(&admin, "pat-drop-test", "PAT drop test")
-        .await
-        .unwrap();
-    assign_project_role(&admin, principal.id(), "org", "project", "admin")
-        .await
-        .unwrap();
+    let principal = create_service(
+        &admin,
+        "pat-drop-test",
+        "PAT drop test",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .unwrap();
+    assign_project_role(
+        &admin,
+        principal.id(),
+        "org",
+        "project",
+        "admin",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     let issued = issue_pat(
         &admin,
         principal.id(),

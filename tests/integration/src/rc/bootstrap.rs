@@ -95,6 +95,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
     let management_path = resources.work.join("management-pat.json");
     let route_path = resources.work.join("route-pat.json");
     let provisioned = provision_project_env::provision_project_env(&ProvisionProjectEnvRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         org: "rc".into(),
         project: "app".into(),
         env: "dev".into(),

@@ -304,10 +304,17 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .await
         .ok()
         .expect("grant environment membership");
-    assign_project_role(&*admin, &user, ORG, PROJECT, "admin")
-        .await
-        .ok()
-        .expect("assign the existing application role");
+    assign_project_role(
+        &*admin,
+        &user,
+        ORG,
+        PROJECT,
+        "admin",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .ok()
+    .expect("assign the existing application role");
     reconcile_journey_run_plane(
         &JourneyScope::receiving(),
         system.url(),

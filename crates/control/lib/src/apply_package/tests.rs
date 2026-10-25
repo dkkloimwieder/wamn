@@ -25,6 +25,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         .unwrap();
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
     apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: url.clone(),
         tenant: TENANT.to_owned(),
@@ -50,6 +51,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         std::fs::write(root.join(&migration.relative_path), &migration.bytes).unwrap();
     }
     let applied = apply_package(ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&root).unwrap(),
         database_url: url.clone(),
         tenant: TENANT.to_owned(),
@@ -66,8 +68,150 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
 
     let tx = client.transaction().await.unwrap();
     tx.query_one(CLAIM_TENANT_SQL, &[&TENANT]).await.unwrap();
-    let local = reconcile_local_package_configuration(&tx, TENANT, &directory)
-        .await
-        .expect_err("the local configuration path admitted a removed model");
+    let local = reconcile_local_package_configuration(
+        &tx,
+        TENANT,
+        &directory,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect_err("the local configuration path admitted a removed model");
     assert_eq!(format!("{local:#}"), format!("{applied:#}"));
+}
+
+#[tokio::test]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+async fn auth_drops_ensure_admin_role_drops_cached_grants_only_after_commit() {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use wamn_platform_identity::auth_changes::AuthDrops;
+    use wamn_runtime::auth_cache::{
+        AuthCache, PrincipalGrants,
+        test_util::{nats, until, watched},
+    };
+
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(connection);
+    client
+        .batch_execute(&wamn_control_provision::platform_principals_sql("example.invalid").unwrap())
+        .await
+        .unwrap();
+    client.batch_execute(
+        "CREATE ROLE authdrops_role_owner NOLOGIN NOSUPERUSER BYPASSRLS; \
+         GRANT USAGE ON SCHEMA platform, wamn_history, wamn_authority TO authdrops_role_owner; \
+         GRANT ALL ON ALL TABLES IN SCHEMA platform TO authdrops_role_owner; \
+         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_history, wamn_authority TO authdrops_role_owner; \
+         SET ROLE authdrops_role_owner;"
+    ).await.unwrap();
+    let (_server, nats) = nats().await;
+    let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
+    let changes = watched(&nats, Some("admin-drops"), cache.clone()).await;
+    let ticket = cache.grants("admin-drops", "principal").unwrap_err();
+    cache
+        .keep_grants(
+            "admin-drops",
+            "principal",
+            ticket,
+            PrincipalGrants::default(),
+        )
+        .await;
+    assert!(cache.grants("admin-drops", "principal").is_ok());
+
+    let tx = client.transaction().await.unwrap();
+    bind_apply_package_principal(&tx).await.unwrap();
+    let mut rolled_back = AuthDrops::default();
+    assert!(
+        ensure_admin_role(&tx, "admin-drops", &mut rolled_back)
+            .await
+            .unwrap()
+    );
+    assert!(!rolled_back.is_empty());
+    assert!(cache.grants("admin-drops", "principal").is_ok());
+    tx.rollback().await.unwrap();
+    assert!(cache.grants("admin-drops", "principal").is_ok());
+
+    let tx = client.transaction().await.unwrap();
+    bind_apply_package_principal(&tx).await.unwrap();
+    let mut drops = AuthDrops::default();
+    assert!(
+        ensure_admin_role(&tx, "admin-drops", &mut drops)
+            .await
+            .unwrap()
+    );
+    assert!(cache.grants("admin-drops", "principal").is_ok());
+    tx.commit().await.unwrap();
+    changes.publish(drops).await;
+    until("the admin role drop clears cached grants", || {
+        cache.grants("admin-drops", "principal").is_err()
+    })
+    .await;
+    let tx = client.transaction().await.unwrap();
+    bind_apply_package_principal(&tx).await.unwrap();
+    let mut unchanged = AuthDrops::default();
+    assert!(
+        !ensure_admin_role(&tx, "admin-drops", &mut unchanged)
+            .await
+            .unwrap()
+    );
+    assert!(unchanged.is_empty());
+    tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use wamn_runtime::auth_cache::{
+        AuthCache, PrincipalGrants,
+        test_util::{nats, until, watched},
+    };
+
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    database.execute(&[
+        &wamn_control_provision::sql::install_platform_extensions_sql(),
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
+    ]).unwrap();
+    database.execute(&[
+        "CREATE ROLE authdrops_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS PASSWORD 'authdrops'; GRANT wamn_db_owner TO authdrops_apply;",
+        "GRANT USAGE, CREATE ON SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL TABLES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply;",
+    ]).unwrap();
+    let mut owner_url = url::Url::parse(database.url()).unwrap();
+    owner_url.set_username("authdrops_apply").unwrap();
+    owner_url.set_password(Some("authdrops")).unwrap();
+    let (_server, nats) = nats().await;
+    let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
+    let changes = watched(&nats, Some("apply-drops"), cache.clone()).await;
+    let ticket = cache.grants("apply-drops", "principal").unwrap_err();
+    cache
+        .keep_grants(
+            "apply-drops",
+            "principal",
+            ticket,
+            PrincipalGrants::default(),
+        )
+        .await;
+    assert!(cache.grants("apply-drops", "principal").is_ok());
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+    apply_package(ApplyPackageRequest {
+        package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
+        database_url: owner_url.to_string(),
+        tenant: "apply-drops".to_owned(),
+        changes,
+    })
+    .await
+    .unwrap();
+    until("package apply publishes the admin role drop", || {
+        cache.grants("apply-drops", "principal").is_err()
+    })
+    .await;
+    assert_eq!(database.execute(&["SELECT count(*) FROM platform.role WHERE tenant_id = 'apply-drops' AND name = 'admin'"]).unwrap().trim(), "1");
 }

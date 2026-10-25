@@ -246,9 +246,14 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         .cause(),
         Some(RefusalCause::Expired)
     );
-    let service = create_service(&client, "password-service", "Service")
-        .await
-        .unwrap();
+    let service = create_service(
+        &client,
+        "password-service",
+        "Service",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         issue_invitation(&mut client, &actor(), service.id())
             .await

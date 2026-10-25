@@ -111,6 +111,7 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
             ORG,
             "billing",
             "project-admin",
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
         )
         .await
         .expect("assign project-admin");

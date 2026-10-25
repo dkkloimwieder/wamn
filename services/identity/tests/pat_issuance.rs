@@ -206,9 +206,14 @@ async fn operator_pat_issuance_over_https() {
     let user = create_user(&system, "pat-user", "pat-human@example.invalid", "PAT User")
         .await
         .expect_redacted("user fixture");
-    let machine = create_service(&system, "pat-machine", "PAT Machine")
-        .await
-        .expect_redacted("service fixture");
+    let machine = create_service(
+        &system,
+        "pat-machine",
+        "PAT Machine",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect_redacted("service fixture");
     let disabled = create_user(
         &system,
         "pat-disabled",

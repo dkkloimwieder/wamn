@@ -1097,7 +1097,15 @@ async fn admitted_user(
     role: &str,
 ) -> anyhow::Result<IssuedPat> {
     let principal = create_user(admin, subject, subject, subject).await?;
-    assign_project_role(admin, principal.id(), ORG, project, role).await?;
+    assign_project_role(
+        admin,
+        principal.id(),
+        ORG,
+        project,
+        role,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await?;
     issue_pat(admin, principal.id(), "gate", TTL)
         .await
         .map_err(Into::into)
@@ -1503,12 +1511,24 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let bob = admitted_user(&admin, "bob@example.com", PROJECT, "project-admin")
         .await
         .expect("admit bob");
-    let service = create_service(&admin, "ci-runner", "CI runner")
-        .await
-        .expect("create the service principal");
-    assign_project_role(&admin, service.id(), ORG, PROJECT, "project-author")
-        .await
-        .expect("admit the service principal");
+    let service = create_service(
+        &admin,
+        "ci-runner",
+        "CI runner",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("create the service principal");
+    assign_project_role(
+        &admin,
+        service.id(),
+        ORG,
+        PROJECT,
+        "project-author",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("admit the service principal");
     let service_token = issue_pat(&admin, service.id(), "gate", TTL)
         .await
         .expect("mint a service token");

@@ -169,9 +169,14 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     )
     .await
     .expect_redacted("other user fixture");
-    let service = create_service(system, "session-machine", "Session Machine")
-        .await
-        .expect_redacted("service fixture");
+    let service = create_service(
+        system,
+        "session-machine",
+        "Session Machine",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect_redacted("service fixture");
     let alice_pat = issue_pat(
         system,
         alice.id(),
@@ -205,9 +210,16 @@ async fn exercise(fixture: &Fixture, https: &Https) {
 
     // Tenant data and a management role are insufficient without an explicit
     // membership. The second principal's membership cannot admit Alice either.
-    wamn_platform_identity::assign_project_role(system, alice.id(), "demo", "widgets", "admin")
-        .await
-        .expect_redacted("management-role negative control");
+    wamn_platform_identity::assign_project_role(
+        system,
+        alice.id(),
+        "demo",
+        "widgets",
+        "admin",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect_redacted("management-role negative control");
     refuse(https, alice_pat.token(), aud).await;
     grant(system, &alice, "demo", "dev").await;
 

@@ -172,6 +172,7 @@ async fn provision_control(control: &Client) {
 async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
     for input in inputs {
         apply_package::apply_package(ApplyPackageRequest {
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: crate::package_artifact::fixture_package_root(&input.root)
                 .expect("read the fixture package root"),
             database_url: project_url.to_owned(),

@@ -53,6 +53,7 @@ fn fixture_roots(paths: &[PathBuf]) -> Vec<PackageRoot> {
 
 fn apply_request(database_url: &str, package: &Path) -> ApplyPackageRequest {
     ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: fixture_root(package),
         database_url: database_url.to_owned(),
         tenant: TENANT.to_owned(),

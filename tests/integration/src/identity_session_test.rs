@@ -393,7 +393,7 @@ async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {
         let user_email = format!("{user_subject}@example.invalid");
         let user = create_user(&transaction, &user_subject, &user_email, "Disposable session test user").await
             .map_err(|_| anyhow!("create identity session fixture user failed"))?;
-        let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service").await
+        let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service", &mut wamn_platform_identity::auth_changes::AuthDrops::default()).await
             .map_err(|_| anyhow!("create identity session fixture service failed"))?;
         let user_pat = issue_pat(&transaction, user.id(), "Disposable session test", Duration::from_secs(3600)).await
             .map_err(|_| anyhow!("issue identity session fixture user PAT failed"))?;

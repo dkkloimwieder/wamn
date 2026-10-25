@@ -87,13 +87,20 @@ pub(super) async fn assemble(
         )
         .await?;
     let subject = operator_subject(input.org, input.project, input.environment)?;
-    let principal = create_service(&system, &subject, "local application operator").await?;
+    let principal = create_service(
+        &system,
+        &subject,
+        "local application operator",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await?;
     assign_project_role(
         &system,
         principal.id(),
         input.org,
         input.project,
         input.caller_role,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
     )
     .await?;
     let issued = issue_pat(
@@ -207,6 +214,7 @@ pub(super) async fn assemble(
     let mut roots = BTreeMap::new();
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: wamn_control::apply_package::PackageRoot {
                 path: package.root.to_path_buf(),
                 artifact_digest: Some(

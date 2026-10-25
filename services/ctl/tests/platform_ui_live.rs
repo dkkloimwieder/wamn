@@ -41,6 +41,7 @@ async fn provision_browser_environment(
     let output = root.join(BROWSER_PROJECT);
     std::fs::create_dir_all(&output)?;
     let provisioned = provision_project_env(&ProvisionProjectEnvRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         org: ORG.to_owned(),
         project: BROWSER_PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),

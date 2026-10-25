@@ -198,6 +198,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("seed the authored role's references")?;
 
     let args = || ApplyPackageRequest {
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: package_root(),
             artifact_digest: Some(
@@ -368,12 +369,20 @@ async fn issue_scoped_token(
         admin,
         &subject,
         &format!("operator {project}/{environment}"),
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
     )
     .await
     .context("create wrong-scope operator service")?;
-    assign_project_role(admin, principal.id(), ORG, project, ADMIN_ROLE)
-        .await
-        .context("assign wrong-scope operator role")?;
+    assign_project_role(
+        admin,
+        principal.id(),
+        ORG,
+        project,
+        ADMIN_ROLE,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .context("assign wrong-scope operator role")?;
     Ok(
         issue_pat(admin, principal.id(), "operator", Duration::from_secs(3600))
             .await
@@ -491,7 +500,15 @@ async fn assert_user_environment_membership(
         )
         .await?;
     // A project-wide role and another environment's membership cannot authorize this route.
-    assign_project_role(admin, user.id(), ORG, PROJECT, ADMIN_ROLE).await?;
+    assign_project_role(
+        admin,
+        user.id(),
+        ORG,
+        PROJECT,
+        ADMIN_ROLE,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await?;
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
     let mut admissions = 0;
     assert_eq!(
@@ -960,9 +977,16 @@ async fn production_operator_authentication_and_operation_authorization() {
         (ORG, PROJECT, "project-author"),
         (ORG, PROJECT, "operator"),
     ] {
-        assign_project_role(admin.as_ref(), principal.id(), org, project, role)
-            .await
-            .expect("assign a role that cannot authorize this route");
+        assign_project_role(
+            admin.as_ref(),
+            principal.id(),
+            org,
+            project,
+            role,
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        )
+        .await
+        .expect("assign a role that cannot authorize this route");
         assert_eq!(
             invoke(
                 &route_auth,
@@ -975,9 +999,16 @@ async fn production_operator_authentication_and_operation_authorization() {
             "the role {org}/{project}/{role} authorized the wrong route"
         );
     }
-    assign_project_role(admin.as_ref(), principal.id(), ORG, PROJECT, ADMIN_ROLE)
-        .await
-        .expect("restore the admin project role");
+    assign_project_role(
+        admin.as_ref(),
+        principal.id(),
+        ORG,
+        PROJECT,
+        ADMIN_ROLE,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .expect("restore the admin project role");
     let mut admin_admissions = 0;
     invoke(
         &route_auth,

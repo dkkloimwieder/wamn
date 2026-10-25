@@ -182,6 +182,9 @@ pub(crate) async fn apply_coordinated(
         tx.commit()
             .await
             .context("commit base, overlay successors, and qualification together")?;
+        for outcome in &outcomes {
+            request.changes.publish(outcome.drops.clone()).await;
+        }
         Ok(outcomes)
     }
     .await;

@@ -224,9 +224,16 @@ async fn exercise(
     )
     .await
     .context("issue the test PAT through production identity")?;
-    assign_project_role(system, principal, &args.org, &args.project, "admin")
-        .await
-        .context("assign the project role that must not imply membership")?;
+    assign_project_role(
+        system,
+        principal,
+        &args.org,
+        &args.project,
+        "admin",
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await
+    .context("assign the project role that must not imply membership")?;
     seed_tenant_role(args, project, principal, role, auth).await?;
 
     let request = |case: &'static str, status| get_case(args, http, token.token(), case, status);

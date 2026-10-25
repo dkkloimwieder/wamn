@@ -92,6 +92,7 @@ wamn-schema-introspection = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [dev-dependencies]
+wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
 wamn-workflow = { workspace = true }
 wamn-fixture-package = { workspace = true }

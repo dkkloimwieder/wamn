@@ -1278,6 +1278,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
 async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
     for (secret_namespace, disposable) in [(Some("hosts".to_owned()), None), (None, Some(true))] {
         let error = provision_project_env(&ProvisionProjectEnvRequest {
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             org: "acme".into(),
             project: "billing".into(),
             env: "dev".into(),

@@ -419,6 +419,16 @@ impl ProductionDevStageRunner {
         for package in package_inputs {
             let outcome = apply_package::apply_local_package(
                 ApplyPackageRequest {
+                    changes: wamn_platform_identity::auth_changes::AuthChanges::new(
+                        async_nats::connect(self.config.scheduler_nats_url())
+                            .await
+                            .map_err(|source| {
+                                ProductionDevStageError::owner(
+                                    "connect auth changes",
+                                    source.into(),
+                                )
+                            })?,
+                    ),
                     package: apply_package::PackageRoot {
                         path: package.root,
                         artifact_digest: None,
@@ -800,6 +810,13 @@ impl ProductionDevStageRunner {
             &self.config.activation_identity().tenant,
             &self.config.activation_identity().environment,
             apply,
+            &wamn_platform_identity::auth_changes::AuthChanges::new(
+                async_nats::connect(self.config.scheduler_nats_url())
+                    .await
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("connect auth changes", source.into())
+                    })?,
+            ),
         )
         .await
         .map_err(|source| {

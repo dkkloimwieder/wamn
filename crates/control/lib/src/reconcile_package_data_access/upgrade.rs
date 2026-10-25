@@ -240,6 +240,7 @@ pub(crate) async fn reconcile_upgrade_in_transaction(
         &packages,
         super::ReconcileMode::Qualification,
         true,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
     )
     .await
 }
@@ -255,6 +256,7 @@ pub(crate) async fn reconcile_for_upgrade(
         &packages,
         super::ReconcileMode::Qualification,
         true,
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
     )
     .await
 }
