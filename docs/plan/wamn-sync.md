@@ -72,7 +72,7 @@ The engine is generic and lives in the wfe repo as a new package, `@wfe/sync`, b
 
 ### What `@wfe/sync` is told about its consumer
 
-The consumer is wamn: a Rust host serving generated per-model reads (`list`, `changes`) over GET with ETags and 304s, and operations over POST deduplicated by a request hash the client computes. Rows carry a client-generated UUIDv7 `id` and an integer `row_version`. Supported browsers are Chrome on PC and tablet; other browsers must degrade, never break. Solid 2 (`2.0.0-rc.18` or later) is the framework. That is the whole context; nothing else about wamn is needed to build the package.
+The consumer is wamn: a Rust host serving generated per-model reads (`list`, `changes`) over GET with ETags and 304s, and operations over POST deduplicated by a request hash the client computes. UUID-keyed rows carry a client-generated UUIDv7 `id` and an integer `row_version`. Supported browsers are Chrome on PC and tablet; other browsers must degrade, never break. Solid 2 (`2.0.0-rc.18` or later) is the framework. That is the whole context; nothing else about wamn is needed to build the package.
 
 ### `@wfe/sync` public surface
 
@@ -472,14 +472,14 @@ async replay() {
 
 The platform's conflict rule is refusal, not merge. A write carries the `row_version` it was made against (already the revision rule for commands that guard a reference). On replay, a stale `row_version` is refused with the existing code; the entry becomes `refused`, the optimistic row reverts, and the record shows the refusal with the current row beside the recorded request. The user resubmits or discards. Nothing is merged automatically.
 
-Append-only operations (a new record against a static parent) carry the parent's id, not its `row_version`, and cannot conflict on the parent; they conflict only on their own id, which is client-generated (UUIDv7) and unique.
+Append-only operations (a new record against a static parent) carry the parent's id, not its `row_version`, and cannot conflict on the parent. Their own id follows the key rules below.
 
 ### Ids and numbers
 
-- Every record id is a client-generated UUIDv7, for every model, made by the binding at enqueue; the host accepts the supplied id. A sequence is never a record id: it is a business key, unique and indexed, beside the id.
+- UUID record ids are client-generated UUIDv7 values, made by the binding at enqueue. The host accepts the supplied id. Plain integer keys also require a client id. The database generates identity and DEFAULT integer keys, and create returns the id. A numbered field is never the record id: it is a business key, unique and indexed, beside the id.
 - Fields declared `number = "<sequence>"` are host-assigned at commit, as the generator already enforces; the client never supplies them. Numbers are assigned in upload order, not record order; `recorded_at` carries record order.
 - Until the feed echo brings the number, the field renders as a placeholder that cannot be read as a number: `pending·<last 4 hex of the id>`. Any operation that consumes the number (print, export, a typed reference) waits on it: `yield until(() => rows[id]?.number !== undefined)`.
-- References between two offline entries (a line to its header) use the header's id; both ids exist at enqueue, so nothing is ever remapped.
+- For client-supplied keys, references between two offline entries (a line to its header) use the header's id. Both ids exist at enqueue, so nothing is ever remapped.
 
 ### Status surface
 

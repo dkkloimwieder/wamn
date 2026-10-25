@@ -17,6 +17,7 @@ use super::{
     ModelDeclaration, OperationDeclaration, PackageManifest, Table, WamnApi, column, insert_bytes,
     query_variants, rust_identifier, rust_type_identifier, sql,
 };
+use crate::key::{KeyType, key_type};
 use crate::manifest::{FilterMatch, OperationErrorDetailKey, access_operation_error_detail};
 
 const HEADER: &str = "// @generated from the package manifest and migration IR; do not edit.\n\n";
@@ -189,7 +190,7 @@ pub(super) fn emit_model_data(
     source.push('\n');
     for (action, operation) in &model.operations {
         match action {
-            CrudAction::Get => emit_get(&mut source, model_name, &model_type),
+            CrudAction::Get => emit_get(&mut source, model_name, &model_type, table),
             CrudAction::Query => emit_query(
                 &mut source,
                 model_name,
@@ -240,15 +241,34 @@ fn statement_error(action: CrudAction, constraints_expression: &str) -> String {
     )
 }
 
-fn emit_get(source: &mut String, model_name: &str, model_type: &str) {
+/// The data layer receives integers already parsed by the codec.
+fn key_request(table: &Table) -> (&'static str, &'static str, &'static str, &'static str) {
+    match key_type(table).expect("validation resolved the model key") {
+        KeyType::Uuid => (
+            "&str",
+            "let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n",
+            "id.clone()",
+            "Error::not_found(&id)",
+        ),
+        key => (
+            request_type(key.column_type()),
+            "",
+            "id",
+            "Error::NotFound { field: \"id\".to_owned(), id: id.to_string() }",
+        ),
+    }
+}
+
+fn emit_get(source: &mut String, model_name: &str, model_type: &str, table: &Table) {
+    let (id_type, parse_id, id_argument, not_found) = key_request(table);
     let refuse = statement_error(CrudAction::Get, "Constraints::NONE");
     writeln!(
         source,
         "/// `{model_name}.get`: load one row by id.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn get(connection: &mut Connection, id: &str) -> Result<{model_type}Row, Error> {{\n\
-         let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n\
-         sql::get(connection, id.clone()).await.map_err({refuse})?.ok_or_else(|| Error::not_found(&id))\n\
+         pub async fn get(connection: &mut Connection, id: {id_type}) -> Result<{model_type}Row, Error> {{\n\
+         {parse_id}\
+         sql::get(connection, {id_argument}).await.map_err({refuse})?.ok_or_else(|| {not_found})\n\
          }}\n"
     )
     .expect("writing to a String cannot fail");
@@ -281,17 +301,28 @@ fn emit_create(
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let mut body =
-        String::from("let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n");
+    let client_id = !crate::key::database_generated(table);
+    let (id_type, parse_id, _, _) = key_request(table);
+    let id_parameter = if client_id {
+        format!("id: {id_type}, ")
+    } else {
+        String::new()
+    };
+    let mut body = if client_id {
+        parse_id.to_owned()
+    } else {
+        String::new()
+    };
     for (field, bind) in operation
         .writable_fields
         .iter()
-        .zip(accessor.binds.iter().skip(1))
+        .zip(accessor.binds.iter().skip(usize::from(client_id)))
     {
         let name = field_name(field);
         emit_value(&mut body, &name, field, bind, &name);
     }
     let mut arguments = std::iter::once("id".to_owned())
+        .filter(|_| client_id)
         .chain(
             operation
                 .writable_fields
@@ -331,7 +362,7 @@ fn emit_create(
          /// for the operation.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          #[allow(clippy::too_many_arguments)]\n\
-         pub async fn create(transaction: &mut wamn_postgres_statements::Transaction, id: &str, {parameters}) -> Result<{model_type}Row, Error> {{\n\
+         pub async fn create(transaction: &mut wamn_postgres_statements::Transaction, {id_parameter}{parameters}) -> Result<{model_type}Row, Error> {{\n\
          {body}\
          sql::create(transaction, {arguments}).await.map_err({refuse})\n\
          }}\n"
@@ -396,13 +427,13 @@ fn emit_update(
         .expect("the revision field is a column")
         .column_type();
     let revision_name = field_name(revision);
+    let (id_type, parse_id, id_argument, not_found) = key_request(table);
     let mut parameters = format!(
-        "id: &str, expected_{revision_name}: {}",
+        "id: {id_type}, expected_{revision_name}: {}",
         request_type(revision_type)
     );
-    let mut body =
-        String::from("let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n");
-    let mut arguments = format!("id.clone(), expected_{revision_name}");
+    let mut body = String::from(parse_id);
+    let mut arguments = format!("{id_argument}, expected_{revision_name}");
     for field in &operation.writable_fields {
         let column = column(table, field).expect("validation resolved the column");
         let name = field_name(field);
@@ -458,7 +489,7 @@ fn emit_update(
          let row = sql::update(transaction, {arguments}).await.map_err({refuse})?;\n\
          match row.outcome.as_deref() {{\n\
          Some({updated:?}) => Ok({model_type}Row {{ {members} }}),\n\
-         Some({not_found:?}) => Err(Error::not_found(&id)),\n\
+         Some({not_found_outcome:?}) => Err({not_found}),\n\
          Some({conflict:?}) => Err(Error::conflict({expected}, {observed})),\n\
          _ => Err(Error::internal()),\n\
          }}\n\
@@ -466,7 +497,7 @@ fn emit_update(
         expected = widen(revision_type, &format!("expected_{revision_name}")),
         observed = widen(revision_type, &format!("row.observed_{revision_name}.ok_or_else(Error::internal)?")),
         updated = sql::OUTCOME_UPDATED,
-        not_found = sql::OUTCOME_NOT_FOUND,
+        not_found_outcome = sql::OUTCOME_NOT_FOUND,
         conflict = sql::OUTCOME_CONCURRENCY_CONFLICT,
     )
     .expect("writing to a String cannot fail");
@@ -487,17 +518,18 @@ fn emit_delete(
         .expect("the revision field is a column")
         .column_type();
     let revision_name = field_name(revision);
+    let (id_type, parse_id, id_argument, not_found) = key_request(table);
     let refuse = statement_error(CrudAction::Delete, &constraints(CrudAction::Delete));
     writeln!(
         source,
         "/// `{model_name}.delete`: delete one row at the revision the caller last read.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn delete(transaction: &mut wamn_postgres_statements::Transaction, id: &str, expected_{revision_name}: {revision_rust}) -> Result<{model_type}DeleteRow, Error> {{\n\
-         let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n\
-         let row = sql::delete(transaction, id.clone(), expected_{revision_name}).await.map_err({refuse})?;\n\
+         pub async fn delete(transaction: &mut wamn_postgres_statements::Transaction, id: {id_type}, expected_{revision_name}: {revision_rust}) -> Result<{model_type}DeleteRow, Error> {{\n\
+         {parse_id}\
+         let row = sql::delete(transaction, {id_argument}, expected_{revision_name}).await.map_err({refuse})?;\n\
          match row.outcome.as_deref() {{\n\
          Some({deleted:?}) => Ok(row),\n\
-         Some({not_found:?}) => Err(Error::not_found(&id)),\n\
+         Some({not_found_outcome:?}) => Err({not_found}),\n\
          Some({conflict:?}) => Err(Error::conflict({expected}, {observed})),\n\
          _ => Err(Error::internal()),\n\
          }}\n\
@@ -506,7 +538,7 @@ fn emit_delete(
         expected = widen(revision_type, &format!("expected_{revision_name}")),
         observed = widen(revision_type, &format!("row.observed_{revision_name}.ok_or_else(Error::internal)?")),
         deleted = sql::OUTCOME_DELETED,
-        not_found = sql::OUTCOME_NOT_FOUND,
+        not_found_outcome = sql::OUTCOME_NOT_FOUND,
         conflict = sql::OUTCOME_CONCURRENCY_CONFLICT,
     )
     .expect("writing to a String cannot fail");
@@ -525,6 +557,12 @@ fn emit_query(
         .as_ref()
         .expect("query validation requires pagination");
     let tie_breaker = field_name(&pagination.tie_breaker.field);
+    let id_type = key_type(table).expect("validation resolved the model key");
+    let encode_cursor = if id_type == KeyType::Uuid {
+        "encode"
+    } else {
+        "id::encode_with_id"
+    };
 
     // The request: one member for each filter, the search, the sort, the
     // cursor, and the limit the codec filled.
@@ -580,20 +618,28 @@ fn emit_query(
         let key_column = column(table, field).expect("validation resolved the sort field");
         let key_type = cursor_key_type(key_column.column_type());
         let key_member = field_name(field);
+        let decode_cursor = if id_type == KeyType::Uuid {
+            format!("decode::<{key_type}>")
+        } else {
+            format!(
+                "id::decode_with_id::<{key_type}, {}>",
+                request_type(id_type.column_type())
+            )
+        };
         let encode = if key_column.nullable() {
             format!(
-                "row.{key_member}.as_ref().ok_or(Invalid).and_then(|key| cursor::encode({field:?}, {direction_type}, key, &row.{tie_breaker}))"
+                "row.{key_member}.as_ref().ok_or(Invalid).and_then(|key| cursor::{encode_cursor}({field:?}, {direction_type}, key, &row.{tie_breaker}))"
             )
         } else {
             format!(
-                "cursor::encode({field:?}, {direction_type}, &row.{key_member}, &row.{tie_breaker})"
+                "cursor::{encode_cursor}({field:?}, {direction_type}, &row.{key_member}, &row.{tie_breaker})"
             )
         };
         writeln!(
             arms,
             "({field:?}, {direction_type}) => {{\n\
              let (cursor_key, cursor_id) = match input.cursor.as_deref() {{\n\
-             Some(encoded) => {{ let (key, id) = cursor::decode::<{key_type}>(encoded, {field:?}, {direction_type}).map_err(|Invalid| Error::invalid(\"cursor\"))?; (Some(key), Some(id)) }}\n\
+             Some(encoded) => {{ let (key, id) = cursor::{decode_cursor}(encoded, {field:?}, {direction_type}).map_err(|Invalid| Error::invalid(\"cursor\"))?; (Some(key), Some(id)) }}\n\
              None => (None, None),\n\
              }};\n\
              let rows = sql::query_{field}_{direction_name}(connection, {arguments}{comma} cursor_key, cursor_id, input.limit + 1).await.map_err(|error| query_statement(&error))?;\n\

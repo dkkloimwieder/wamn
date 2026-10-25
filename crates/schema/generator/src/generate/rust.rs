@@ -333,6 +333,7 @@ pub(super) fn wamn_api(
                 row: model_row.clone(),
                 fetch: AccessorFetch::One,
                 binds: std::iter::once("id")
+                    .filter(|_| !crate::key::database_generated(table))
                     .chain(operation.writable_fields.iter().map(String::as_str))
                     .map(|field| {
                         bind_for_column(

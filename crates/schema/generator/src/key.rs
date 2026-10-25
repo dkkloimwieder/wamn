@@ -66,3 +66,12 @@ pub(crate) fn primary_key(table: &Table) -> Option<&str> {
             _ => None,
         })
 }
+
+/// Whether create omits the integer key and returns the database's value.
+pub(crate) fn database_generated(table: &Table) -> bool {
+    table.columns().iter().any(|column| {
+        column.name() == "id"
+            && matches!(column.column_type(), ColumnType::Int32 | ColumnType::Int64)
+            && (column.default().is_some() || column.generation().is_some())
+    })
+}

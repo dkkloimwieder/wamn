@@ -1439,7 +1439,7 @@ fn id_is_client_owned_and_never_a_writable_field() {
     let mut declared = create_manifest();
     declared["models"]["gadget"]["fields"] = json!({"id": {"role": "actor"}});
     let error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
-    assert!(error.to_string().contains("gadget.id is client-generated"));
+    assert!(error.to_string().contains("gadget.id is the key"));
     for action in ["create", "update"] {
         let mut declared = create_manifest();
         declared["models"]["gadget"]["operations"][action]["writable_fields"] = json!(["id"]);
@@ -2893,15 +2893,93 @@ fn a_logged_relation_needs_a_primary_key() {
 }
 
 #[test]
+fn integer_keys_use_typed_data_and_server_generated_create_ids() {
+    use wamn_schema_introspection::ir::{ColumnGeneration, IdentityMode};
+
+    let base = catalog(false);
+    let gadget = table(&base, "gadget");
+    for (ty, rust, default) in [
+        (ColumnType::Int32, "i32", ColumnDefault::int32(42)),
+        (
+            ColumnType::Int64,
+            "i64",
+            ColumnDefault::int64(9_007_199_254_740_993),
+        ),
+    ] {
+        for generation in [
+            None,
+            Some(ColumnGeneration::Identity {
+                mode: IdentityMode::Always,
+            }),
+            Some(ColumnGeneration::Identity {
+                mode: IdentityMode::ByDefault,
+            }),
+        ] {
+            let columns = gadget
+                .columns()
+                .iter()
+                .map(|column| {
+                    if column.name() == "id" {
+                        Column::new(
+                            "id",
+                            ty,
+                            false,
+                            generation.is_none().then(|| default.clone()),
+                            generation.clone(),
+                        )
+                    } else {
+                        column.clone()
+                    }
+                })
+                .collect();
+            let catalog = replacing_table(
+                &base,
+                rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
+            );
+            let mut manifest = manifest();
+            let model = &mut manifest["models"]["gadget"];
+            model["server_owned_fields"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|field| field != "id");
+            model["delete_mode"] = json!("hard");
+            model["operations"]["query"]
+                .as_object_mut()
+                .unwrap()
+                .remove("authored_sql");
+            model["operations"]["create"] = json!({"permission": "gadget.create", "writable_fields": ["stock_id"], "result": "one"});
+            model["operations"]["delete"] = json!({"permission": "gadget.delete", "revision_field": "row_version", "result": "one"});
+            let package = run(&catalog, &manifest, &[]).unwrap();
+            let data =
+                std::str::from_utf8(package.file("generated/data/gadget.rs").unwrap().bytes())
+                    .unwrap();
+            assert_eq!(data.matches(&format!("id: {rust}")).count(), 3, "{data}");
+            assert!(!data.contains("scalar::uuid(id)"));
+            assert!(data.contains("cursor::id::encode_with_id("));
+            assert!(data.contains(&format!("cursor::id::decode_with_id::<String, {rust}>")));
+            let create = std::str::from_utf8(
+                package
+                    .file("generated/sql/gadget/create.sql")
+                    .unwrap()
+                    .bytes(),
+            )
+            .unwrap();
+            let (insert, returning) = create.split_once("RETURNING").unwrap();
+            assert_eq!(insert, "INSERT INTO gadget (stock_id)\nVALUES ($1::uuid)\n");
+            assert!(returning.contains("\n    id,"), "{create}");
+            manifest["models"]["gadget"]["operations"]["create"]["writable_fields"] =
+                json!(["id", "stock_id"]);
+            let error = run(&catalog, &manifest, &[]).unwrap_err();
+            assert!(error.context().contains("server-owned field id"), "{error}");
+        }
+    }
+}
+
+#[test]
 fn generated_operations_require_a_supported_single_column_key() {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
-    let mut manifest = manifest();
-    // Query cursor validation still belongs to the accessor change.
-    manifest["models"]["gadget"]["operations"]
-        .as_object_mut()
-        .unwrap()
-        .remove("query");
+    let manifest = manifest();
     for ty in [
         ColumnType::Uuid,
         ColumnType::Int32,
@@ -2929,7 +3007,7 @@ fn generated_operations_require_a_supported_single_column_key() {
             &base,
             rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
         );
-        let result = run(&catalog, &manifest, &[]);
+        let result = run(&catalog, &manifest, &QUERY_SOURCES);
         if matches!(ty, ColumnType::Uuid | ColumnType::Int32 | ColumnType::Int64) {
             result.unwrap();
         } else {
@@ -2954,7 +3032,7 @@ fn generated_operations_require_a_supported_single_column_key() {
             &base,
             rebuilt_table(gadget, gadget.columns().to_vec(), constraints),
         );
-        let error = run(&catalog, &manifest, &[]).unwrap_err();
+        let error = run(&catalog, &manifest, &QUERY_SOURCES).unwrap_err();
         assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
         assert_eq!(error.object(), Some("inventory.gadget"));
         assert!(

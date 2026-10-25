@@ -41,7 +41,7 @@ const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
 /// The create input field that carries the caller's idempotency key.
 pub(crate) const CREATE_KEY_FIELD: &str = "idempotency_key";
-/// Insert the row with its supplied id, and return it with `RETURNING`.
+/// Insert the row and return it, including any database-generated key.
 const CREATE_STATEMENT: &str = "create";
 /// The change feed statement of a list read with a feed.
 const CHANGES_STATEMENT: &str = "changes";
@@ -993,6 +993,9 @@ fn server_owned_fields<'a>(model: &'a ModelDeclaration, table: &'a Table) -> Vec
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
+    if crate::key::database_generated(table) && !fields.contains(&"id") {
+        fields.push("id");
+    }
     let reserved_names = RecordHistoryColumn::ALL
         .map(RecordHistoryColumn::as_str)
         .into_iter()

@@ -230,3 +230,5 @@ mod tests {
         assert!(decode::<Uuid>(&valid, "packaging_code", Direction::Ascending).is_err());
     }
 }
+
+pub mod id;

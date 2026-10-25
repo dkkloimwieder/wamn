@@ -83,7 +83,7 @@ fn validate_model_fields(
     for (field, declaration) in &model.fields {
         if field == "id" && declaration.role.is_some() {
             return Err(invalid(format!(
-                "{model_name}.id is client-generated and cannot have a server-assigned role"
+                "{model_name}.id is the key and cannot have a server-assigned role"
             )));
         }
         if column(table, field).is_none() {
@@ -137,7 +137,7 @@ fn validate_model_fields(
     Ok(())
 }
 
-/// A numbered field is separate from the client-generated row id.
+/// A numbered field is separate from the row id.
 fn validate_numbered_field(
     model_name: &str,
     model: &ModelDeclaration,
@@ -150,7 +150,7 @@ fn validate_numbered_field(
     let key = primary_key(table);
     if key == Some(field) {
         return Err(invalid(format!(
-            "{model_name}.{field} is the key and cannot be numbered; ids are client-generated"
+            "{model_name}.{field} is the key and cannot be numbered"
         )));
     }
     let ty = column(table, field)

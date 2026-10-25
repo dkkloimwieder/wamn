@@ -124,7 +124,7 @@ environment = {
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
 - `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern; after that the admin owns the pattern. A sequence is independent of the records: it needs no model field and no declared caller, and its keys need not be fields of any model (owner ruling 2026-10-24).
 - `number = "<sequence>"` on a field names one caller of the sequence. The generated insert calls `next_number` with the model fields that the pattern names. A write that supplies this field is a build refusal. The model must contain every field named by `per=`, `reset=` or `{field:}`. A numbered field must be `text`, `int32` or `int64`. Integer fields take only a bare `{seq}` pattern.
-- A key field never declares `number`. Every record id is client-generated, and a number is a separate host-assigned field.
+- A key field never declares `number`. A number is a separate host-assigned field.
 - `role = "actor"` on a field: the host fills it from the operation caller. The generated insert fills every actor field from `app.user_id`. The generated update fills `updated_by` from `app.user_id` and never touches `created_by`. An update that changes no field leaves `updated_by` as it leaves the revision. An actor field is `uuid` and is named `created_by` or `updated_by`. Any other name or type is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - An overlay is a model whose `owner` differs from `package.id`. It inherits the owner’s `number` and `role = "actor"` declarations, even when it declares no `fields`. The build reads these facts and the sequence pattern from the base build’s compiled manifest. A conflicting number, actor declaration or sequence pattern is a build refusal.
 - Generated overlay inserts number and stamp inherited fields. Generated overlay updates fill inherited `updated_by` from `app.user_id`. A write that supplies an inherited number or actor field is a build refusal. Numbered fields, actor fields and pattern keys must belong to the relation owner. The owner’s inserts and updates do not fill fields that an overlay adds through `field_owners`.
@@ -259,7 +259,9 @@ The application and the actor are transaction claims the host sets at `begin-ope
 
 ### Sequence and the record id
 
-A key field never declares `number = "<sequence>"`, and the build refuses it. Every record id is client-generated (wamn-sync.md, Ids and numbers).
+A key field never declares `number = "<sequence>"`, and the build refuses it. UUID keys and integer keys without a default require a client id on create.
+The database generates identity and DEFAULT integer keys, and create returns the id.
+A create request cannot supply a database-generated id.
 
 A number is a separate host-assigned field, for example a unique `number` column beside the uuid `id`.
 

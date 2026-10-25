@@ -192,7 +192,7 @@ fn reset_or_per_in_a_sequence_bound_to_the_key_is_refused() {
 }
 
 #[test]
-fn an_integer_key_is_refused_even_with_a_bare_counter() {
+fn an_integer_key_cannot_be_numbered_even_with_a_bare_counter() {
     for pattern in ["G{seq:n}", "{seq:n}"] {
         let mut manifest = numbered();
         manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
@@ -202,7 +202,7 @@ fn an_integer_key_is_refused_even_with_a_bare_counter() {
         let (error_type, message) = refusal(&integer_key_catalog(), &manifest);
         assert_eq!(error_type, GenerateErrorType::InvalidModel, "{message}");
         assert!(
-            message.contains("gadget.id must be a non-null uuid supplied by the client"),
+            message.contains("gadget.id is the key and cannot be numbered"),
             "{message}"
         );
     }

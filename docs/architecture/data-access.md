@@ -219,6 +219,10 @@ Application handlers of custom operations retain business rules, transaction seq
 ## Generated operations
 
 A generated CRUD operation needs no authored Rust, WIT, route entry, or declaration entry.
+Create requires a client id for UUID keys and integer keys without a default.
+For identity or DEFAULT integer keys, create omits the id and returns the database-generated value.
+A request that supplies a database-generated id is refused.
+Only database-generated keys can appear in `server_owned_fields`.
 Generation writes these files for each package. A path below is a logical path: the file lies at the same path, without `generated/`, in the package's build output `apps/target/wamn/<package>`, which Git does not hold.
 
 1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.
@@ -505,7 +509,7 @@ Generation refuses these declarations:
 - A numbered field that is not `text`, `int32` or `int64`. An integer numbered field takes a bare `{seq:<counter>}` pattern only.
 - An actor field that is not a `uuid` field named `created_by` or `updated_by`.
 - A pattern key that is not a field of the numbered model. The field cannot be `bytes` or `json`, and the `create` operation must write it.
-- A numbered key field. Every record id is client-generated.
+- A numbered key field, whether the client or the database supplies the id.
 - A counter with `per=` on the key field of its model.
 - A write that supplies a `number` or `actor` field, inherited or not, in a generated operation or in a custom operation statement.
 - In an overlay, a numbered field, an actor field or a pattern key that the relation owner does not own, and a declaration or sequence pattern that differs from the owner's.
