@@ -664,6 +664,7 @@ async fn verify_response(
                 "token_type",
                 "renewal_token",
                 "login_expires_at",
+                "sub",
             ],
         );
     } else {
@@ -692,6 +693,9 @@ async fn verify_response(
     );
     assert!(claims.roles == roles, "exact current tenant roles");
     assert_eq!(body["expires_at"].as_i64(), Some(claims.exp));
+    if renewable {
+        assert_eq!(body["sub"], claims.sub);
+    }
     for wrong in [
         SessionScope {
             issuer: "https://wrong-issuer.invalid",

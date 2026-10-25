@@ -228,6 +228,7 @@ struct ResetRequest {
 
 #[derive(Serialize)]
 struct RenewableResponse<'a> {
+    sub: &'a str,
     access_token: &'a str,
     token_type: &'static str,
     expires_at: i64,
@@ -236,7 +237,8 @@ struct RenewableResponse<'a> {
 }
 
 #[derive(Serialize)]
-struct CookieResponse {
+struct CookieResponse<'a> {
+    sub: &'a str,
     expires_at: i64,
     login_expires_at: i64,
 }
@@ -827,6 +829,7 @@ fn renewable_response(
     renewal: &password_login::Renewal,
 ) -> Response<Full<Bytes>> {
     match serde_json::to_vec(&RenewableResponse {
+        sub: &token.claims().sub,
         access_token: token.token(),
         token_type: "Bearer",
         expires_at: token.claims().exp,
@@ -846,6 +849,7 @@ fn cookie_response(
     now: i64,
 ) -> Response<Full<Bytes>> {
     let Ok(bytes) = serde_json::to_vec(&CookieResponse {
+        sub: &token.claims().sub,
         expires_at: token.claims().exp,
         login_expires_at: renewal.login.expires_at,
     }) else {

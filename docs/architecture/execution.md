@@ -744,7 +744,7 @@ An email that the identity rules refuse answers 400 with the reason, and a disab
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`.
 It reuses the PAT exchange's membership, current environment, active tenant user, role, and signing checks.
-Its response contains `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
+Its response contains `sub`, `access_token`, `token_type`, `expires_at`, `renewal_token`, and `login_expires_at`.
 The two expiry fields contain Unix seconds. `token_type` is `Bearer`.
 
 `POST /password/renew` accepts `renewal_token` and `aud` and returns the same response fields.
@@ -759,7 +759,7 @@ Neither operation requires continued application access. Neither revokes PATs.
 Previously issued password tokens fail new admission after logout commits.
 
 `/password/session`, `/password/renew`, and `/password/logout` accept an optional `carrier`, `"bearer"` by default or `"cookie"`.
-With `"cookie"`, the reply body holds only `expires_at` and `login_expires_at`, and the tokens travel in three cookies.
+With `"cookie"`, the reply body holds only `sub`, `expires_at`, and `login_expires_at`, and the tokens travel in three cookies.
 `__Host-wamn-session` holds the session token. It is HttpOnly, with `Path=/`.
 `__Host-wamn-csrf` holds a new random CSRF token. The page reads it, so it is not HttpOnly.
 `__Secure-wamn-renewal` holds the renewal token. It is HttpOnly, with `Path=/password`.

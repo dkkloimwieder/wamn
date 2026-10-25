@@ -77,6 +77,7 @@ async fn body(response: reqwest::Response) -> Value {
             "expires_at",
             "renewal_token",
             "login_expires_at",
+            "sub",
         ],
     );
     assert_eq!(result["token_type"], "Bearer");
@@ -147,6 +148,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     let https = server(&fixture).await;
     let first = login(&https, &fixture).await;
     let verified = claims(&fixture, &first).await;
+    assert_eq!(first["sub"], verified.sub);
     assert_eq!(verified.sub, user.id().as_str());
     assert_eq!(verified.roles, vec!["receiver"]);
     assert!(active(&fixture, &first).await);
@@ -165,6 +167,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         assert!(first["renewal_token"] != second["renewal_token"]);
     }
     assert_eq!(first["login_expires_at"], second["login_expires_at"]);
+    assert_eq!(second["sub"], claims(&fixture, &second).await.sub);
     assert_failure(
         request(&https, &fixture, "/password/renew", &first)
             .send()
@@ -493,6 +496,7 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
     )
     .expect_redacted("signed control session");
     assert_eq!(claims.sub, user.id().as_str());
+    assert_eq!(session["sub"], claims.sub);
     assert!(claims.roles.is_empty(), "a control session has no roles");
     assert!(
         wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
@@ -761,7 +765,7 @@ async fn cookie_body(response: reqwest::Response, started: i64) -> (Value, [Stri
     let bytes = response.bytes().await.expect_redacted("response bytes");
     let returned = unix_seconds();
     let result: Value = serde_json::from_slice(&bytes).expect_redacted("response JSON");
-    assert_fields(&result, &["expires_at", "login_expires_at"]);
+    assert_fields(&result, &["expires_at", "login_expires_at", "sub"]);
     let deadlines = [
         result["expires_at"].as_i64().unwrap(),
         result["expires_at"].as_i64().unwrap(),
@@ -890,6 +894,7 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
     let started = unix_seconds();
     let (first_body, first) = cookie_body(cookie_login().await.unwrap(), started).await;
     let first_claims = cookie_claims(&fixture, &first).await;
+    assert_eq!(first_body["sub"], first_claims.sub);
     assert_eq!(first_body["expires_at"], first_claims.exp);
 
     // The carrier decides where the renewal token may travel.
@@ -953,6 +958,7 @@ async fn cookie_carrier_sets_rotates_and_clears_three_cookies() {
         assert!(first[index] != second[index], "every cookie rotates");
     }
     let second_claims = cookie_claims(&fixture, &second).await;
+    assert_eq!(second_body["sub"], second_claims.sub);
     assert_eq!(second_claims.authority, first_claims.authority);
 
     // A replayed renewal cookie refuses and revokes its family.

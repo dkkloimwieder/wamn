@@ -4,7 +4,7 @@
  * `/password/environments` lists what the account can reach, and
  * `/password/session` signs in to one of them. With the carrier "cookie" the
  * identity service sets the session, CSRF and renewal cookies, and the body
- * holds only the two expiry times. The page holds no token and writes nothing
+ * holds the user id and the two expiry times. The page holds no token and writes nothing
  * to browser storage. The keeper renews the session on load and again before
  * it expires, so a reload does not ask for the password.
  */
@@ -22,8 +22,9 @@ export interface Environment {
   readonly env?: string;
 }
 
-/** When the session token and the login behind it expire, in Unix seconds. */
+/** The user id and expiry times of the session token and login, in Unix seconds. */
 export interface SessionTimes {
+  readonly userId: string;
   readonly expiresAt: number;
   readonly loginExpiresAt: number;
 }
@@ -38,6 +39,7 @@ export interface SessionOptions {
 
 /** The cookie mode body of a session and of a renewal. */
 const TIMES = z.looseObject({
+  sub: z.string(),
   expires_at: z.number(),
   login_expires_at: z.number(),
 });
@@ -58,7 +60,7 @@ function refusedBy(path: string, response: Response): Error {
 
 async function times(response: Response): Promise<SessionTimes> {
   const document = TIMES.parse(await response.json());
-  return { expiresAt: document.expires_at, loginExpiresAt: document.login_expires_at };
+  return { userId: document.sub, expiresAt: document.expires_at, loginExpiresAt: document.login_expires_at };
 }
 
 /** The environments of an org, optionally filtered by project, that this account can sign in to. */

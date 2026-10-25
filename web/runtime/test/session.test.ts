@@ -157,7 +157,7 @@ describe("the transport carrier", () => {
   });
 });
 
-const TIMES = '{"expires_at":1000,"login_expires_at":28000}';
+const TIMES = '{"sub":"user-1","expires_at":1000,"login_expires_at":28000}';
 
 describe("the session calls", () => {
   it("lists the environments of the account", async () => {
@@ -180,7 +180,7 @@ describe("the session calls", () => {
       () => new Response(null, { status: 204 }),
     ]);
     const options = { baseUrl: "https://id.test", fetch: stub.fetch };
-    const expected = { expiresAt: 1000, loginExpiresAt: 28000 };
+    const expected = { userId: "user-1", expiresAt: 1000, loginExpiresAt: 28000 };
     expect(await signIn("me@example.test", "pw", "aud-1", options)).toEqual(expected);
     expect(await renew("aud-1", options)).toEqual(expected);
     await signOut("aud-1", options);
@@ -267,7 +267,7 @@ function reply(status: number, document?: unknown): () => Response {
 }
 
 function times(expiresAt: number): () => Response {
-  return reply(200, { expires_at: expiresAt, login_expires_at: 28_000 });
+  return reply(200, { sub: "user-1", expires_at: expiresAt, login_expires_at: 28_000 });
 }
 
 describe("the session keeper", () => {
@@ -278,7 +278,7 @@ describe("the session keeper", () => {
     keepSession({ aud: "aud-1", fetch: stub.fetch, clock, onState: (state) => states.push(state) });
     await settle();
     expect(stub.seen.map((call) => call.url)).toEqual(["/password/renew"]);
-    expect(states).toEqual([{ status: "signedIn", expiresAt: 1_000, loginExpiresAt: 28_000 }]);
+    expect(states).toEqual([{ status: "signedIn", userId: "user-1", expiresAt: 1_000, loginExpiresAt: 28_000 }]);
     expect(clock.pending()).toEqual([940_000]);
 
     clock.advance(939_999);
@@ -287,7 +287,7 @@ describe("the session keeper", () => {
     clock.advance(940_000);
     await settle();
     expect(stub.seen).toHaveLength(2);
-    expect(states.at(-1)).toEqual({ status: "signedIn", expiresAt: 1_900, loginExpiresAt: 28_000 });
+    expect(states.at(-1)).toEqual({ status: "signedIn", userId: "user-1", expiresAt: 1_900, loginExpiresAt: 28_000 });
     expect(clock.pending()).toEqual([1_840_000]);
   });
 
@@ -327,7 +327,7 @@ describe("the session keeper", () => {
     expect(stub.seen.map((call) => call.url)).toEqual(["/password/renew", "/password/session", "/password/logout"]);
     expect(states).toEqual([
       { status: "signedOut" },
-      { status: "signedIn", expiresAt: 1_000, loginExpiresAt: 28_000 },
+      { status: "signedIn", userId: "user-1", expiresAt: 1_000, loginExpiresAt: 28_000 },
       { status: "signedOut" },
     ]);
     clock.advance(2_000_000);
