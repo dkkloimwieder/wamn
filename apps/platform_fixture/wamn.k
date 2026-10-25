@@ -14,6 +14,24 @@ manifest.Package {
         pick_label = {pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"}
     }
     models = {
+        counter = manifest.Model("counter", _schema) {
+            table = "counter"
+            owner = "platform_fixture"
+            server_owned_fields = ["id", "edit_version"]
+            audit_log = {columns = ["created_at"], retention = "P30D"}
+            delete_mode = "hard"
+            operations: {
+                get: {revision_field = "edit_version", result = "one"}
+                query: {
+                    display_field = "label"
+                    sort = {fields = ["created_at"], directions = ["ascending", "descending"]}
+                    result = "page"
+                }
+                create: {writable_fields = ["label"], result = "one"}
+                update: {writable_fields = ["label"], revision_field = "edit_version", result = "one"}
+                delete: {revision_field = "edit_version", result = "one"}
+            }
+        }
         numbered_label = manifest.Model("numbered_label", _schema) {
             table = "numbered_label"
             owner = "platform_fixture"

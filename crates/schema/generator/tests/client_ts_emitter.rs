@@ -40,6 +40,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
     assert_eq!(
         files.iter().map(GeneratedFile::path).collect::<Vec<_>>(),
         [
+            "generated/client-ts/counter.ts",
             "generated/client-ts/index.ts",
             "generated/client-ts/number.ts",
             "generated/client-ts/numbered_label.ts",
@@ -101,6 +102,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "// @generated from the client-contract IR; do not edit.\n//\n",
             "// The wire contract lives in `@wamn/web-runtime`, which this package",
             " depends on.\n\n",
+            "export * as counter from \"./counter.js\";\n",
             "export * as number from \"./number.js\";\n",
             "export * as numberedLabel from \"./numbered_label.js\";\n",
             "export * as widget from \"./widget.js\";\n",

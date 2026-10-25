@@ -15,6 +15,7 @@ fn typed_wit_and_codec_follow_package_and_envelope_declarations() {
         manifest["models"]["widget_maker"]["owner"] = json!(package_id);
         manifest["models"]["widget_tag"]["owner"] = json!(package_id);
         manifest["models"]["numbered_label"]["owner"] = json!(package_id);
+        manifest["models"]["counter"]["owner"] = json!(package_id);
         manifest["custom_operations"]["widget.archive"]["input"]["raw_body_maximum"] = json!(4096);
         manifest["custom_operations"]["widget.archive"]["input"]["envelope"] =
             json!({"minimum": 2, "maximum": 7});

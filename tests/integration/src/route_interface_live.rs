@@ -906,6 +906,7 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
     let scratch = ScratchRoot::create()?;
     let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
     let result = async {
+        integer_identity_operations(&paths, project.url()).await?;
         let all = json!({});
         let (first, first_version) = create_widget(&paths, "standard", "kept").await?;
         let (second, second_version) = create_widget(&paths, "priority", "kept").await?;
@@ -1460,4 +1461,114 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
     }.await;
     application.shutdown().await?;
     result
+}
+
+/// The generated integer operations use decimal strings across the HTTP and WIT boundaries.
+async fn integer_identity_operations(paths: &Paths, database_url: &str) -> anyhow::Result<()> {
+    let (database, connection) =
+        tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    // Custom sequence options are outside the introspected schema contract.
+    // Seed the next generated value without changing that schema.
+    database.query_one(
+        "SELECT setval(pg_get_serial_sequence('inventory.counter', 'id'), 9007199254740993, false)",
+        &[],
+    ).await?;
+    drop(database);
+    connection.await??;
+
+    let mut ids = Vec::new();
+    for (index, expected) in ["9007199254740993", "9007199254740994"]
+        .into_iter()
+        .enumerate()
+    {
+        let created = paths.route("/counter/create", &json!([{
+            "request_id": format!("counter-{index}"), "idempotency_key": format!("counter-{index}"),
+            "label": format!("counter {index}"),
+        }])).await?;
+        let id = value(&created)?["id"].clone();
+        anyhow::ensure!(
+            id == json!(expected),
+            "create returns the generated int8 as a string: {created}"
+        );
+        let read = paths.route("/counter/get", &json!([{"id": id}])).await?;
+        anyhow::ensure!(
+            value(&read)? == value(&created)?,
+            "get returns the created record: {read}"
+        );
+        ids.push(id);
+    }
+    let page = paths
+        .route("/counter/query", &json!([{"limit": 1}]))
+        .await?;
+    let first = value(&page)?;
+    anyhow::ensure!(first["item"].as_array().is_some_and(|rows| rows.len() == 1));
+    anyhow::ensure!(first["item"][0]["id"] == ids[0]);
+    let next = first["next_cursor"]
+        .as_str()
+        .context("the first integer page has a cursor")?;
+    let cursor_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(next)?;
+    let cursor: Value = serde_json::from_slice(&cursor_bytes)?;
+    anyhow::ensure!(
+        cursor["id"] == ids[0],
+        "the cursor preserves the full int8 string: {cursor}"
+    );
+    let page = paths
+        .route("/counter/query", &json!([{"limit": 1, "cursor": next}]))
+        .await?;
+    let second = value(&page)?;
+    anyhow::ensure!(
+        second["item"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == 1)
+    );
+    anyhow::ensure!(second["item"][0]["id"] == ids[1] && second["next_cursor"].is_null());
+
+    let updated = paths
+        .route(
+            "/counter/update",
+            &json!([{
+                "request_id": "counter-update", "id": ids[0], "expected_edit_version": "1",
+                "change": {"label": "updated"},
+            }]),
+        )
+        .await?;
+    anyhow::ensure!(value(&updated)?["id"] == ids[0] && value(&updated)?["edit_version"] == "2");
+    let read = paths
+        .route("/counter/get", &json!([{"id": ids[0]}]))
+        .await?;
+    anyhow::ensure!(value(&read)?["label"] == "updated");
+    value(
+        &paths
+            .route(
+                "/counter/delete",
+                &json!([{
+                    "request_id": "counter-delete", "id": ids[1], "expected_edit_version": "1",
+                }]),
+            )
+            .await?,
+    )?;
+    let missing = paths
+        .route("/counter/get", &json!([{"id": ids[1]}]))
+        .await?;
+    refused(&missing, "not_found", &json!({"field": "id", "id": ids[1]}))?;
+
+    let changes = paths
+        .route(
+            "/counter/query",
+            &json!([{"feed": {"cursor": first["cursor"]}}]),
+        )
+        .await?;
+    let changes = value(&changes)?;
+    let update = change_of(changes, &ids[0])?;
+    anyhow::ensure!(
+        update["deleted"] == false
+            && update["data"]["id"] == ids[0]
+            && update["data"]["label"] == "updated"
+            && update["data"]["edit_version"] == "2"
+    );
+    let delete = change_of(changes, &ids[1])?;
+    anyhow::ensure!(delete["deleted"] == true && delete.get("data").is_none());
+    anyhow::ensure!(changes["complete"] == true);
+    Ok(())
 }

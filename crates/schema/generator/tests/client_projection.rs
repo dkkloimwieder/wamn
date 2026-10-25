@@ -368,7 +368,11 @@ fn release() -> ClientContractIr {
 #[test]
 fn platform_update_preserves_writable_type_presence_and_nullability() {
     let platform = release();
-    let update = operation(&platform, "update");
+    let update = platform.models[fixture::widget_index(&platform)]
+        .operations
+        .iter()
+        .find(|operation| operation.name == "update")
+        .expect("the fixture declares widget.update");
     let schema = update
         .route
         .as_ref()
@@ -681,9 +685,9 @@ fn leaf<'a>(
 fn authored_text_reaches_every_field_the_client_reads() {
     let ir = fixture::client_release();
     let operation = |name: &str| {
-        ir.models
+        ir.models[fixture::widget_index(&ir)]
+            .operations
             .iter()
-            .flat_map(|model| &model.operations)
             .find(|operation| operation.name == name)
             .unwrap_or_else(|| panic!("the fixture declares {name}"))
     };
@@ -800,10 +804,9 @@ fn a_published_response_takes_its_text_from_the_terminal() {
     )]);
     let ir = ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
         .expect("the fixture projects with a published response");
-    let get = ir
-        .models
+    let get = ir.models[fixture::widget_index(&ir)]
+        .operations
         .iter()
-        .flat_map(|model| &model.operations)
         .find(|operation| operation.name == "get")
         .expect("the fixture declares get");
     let response = &get.route.as_ref().expect("the get route").response;
@@ -826,9 +829,9 @@ fn a_published_response_takes_its_text_from_the_terminal() {
 fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
     let ir = fixture::client_release();
     let operation = |name: &str| {
-        ir.models
+        ir.models[fixture::widget_index(&ir)]
+            .operations
             .iter()
-            .flat_map(|model| &model.operations)
             .find(|operation| operation.name == name)
             .unwrap_or_else(|| panic!("the fixture declares {name}"))
     };

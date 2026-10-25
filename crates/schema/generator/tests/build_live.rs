@@ -126,8 +126,8 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
     // The fixture normally has no browser client. Its update-only model
     // needs a read to supply the revision when this test enables components.
     workspace.edit_manifest(
-        "update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
-        "get: {revision_field = \"edit_version\", result = \"one\"}\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
+        "operations: {\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
+        "operations: {\n                get: {revision_field = \"edit_version\", result = \"one\"}\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
     );
     let database = wamn_test_postgres::database();
     assert!(!workspace.package().join("generated").exists());
@@ -172,6 +172,17 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
     let output_second = package_output(&second, wamn_fixture_package::PACKAGE_ID);
     let files = snapshot(&output_first);
     assert_eq!(files, snapshot(&output_second));
+    for path in [
+        "data/counter.rs",
+        "wit/counter_query_codec.rs",
+        "client-ts/counter.ts",
+        "sql/counter/changes.sql",
+    ] {
+        assert!(
+            files.contains_key(Path::new(path)),
+            "the bigint model participates in determinism: {path}"
+        );
+    }
     let bindings = std::str::from_utf8(&files[Path::new("client-ts/widget.ts")]).unwrap();
     let components =
         std::str::from_utf8(&files[Path::new("client-ts/components/widget.ts")]).unwrap();
@@ -453,8 +464,8 @@ async fn overlay_builds_inherit_owner_fields_from_receipted_manifests() {
 
     let workspace = Workspace::new("inherited-fields");
     workspace.edit_manifest(
-        "audit_log = {columns = [\"created_at\"], retention = \"P30D\"}",
-        "fields = {updated_by = {role = \"actor\"}}\n            audit_log = {columns = [\"created_at\", \"updated_at\", \"updated_by\"], retention = \"P30D\"}",
+        "audit_log = {columns = [\"created_at\"], retention = \"P30D\"}\n            # A hard delete:",
+        "fields = {updated_by = {role = \"actor\"}}\n            audit_log = {columns = [\"created_at\", \"updated_at\", \"updated_by\"], retention = \"P30D\"}\n            # A hard delete:",
     );
     fs::write(
         workspace.package().join("migrations/9999_actor.sql"),

@@ -696,6 +696,17 @@ fn overlay_manifest() -> Value {
     manifest["package"]["id"] = json!("decorator_fixture");
     // An overlay owns no relation of the base package, so no model declares
     // a record history here.
+    let counter = manifest["models"]["counter"].as_object_mut().unwrap();
+    counter.remove("audit_log");
+    counter.remove("delete_mode");
+    counter["operations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("create");
+    counter["operations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("delete");
     let maker = manifest["models"]["widget_maker"].as_object_mut().unwrap();
     maker.remove("audit_log");
     let numbered = manifest["models"]["numbered_label"]

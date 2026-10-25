@@ -472,9 +472,29 @@ mod tests {
             &[wamn_fixture_package::manifest_path()],
         )
         .expect("read the fixture attachments");
-        // The numbering fixture adds two routes. The original widget surface
-        // must still match its frozen routes and declaration below.
+        // The numbering and integer-key fixtures add routes. The original
+        // widget surface must still match its frozen routes and declaration.
         for (id, hash) in [
+            (
+                "counter-create-http",
+                "sha256:63800f68a02a761faeace3feaa500b74b2408aac99898448fdd5c779fdee0b4b",
+            ),
+            (
+                "counter-delete-http",
+                "sha256:dd7d6502bc5b547dd64e73054170b31890f0123ca936c981d0df49effaf38db1",
+            ),
+            (
+                "counter-get-http",
+                "sha256:a06a0ddc8d687b32088f459563b8068ba53f84b14eff64c979b222891234b3c1",
+            ),
+            (
+                "counter-query-http",
+                "sha256:65981cebce1e8e656548d6b9c69737d89dd8312e6328713c2a1e620820771752",
+            ),
+            (
+                "counter-update-http",
+                "sha256:26164adfe296d3d57b4bb096324734d565cefaf7f550771f1c1bc195bf74e59b",
+            ),
             (
                 "number-issue-http",
                 "sha256:c653cc69ec8df292e19b4fca4fa4532fa9096ad30af62e844721c186e61c8cc9",
@@ -501,7 +521,15 @@ mod tests {
             "tenant-a",
         )
         .expect("render the fixture declaration");
-        for operation in ["number/issue", "numbered-label/create"] {
+        for operation in [
+            "counter/create",
+            "counter/delete",
+            "counter/get",
+            "counter/query",
+            "counter/update",
+            "number/issue",
+            "numbered-label/create",
+        ] {
             assert!(
                 declaration["operations"]
                     .as_object_mut()

@@ -89,6 +89,11 @@ pub(crate) fn client_release() -> ClientContractIr {
 pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr {
     let contracts = contracts(package);
     let routes = [
+        ("counter", "create"),
+        ("counter", "get"),
+        ("counter", "query"),
+        ("counter", "update"),
+        ("counter", "delete"),
         ("widget", "archive"),
         ("widget", "create"),
         ("widget", "delete"),
@@ -115,6 +120,12 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
                 method: "POST".to_owned(),
                 template: format!("/{model}/{name}"),
                 input_schema: match name {
+                    _ if model == "counter" => Some(serde_json::from_slice(
+                        package.files().iter()
+                            .find(|file| file.path() == format!("generated/routes/counter/{name}.json"))
+                            .expect("the counter publishes its generated input schema")
+                            .bytes(),
+                    ).unwrap()),
                     // The shape a real release publishes: the record key, the
                     // revision it expects, the request identity, and the change.
                     "update" => Some(json!({
@@ -443,7 +454,45 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         ],
         Vec::new(),
     );
-    CatalogIr::new(vec![widget, widget_maker, widget_tag, numbered_label])
+    let counter = Table::new(
+        "inventory",
+        "counter",
+        vec![
+            Column::new(
+                "id",
+                ColumnType::Int64,
+                false,
+                None,
+                Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                    mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                }),
+            ),
+            Column::new("label", ColumnType::Text, false, None, None),
+            Column::new(
+                "edit_version",
+                ColumnType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+            Column::new(
+                "created_at",
+                ColumnType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+        ],
+        vec![Constraint::primary_key("counter_id_pkey", ["id"]).expect("valid primary key")],
+        Vec::new(),
+    );
+    CatalogIr::new(vec![
+        widget,
+        widget_maker,
+        widget_tag,
+        numbered_label,
+        counter,
+    ])
 }
 
 /// The name of [`unread_table`].

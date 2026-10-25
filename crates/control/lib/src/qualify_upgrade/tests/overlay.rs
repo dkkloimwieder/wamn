@@ -4,7 +4,7 @@ use super::*;
 
 const OVERLAY: &str = "platform_fixture_overlay";
 const ORIGINAL_PIN: &str =
-    "sha256:5a39f0961c2a47181b150baf9b1fabff4c0bb60c9d8e5570380023f4eace67ec";
+    "sha256:c2b7241efd86d8d81d8a3cb8f479687fe21dea27ce3c50510b24f0e87c968a13";
 
 struct OverlayFixture {
     base: Fixture,

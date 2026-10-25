@@ -130,7 +130,7 @@ fn private_operations_are_excluded_but_malformed_public_operations_refuse() {
     );
     assert_eq!(
         ir.models.iter().flat_map(|model| &model.operations).count(),
-        13,
+        18,
         "excluding one private operation must retain its public siblings"
     );
 
@@ -243,7 +243,7 @@ fn platform_release_routes_are_exact_and_contracts_alone_invent_none() {
             .flat_map(|model| &model.operations)
             .filter(|operation| operation.route.is_some())
             .count(),
-        11
+        16
     );
 
     let contracts = fixture::contracts(&fixture::generate_fixture());
