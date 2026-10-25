@@ -187,7 +187,7 @@ pub(super) async fn apply(
         tx.query_one("SELECT set_config('search_path',$1,true)", &[&search_path])
             .await?;
         tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
-        roles::set_package_owner_role(&tx).await?;
+        roles::set_package_owner_role(&tx, package_id).await?;
         let statement = tx
             .prepare_typed(
                 &batch.sql,

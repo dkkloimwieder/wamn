@@ -175,7 +175,7 @@ async fn package_recreate_reason(
             wamn_pg_core::quote_ident(&model.schema),
             wamn_pg_core::quote_ident(&history)
         );
-        set_package_owner_role(tx).await?;
+        set_package_owner_role(tx, &package.id).await?;
         let holds_rows = tx
             .query_one(rows_present_sql.as_str(), &[])
             .await

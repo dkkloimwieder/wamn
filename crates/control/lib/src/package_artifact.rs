@@ -770,6 +770,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     refuse_workflow_declarations(&manifest_bytes)?;
     let manifest = PackageManifest::from_slice(&manifest_bytes)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
+    crate::component_admission::check_package_backfill(&manifest)?;
     let contract = &manifest.required_platform_policy_contract;
     ensure!(
         contract.state == PolicyContractState::Satisfied,

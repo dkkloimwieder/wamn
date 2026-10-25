@@ -36,6 +36,35 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
+    // Instrument the existing invoker trigger without changing the schema.
+    // This observes the actual role of each backfill UPDATE, including copies
+    // used by qualification, and tries a platform write under that role.
+    let owner = wamn_control_provision::package_owner_role("platform_fixture");
+    let trigger: String = fixture
+        .source
+        .query_one(
+            "SELECT pg_get_functiondef('wamn_history.inventory__widget_stamp()'::regprocedure)",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let probe = format!(
+        "BEGIN\n\
+        IF NEW.note = 'backfilled' THEN \
+          IF current_user <> '{owner}' THEN RAISE EXCEPTION 'wrong backfill owner: %', current_user; END IF; \
+          BEGIN \
+            DELETE FROM platform.setting WHERE false; \
+            RAISE EXCEPTION 'backfill reached a platform table'; \
+          EXCEPTION WHEN insufficient_privilege THEN NULL; END; \
+        END IF;\n"
+    );
+    let (before, after) = trigger.split_once("BEGIN\n").unwrap();
+    fixture
+        .source
+        .batch_execute(&format!("{before}{probe}{after}"))
+        .await
+        .unwrap();
     let original = state(&mut fixture.source).await;
     let result = qualify_upgrade(request(&fixture, "backfill.json"))
         .await

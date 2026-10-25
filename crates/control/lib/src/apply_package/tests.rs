@@ -184,6 +184,11 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
         "CREATE ROLE authdrops_apply LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS PASSWORD 'authdrops'; GRANT wamn_db_owner TO authdrops_apply;",
         "GRANT USAGE, CREATE ON SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL TABLES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT ALL ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA catalog, platform, wamn_history, wamn_authority TO authdrops_apply;",
     ]).unwrap();
+    database.execute(&[
+        &wamn_control_provision::sql::ensure_package_owner_role_sql("wamn_inventory"),
+        &wamn_control_provision::sql::package_owner_grants_sql("wamn_inventory"),
+        &format!("GRANT {} TO authdrops_apply; GRANT USAGE, CREATE ON SCHEMA wamn_history TO authdrops_apply WITH GRANT OPTION; GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_history TO authdrops_apply WITH GRANT OPTION;", wamn_control_provision::package_owner_role("wamn_inventory")),
+    ]).unwrap();
     let mut owner_url = url::Url::parse(database.url()).unwrap();
     owner_url.set_username("authdrops_apply").unwrap();
     owner_url.set_password(Some("authdrops")).unwrap();

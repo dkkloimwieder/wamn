@@ -412,6 +412,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0036_retire_released_workflows.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0037_package_owners.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0037_package_owners.sql"),
+    },
 ];
 
 #[cfg(test)]

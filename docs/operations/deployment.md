@@ -467,6 +467,11 @@ A failure leaves the database as it was.
 The verb refuses a recorded file that differs from the file of the binary, with `schema-migration-drift`.
 It runs system files as `wamn_system` and project files as the admin connection.
 
+Project migration `0037_package_owners.sql` creates package owner roles and transfers existing application objects, including history tables and synchronization functions.
+It preserves application and retention grants. The database owner retains platform objects.
+Apply this migration before direct package apply or upgrade qualification on an existing database.
+The project migration step of `env apply` runs it automatically.
+
 `provision-system` and `env apply` record every file in a fresh install, so a new target needs no upgrade run.
 A database installed before its record table existed takes `--baseline <ordinal>` on its first run only.
 The verb then records the files up to that ordinal without running them, and applies the rest in the same run.

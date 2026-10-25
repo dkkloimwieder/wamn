@@ -93,7 +93,7 @@ pub(super) async fn install(
         .await?;
     tx.query_one("SELECT set_config('search_path',$1,true)", &[&search_path])
         .await?;
-    roles::set_package_owner_role(tx).await?;
+    roles::set_package_owner_role(tx, package).await?;
     tx.batch_execute(&statement.sql).await.with_context(|| {
         format!(
             "install synchronization {}; stop and resume after correcting the cause",
@@ -104,7 +104,7 @@ pub(super) async fn install(
     let expected = StageSynchronizationExpectation {
         definition: inspected,
         writable_columns: columns,
-        owner_role: "wamn_db_owner".to_owned(),
+        owner_role: wamn_control_provision::package_owner_role(package),
     };
     verify_stage_synchronizations(tx, &[expected]).await?;
     for (section, name) in [
@@ -179,7 +179,7 @@ pub(super) async fn verify_inherited(
         expected.push(StageSynchronizationExpectation {
             definition: declaration.clone(),
             writable_columns: columns,
-            owner_role: "wamn_db_owner".to_owned(),
+            owner_role: wamn_control_provision::package_owner_role(package),
         });
     }
     verify_stage_synchronizations(tx, &expected).await?;

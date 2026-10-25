@@ -92,7 +92,11 @@ pub(crate) async fn copy_database(
     })
     .await
     .context("join upgrade scratch creation")??;
+    let packages = copied_package_owners(source_url, snapshot).await?;
     prepare_floor(scratch.url()).await?;
+    for (package, _) in &packages {
+        execute_sql(scratch.url(), &sql::ensure_package_owner_role_sql(package)).await?;
+    }
 
     let mut export = Command::new(format!("{POSTGRES_BIN}/pg_dump"));
     connection_environment(&mut export, source_url)?;
@@ -114,12 +118,53 @@ pub(crate) async fn copy_database(
             "--exit-on-error",
         ])
         .arg(&archive);
-    // Deliberately retain owner commands: package DDL must still execute as
-    // wamn_db_owner against objects that role actually owns.
+    // Retain owner commands so package DDL uses the same owner as production.
     run_copy_command(&mut restore, "restore the owned predecessor copy").await?;
     restore_platform_grants(scratch.url()).await?;
+    for (package, schema) in &packages {
+        let grants = format!(
+            "{} GRANT USAGE, CREATE ON SCHEMA {} TO {};",
+            sql::package_owner_grants_sql(package),
+            wamn_pg_core::quote_ident(schema),
+            wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(package)),
+        );
+        execute_sql(scratch.url(), &grants).await?;
+    }
     fs::remove_dir_all(&dump.0).context("remove the private predecessor dump")?;
     Ok(scratch)
+}
+
+/// Read package identities from the same snapshot that pg_dump copies.
+async fn copied_package_owners(
+    source_url: &str,
+    snapshot: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let (mut client, connection) = tokio_postgres::connect(source_url, NoTls).await?;
+    let task = tokio::spawn(connection);
+    let tx = client
+        .build_transaction()
+        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+        .read_only(true)
+        .start()
+        .await?;
+    tx.batch_execute(&format!(
+        "SET TRANSACTION SNAPSHOT {}",
+        wamn_pg_core::quote_literal(snapshot)
+    ))
+    .await?;
+    let packages = tx
+        .query(
+            "SELECT DISTINCT owner_package_id, schema_name FROM catalog.package_definition_owners",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    tx.commit().await?;
+    drop(client);
+    task.await??;
+    Ok(packages)
 }
 
 /// Keep credentials out of process arguments and discard inherited libpq settings.

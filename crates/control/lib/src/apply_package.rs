@@ -22,7 +22,7 @@ use package_version::{
     current_package_version, predecessor_not_current_error, predecessor_prefix_error,
 };
 use record_history::{create_history_tables, reconcile_record_history_triggers};
-use roles::{assert_host_role, reset_host_role, set_package_owner_role};
+use roles::assert_host_role;
 
 mod abandon;
 mod backfill;
@@ -634,13 +634,9 @@ async fn apply_prepared(
         .await
         .context("install the platform extensions")?;
 
-    // Package text cannot issue SET ROLE: the pre-apply policy rejects a
-    // package escalating itself. This host-issued SET LOCAL ROLE moves in the
-    // opposite direction, narrowing the administrator to the existing
-    // package-owner role while package DDL runs.
-    set_package_owner_role(tx).await?;
-    ensure_model_schemas(tx, &plan).await?;
-    reset_host_role(tx).await?;
+    // Provision package authority before any authored DDL. The migration
+    // runner selects the owning role after the policy refuses role changes.
+    ensure_model_schemas(tx, &plan, manifest).await?;
     // catalog.packages is immutable, so a local target keeps the row it first
     // recorded there and records the current manifest in its comment.
     let registered_artifact_digest = match &applied {
@@ -677,9 +673,7 @@ async fn apply_prepared(
                 )
                 .await?;
             } else {
-                set_package_owner_role(tx).await?;
-                execute(tx, statement, coordinate_text).await?;
-                reset_host_role(tx).await?;
+                roles::execute_migration(tx, manifest, statement).await?;
             }
         } else {
             assert_host_role(tx).await?;
@@ -820,6 +814,7 @@ pub(crate) async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow
 async fn ensure_model_schemas(
     tx: &Transaction<'_>,
     plan: &wamn_schema_control::PackageMigrationPlan,
+    manifest: &PackageManifest,
 ) -> anyhow::Result<()> {
     let schemas = plan
         .models
@@ -831,12 +826,32 @@ async fn ensure_model_schemas(
                 .map(|relation| relation.schema.as_str()),
         )
         .collect::<BTreeSet<_>>();
+    let package = &manifest.package.id;
+    tx.batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
+        package,
+    ))
+    .await
+    .context("provision the package owner")?;
+    tx.batch_execute(&wamn_control_provision::sql::package_owner_grants_sql(
+        package,
+    ))
+    .await
+    .context("grant the package history surface")?;
+    let role = wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(package));
     for schema in schemas {
         let schema = wamn_schema_control::BareSchemaName::new(schema)
             .context("validate manifest model schema for creation")?;
-        tx.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {}", schema.quoted()))
+        tx.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {role}; GRANT USAGE, CREATE ON SCHEMA {} TO {role}", schema.quoted(), schema.quoted()))
             .await
             .with_context(|| format!("ensure package model schema {schema}"))?;
+        let unclaimed: bool = tx.query_one(
+            "SELECT NOT EXISTS (SELECT 1 FROM catalog.package_definition_owners WHERE schema_name = $1 AND definition_type = 'relation')",
+            &[&schema.as_str()],
+        ).await?.get(0);
+        if unclaimed {
+            tx.batch_execute(&format!("ALTER SCHEMA {} OWNER TO {role}", schema.quoted()))
+                .await?;
+        }
     }
     Ok(())
 }

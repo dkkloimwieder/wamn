@@ -7,7 +7,7 @@
 //! `wamn-zua8.3`): `CREATEROLE` and `CREATEDB`, `REPLICATION` for the CDC role
 //! and slot, `BYPASSRLS` for `reconcile-run-plane`, membership of
 //! `pg_signal_backend` to end retired sessions, of `wamn_system` to write the
-//! registry, and of `wamn_db_owner`, the owner role of the project schemas,
+//! registry, and of `wamn_db_owner`, the owner role of the platform schemas,
 //! and `createrole_self_grant = 'set, inherit'`, so that it is a member of
 //! every role it creates.
 

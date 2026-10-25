@@ -44,6 +44,16 @@ pub(super) fn read_package_manifests(
                 error,
             )
         })?;
+        crate::component_admission::check_package_backfill(&manifest).map_err(|error| {
+            PublishManifestError::with_source(
+                PublishManifestErrorType::PackageManifest,
+                format!(
+                    "package {} upgrade_stage.backfill.sql: {error}",
+                    manifest.package.id
+                ),
+                error,
+            )
+        })?;
         let root = wamn_schema_generator::manifest_package_root(path).ok_or_else(|| {
             PublishManifestError::new(
                 PublishManifestErrorType::PackageManifest,
@@ -385,5 +395,63 @@ mod tests {
             archive.expect("the archive has a contract").idempotency,
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::read_package_manifests;
+    use serde_json::json;
+
+    #[test]
+    fn publish_parses_backfill_and_applies_declared_statement_checks() {
+        let root =
+            std::env::temp_dir().join(format!("wamn-backfill-admission-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("wamn.json");
+        let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/apply_package/base/wamn.json"
+        ))
+        .unwrap();
+        manifest["package"]["predecessor_version"] = json!("0.9.0");
+        manifest["upgrade_stage"] = json!({
+            "phase": "backfill",
+            "preconditions": {"ready": "SELECT true"},
+            "postconditions": {"done": "SELECT true"},
+            "backfill": {"sql": "SELECT", "batch_size": 1, "initial_cursor": null}
+        });
+        for (sql, refusal) in [
+            ("this is not SQL", "Unparsed"),
+            ("SELECT 1; SELECT 2", "NotOneStatement"),
+            ("SET ROLE wamn_db_owner", "SessionWrite"),
+            (
+                "SELECT set_config('role','wamn_db_owner',true)",
+                "SessionWrite",
+            ),
+            ("DO $$ BEGIN NULL; END $$", "CodeBlock"),
+            (
+                "WITH changed AS (DELETE FROM platform.setting RETURNING *) SELECT * FROM changed",
+                "PlatformWrite",
+            ),
+            (
+                "SELECT platform.bump_counter('x','y','z')",
+                "CounterFunction",
+            ),
+        ] {
+            manifest["upgrade_stage"]["backfill"]["sql"] = json!(sql);
+            std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            let error = read_package_manifests(std::slice::from_ref(&path)).unwrap_err();
+            let detail = error.to_string();
+            assert!(
+                detail.contains("upgrade_stage.backfill.sql") && detail.contains(refusal),
+                "{detail}"
+            );
+        }
+        manifest["upgrade_stage"]["backfill"]["sql"] = json!(
+            "WITH batch AS (SELECT id FROM inventory.panel ORDER BY id LIMIT $2), updated AS (UPDATE inventory.panel SET name = 'filled' FROM batch WHERE panel.id = batch.id RETURNING panel.id) SELECT $1::jsonb AS next_cursor, NOT EXISTS (SELECT 1 FROM batch) AS complete"
+        );
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        read_package_manifests(&[path]).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

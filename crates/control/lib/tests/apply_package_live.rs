@@ -799,13 +799,15 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                 AND relation.relkind = 'r' \
                 AND relation.relname NOT IN ('wamn_entities', 'wamn_cdc_exclusions') \
               GROUP BY namespace.nspowner",
-            &[&wamn_control_provision::DB_OWNER_ROLE],
+            &[&wamn_control_provision::package_owner_role(
+                "wamn_inventory",
+            )],
         )
         .await
         .expect("read server-derived package schema and relation owners");
     assert!(
         ownership.get::<_, bool>(0) && ownership.get::<_, bool>(1),
-        "schema creation and exact package DDL must run as wamn_db_owner"
+        "schema creation and exact package DDL must use the package owner"
     );
     // apply-package writes the built-in admin role and no permission row. It
     // leaves the rows of an authored role, which release reconciliation owns.
@@ -1010,6 +1012,16 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     apply(&url, &overlay)
         .await
         .expect("the client overlay fixture applies after its base fixture");
+    let overlay_role = wamn_control_provision::package_owner_role("client_overlay_inventory");
+    let overlay_owner = client.query_one(
+        "SELECT pg_get_userbyid(relowner)::text, has_table_privilege($1::text, 'inventory.rack', 'REFERENCES') FROM pg_class WHERE oid='inventory.quality_inspection'::regclass",
+        &[&overlay_role],
+    ).await.unwrap();
+    assert_eq!(overlay_owner.get::<_, String>(0), overlay_role);
+    assert!(
+        !overlay_owner.get::<_, bool>(1),
+        "migration REFERENCES grants must not survive"
+    );
     assert!(
         client
             .query_one(
@@ -1780,7 +1792,7 @@ async fn record_history_log_follows_the_declaration() {
              EXECUTE FUNCTION wamn_history.inventory__panel_line_log('P30D')",
         ]
     );
-    let owner = wamn_control_provision::DB_OWNER_ROLE.to_owned();
+    let owner = wamn_control_provision::package_owner_role("wamn_inventory");
     assert_eq!(
         inventory_history_tables(&client).await,
         [
@@ -2535,4 +2547,90 @@ async fn model_versions_use_wal_without_counter_triggers() {
         .await
         .expect("the first writer commits");
     std::fs::remove_dir_all(package).expect("remove the WAL fixture");
+}
+
+#[tokio::test]
+async fn package_owner_migration_preserves_grants_and_excludes_platform_tables() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    install(&client).await;
+    let package =
+        fixture_root().with_file_name(format!("package-owner-migration-{}", std::process::id()));
+    copy_base_fixture_as(&package, "owner_migration", "inventory");
+    set_audit_log_columns(&package, "panel", &["created_at"]);
+    set_audit_log_retention(&package, "panel", "unlimited");
+    apply(&url, &package).await.unwrap();
+    let role = wamn_control_provision::package_owner_role("owner_migration");
+    // Recreate the installed ownership from before this change, with a live grant.
+    client
+        .batch_execute(&format!(
+            "GRANT USAGE ON SCHEMA inventory TO wamn_app; \
+         GRANT SELECT (id) ON inventory.panel TO wamn_app; \
+         REASSIGN OWNED BY {role} TO wamn_db_owner; \
+         DROP OWNED BY {role}; DROP ROLE {role}; \
+         ALTER TABLE platform.setting OWNER TO wamn_db_owner;"
+        ))
+        .await
+        .unwrap();
+    let migration =
+        include_str!("../../../../deploy/sql/migrations/project/0037_package_owners.sql");
+    client.batch_execute(migration).await.unwrap();
+    client.batch_execute(migration).await.unwrap();
+    // Reprovisioning uses the same identity as the numbered SQL migration.
+    client
+        .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
+            "owner_migration",
+        ))
+        .await
+        .unwrap();
+    let facts = client.query_one(
+        "SELECT pg_get_userbyid(c.relowner)::text, pg_get_userbyid(n.nspowner)::text, \
+         has_column_privilege('wamn_app', c.oid, 'id', 'SELECT'), \
+         (SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='inventory.panel_history'::regclass), \
+         (SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='platform.setting'::regclass) \
+         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid='inventory.panel'::regclass", &[]
+    ).await.unwrap();
+    assert_eq!(facts.get::<_, String>(0), role);
+    assert_eq!(facts.get::<_, String>(1), role);
+    assert!(facts.get::<_, bool>(2));
+    assert_eq!(facts.get::<_, String>(3), role);
+    assert_eq!(facts.get::<_, String>(4), "wamn_db_owner");
+    let generated = client
+        .query_one(
+            "SELECT pg_get_userbyid(p.proowner)::text, pg_get_userbyid(c.relowner)::text \
+         FROM pg_proc p CROSS JOIN pg_class c \
+         WHERE p.oid='wamn_history.inventory__panel_stamp()'::regprocedure \
+           AND c.oid=pg_get_serial_sequence('inventory.panel_history','position')::regclass",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(generated.get::<_, String>(0), role);
+    assert_eq!(generated.get::<_, String>(1), role);
+    client
+        .batch_execute(&format!("SET ROLE {role}"))
+        .await
+        .unwrap();
+    client
+        .batch_execute("ALTER TABLE inventory.panel ADD COLUMN owner_probe text")
+        .await
+        .unwrap();
+    let denied = client
+        .batch_execute("DELETE FROM platform.setting")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        denied.code(),
+        Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
+    );
+    client
+        .batch_execute("RESET ROLE; SET ROLE wamn_app")
+        .await
+        .unwrap();
+    client
+        .query("SELECT id FROM inventory.panel", &[])
+        .await
+        .unwrap();
+    client.batch_execute("RESET ROLE").await.unwrap();
+    std::fs::remove_dir_all(package).unwrap();
 }

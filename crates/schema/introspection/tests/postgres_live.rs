@@ -290,8 +290,8 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
     );
     assert_eq!(
         server_tables.len(),
-        3,
-        "the fixture migration created three tables"
+        4,
+        "the fixture migration created four tables"
     );
     assert!(
         first
@@ -1126,6 +1126,45 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
             "the {role} grants do not change the catalog IR"
         );
     }
+
+    let package_owner = "wamn_package_owner_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    admin.batch_execute(&format!(
+        "CREATE ROLE {package_owner} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+         GRANT USAGE, CREATE ON SCHEMA inventory TO {package_owner}"
+    )).await.unwrap();
+    assert_eq!(
+        read_catalog(reader, &[APPLICATION_SCHEMA])
+            .await
+            .unwrap()
+            .canonical_json_bytes(),
+        before.canonical_json_bytes()
+    );
+    for (grant, revoke) in [
+        (
+            format!("GRANT CREATE ON SCHEMA inventory TO {package_owner} WITH GRANT OPTION"),
+            format!("REVOKE GRANT OPTION FOR CREATE ON SCHEMA inventory FROM {package_owner}"),
+        ),
+        (
+            format!("GRANT SELECT ON inventory.widget TO {package_owner}"),
+            format!("REVOKE SELECT ON inventory.widget FROM {package_owner}"),
+        ),
+    ] {
+        admin.batch_execute(&grant).await.unwrap();
+        let error = read_catalog(reader, &[APPLICATION_SCHEMA])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.error_type(),
+            PostgresIntrospectionErrorType::UnsupportedAcl
+        );
+        admin.batch_execute(&revoke).await.unwrap();
+    }
+    admin
+        .batch_execute(&format!(
+            "REVOKE ALL ON SCHEMA inventory FROM {package_owner}; DROP ROLE {package_owner}"
+        ))
+        .await
+        .unwrap();
 
     let other_role = identifier(other_role);
     admin

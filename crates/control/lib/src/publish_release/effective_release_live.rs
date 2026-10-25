@@ -101,10 +101,8 @@ async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
 async fn provision_project(project: &Client) {
     project
         .batch_execute(
-            // `apply_package` narrows migration authority to `wamn_db_owner`
-            // (48367402), so that role must exist and must own this database
-            // or the migrations are refused for want of CREATE on it. The test
-            // creates every role it needs; it takes no out-of-band setup.
+            // The database owner holds the platform floor. `apply_package`
+            // provisions separate package owners before running migrations.
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \

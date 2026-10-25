@@ -292,7 +292,7 @@ pub(super) async fn create_history_tables(
             .with_context(|| format!("read history table {}.{history}", model.schema))?
             .get::<_, bool>(0);
         // The package-owner role owns the relation, so it owns its history table.
-        set_package_owner_role(tx).await?;
+        set_package_owner_role(tx, &manifest.package.id).await?;
         tx.execute(
             "SELECT wamn_history.create_history_table($1, $2, false)",
             &[&model.schema, &model.table],
@@ -455,7 +455,7 @@ pub(super) async fn reconcile_record_history_triggers(
     {
         // The package-owner role owns the relation and the generated
         // functions, so it creates the triggers and the functions.
-        set_package_owner_role(tx).await?;
+        set_package_owner_role(tx, &manifest.package.id).await?;
         tx.batch_execute(statement)
             .await
             .with_context(|| format!("reconcile a record-history trigger: {statement}"))?;
@@ -553,7 +553,7 @@ async fn read_relation_triggers(
 /// Grant the audit retention role exactly its privileges on the history tables
 /// whose log trigger carries `P<n>D`, and revoke every other privilege.
 ///
-/// The package-owner role owns the history tables, so it issues the grants.
+/// The host issues grants across every installed package owner.
 /// The result reports whether the grants of the role changed.
 async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Result<bool> {
     let read_grants = || async {
@@ -577,7 +577,7 @@ async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Resul
         })
     };
     let before = read_grants().await?;
-    set_package_owner_role(tx).await?;
+    super::roles::assert_host_role(tx).await?;
     tx.batch_execute(&reconcile_audit_retention_grants_sql())
         .await
         .context("reconcile the audit retention grants")?;

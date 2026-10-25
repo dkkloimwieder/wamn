@@ -281,6 +281,9 @@ const PLATFORM_GRANTEES: [&str; 2] = [AUDIT_RETENTION_ROLE, DATA_ACCESS_ROLE];
 // than the object owner and the `$2` platform roles. The audit retention grants
 // are a record history platform fixture and the application role grants come
 // from the package declaration, so their grantee names alone skip them.
+// Package owner names come from control-provision::package_owner_role. Shared
+// schemas grant those NOLOGIN owners USAGE and CREATE, never a grant option.
+// This exception applies only to schema ACLs, not to table or column grants.
 const SCHEMAS_SQL: &str = r"
 WITH configured(schema_name) AS (
     SELECT unnest($1::text[])
@@ -293,6 +296,12 @@ SELECT configured.schema_name,
               AND entry.grantee NOT IN (
                   SELECT role.oid FROM pg_catalog.pg_roles AS role
                    WHERE role.rolname = ANY($2::text[])
+                      OR (role.rolname ~ '^wamn_package_owner_[0-9a-f]{40}$'
+                          AND NOT (role.rolcanlogin OR role.rolsuper OR role.rolcreatedb
+                                   OR role.rolcreaterole OR role.rolinherit
+                                   OR role.rolreplication OR role.rolbypassrls)
+                          AND entry.privilege_type IN ('USAGE', 'CREATE')
+                          AND NOT entry.is_grantable)
               )
        ) AS has_acl
   FROM configured

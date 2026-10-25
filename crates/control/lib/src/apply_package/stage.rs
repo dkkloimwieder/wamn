@@ -149,7 +149,7 @@ pub(super) async fn conditions(
         .await?;
     for (name, sql) in conditions {
         tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
-        set_package_owner_role(tx).await?;
+        set_package_owner_role(tx, package).await?;
         let rows = tx.query(sql, &[]).await.with_context(|| {
             format!("stage {section} {name} failed; stop and resume after correcting the cause")
         })?;

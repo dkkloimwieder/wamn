@@ -64,6 +64,14 @@ The platform alone installs its declared extension list, `btree_gist` and `pg_st
 
 The platform installs the record history triggers and the history tables, and the catalog reader skips them by name, as [record history](#record-history) describes.
 
+Provisioning creates one `NOLOGIN` role per package ID before package migrations run.
+`package_owner_role` in `crates/control/provision/src/name.rs` derives `wamn_package_owner_<40 SHA-256 hex digits>` from that ID.
+The role owns the package schemas, tables, sequences, and generated history functions.
+An overlay keeps its own role and uses the base relation owner for admitted changes to that relation.
+The database owner, `wamn_db_owner`, retains platform objects.
+Project migration `0037_package_owners.sql` transfers existing package objects and preserves their grants.
+Publication parses backfill SQL with the same statement checks as declared component SQL.
+
 Each managed relation, field, and constraint records its owning package.
 An overlay can add a field only where the base permits that extension.
 The added field remains overlay-owned even inside a base relation.
@@ -746,7 +754,7 @@ Such a change moves the stamps and writes an entry. A true no-op moves no stamp 
 
 The log function calls `row_image` with the authority of the writer.
 `record-history.sql` therefore grants `USAGE` on `wamn_history` and `EXECUTE` on `row_image` and `timestamptz_image` to `wamn_db_owner`.
-It also grants `CREATE` on `wamn_history` to `wamn_db_owner`, which owns the generated functions. Project migration `0022_record_history_relation_functions.sql` grants it to an existing database.
+Package provisioning grants the same history privileges and schema `CREATE` to each package owner, which owns its generated functions.
 [`deploy/sql/record-history-app-grants.sql`](../../deploy/sql/record-history-app-grants.sql) grants the same three privileges to `wamn_app`.
 `CATALOG_SCHEMA_SQL` composes it after `record-history.sql`.
 Every other tenant or package applier applies it after `record-history.sql`.
@@ -761,7 +769,7 @@ Generation refuses these declarations:
 
 No generated `update` or `delete` exists over a history table, so no application operation can alter an entry.
 
-After the migrations apply, apply-package creates the history table of each owned logged relation as `wamn_db_owner`.
+After the migrations apply, apply-package creates each logged relation’s history table as its package owner.
 apply-package never drops a history table.
 It records the CDC exclusion of each history table in `wamn_cdc_exclusions`, as it records an internal relation.
 The exclusion row names the package that owns the relation, and its relation id is the history table name.

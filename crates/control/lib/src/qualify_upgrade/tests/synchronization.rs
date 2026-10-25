@@ -41,7 +41,7 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
     .unwrap();
     wamn_schema_generator::write_compiled_manifest(&candidate).unwrap();
     let generation = fixture.server.database("upgrade_generation").unwrap();
-    connect(generation.url()).await.batch_execute(&format!("ALTER TABLE inventory.widget_maker DROP COLUMN note; SET ROLE wamn_db_owner; ALTER TABLE inventory.widget_tag ADD COLUMN mirror_note text; {sql}; RESET ROLE")).await.unwrap();
+    connect(generation.url()).await.batch_execute(&format!("ALTER TABLE inventory.widget_maker DROP COLUMN note; SET ROLE {}; ALTER TABLE inventory.widget_tag ADD COLUMN mirror_note text; {sql}; RESET ROLE", wamn_control_provision::package_owner_role("platform_fixture"))).await.unwrap();
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();

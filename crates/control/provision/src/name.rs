@@ -9,6 +9,8 @@
 
 use std::fmt::Write as _;
 
+use sha2::{Digest as _, Sha256};
+
 use crate::error::ProvisionError;
 use crate::workload_role::WorkloadRoleFamily;
 
@@ -18,25 +20,21 @@ use crate::workload_role::WorkloadRoleFamily;
 /// grants `CONNECT` to each generation on its own database instead.
 pub const APP_ROLE: &str = "wamn_app";
 
-/// The role every project-env database's `datdba` points at — the title holder,
-/// and nothing else (wamn-0h0g R9).
-///
-/// **Owner-only by construction**: `NOLOGIN`, zero grants, zero memberships, and
-/// no credential-generation pair. Nothing authenticates as it, so there is
-/// nothing to rotate. The rights database ownership implies — `ALTER DATABASE`,
-/// `DROP DATABASE`, `CREATE SCHEMA`, `GRANT … ON DATABASE`, `TEMPORARY` — are
-/// exercised only by the superuser provisioning principal that applies the
-/// `Database` CR and the privilege SQL.
-///
-/// Deliberately **not** [`APP_ROLE`]: guest-authored SQL executes as `wamn_app`,
-/// and ownership confers authority no grant matrix expresses and no `REVOKE`
-/// can remove (`NOCREATEDB` restrains none of it on an already-owned database).
-/// Deliberately **not** `postgres` either: a superuser-owned tenant database
-/// trades a guest-reachable owner for a superuser one. Every other runtime role
-/// in this repository is probed with "owns the current database" treated as
-/// DISQUALIFYING; this role is the one principal for which ownership is the
-/// whole point.
+/// The NOLOGIN owner of project-environment databases and platform objects.
+/// Package objects belong to their separate [`package_owner_role`].
+/// Runtime application logins inherit [`APP_ROLE`], never this owner role.
+/// The provisioning principal holds this role for trusted platform writes.
 pub const DB_OWNER_ROLE: &str = "wamn_db_owner";
+
+/// The NOLOGIN owner of one package's SQL objects, independent of its version.
+/// A 40-digit SHA-256 prefix follows the workload role naming convention and
+/// keeps every package identifier within PostgreSQL's 63-byte name limit.
+pub fn package_owner_role(package: &str) -> String {
+    format!(
+        "wamn_package_owner_{}",
+        &hex::encode(Sha256::digest(package.as_bytes()))[..40]
+    )
+}
 
 /// Prefix for the scoped control-author URL Secret.
 pub const CONTROL_AUTHOR_SECRET_PREFIX: &str = "wamn-authoring-";

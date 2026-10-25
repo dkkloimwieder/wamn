@@ -246,3 +246,43 @@ END $$;
         ),
     );
 }
+
+#[test]
+fn package_owners_provision_and_replay_without_database_owner_membership() {
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("package_owner_provision").unwrap();
+    let role = wamn_control_provision::package_owner_role("owner_probe");
+    run_ok(
+        database.url(),
+        &format!(
+            "CREATE ROLE wamn_system NOLOGIN; CREATE ROLE wamn_app NOLOGIN; {} {} {}; {} \
+         SET ROLE wamn_provisioner; SET createrole_self_grant = 'set, inherit'; \
+         {} {} \
+         CREATE SCHEMA package_probe AUTHORIZATION {role}; \
+         SET ROLE {role}; CREATE TABLE package_probe.record (id bigint GENERATED ALWAYS AS IDENTITY); \
+         RESET ROLE;",
+            sql::ensure_db_owner_role_sql(),
+            wamn_control_provision::provisioner::ensure_provisioner_role_sql(),
+            sql::set_database_owner_sql("package_owner_provision"),
+            sql::ensure_package_owner_role_sql("owner_probe"),
+            sql::ensure_package_owner_role_sql("owner_probe"),
+            sql::ensure_package_owner_role_sql("second_owner"),
+        ),
+    );
+    let facts = psql(
+        database.url(),
+        &format!(
+            "SELECT NOT (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolinherit OR rolreplication OR rolbypassrls) \
+           AND NOT pg_has_role(rolname, 'wamn_db_owner', 'MEMBER') \
+           AND NOT pg_has_role(rolname, 'wamn_app', 'MEMBER') \
+         FROM pg_roles WHERE rolname = '{role}';"
+        ),
+    );
+    assert!(
+        facts.status.success(),
+        "{}",
+        String::from_utf8_lossy(&facts.stderr)
+    );
+    assert!(String::from_utf8_lossy(&facts.stdout).contains(" t\n"));
+    server.stop().unwrap();
+}
