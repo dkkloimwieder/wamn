@@ -91,12 +91,13 @@ pub fn session(pair: &Ed25519KeyPair, kid: &str, roles: &[&str]) -> String {
 }
 
 /// Copy the bundle into a directory named for the test, add the key file, and
-/// return the directory with the bundle digest.
+/// return the directory with the bundle digest. The directory lies under the
+/// system temporary directory, not the target directory, so the edge's
+/// `status.sock` in it stays within the Unix socket path limit (wamn-xvk3e).
 pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, String) {
     static SOURCE: OnceLock<PathBuf> = OnceLock::new();
     let source = SOURCE.get_or_init(build_bundle);
-    let directory = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("edge-{test}-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("edge-{test}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("create the bundle directory");
     for entry in std::fs::read_dir(source).expect("read the bundle directory") {
