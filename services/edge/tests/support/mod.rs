@@ -113,7 +113,7 @@ pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, String) {
     (directory, file_digest(&bundle))
 }
 
-/// Build the route guest, and write the bundle of `apps/edge_device`, with the
+/// Build the route guest into `apps/target`, and write the bundle of `apps/edge_device`, with the
 /// component of its build, into a new directory of this test binary.
 fn build_bundle() -> PathBuf {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -121,6 +121,7 @@ fn build_bundle() -> PathBuf {
     let flags = run(&mut Command::new(repository.join("tools/guest-rustflags")));
     run(Command::new(env!("CARGO"))
         .current_dir(repository.join("apps"))
+        .env_remove("CARGO_TARGET_DIR")
         .env("RUSTFLAGS", String::from_utf8(flags).expect("flags").trim())
         .args(["build", "--locked", "--offline", "--release"])
         .args(["--target", "wasm32-wasip2", "-p", "http-route"]));
