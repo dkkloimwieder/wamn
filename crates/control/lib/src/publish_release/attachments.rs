@@ -405,8 +405,8 @@ fn validate_authored_attachment_routes(
 mod tests {
     use super::*;
 
-    /// The route hashes and the whole attachment set of the fixture, as publish
-    /// read them before generation wrote the generated route entries.
+    /// The route hashes and the whole attachment set of the fixture, including
+    /// the required client-generated id on create.
     const FIXTURE_ROUTES: &[(&str, &str)] = &[
         (
             "widget-archive-http",
@@ -414,7 +414,7 @@ mod tests {
         ),
         (
             "widget-create-http",
-            "sha256:9503afb0a101e407ff840430d229fd1628c83605963921b9877b6057926e9c9d",
+            "sha256:cf8de54376ff8ba81fa3a77e8d3217d3b747dd817104a341fe01d74758bf4549",
         ),
         (
             "widget-delete-http",
@@ -458,10 +458,10 @@ mod tests {
         ),
     ];
     const FIXTURE_ATTACHMENTS_DIGEST: &str =
-        "sha256:00b8d9d12d2fb4a122cdf35c46a5e46bac09223c147523d8b96184d7eabddb89";
-    /// The rendered fixture declaration, before generation wrote its entries.
+        "sha256:ec745f6a368e2d65877f31a6a1cef54477b930da1cae1e5ce701217a76ba6266";
+    /// The rendered fixture declaration with its generated route entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:0eed3684411c81efc1f40fc638904bff51a0faafc79da4d8e66758c37a92d4ad";
+        "sha256:f77ddfb59c66ba08b92d99016324e9f78979ac1ba0da308e32cf86e212097a28";
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they

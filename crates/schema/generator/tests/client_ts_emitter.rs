@@ -49,6 +49,14 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
         ]
     );
     let widget = widget(&files);
+    let request = widget
+        .split("export interface WidgetCreateRequest {")
+        .nth(1)
+        .unwrap()
+        .split('}')
+        .next()
+        .unwrap();
+    assert!(request.contains("  id: Uuid;"), "{request}");
     for (operation, function) in [
         ("archive", "archive"),
         ("create", "create"),

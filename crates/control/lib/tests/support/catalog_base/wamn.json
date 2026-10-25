@@ -7,7 +7,7 @@
       "table": "record",
       "owner": "platform_catalog_base",
       "client_field_extensible": true,
-      "server_owned_fields": ["id"],
+      "server_owned_fields": [],
       "field_owners": {},
       "constraint_owners": {},
       "enum_fields": {},

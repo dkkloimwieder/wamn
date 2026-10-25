@@ -7,7 +7,7 @@
       "table": "record",
       "owner": "platform_records",
       "client_field_extensible": true,
-      "server_owned_fields": ["id", "state"],
+      "server_owned_fields": ["state"],
       "enum_fields": { "state": ["open", "closed"] },
       "audit_log": { "columns": ["created_at"], "retention": "unlimited" },
       "operations": {
@@ -18,7 +18,7 @@
       "schema": "platform_fixture",
       "table": "location",
       "owner": "platform_records",
-      "server_owned_fields": ["id"],
+      "server_owned_fields": [],
       "enum_fields": {},
       "audit_log": { "columns": [], "retention": "none" },
       "operations": {}

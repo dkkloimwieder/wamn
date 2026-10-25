@@ -184,7 +184,7 @@ pub(super) fn manifest() -> Value {
                 "table": "gadget",
                 "owner": "platform_gadget",
                 "server_owned_fields": [
-                    "id", "part_code", "status", "row_version", "created_at"
+                    "part_code", "status", "row_version", "created_at"
                 ],
                 "enum_fields": {"status": ["open", "complete", "cancelled"]},
                 "audit_log": {"columns": ["created_at"], "retention": "none"},

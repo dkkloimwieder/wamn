@@ -1074,7 +1074,10 @@ fn input_contract(
     // The key input and a filter both name a model column, so both read that
     // column's text. The revision input names one too, and it is deliberately
     // left silent: no screen renders it, because the plan reserves it.
-    let mut key = json!({"type": "uuid", "required": true});
+    let mut key = json!({
+        "type": column(table, "id").expect("validated id column").column_type().as_str(),
+        "required": true,
+    });
     key.as_object_mut()
         .expect("the key input object")
         .extend(model_text_members(model, "id"));
@@ -1143,9 +1146,10 @@ fn input_contract(
         CrudAction::Create => merge_json(
             common,
             &json!({
+                "id": key,
                 CREATE_KEY_FIELD: {"type": "text", "required": true},
                 "request": {
-                    "over": "writable_fields",
+                    "over": "id_and_writable_fields",
                     "payload": "canonical_compact_json",
                     "changed": "idempotency_conflict",
                 },

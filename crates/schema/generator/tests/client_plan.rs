@@ -85,6 +85,7 @@ fn supplied_inputs_name_only_the_reserved_contract_paths() {
             .map(|field| (field.path, field.type_))
             .collect::<Vec<_>>(),
         [
+            ("id", SuppliedType::Id),
             ("idempotency_key", SuppliedType::IdempotencyKey),
             ("request_id", SuppliedType::RequestId),
         ],

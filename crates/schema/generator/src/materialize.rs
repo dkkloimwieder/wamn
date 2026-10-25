@@ -29,7 +29,7 @@ use crate::{
     manifest::CONTROL_OWNED_RELATION_TABLES,
 };
 
-pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.7";
+pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.8";
 pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
 
 #[derive(Debug)]
@@ -956,7 +956,7 @@ mod tests {
                 "schema":"application",
                 "table":"thing",
                 "owner":"test_package",
-                "server_owned_fields":["id"],
+                "server_owned_fields":[],
                 "audit_log":{"columns":[],"retention":"none"},
                 "operations":{
                     "get":{

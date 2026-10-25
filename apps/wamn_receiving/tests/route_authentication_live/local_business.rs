@@ -227,7 +227,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
                 .header(reqwest::header::HOST, &application.route_host)
                 .bearer_auth(&application.bearer)
                 .json(
-                    &json!([{"request_id": key, "idempotency_key": key, "supplier_id": supplier}]),
+                    &json!([{"request_id": key, "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": key, "supplier_id": supplier}]),
                 )
                 .send()
                 .await?;

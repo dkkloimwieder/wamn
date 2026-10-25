@@ -892,7 +892,7 @@ mod tests {
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
                 "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
-                "server_owned_fields": ["id"],
+                "server_owned_fields": [],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "operations": {"query": {
                     "permission": "order_row.query", "result": "page",
@@ -988,7 +988,7 @@ mod tests {
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
                 "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
-                "server_owned_fields": ["id"],
+                "server_owned_fields": [],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "operations": {"query": {
                     "permission": "order_row.query", "result": "page",

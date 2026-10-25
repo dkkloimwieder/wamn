@@ -4,7 +4,7 @@ import { FormView } from "@wfe/generator";
 import { DashboardPanel } from "@wfe/components/layout";
 import { FieldError } from "@wfe/components";
 import { filledValues, type ScreenProps } from "@wamn/platform-ui";
-import { newIdempotencyKey, newRequestId, occurredAt } from "@wamn/web-runtime";
+import { newIdempotencyKey, newRequestId, occurredAt, uuidv7 } from "@wamn/web-runtime";
 import * as purchase from "@wamn/receiving-client/purchase_order.js";
 import * as supplier from "@wamn/receiving-client/supplier.js";
 import * as receiving from "@wamn/receiving-client/receiving.js";
@@ -24,17 +24,18 @@ function message(error: unknown) {
 export function SupplierForm(props: ScreenProps) {
   const initial = { name: filledValues<{ name?: string }>(props.search).name ?? "" };
   const [values, setValues] = createSignal(initial);
-  let intent: { name: string; key: string } | undefined;
+  let intent: { name: string; key: string; id: string } | undefined;
   const form = createForm({
     values,
     defaults: () => initial,
     onValuesChange: setValues,
     validate: (snapshot) => (snapshot.name.trim() ? {} : { fields: { name: "Enter a value." } }),
     onSubmit: async (snapshot, { signal }) => {
-      if (intent?.name !== snapshot.name) intent = { name: snapshot.name, key: newIdempotencyKey() };
+      if (intent?.name !== snapshot.name) intent = { name: snapshot.name, key: newIdempotencyKey(), id: uuidv7() };
       try {
         await invoke(props.transport, supplier.SUPPLIER_CREATE_ROUTE, {
           ...snapshot,
+          id: intent.id,
           idempotency_key: intent.key,
           request_id: newRequestId(),
         });

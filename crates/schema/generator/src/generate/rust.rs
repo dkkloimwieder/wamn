@@ -332,9 +332,8 @@ pub(super) fn wamn_api(
                 sql_path: paths[0].clone(),
                 row: model_row.clone(),
                 fetch: AccessorFetch::One,
-                binds: operation
-                    .writable_fields
-                    .iter()
+                binds: std::iter::once("id")
+                    .chain(operation.writable_fields.iter().map(String::as_str))
                     .map(|field| {
                         bind_for_column(
                             table,

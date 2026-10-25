@@ -12,9 +12,7 @@
       "schema": "inventory",
       "table": "item",
       "owner": "source_fixture",
-      "server_owned_fields": [
-        "id"
-      ],
+      "server_owned_fields": [],
       "audit_log": {
         "columns": [],
         "retention": "none"

@@ -12,7 +12,7 @@
       "schema": "bind_connection_fixture",
       "table": "item",
       "owner": "bind_connection_fixture",
-      "server_owned_fields": ["id"],
+      "server_owned_fields": [],
       "audit_log": {
         "columns": [],
         "retention": "none"

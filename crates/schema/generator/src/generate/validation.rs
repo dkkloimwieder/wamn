@@ -275,6 +275,12 @@ fn validate_model(
     }
     let mut seen = BTreeSet::new();
     for field in &model.server_owned_fields {
+        if field == "id" {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidModel,
+                format!("{model_name} lists id in server_owned_fields; id is client-generated"),
+            ));
+        }
         validate_field(table, model_name, field)?;
         if !seen.insert(field) {
             return Err(GenerateError::new(
@@ -370,7 +376,13 @@ fn validate_operation(
     operation: &OperationDeclaration,
 ) -> Result<(), GenerateError> {
     let context = format!("{model_name}.{}", action.as_str());
-    validate_field(table, model_name, "id")?;
+    let id = validate_field(table, model_name, "id")?;
+    if id.column_type() != ColumnType::Uuid || id.nullable() {
+        return Err(GenerateError::new(
+            GenerateErrorType::InvalidModel,
+            format!("{model_name}.id must be a non-null uuid supplied by the client"),
+        ));
+    }
     if let Some(display_field) = &operation.display_field {
         if action != CrudAction::Query {
             return Err(GenerateError::new(
@@ -393,6 +405,12 @@ fn validate_operation(
     let server_owned = server_owned_fields(model, table);
     let mut writable = BTreeSet::new();
     for field in &operation.writable_fields {
+        if field == "id" {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidOperation,
+                format!("{context} lists id in writable_fields; id is the row key"),
+            ));
+        }
         let column = validate_field(table, model_name, field)?;
         if !writable.insert(field) {
             return Err(GenerateError::new(

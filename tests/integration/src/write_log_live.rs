@@ -28,10 +28,16 @@ struct Routes {
 
 impl Routes {
     /// Post one `widget.create` item, and return its answer item.
-    async fn create(&self, request_id: &str, key: &str, code: &str) -> anyhow::Result<Value> {
+    async fn create(
+        &self,
+        request_id: &str,
+        key: &str,
+        id: &str,
+        code: &str,
+    ) -> anyhow::Result<Value> {
         self.post(
             "/widget/create",
-            json!({"request_id": request_id, "idempotency_key": key, "code": code}),
+            json!({"request_id": request_id, "id": id, "idempotency_key": key, "code": code}),
         )
         .await
     }
@@ -168,8 +174,12 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     let (database, connection) = tokio_postgres::connect(project.url(), NoTls).await?;
     tokio::spawn(connection);
 
+    let first_id = uuid::Uuid::now_v7().to_string();
+    let second_id = uuid::Uuid::now_v7().to_string();
+    let third_id = uuid::Uuid::now_v7().to_string();
+
     // The first call writes one widget and one log row.
-    let first = routes.create("r-1", "k-1", "standard").await?;
+    let first = routes.create("r-1", "k-1", &first_id, "standard").await?;
     anyhow::ensure!(
         first.get("value").is_some(),
         "the first call creates: {first}"
@@ -177,12 +187,16 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     anyhow::ensure!(counts(&database, "k-1").await? == (1, 1));
 
     // A retry with the same request answers the stored outcome and writes nothing.
-    let retry = routes.create("r-2", "k-1", "standard").await?;
+    let retry = routes.create("r-2", "k-1", &first_id, "standard").await?;
     anyhow::ensure!(retry == first, "a retry answers {first}, not {retry}");
     anyhow::ensure!(counts(&database, "k-1").await? == (1, 1));
 
+    let changed_id = routes.create("r-id", "k-1", &second_id, "standard").await?;
+    anyhow::ensure!(changed_id["error"]["code"] == "idempotency_conflict");
+    anyhow::ensure!(counts(&database, "k-1").await? == (1, 1));
+
     // The same key with another request is refused, and writes nothing.
-    let changed = routes.create("r-3", "k-1", "priority").await?;
+    let changed = routes.create("r-3", "k-1", &first_id, "priority").await?;
     anyhow::ensure!(
         changed["error"]["code"] == "idempotency_conflict"
             && changed["error"]["detail"]
@@ -193,13 +207,13 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
 
     // A refused create leaves no log row, so a later different request under
     // the same key does its work.
-    let refused = routes.create("r-4", "k-2", "standard").await?;
+    let refused = routes.create("r-4", "k-2", &second_id, "standard").await?;
     anyhow::ensure!(
         refused["error"]["code"] == "unique_violation",
         "a second standard widget is refused: {refused}"
     );
     anyhow::ensure!(counts(&database, "k-2").await? == (1, 0));
-    let later = routes.create("r-5", "k-2", "priority").await?;
+    let later = routes.create("r-5", "k-2", &second_id, "priority").await?;
     anyhow::ensure!(
         later.get("value").is_some(),
         "the key is free again: {later}"
@@ -222,8 +236,8 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
         .batch_execute("DELETE FROM inventory.widget")
         .await?;
     let (left, right) = tokio::join!(
-        routes.create("r-6", "k-3", "standard"),
-        routes.create("r-7", "k-3", "standard"),
+        routes.create("r-6", "k-3", &third_id, "standard"),
+        routes.create("r-7", "k-3", &third_id, "standard"),
     );
     let (left, right) = (left?, right?);
     anyhow::ensure!(
@@ -252,8 +266,8 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
         .header("Host", &routes.host)
         .bearer_auth(&routes.bearer)
         .json(&json!([
-            {"request_id": "r-8", "idempotency_key": "k-3", "code": "standard"},
-            {"request_id": "r-9", "idempotency_key": "k-1", "code": "priority"},
+            {"request_id": "r-8", "id": third_id, "idempotency_key": "k-3", "code": "standard"},
+            {"request_id": "r-9", "id": first_id, "idempotency_key": "k-1", "code": "priority"},
         ]))
         .send()
         .await?;
@@ -294,7 +308,9 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
 
     let mut widgets = Vec::new();
     for (key, code) in [("w-1", "standard"), ("w-2", "priority")] {
-        let created = routes.create(key, key, code).await?;
+        let created = routes
+            .create(key, key, &uuid::Uuid::now_v7().to_string(), code)
+            .await?;
         widgets.push(
             created["value"]["id"]
                 .as_str()

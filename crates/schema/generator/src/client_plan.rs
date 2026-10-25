@@ -168,6 +168,8 @@ pub fn route_canonicalization(
 /// The platform value that a session driver writes into a reserved input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuppliedType {
+    /// The client-generated id of a new row.
+    Id,
     /// One submission attempt's identity.
     RequestId,
     /// The replay key of one submission intent.
@@ -818,6 +820,12 @@ impl<'a> ScreenPlan<'a> {
         let supplied: Vec<SuppliedField<'a>> = leaf_fields(&operation.input_fields)
             .into_iter()
             .filter_map(|field| {
+                if operation.type_ == "create" && field.path == "id" {
+                    return Some(SuppliedField {
+                        path: field.path.as_str(),
+                        type_: SuppliedType::Id,
+                    });
+                }
                 SUPPLIED_PATHS
                     .iter()
                     .find(|(path, _)| *path == field.path)

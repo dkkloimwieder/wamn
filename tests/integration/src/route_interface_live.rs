@@ -321,15 +321,30 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     // CREATE. The route replays the command the wiring created, from the same
     // write log record: the same id and the same creation time.
     let create = json!([{
-        "request_id": "create", "idempotency_key": "create-1", "code": "standard",
+        "request_id": "create", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "create-1", "code": "standard",
     }]);
     let created = paths.alike("/widget/create", &create).await?;
     let id = value(&created)?["id"].clone();
+    anyhow::ensure!(id == create[0]["id"], "create keeps the supplied id");
     let version = edit_version(&created)?;
+    refused(
+        &paths
+            .alike(
+                "/widget/create",
+                &json!([{
+                    "request_id": "duplicate-id", "idempotency_key": "duplicate-id",
+                    "id": id, "code": "priority",
+                }]),
+            )
+            .await?,
+        "unique_violation",
+        &json!({"constraint": "widget_id_pkey"}),
+    )?;
+
     let second = paths
         .route(
             "/widget/create",
-            &json!([{"request_id": "create-2", "idempotency_key": "create-2", "code": "priority"}]),
+            &json!([{"request_id": "create-2", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "create-2", "code": "priority"}]),
         )
         .await?;
     let other = value(&second)?["id"].clone();
@@ -340,7 +355,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         &paths
             .alike(
                 "/widget/create",
-                &json!([{"request_id": "taken", "idempotency_key": "taken", "code": "priority"}]),
+                &json!([{"request_id": "taken", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "taken", "code": "priority"}]),
             )
             .await?,
         "unique_violation",
@@ -493,7 +508,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
             .alike(
                 "/widget/create",
                 &json!([{
-                    "request_id": "no-maker", "idempotency_key": "no-maker",
+                    "request_id": "no-maker", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "no-maker",
                     "code": "standard", "maker_id": MISSING,
                 }]),
             )
@@ -527,7 +542,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         &paths
             .route(
                 "/widget/create",
-                &json!([{"request_id": "create-3", "idempotency_key": "create-3", "code": "standard"}]),
+                &json!([{"request_id": "create-3", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "create-3", "code": "standard"}]),
             )
             .await?,
     )?;
@@ -783,7 +798,7 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
             .route(
                 "/widget/create",
                 &json!([{
-                    "request_id": "count", "idempotency_key": "count", "code": "standard",
+                    "request_id": "count", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "count", "code": "standard",
                 }]),
             )
             .await?;
@@ -889,7 +904,7 @@ async fn create_widget(paths: &Paths, code: &str, note: &str) -> anyhow::Result<
     let created = paths
         .route(
             "/widget/create",
-            &json!([{"request_id": key, "idempotency_key": key, "code": code, "note": note}]),
+            &json!([{"request_id": key, "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": key, "code": code, "note": note}]),
         )
         .await?;
     Ok((value(&created)?["id"].clone(), edit_version(&created)?))

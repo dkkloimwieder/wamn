@@ -1411,8 +1411,8 @@ fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
 // Generated create: the write log (`docs/plan/write-log.md`).
 //
 // A create claims its key in `platform.write_log`, inserts its row and
-// stores its result in one transaction that its codec holds. The model's
-// defaults mint the identities, and `RETURNING` hands them back.
+// stores its result in one transaction that its codec holds. The binding
+// supplies the id, and `RETURNING` hands the row back.
 // ---------------------------------------------------------------------------
 
 fn create_manifest() -> Value {
@@ -1423,6 +1423,34 @@ fn create_manifest() -> Value {
         "result": "one"
     });
     manifest
+}
+
+#[test]
+fn id_is_client_owned_and_never_a_writable_field() {
+    let mut declared = create_manifest();
+    declared["models"]["gadget"]["server_owned_fields"] = json!(["id"]);
+    let error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
+    assert!(
+        error
+            .to_string()
+            .contains("gadget lists id in server_owned_fields")
+    );
+    let mut declared = create_manifest();
+    declared["models"]["gadget"]["fields"] = json!({"id": {"role": "actor"}});
+    let error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
+    assert!(error.to_string().contains("gadget.id is client-generated"));
+    for action in ["create", "update"] {
+        let mut declared = create_manifest();
+        declared["models"]["gadget"]["operations"][action]["writable_fields"] = json!(["id"]);
+        let error = run(&catalog(false), &declared, &QUERY_SOURCES).unwrap_err();
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("gadget.{action} lists id in writable_fields"))
+        );
+    }
 }
 
 /// A second model with create fields in each admitted presence state
@@ -1477,7 +1505,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                 "schema": "inventory",
                 "table": "inventory_item",
                 "owner": "wamn_inventory",
-                "server_owned_fields": ["id", "sequence_number", "created_at"],
+                "server_owned_fields": ["sequence_number", "created_at"],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "delete_mode": "hard",
                 "operations": {
@@ -1645,6 +1673,16 @@ const CODEC_TESTS: &str = r##"
 mod codec_tests {
     use crate::exports::wamn_inventory::inventory_item::create as contract;
 
+    #[test]
+    fn a_create_accepts_the_supplied_id_and_requires_it() {
+        let body = r#"[{"request_id":"r","id":"019fd531-287b-7000-8000-00000000abcd","idempotency_key":"k","sku":"BOX"}]"#;
+        let mut items = super::create_codec::decode(body).unwrap();
+        let request = items.remove(0).input.unwrap();
+        assert_eq!(request.id, "019fd531-287b-7000-8000-00000000abcd");
+        assert_eq!(create(r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#), ["input"]);
+        assert_eq!(create(r#"[{"request_id":"r","id":"not-a-uuid","idempotency_key":"k","sku":"BOX"}]"#), ["id"]);
+    }
+
     /// The field each refused item names. A refused item never reaches the
     /// connection, so this test needs no database.
     fn create(body: &str) -> Vec<String> {
@@ -1672,9 +1710,9 @@ mod codec_tests {
 
     #[test]
     fn a_create_refuses_an_omitted_field_that_nothing_would_fill() {
-        let omitted = r#"[{"request_id":"r","idempotency_key":"k"}]"#;
+        let omitted = r#"[{"request_id":"r","id":"019fd531-287b-7000-8000-00000000abcd","idempotency_key":"k"}]"#;
         assert_eq!(create(omitted), ["sku"]);
-        let null = r#"[{"request_id":"r","idempotency_key":"k","sku":null}]"#;
+        let null = r#"[{"request_id":"r","id":"019fd531-287b-7000-8000-00000000abcd","idempotency_key":"k","sku":null}]"#;
         assert_eq!(create(null), ["sku"]);
     }
 }
@@ -1771,16 +1809,15 @@ fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
     .unwrap()
 }
 
-/// A create binds only its writable fields. The model's defaults mint the
-/// identities, and `RETURNING` hands them back. The generator writes no claim
-/// or replay statement of its own.
+/// A create binds its client id and writable fields. The generator writes
+/// no claim or replay statement of its own.
 #[test]
-fn generated_create_binds_no_identity() {
+fn generated_create_binds_the_client_id() {
     let package = run(&catalog(false), &create_manifest(), &QUERY_SOURCES).unwrap();
     assert_eq!(
         generated_create_sql(&package, "create"),
-        "INSERT INTO gadget (stock_id)\n\
-         VALUES ($1::uuid)\n\
+        "INSERT INTO gadget (id, stock_id)\n\
+         VALUES ($1::uuid, $2::uuid)\n\
          RETURNING\n    \
          created_at,\n    id,\n    part_code,\n    row_version,\n    status,\n    stock_id;\n",
     );
@@ -1794,7 +1831,24 @@ fn generated_create_binds_no_identity() {
     }
     let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
     let model = object_named(overlay["relations"].as_array().unwrap(), "table", "gadget");
-    assert_eq!(model["insert_fields"], json!(["stock_id"]));
+    assert_eq!(model["insert_fields"], json!(["id", "stock_id"]));
+    let input = artifact_json(&package, "generated/contracts/gadget/create.input.json");
+    assert_eq!(input["id"], json!({"type": "uuid", "required": true}));
+    let route = artifact_json(&package, "generated/routes/gadget/create.json");
+    assert!(
+        route["items"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("id"))
+    );
+    let errors = artifact_json(&package, "generated/contracts/gadget/create.errors.json");
+    let primary = errors["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["constraint"] == "gadget_id_pkey")
+        .unwrap();
+    assert_eq!(primary["literal"], "unique_violation");
 }
 
 /// The create contract names the write log, in which the host claims its key,
@@ -1833,7 +1887,10 @@ fn generated_create_contracts_publish_the_write_log_and_its_refusal() {
     );
     assert_eq!(
         statements[0]["binds"],
-        json!([{"name": "stock_id", "type": "uuid", "nullable": false}])
+        json!([
+            {"name": "id", "type": "uuid", "nullable": false},
+            {"name": "stock_id", "type": "uuid", "nullable": false},
+        ])
     );
 
     let errors = artifact_json(&package, "generated/contracts/gadget/create.errors.json");
@@ -1854,7 +1911,7 @@ fn generated_create_contracts_publish_the_write_log_and_its_refusal() {
     assert_eq!(
         input["request"],
         json!({
-            "over": "writable_fields",
+            "over": "id_and_writable_fields",
             "payload": "canonical_compact_json",
             "changed": "idempotency_conflict",
         })
@@ -2268,7 +2325,6 @@ fn selected_stamp_columns_become_server_owned() {
     assert_eq!(
         input["server_owned_fields"]["fields"],
         json!([
-            "id",
             "part_code",
             "status",
             "row_version",
@@ -2285,7 +2341,6 @@ fn selected_stamp_columns_become_server_owned() {
     assert_eq!(
         input["server_owned_fields"]["fields"],
         json!([
-            "id",
             "part_code",
             "status",
             "row_version",

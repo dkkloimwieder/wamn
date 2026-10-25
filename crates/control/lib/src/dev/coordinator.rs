@@ -2331,7 +2331,7 @@ mod tests {
         manifest.custom_operations.clear();
         manifest.internal_relations.clear();
         let model = manifest.models.get_mut("record").unwrap();
-        model.server_owned_fields = vec!["id".to_owned()];
+        model.server_owned_fields.clear();
         model.enum_fields.clear();
         model
             .operations

@@ -80,6 +80,11 @@ fn validate_model_fields(
     let invalid = |detail: String| GenerateError::new(GenerateErrorType::InvalidModel, detail);
     let mut numbered = None;
     for (field, declaration) in &model.fields {
+        if field == "id" && declaration.role.is_some() {
+            return Err(invalid(format!(
+                "{model_name}.id is client-generated and cannot have a server-assigned role"
+            )));
+        }
         if column(table, field).is_none() {
             return Err(GenerateError::for_object(
                 GenerateErrorType::UnknownColumn,
@@ -131,8 +136,7 @@ fn validate_model_fields(
     Ok(())
 }
 
-/// The key rules of one numbered field (`docs/plan/platform-config.md`,
-/// "Sequence as the record id").
+/// A numbered field is separate from the client-generated row id.
 fn validate_numbered_field(
     model_name: &str,
     model: &ModelDeclaration,
@@ -143,13 +147,9 @@ fn validate_numbered_field(
 ) -> Result<(), GenerateError> {
     let invalid = |detail: String| GenerateError::new(GenerateErrorType::InvalidModel, detail);
     let key = primary_key(table);
-    if key == Some(field)
-        && pattern
-            .counters()
-            .any(|counter| counter.scope().key().is_some())
-    {
+    if key == Some(field) {
         return Err(invalid(format!(
-            "{model_name}.{field} is the key and numbers from sequence {sequence}, whose pattern uses reset= or per=; a key's counters may not, because two records would collide"
+            "{model_name}.{field} is the key and cannot be numbered; ids are client-generated"
         )));
     }
     let ty = column(table, field)

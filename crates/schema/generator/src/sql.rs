@@ -40,10 +40,7 @@ pub(crate) fn get(table: &Table, tombstoned: bool) -> String {
     )
 }
 
-/// Insert the row, and return it with the identities its defaults minted.
-///
-/// The write log keys the retry, so the insert binds no identity: a retry that
-/// finds a stored result never reaches it (`docs/plan/write-log.md` 4.3).
+/// Insert the row with its client-generated id and return it.
 ///
 /// A numbered field binds last, as the text `next-number` returned, and the
 /// SQL casts it to the column. An actor field reads the `app.user_id` claim,
@@ -53,13 +50,10 @@ pub(crate) fn create(
     model: &ModelDeclaration,
     operation: &OperationDeclaration,
 ) -> String {
-    let mut columns = operation
-        .writable_fields
-        .iter()
-        .map(String::as_str)
+    let mut columns = std::iter::once("id")
+        .chain(operation.writable_fields.iter().map(String::as_str))
         .collect::<Vec<_>>();
-    let mut values = operation
-        .writable_fields
+    let mut values = columns
         .iter()
         .enumerate()
         .map(|(index, field)| {
@@ -81,13 +75,6 @@ pub(crate) fn create(
             postgres_type(column_type(table, field))
         ));
         columns.push(field);
-    }
-    if columns.is_empty() {
-        return format!(
-            "INSERT INTO {} DEFAULT VALUES\nRETURNING\n    {};\n",
-            table.name(),
-            returning_columns(table)
-        );
     }
     format!(
         "INSERT INTO {} ({})\nVALUES ({})\nRETURNING\n    {};\n",

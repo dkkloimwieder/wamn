@@ -361,7 +361,7 @@ fn declare_ownership_only_model(root: &Path, model_id: &str, table: &str) {
         "schema": "inventory",
         "table": table,
         "owner": "wamn_inventory",
-        "server_owned_fields": ["id"],
+        "server_owned_fields": [],
         "enum_fields": {},
         "audit_log": {"columns": [], "retention": "none"},
         "operations": {}

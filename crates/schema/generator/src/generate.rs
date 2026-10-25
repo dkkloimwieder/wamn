@@ -41,7 +41,7 @@ const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
 /// The create input field that carries the caller's idempotency key.
 pub(crate) const CREATE_KEY_FIELD: &str = "idempotency_key";
-/// Insert the row. Its defaults mint its identities, and `RETURNING` hands them back.
+/// Insert the row with its supplied id, and return it with `RETURNING`.
 const CREATE_STATEMENT: &str = "create";
 /// The change feed statement of a list read with a feed.
 const CHANGES_STATEMENT: &str = "changes";

@@ -1785,7 +1785,7 @@ fn enum_fields_come_from_the_check_and_an_authored_list_only_narrows() {
 #[test]
 fn a_stated_stamp_column_refuses() {
     let mut authored = without_relations(fixture::manifest());
-    authored["models"]["widget"]["server_owned_fields"] = json!(["id", "created_at"]);
+    authored["models"]["widget"]["server_owned_fields"] = json!(["created_at"]);
     let error = derive(&authored).expect_err("a stamp is not authored");
     assert!(
         error

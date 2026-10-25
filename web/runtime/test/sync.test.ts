@@ -38,6 +38,7 @@ const route: OperationRoute = {
 async function create(
   transport: Transport,
   items: readonly {
+    id: string;
     idempotencyKey: string;
     requestId: string;
     label: string;
@@ -50,6 +51,7 @@ async function create(
         toWire(item, {
           idempotency_key: "idempotencyKey",
           request_id: "requestId",
+          id: "id",
           label: "label",
         }),
       ),
@@ -61,7 +63,7 @@ async function create(
 function entry(): OutboxEntry {
   return {
     operation,
-    request: { label: "Box" },
+    request: { id: "row-1", label: "Box" },
     request_hash: "stored-hash",
     expect: { model: "row", id: "row-1" },
     append_only: false,
@@ -149,7 +151,12 @@ describe("send", () => {
     expect(requests).toHaveLength(3);
     expect(new Set(requests.map((item) => item["request_id"])).size).toBe(3);
     for (const item of requests) {
-      expect(item).toEqual({ label: "Box", idempotency_key: "stored-hash", request_id: expect.any(String) });
+      expect(item).toEqual({
+        id: "row-1",
+        label: "Box",
+        idempotency_key: "stored-hash",
+        request_id: expect.any(String),
+      });
     }
     expect(stored).toEqual(original);
   });

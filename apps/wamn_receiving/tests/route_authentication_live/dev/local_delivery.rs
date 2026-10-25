@@ -26,10 +26,11 @@ const APPENDED: &str = "apps/wamn_receiving/migrations/0003_location_note.sql";
 const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
 const CODE_BEFORE: &str = "read::location_list(connection)";
 const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, wamn_receiving_data_access::AccessError>(rows) }";
-const MANIFEST_BEFORE: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"id\"]";
-const MANIFEST_AFTER: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"id\", \"note\"]";
-const OWNER_BEFORE: &str = "server_owned_fields = [\"id\", \"note\"]";
-const OWNER_AFTER: &str = "server_owned_fields = [\"id\", \"note\"]\n            field_owners = {note = \"wamn_receiving\"}";
+const MANIFEST_BEFORE: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = []";
+const MANIFEST_AFTER: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"note\"]";
+const OWNER_BEFORE: &str = "server_owned_fields = [\"note\"]";
+const OWNER_AFTER: &str =
+    "server_owned_fields = [\"note\"]\n            field_owners = {note = \"wamn_receiving\"}";
 
 #[tokio::test]
 #[ignore = "requires: WAMN_LOCAL_DEV_EDIT_ROOT, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME, WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]

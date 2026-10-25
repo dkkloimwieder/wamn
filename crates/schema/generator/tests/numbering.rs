@@ -129,7 +129,7 @@ fn text(package: &GeneratedPackage, path: &str) -> String {
 fn a_create_that_supplies_a_number_field_is_refused() {
     let mut manifest = numbered();
     manifest["models"]["gadget"]["server_owned_fields"] =
-        json!(["id", "status", "row_version", "created_at"]);
+        json!(["status", "row_version", "created_at"]);
     manifest["models"]["gadget"]["operations"]["create"]["writable_fields"] =
         json!(["stock_id", "part_code"]);
     let (kind, message) = refusal(&catalog(false), &manifest);
@@ -192,22 +192,20 @@ fn reset_or_per_in_a_sequence_bound_to_the_key_is_refused() {
 }
 
 #[test]
-fn an_integer_key_takes_only_a_bare_counter() {
-    let mut manifest = numbered();
-    manifest["sequences"]["gadget_number"]["pattern"] = json!("G{seq:n}");
-    manifest["models"]["gadget"]["fields"] = json!({"id": {"number": "gadget_number"}});
-    // The generated reads key a row by a uuid, so the model only creates.
-    let create = manifest["models"]["gadget"]["operations"]["create"].clone();
-    manifest["models"]["gadget"]["operations"] = json!({"create": create});
-    let (kind, message) = refusal(&integer_key_catalog(), &manifest);
-    assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
-    assert!(
-        message.contains("takes a bare {seq:<counter>} pattern only"),
-        "{message}"
-    );
-
-    manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
-    run(&integer_key_catalog(), &manifest, &[]).unwrap();
+fn an_integer_key_is_refused_even_with_a_bare_counter() {
+    for pattern in ["G{seq:n}", "{seq:n}"] {
+        let mut manifest = numbered();
+        manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
+        manifest["models"]["gadget"]["fields"] = json!({"id": {"number": "gadget_number"}});
+        let create = manifest["models"]["gadget"]["operations"]["create"].clone();
+        manifest["models"]["gadget"]["operations"] = json!({"create": create});
+        let (error_type, message) = refusal(&integer_key_catalog(), &manifest);
+        assert_eq!(error_type, GenerateErrorType::InvalidModel, "{message}");
+        assert!(
+            message.contains("gadget.id must be a non-null uuid supplied by the client"),
+            "{message}"
+        );
+    }
 }
 
 /// A model's numbered field needs a field of the model for each key its

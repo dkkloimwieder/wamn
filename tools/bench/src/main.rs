@@ -594,7 +594,8 @@ impl Workload {
                     &self.target,
                     "supplier/create",
                     &json!([{
-                        "request_id": key, "idempotency_key": key, "name": key,
+                        "request_id": key, "id": uuid::Uuid::now_v7().to_string(),
+                        "idempotency_key": key, "name": key,
                     }]),
                 )
                 .await

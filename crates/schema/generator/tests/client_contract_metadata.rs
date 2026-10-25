@@ -42,7 +42,7 @@ fn manifest() -> Value {
                 "schema": "inventory",
                 "table": "stock",
                 "owner": "example",
-                "server_owned_fields": ["id", "edit_version"],
+                "server_owned_fields": ["edit_version"],
                 "audit_log": {"columns": [], "retention": "none"},
                 "operations": operations
             }

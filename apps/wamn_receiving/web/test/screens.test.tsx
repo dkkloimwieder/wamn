@@ -459,7 +459,14 @@ describe("Receiving descriptions and bindings", () => {
     await waitFor(() => expect(view.open).toHaveBeenCalledWith("suppliers"));
     expect(invoke).toHaveBeenCalledWith({
       ...SUPPLIER_CREATE_ROUTE,
-      items: [{ name: "BROWSER-NEW-SUPPLIER", request_id: expect.any(String), idempotency_key: expect.any(String) }],
+      items: [
+        {
+          id: expect.any(String),
+          name: "BROWSER-NEW-SUPPLIER",
+          request_id: expect.any(String),
+          idempotency_key: expect.any(String),
+        },
+      ],
     });
   });
   it("keeps the supplier key on retry and replaces it when the name changes", async () => {
@@ -482,12 +489,15 @@ describe("Receiving descriptions and bindings", () => {
     const writes = () => invoke.mock.calls.map(([request]) => request.items[0] as Record<string, JsonValue>);
     expect(writes()[0]!.idempotency_key).toEqual(expect.any(String));
     expect(writes()[1]!.idempotency_key).toBe(writes()[0]!.idempotency_key);
+    expect(writes()[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(writes()[1]!.id).toBe(writes()[0]!.id);
     expect(writes()[1]!.request_id).not.toBe(writes()[0]!.request_id);
     fireEvent.input(screen.getByLabelText("Supplier name"), { target: { value: "Changed supplier" } });
     flush();
     submit();
     await waitFor(() => expect(view.open).toHaveBeenCalledWith("suppliers"));
     expect(writes()[2]!.idempotency_key).not.toBe(writes()[0]!.idempotency_key);
+    expect(writes()[2]!.id).not.toBe(writes()[0]!.id);
     expect(writes()[2]!.name).toBe("Changed supplier");
   });
   it("keeps the receipt intent on retry and replaces it when the operator changes the draft", async () => {

@@ -146,7 +146,7 @@ fn emit_crud_interface(
     match action {
         CrudAction::Get | CrudAction::Delete => source.push_str("    id: string,\n"),
         CrudAction::Create => {
-            source.push_str("    idempotency-key: string,\n");
+            source.push_str("    id: string,\n    idempotency-key: string,\n");
             emit_writable_fields(source, table, operation);
         }
         CrudAction::Query => {
@@ -802,7 +802,7 @@ fn emit_crud_json_codec(
             source.push_str(" }\n\n");
         }
         CrudAction::Create => {
-            source.push_str("struct JsonRequest { idempotency_key: String,\n");
+            source.push_str("struct JsonRequest { id: String, idempotency_key: String,\n");
             emit_json_columns(&mut source, table, &operation.writable_fields);
             source.push_str("}\n\n");
         }
@@ -944,7 +944,10 @@ fn emit_crud_normalizer(
         "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
     );
     source.push_str("    let _ = &request;\n");
-    if matches!(action, CrudAction::Get | CrudAction::Delete) {
+    if matches!(
+        action,
+        CrudAction::Get | CrudAction::Create | CrudAction::Delete
+    ) {
         emit_scalar_validation(
             &mut source,
             "request.id",
@@ -1130,7 +1133,7 @@ fn emit_crud_request_assignments(
             .expect("writing to a String cannot fail");
         }
         CrudAction::Create => {
-            source.push_str("            idempotency_key: request.idempotency_key,\n");
+            source.push_str("            id: request.id,\n            idempotency_key: request.idempotency_key,\n");
             for field in &operation.writable_fields {
                 let column = model_column(table, field);
                 let name = rust_identifier(field).expect("validated field has a Rust name");

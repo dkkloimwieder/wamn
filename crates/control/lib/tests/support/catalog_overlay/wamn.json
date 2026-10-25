@@ -21,7 +21,7 @@
       "constraint_owners": {
         "record_review_state_check": "platform_catalog_overlay"
       },
-      "server_owned_fields": ["id"],
+      "server_owned_fields": [],
       "enum_fields": {},
       "operations": { "get": { "permission": "record.get", "result": "one" } }
     },

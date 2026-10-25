@@ -137,10 +137,13 @@ fn handler(
             ),
         ),
         CrudAction::Create => {
-            let arguments = operation
-                .writable_fields
-                .iter()
-                .map(|field| format!("request.{}.flatten()", member_name(field)))
+            let arguments = std::iter::once("&request.id".to_owned())
+                .chain(
+                    operation
+                        .writable_fields
+                        .iter()
+                        .map(|field| format!("request.{}.flatten()", member_name(field))),
+                )
                 .collect::<Vec<_>>()
                 .join(", ");
             (

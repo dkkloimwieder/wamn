@@ -331,17 +331,17 @@ pub(crate) async fn assert_blank_codes_refuse(route: &Route) -> anyhow::Result<(
     for (path, item, field) in [
         (
             "/product/create",
-            json!({"request_id": "blank", "idempotency_key": "blank-product", "product_code": "  "}),
+            json!({"request_id": "blank", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "blank-product", "product_code": "  "}),
             "product_code",
         ),
         (
             "/location/create",
-            json!({"request_id": "blank", "idempotency_key": "blank-location", "location_code": "\t"}),
+            json!({"request_id": "blank", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "blank-location", "location_code": "\t"}),
             "location_code",
         ),
         (
             "/packaging/create",
-            json!({"request_id": "blank", "idempotency_key": "blank-packaging", "packaging_code": " ",
+            json!({"request_id": "blank", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "blank-packaging", "packaging_code": " ",
                 "type": "tote", "location_id": missing, "status": "available"}),
             "packaging_code",
         ),

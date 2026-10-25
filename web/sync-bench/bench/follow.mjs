@@ -18,6 +18,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { preview } from "vite";
+import { uuidv7 } from "../../runtime/src/sync/ids.ts";
 
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
 const routeHost = process.env.WAMN_ROUTE_HOST;
@@ -95,6 +96,7 @@ try {
       {
         request_id: "follow-create",
         idempotency_key: "follow-create",
+        id: uuidv7(),
         packaging_code: "FOLLOW-1",
         type: "pallet",
         location_id: locationId,

@@ -281,15 +281,23 @@ fn emit_create(
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let mut body = String::new();
-    for (field, bind) in operation.writable_fields.iter().zip(&accessor.binds) {
+    let mut body =
+        String::from("let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n");
+    for (field, bind) in operation
+        .writable_fields
+        .iter()
+        .zip(accessor.binds.iter().skip(1))
+    {
         let name = field_name(field);
         emit_value(&mut body, &name, field, bind, &name);
     }
-    let mut arguments = operation
-        .writable_fields
-        .iter()
-        .map(|field| field_name(field))
+    let mut arguments = std::iter::once("id".to_owned())
+        .chain(
+            operation
+                .writable_fields
+                .iter()
+                .map(|field| field_name(field)),
+        )
         .collect::<Vec<_>>();
     let refuse = statement_error(CrudAction::Create, &constraints(CrudAction::Create));
     // The first of two statements: the host renders the number from the
@@ -323,7 +331,7 @@ fn emit_create(
          /// for the operation.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          #[allow(clippy::too_many_arguments)]\n\
-         pub async fn create(transaction: &mut wamn_postgres_statements::Transaction, {parameters}) -> Result<{model_type}Row, Error> {{\n\
+         pub async fn create(transaction: &mut wamn_postgres_statements::Transaction, id: &str, {parameters}) -> Result<{model_type}Row, Error> {{\n\
          {body}\
          sql::create(transaction, {arguments}).await.map_err({refuse})\n\
          }}\n"

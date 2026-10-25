@@ -23,7 +23,7 @@ reqwest = { workspace = true, features = ["rustls", "json"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
 wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }

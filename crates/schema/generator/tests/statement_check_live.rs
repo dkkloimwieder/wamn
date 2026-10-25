@@ -91,7 +91,7 @@ impl PlatformPackage {
             "required_platform_policy_contract": {"id": "statement_access", "state": "unsatisfied"},
             "models": {"widget": {
                 "schema": "inventory", "table": "widget", "owner": "statement_fixture",
-                "server_owned_fields": ["id"], "audit_log": {"columns": [], "retention": "none"}, "operations": {}
+                "server_owned_fields": [], "audit_log": {"columns": [], "retention": "none"}, "operations": {}
             }},
             "custom_operations": {"widget.list": {
                 "type": "projection", "lists": {"key_field": "id"}, "visibility": "public", "permission": "widget.list",

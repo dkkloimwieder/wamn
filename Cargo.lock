@@ -5616,6 +5616,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+ "uuid",
  "wamn-execution-contract",
 ]
 

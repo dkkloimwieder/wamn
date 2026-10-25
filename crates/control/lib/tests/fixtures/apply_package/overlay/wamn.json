@@ -30,7 +30,6 @@
         "panel_overlay_quality_status_check": "client_overlay_inventory"
       },
       "server_owned_fields": [
-        "id",
         "panel_number",
         "stock_id",
         "status",
