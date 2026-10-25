@@ -289,6 +289,7 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
                 .bearer_auth(&application.bearer)
                 .json(&json!([{
                     "request_id": format!("supplied-{field}"),
+                    "id": uuid::Uuid::now_v7().to_string(),
                     "idempotency_key": format!("supplied-{field}"),
                     "supplier_id": supplier, field: value,
                 }]))

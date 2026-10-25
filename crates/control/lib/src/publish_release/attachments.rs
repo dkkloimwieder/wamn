@@ -483,7 +483,7 @@ mod tests {
             ),
             (
                 "numbered-label-create-http",
-                "sha256:2d16ff9ab477b2198909f821c9ee700945ed4fd45a48f1750f3863af19b2f312",
+                "sha256:b5c815a52c844a15f495710b3db4ee9d8ade8c9ccbe433c7f45e335351b6e011",
             ),
         ] {
             assert_eq!(

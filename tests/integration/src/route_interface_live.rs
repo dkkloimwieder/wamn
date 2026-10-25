@@ -1494,7 +1494,7 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
         let caller = project.execute(&["SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'"])?;
         for (index, number) in [(1, "a-G0001"), (2, "a-G0002")] {
             let (status, answer) = paths.post("/overlay/numbered_label/create", &json!([{
-                "request_id": format!("overlay-{index}"), "idempotency_key": format!("overlay-{index}"), "stock_id": "a",
+                "request_id": format!("overlay-{index}"), "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": format!("overlay-{index}"), "stock_id": "a",
             }])).await?;
             assert_eq!(status, 200, "{answer}");
             let row = value(&answer)?;

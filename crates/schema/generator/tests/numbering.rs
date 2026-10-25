@@ -577,7 +577,7 @@ fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
         let model = object_named(access["relations"].as_array().unwrap(), "table", "gadget");
         assert_eq!(
             model["insert_fields"],
-            json!(["created_by", "part_code", "stock_id", "updated_by"])
+            json!(["created_by", "id", "part_code", "stock_id", "updated_by"])
         );
         assert_eq!(
             model["update_fields"],
@@ -601,18 +601,19 @@ fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
         let first = "00000000-0000-4000-8000-000000000001";
         let second = "00000000-0000-4000-8000-000000000002";
         let stock = "00000000-0000-4000-8000-000000000003";
+        let id = "00000000-0000-4000-8000-000000000004";
         let create = text(&package, "generated/sql/gadget/create.sql");
         database
             .execute(&[&format!(
                 "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
             SET app.user_id = '{first}'; PREPARE create_gadget AS {create}
-            EXECUTE create_gadget('{stock}', 'G-1');"
+            EXECUTE create_gadget('{id}', '{stock}', 'G-1');"
             )])
             .unwrap();
         let row = database
             .execute(&["SELECT id::text FROM inventory.gadget"])
             .unwrap();
-        let id = row.trim();
+        assert_eq!(row.trim(), id);
         let update = text(&package, "generated/sql/gadget/update.sql");
         let actors = || {
             database
@@ -645,20 +646,24 @@ fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
     }
 }
 
-/// PostgreSQL accepts the generated cast of a rendered number into an integer key.
+/// PostgreSQL accepts the generated cast of a rendered number into an integer field.
 #[test]
-fn live_a_numbered_integer_key_inserts_the_rendered_number() {
+fn live_a_numbered_integer_field_inserts_the_rendered_number() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_catalog::test_database::tenant();
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
-    manifest["models"]["gadget"]["fields"] = json!({"id": {"number": "gadget_number"}});
+    manifest["models"]["gadget"]["fields"] = json!({"line_no": {"number": "gadget_number"}});
+    manifest["models"]["gadget"]["server_owned_fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("line_no"));
     let create = manifest["models"]["gadget"]["operations"]["create"].clone();
     manifest["models"]["gadget"]["operations"] = json!({"create": create});
-    let package = run(&integer_key_catalog(), &manifest, &[]).unwrap();
+    let package = run(&actor_catalog("line_no", ColumnType::Int32), &manifest, &[]).unwrap();
     database
         .execute(&[
-            "CREATE TABLE public.gadget (id int PRIMARY KEY, part_code text DEFAULT 'fixture',
+            "CREATE TABLE public.gadget (id uuid PRIMARY KEY, line_no int NOT NULL, part_code text DEFAULT 'fixture',
         stock_id uuid NOT NULL, status text DEFAULT 'open', row_version bigint DEFAULT 1,
         created_at timestamptz DEFAULT now()); GRANT SELECT, INSERT ON public.gadget TO wamn_app;",
         ])
@@ -666,15 +671,15 @@ fn live_a_numbered_integer_key_inserts_the_rendered_number() {
     database
         .execute(&[&format!(
             "SET ROLE wamn_app; PREPARE create_gadget AS {}
-        EXECUTE create_gadget('00000000-0000-4000-8000-000000000003', '42');",
+        EXECUTE create_gadget('00000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000003', '42');",
             text(&package, "generated/sql/gadget/create.sql")
         )])
         .unwrap();
     assert_eq!(
         database
-            .execute(&["SELECT id FROM public.gadget"])
+            .execute(&["SELECT id::text || ',' || line_no::text FROM public.gadget"])
             .unwrap()
             .trim(),
-        "42"
+        "00000000-0000-4000-8000-000000000004,42"
     );
 }
