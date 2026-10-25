@@ -464,7 +464,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
             &secret,
             &None::<&str>,
             &true,
-            &"app",
+            &vec!["app"],
         ],
     )
     .await
@@ -1240,7 +1240,7 @@ async fn ri_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyho
     let d = ri_leg(&db, &app, "default-logical", n, args.wide_bytes, &mut csv).await?;
 
     // The REAL reconcile (l5i9.31/l5i9.61) — the delete registrations demand
-    // FULL for exactly these two tables.
+    // FULL for these two tables; capture also requires FULL for every model.
     let package =
         std::env::temp_dir().join(format!("wamn-cdcbench-package-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&package);
@@ -1260,8 +1260,8 @@ async fn ri_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyho
         .count();
     check(
         pass,
-        &format!("ri: reconcile flipped exactly suppliers + users to FULL ({reconcile:?})"),
-        flips == 2
+        &format!("ri: reconcile flipped every captured model to FULL ({reconcile:?})"),
+        flips == measurement_schema::model_tables().count()
             && reconcile.contains("flipped suppliers (")
             && reconcile.contains("flipped users (")
             && relreplident(&db, "suppliers").await? == "f"

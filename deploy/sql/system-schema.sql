@@ -751,7 +751,7 @@ CREATE TABLE registry.event_readers (
     project                      text NOT NULL,
     env                          text NOT NULL,
     publication                  text NOT NULL,
-    schema                       text,
+    schema                       text[],
     slot                         text NOT NULL,
     stream                       text NOT NULL,
     replication_secret_name      text NOT NULL,

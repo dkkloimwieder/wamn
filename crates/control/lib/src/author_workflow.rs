@@ -21,7 +21,8 @@
 //! The trigger is part of the version: `manual`, or `schedule` with a
 //! five-field UTC cron, parsed as the schedule task parses it
 //! ([`wamn_catalog::parse_workflow_schedule`]). An invalid cron refuses
-//! before the graph is gated.
+//! before the graph is gated. An event trigger names a captured application
+//! model and uses the registration validator for its operations and condition.
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls, Transaction};
@@ -33,12 +34,13 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
 /// Params: `$1` tenant, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
-/// `$10` execution role, `$11` authoring principal, `$12` schedule.
+/// `$10` execution role, `$11` authoring principal, `$12` schedule,
+/// `$13` source package, `$14` entity, `$15` ops, `$16` condition.
 const INSERT_WORKFLOW_SQL: &str = "\
 INSERT INTO catalog.workflows (\
        tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, \
-       trigger, execution_type, execution_role, created_by, schedule\
-     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11::text::uuid, $12) \
+       trigger, execution_type, execution_role, created_by, schedule, source_package, entity, ops, condition\
+     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11::text::uuid, $12, $13, $14, $15, $16) \
 ON CONFLICT DO NOTHING";
 
 /// The stored version carries exactly this definition. The author is not part
@@ -50,7 +52,9 @@ SELECT EXISTS (\
        AND workflow_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
        AND wiring_hash = $7 AND trigger = $8 AND execution_type = $9 \
        AND execution_role IS NOT DISTINCT FROM $10 \
-       AND $11::text <> '' AND schedule IS NOT DISTINCT FROM $12\
+       AND $11::text <> '' AND schedule IS NOT DISTINCT FROM $12 \
+       AND source_package IS NOT DISTINCT FROM $13 AND entity IS NOT DISTINCT FROM $14 \
+       AND ops IS NOT DISTINCT FROM $15 AND condition IS NOT DISTINCT FROM $16\
     )";
 
 const SELECT_RELEASE_SQL: &str = "\
@@ -75,6 +79,7 @@ pub enum AuthorWorkflowErrorType {
     Schedule,
     /// The environment declares no application of this name.
     Application,
+    Event,
 }
 
 impl AuthorWorkflowErrorType {
@@ -87,6 +92,7 @@ impl AuthorWorkflowErrorType {
             Self::Conflict => "conflict",
             Self::Schedule => "schedule",
             Self::Application => "application",
+            Self::Event => "event",
         }
     }
 }
@@ -193,6 +199,13 @@ pub enum WorkflowTrigger<'a> {
     Manual,
     /// The schedule task, at each due moment of this five-field UTC cron.
     Schedule(&'a str),
+    /// A captured model change, filtered with the registration vocabulary.
+    Event {
+        source_package: &'a str,
+        entity: &'a str,
+        ops: &'a [wamn_event_reg::Op],
+        condition: Option<&'a str>,
+    },
 }
 
 impl<'a> WorkflowTrigger<'a> {
@@ -201,13 +214,14 @@ impl<'a> WorkflowTrigger<'a> {
         match self {
             Self::Manual => "manual",
             Self::Schedule(_) => "schedule",
+            Self::Event { .. } => "event",
         }
     }
 
     /// The stored `schedule`.
     pub const fn schedule(self) -> Option<&'a str> {
         match self {
-            Self::Manual => None,
+            Self::Manual | Self::Event { .. } => None,
             Self::Schedule(cron) => Some(cron),
         }
     }
@@ -270,6 +284,74 @@ pub(crate) async fn gate_against_release(
         })
 }
 
+/// Validate an event trigger against the installed capture maps and the application map.
+pub(crate) async fn validate_event_trigger(
+    transaction: &Transaction<'_>,
+    declared: &wamn_catalog::EnvironmentApplications,
+    trigger: WorkflowTrigger<'_>,
+) -> Result<(), AuthorWorkflowError> {
+    let WorkflowTrigger::Event {
+        source_package,
+        entity,
+        ops,
+        condition,
+    } = trigger
+    else {
+        return Ok(());
+    };
+    if !declared
+        .values()
+        .any(|application| application.packages.contains(source_package))
+    {
+        return Err(AuthorWorkflowError::new(
+            AuthorWorkflowErrorType::Event,
+            format!(
+                "source package {source_package:?} is not an application package of the environment"
+            ),
+        ));
+    }
+    let schemas = transaction.query(
+        "SELECT DISTINCT n.nspname::text FROM pg_publication_namespace p JOIN pg_namespace n ON n.oid = p.pnnspid ORDER BY 1", &[]
+    ).await.map_err(|error| storage("read captured schemas", error))?;
+    let mut models = std::collections::BTreeSet::new();
+    for row in schemas {
+        let schema: String = row.get(0);
+        let sql = format!(
+            "SELECT m.entity_id FROM {}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE m.package_id = $1 AND n.nspname = $2 AND c.relname = m.table_name",
+            wamn_pg_core::quote_ident(&schema)
+        );
+        for model in transaction
+            .query(&sql, &[&source_package, &schema])
+            .await
+            .map_err(|error| storage("read captured model map", error))?
+        {
+            models.insert(model.get::<_, String>(0));
+        }
+    }
+    let registration = wamn_event_reg::EventRegistration {
+        schema_version: wamn_event_reg::SCHEMA_VERSION.to_owned(),
+        registration_id: "workflow".to_owned(),
+        package_id: source_package.to_owned(),
+        source_package_id: source_package.to_owned(),
+        entity: entity.to_owned(),
+        ops: ops.to_vec(),
+        input: wamn_event_reg::RegistrationInput::Event,
+        condition: condition.map(str::to_owned),
+    };
+    wamn_event_reg::validate(&registration, source_package, source_package, &models).map_err(
+        |issues| {
+            AuthorWorkflowError::new(
+                AuthorWorkflowErrorType::Event,
+                issues
+                    .iter()
+                    .map(|issue| format!("{}: {}", issue.path, issue.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        },
+    )
+}
+
 /// Gate and append one disabled workflow version in the caller's transaction.
 ///
 /// `control` is the CONTROL-database connection the gate report is read on,
@@ -301,6 +383,7 @@ pub async fn author_workflow(
             )
         })?;
     }
+    validate_event_trigger(transaction, request.declared, request.trigger).await?;
     let document = request.document;
     let hash = gate_against_release(
         transaction,
@@ -331,7 +414,21 @@ pub async fn author_workflow(
     let execution_role = request.execution.role();
     let trigger = request.trigger.as_str();
     let schedule = request.trigger.schedule();
-    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 12] = [
+    let (source_package, entity, ops, condition) = match request.trigger {
+        WorkflowTrigger::Event {
+            source_package,
+            entity,
+            ops,
+            condition,
+        } => (
+            Some(source_package),
+            Some(entity),
+            Some(ops.iter().map(|op| op.as_str()).collect::<Vec<_>>()),
+            condition,
+        ),
+        _ => (None, None, None, None),
+    };
+    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 16] = [
         &request.tenant_id,
         &request.environment,
         &request.application,
@@ -344,6 +441,10 @@ pub async fn author_workflow(
         &execution_role,
         &request.created_by,
         &schedule,
+        &source_package,
+        &entity,
+        &ops,
+        &condition,
     ];
     transaction
         .execute(INSERT_WORKFLOW_SQL, &parameters)

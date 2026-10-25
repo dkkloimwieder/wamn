@@ -988,7 +988,7 @@ pub async fn configure_cdc(
         org: identity().org.clone(),
         project: identity().project.clone(),
         env: identity().environment.clone(),
-        schema: SCHEMA.into(),
+        schemas: vec![SCHEMA.into()],
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
         replication_password: replication_password.into(),

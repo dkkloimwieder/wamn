@@ -591,6 +591,7 @@ impl Fixture {
             enabler,
             &self.digest,
             &declared(),
+            None,
         )
         .await
         .expect("enable the workflow version");

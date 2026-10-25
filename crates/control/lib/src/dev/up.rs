@@ -202,14 +202,25 @@ async fn enable_cdc(
         .iter()
         .map(|root| super::config::read_package_manifest(root))
         .collect::<Result<Vec<_>, _>>()?;
-    let consumer_config = wamn_control_provision::events::registration_consumers(
+    let mut consumers = wamn_control_provision::events::registration_consumers(
         &scope,
         &identity.tenant,
         &manifests,
-    )
-    .iter()
-    .map(serde_json::to_string)
-    .collect::<Result<Vec<_>, _>>()?;
+    );
+    consumers.extend(wamn_control_provision::events::entity_consumers(
+        &scope, &manifests,
+    ));
+    let schemas = manifests
+        .iter()
+        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
+        .chain(std::iter::once(identity.schema.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let consumer_config = consumers
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()?;
     let target = url::Url::parse(target_url).context("parse the target database URL")?;
     let mut password = [0u8; 32];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut password)
@@ -220,7 +231,7 @@ async fn enable_cdc(
             org: identity.org.clone(),
             project: identity.project.clone(),
             env: identity.environment.clone(),
-            schema: identity.schema.clone(),
+            schemas: schemas.clone(),
             system_database_url: Some(args.system_database_url.clone()),
             cluster: None,
             replication_password: hex::encode(password),
@@ -247,14 +258,31 @@ async fn enable_cdc(
     // No CNPG operator runs here, so the superuser that local dev holds creates
     // the publication with the statement the fixtures use. It follows the
     // schema guard of the bundle. The bundle creates the slot before any write.
+    let full = manifests
+        .iter()
+        .flat_map(|manifest| manifest.models.values())
+        .map(|model| {
+            format!(
+                "{};",
+                wamn_schema_control::alter_replica_identity_sql(
+                    &model.schema,
+                    &model.table,
+                    wamn_schema_control::ReplicaIdentity::Full
+                )
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join("\n");
     std::fs::write(
         &cdc_sql_file,
         format!(
-            "{}{}\n",
+            "{}{full}\n{}\n",
             outcome.cdc_sql,
-            wamn_control_provision::sql::create_publication_sql(
+            wamn_control_provision::sql::create_publication_schemas_sql(
                 &outcome.cdc_name,
-                &identity.schema
+                &schemas
             )
         ),
     )
@@ -266,7 +294,7 @@ async fn enable_cdc(
     crate::enable_cdc_project_env::record_event_reader(
         &args.system_database_url,
         &outcome.triple,
-        &identity.schema,
+        &schemas,
         &outcome.cdc_name,
         None,
     )

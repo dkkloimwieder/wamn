@@ -108,6 +108,41 @@ pub fn registration_consumers(
     consumers
 }
 
+/// One durable consumer per captured package and entity, independent of workflows.
+pub fn entity_consumers<'a>(
+    scope: &Triple,
+    manifests: impl IntoIterator<Item = &'a wamn_schema_generator::PackageManifest>,
+) -> Vec<pull::Config> {
+    let entities = manifests
+        .into_iter()
+        .flat_map(|manifest| {
+            manifest
+                .models
+                .iter()
+                .map(|(entity, model)| (model.owner.as_str(), entity.as_str()))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    entities
+        .into_iter()
+        .map(|(package, entity)| {
+            let durable = format!(
+                "entity_{}_{}_{}",
+                package.len(),
+                wamn_event_wire::subject_token(package),
+                wamn_event_wire::subject_token(entity)
+            );
+            let filter = format!(
+                "evt.{}.{}.{}.{}.>",
+                scope.org,
+                scope.project,
+                scope.env.as_str(),
+                wamn_event_wire::subject_token(entity)
+            );
+            materializer_consumer_config(&durable, &filter, Duration::from_secs(30), 5)
+        })
+        .collect()
+}
+
 /// Declare the existing bounded materializer delivery policy.
 pub fn materializer_consumer_config(
     durable: &str,
@@ -274,6 +309,31 @@ mod tests {
     use async_nats::jetstream::stream::{
         DiscardPolicy, PersistenceMode, Placement, Republish, Source, SubjectTransform,
     };
+
+    #[test]
+    fn captured_entities_get_consumers_without_registrations() {
+        let manifest = |package: &str, entity: &str| {
+            serde_json::from_value::<wamn_schema_generator::PackageManifest>(serde_json::json!({
+                "package": {"id": package, "version": "1.0.0"},
+                "required_platform_policy_contract": {"id": "fixture", "state": "satisfied"},
+                "connections": [], "components": {},
+                "models": {entity: {"schema": package, "table": entity, "owner": package, "operations": {}}}
+            }))
+            .unwrap()
+        };
+        let manifests = [
+            manifest("a_b", "c"),
+            manifest("a", "b_c"),
+            manifest("a", "b_c"),
+        ];
+        let scope = Triple::new("acme", "orders", "dev");
+        let consumers = entity_consumers(&scope, &manifests);
+        assert_eq!(consumers.len(), 2);
+        assert_ne!(consumers[0].durable_name, consumers[1].durable_name);
+        assert_eq!(consumers[0].filter_subject, "evt.acme.orders.dev.b_c.>");
+        assert_eq!(consumers[1].filter_subject, "evt.acme.orders.dev.c.>");
+        assert!(registration_consumers(&scope, "tenant", &manifests).is_empty());
+    }
 
     #[test]
     fn event_names_and_subjects_use_the_same_declared_triple() {

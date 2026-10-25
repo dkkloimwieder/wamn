@@ -257,6 +257,7 @@ pub async fn schedule_run(
         ENABLER,
         digest.as_str(),
         &declared,
+        None,
     )
     .await?;
     match host

@@ -215,12 +215,12 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // the whole-org cascade drops the registration.
     writeln!(
         script,
-        "PREPARE uper (text,text,text,text,text,text,text,text,boolean,text) AS {upsert};\n\
+        "PREPARE uper (text,text,text,text,text,text,text,text,boolean,text[]) AS {upsert};\n\
          PREPARE geter (text,text,text) AS {select};\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
-                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,true,'app');\n\
+                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,true,ARRAY['app']);\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev_v2',\
-                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,false,'billing');\n\
+                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,false,ARRAY['billing']);\n\
          CREATE TEMP TABLE reader_probe AS EXECUTE geter('demo','app','dev');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.event_readers\n\
@@ -228,7 +228,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
              'upsert_event_reader_sql is idempotent — one row after two upserts';\n\
            ASSERT (SELECT slot FROM reader_probe)='wamn_cdc_demo__app__dev_v2'\n\
               AND (SELECT enabled FROM reader_probe)=false\n\
-              AND (SELECT schema FROM reader_probe)='billing',\n\
+              AND (SELECT schema FROM reader_probe)=ARRAY['billing'],\n\
              'the second upsert refreshed slot + enabled + schema (ON CONFLICT DO UPDATE)';\n\
            ASSERT (SELECT stream FROM reader_probe)='EVT_4_demo_3_app_3_dev'\n\
               AND (SELECT replication_secret_name FROM reader_probe)='wamn-cdc-demo--app--dev',\n\

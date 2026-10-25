@@ -23,7 +23,7 @@ use crate::env_verbs::parse_coordinate;
 /// Params: `$1` tenant, `$2` environment.
 const LIST_WORKFLOWS_SQL: &str = "\
 SELECT application, workflow_id, version, wiring_hash, trigger, execution_type, \
-       execution_role, enabled, created_by::text, created_at::text, schedule \
+       execution_role, enabled, created_by::text, created_at::text, schedule, source_package, entity, ops, condition, enable_sequence \
   FROM catalog.workflows \
  WHERE tenant_id = $1 AND environment = $2 \
  ORDER BY application, workflow_id, version";
@@ -97,9 +97,20 @@ pub struct AuthorArgs {
     #[arg(long)]
     pub execution_role: Option<String>,
     /// A five-field UTC cron: the schedule task starts the workflow at each
-    /// due moment. Without it, the trigger is manual.
-    #[arg(long)]
+    /// due moment. Without this or `--source-package`, the trigger is manual.
+    #[arg(long, conflicts_with = "source_package")]
     pub schedule: Option<String>,
+    /// The application package whose captured model starts this workflow.
+    #[arg(long, requires_all = ["entity", "ops"])]
+    pub source_package: Option<String>,
+    #[arg(long, requires = "source_package")]
+    pub entity: Option<String>,
+    /// Comma-separated event operations: insert, update, delete.
+    #[arg(long, value_delimiter = ',', value_parser = ["insert", "update", "delete"], requires = "source_package")]
+    pub ops: Vec<String>,
+    /// A registration condition over the old and new row images.
+    #[arg(long, requires = "source_package")]
+    pub condition: Option<String>,
     /// The `platform."user"` id of the authoring principal.
     #[arg(long)]
     pub principal_id: String,
@@ -226,6 +237,22 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                     anyhow::bail!("--execution-type invoker takes no --execution-role")
                 }
             };
+            let ops: Vec<_> = serde_json::from_value(serde_json::json!(args.ops))?;
+            let trigger = if let Some(source_package) = args.source_package.as_deref() {
+                WorkflowTrigger::Event {
+                    source_package,
+                    entity: args
+                        .entity
+                        .as_deref()
+                        .context("--source-package needs --entity")?,
+                    ops: &ops,
+                    condition: args.condition.as_deref(),
+                }
+            } else {
+                args.schedule
+                    .as_deref()
+                    .map_or(WorkflowTrigger::Manual, WorkflowTrigger::Schedule)
+            };
             let document = wamn_control::author_wiring::read_wiring_document(&args.document)?;
             let platform = Platform::from_env()?;
             let triple = parse_coordinate(&args.coordinate)?;
@@ -242,10 +269,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                     application: &args.application,
                     declared: &declared,
                     document: &document,
-                    trigger: args
-                        .schedule
-                        .as_deref()
-                        .map_or(WorkflowTrigger::Manual, WorkflowTrigger::Schedule),
+                    trigger,
                     execution,
                     created_by: &args.principal_id,
                     manifest_digest: &digest,
@@ -270,6 +294,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 &args.principal_id,
                 &digest,
                 &declared,
+                platform.events.as_ref(),
             )
             .await?;
             println!(
@@ -314,6 +339,11 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                         "wiring-hash": row.get::<_, String>(3),
                         "trigger": row.get::<_, String>(4),
                         "schedule": row.get::<_, Option<String>>(10),
+                        "source-package": row.get::<_, Option<String>>(11),
+                        "entity": row.get::<_, Option<String>>(12),
+                        "ops": row.get::<_, Option<Vec<String>>>(13),
+                        "condition": row.get::<_, Option<String>>(14),
+                        "enable-sequence": row.get::<_, Option<i64>>(15),
                         "execution-type": row.get::<_, String>(5),
                         "execution-role": row.get::<_, Option<String>>(6),
                         "enabled": row.get::<_, bool>(7),
@@ -447,6 +477,73 @@ async fn start(args: &StartArgs) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn author_accepts_an_event_and_refuses_incomplete_or_mixed_triggers() {
+        use clap::Parser as _;
+        #[derive(clap::Parser)]
+        struct Command {
+            #[command(flatten)]
+            args: AuthorArgs,
+        }
+        let base = [
+            "workflow",
+            "--admin-database-url",
+            "postgres://localhost/project",
+            "--tenant",
+            "acme",
+            "--environment",
+            "dev",
+            "--coordinate",
+            "acme/orders/dev",
+            "--control-database-url",
+            "postgres://localhost/control",
+            "--application",
+            "orders",
+            "--document",
+            "workflow.json",
+            "--execution-type",
+            "invoker",
+            "--principal-id",
+            "alice",
+        ];
+        let event = [
+            "--source-package",
+            "orders",
+            "--entity",
+            "order",
+            "--ops",
+            "insert,update",
+            "--condition",
+            "new.status != old.status",
+        ];
+        let command = Command::try_parse_from(base.into_iter().chain(event)).unwrap();
+        assert_eq!(command.args.ops, ["insert", "update"]);
+        assert_eq!(command.args.source_package.as_deref(), Some("orders"));
+        assert!(
+            Command::try_parse_from(
+                base.into_iter()
+                    .chain(event)
+                    .chain(["--schedule", "* * * * *"])
+            )
+            .is_err()
+        );
+        assert!(
+            Command::try_parse_from(base.into_iter().chain(["--source-package", "orders"]))
+                .is_err()
+        );
+        assert!(
+            Command::try_parse_from(base.into_iter().chain([
+                "--source-package",
+                "orders",
+                "--entity",
+                "order",
+                "--ops",
+                "truncate"
+            ]))
+            .is_err()
+        );
+    }
 
     #[test]
     fn start_calls_the_host_route_with_no_user() {

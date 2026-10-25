@@ -81,7 +81,11 @@ fn declared_consumers(
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(registration_consumers(scope, tenant, &manifests))
+    let mut consumers = registration_consumers(scope, tenant, &manifests);
+    consumers.extend(wamn_control_provision::events::entity_consumers(
+        scope, &manifests,
+    ));
+    Ok(consumers)
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {

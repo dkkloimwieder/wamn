@@ -180,7 +180,16 @@ fn render(
     let tenant = format!("{}--{}--{}", document.org, document.project, document.env);
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
-    let consumers = registration_consumers(&scope, &tenant, manifests);
+    let mut consumers = registration_consumers(&scope, &tenant, manifests);
+    consumers.extend(wamn_control_provision::events::entity_consumers(
+        &scope,
+        manifests.iter().filter(|manifest| {
+            document
+                .applications
+                .values()
+                .any(|application| application.packages.contains(&manifest.package.id))
+        }),
+    ));
     let subject = source.subjects[0].clone();
     let mut provisioning = Vec::new();
     let mut runtime = vec![subject.clone()];

@@ -191,6 +191,7 @@ pub async fn enable_schedule(
         ENABLER,
         environment.digest,
         environment.applications,
+        None,
     )
     .await?;
     project_task.abort();
@@ -242,7 +243,10 @@ pub async fn exercise(
         })
         .collect::<anyhow::Result<_>>()?;
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-    let consumers = registration_consumers(&scope, &tenant, &manifests);
+    let mut consumers = registration_consumers(&scope, &tenant, &manifests);
+    consumers.extend(wamn_control_provision::events::entity_consumers(
+        &scope, &manifests,
+    ));
     // Each connector run gets its own broker directory, because the broker
     // refuses an existing one.
     let broker_work = run.work.join(connector);
@@ -255,7 +259,7 @@ pub async fn exercise(
         &advisory_stream_config(&scope, 1),
         &consumers,
     )?;
-    let server = start_broker(run, &broker).await?;
+    let server = start_broker(run, &broker.configuration, &broker.provisioning, "events").await?;
     event_broker::write_binding(&broker, &server, &source)?;
     let mut platform = platform.clone();
     platform.events = Some(environment::EventBroker {
@@ -410,7 +414,7 @@ pub async fn exercise(
         )
         .await?
         .get(0);
-    let captured: String = system
+    let captured: Vec<String> = system
         .query_one(
             "SELECT schema FROM registry.event_readers WHERE org=$1 AND project=$2 AND env=$3",
             &[&ORG, &PROJECT, &ENVIRONMENT],
@@ -418,8 +422,8 @@ pub async fn exercise(
         .await?
         .get(0);
     ensure!(
-        captured == CONSUMER,
-        "CDC must capture only the consumer schema: {captured}"
+        captured == [CONSUMER, "wamn_integration"],
+        "CDC must capture every installed application schema: {captured:?}"
     );
     if connector == "netsuite" {
         super::netsuite::seed(&project).await?;
@@ -628,8 +632,13 @@ async fn publish(
     )
 }
 
-async fn start_broker(run: &Run, broker: &event_broker::EventBroker) -> anyhow::Result<String> {
-    let name = format!("{}-events", run.cluster);
+pub(super) async fn start_broker(
+    run: &Run,
+    configuration: &Path,
+    credentials: &event_broker::Credentials,
+    suffix: &str,
+) -> anyhow::Result<String> {
+    let name = format!("{}-{suffix}", run.cluster);
     run.run(
         "docker",
         &[
@@ -640,7 +649,7 @@ async fn start_broker(run: &Run, broker: &event_broker::EventBroker) -> anyhow::
             "--network",
             "kind",
             "--volume",
-            &format!("{}:/fixture/nats.conf:ro", broker.configuration.display()),
+            &format!("{}:/fixture/nats.conf:ro", configuration.display()),
             "nats:2.10-alpine",
             "--jetstream",
             "--store_dir",
@@ -664,7 +673,7 @@ async fn start_broker(run: &Run, broker: &event_broker::EventBroker) -> anyhow::
     let server = format!("nats://{}:4222", ip.trim());
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        match event_broker::connect(&broker.provisioning, &server).await {
+        match event_broker::connect(credentials, &server).await {
             Ok(_) => return Ok(server),
             Err(_) if Instant::now() < deadline => tokio::time::sleep(Duration::from_secs(1)).await,
             Err(error) => return Err(error),

@@ -128,6 +128,24 @@ async fn package_registration_union_flips_exact_tables_and_unreadable_state_refu
     assert_eq!(identity(&client, "orders").await, "d");
 
     client
+        .batch_execute(&wamn_control_provision::sql::create_publication_sql(
+            "captured", "ri_data",
+        ))
+        .await
+        .unwrap();
+    reconcile(&client, PACKAGE_ID, &models(), true)
+        .await
+        .expect("capture requires FULL without registrations");
+    assert_eq!(identity(&client, "orders").await, "f");
+    assert_eq!(identity(&client, "lines").await, "f");
+    assert!(
+        reconcile(&client, PACKAGE_ID, &models(), true)
+            .await
+            .unwrap()
+            .is_noop()
+    );
+
+    client
         .batch_execute("DROP TABLE catalog.event_registrations")
         .await
         .expect("remove registration owner relation");

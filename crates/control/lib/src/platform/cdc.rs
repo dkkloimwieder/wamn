@@ -1,6 +1,6 @@
 //! CDC readers use the environment's registered credentials in hosts. env
-//! apply writes the CDC Secret only for a release with an event registration
-//! (b1cfa6349), so an environment without that Secret gets no reader.
+//! apply writes the CDC Secret for every installed application set.
+//! An environment without that capture credential gets no reader.
 
 use std::path::Path;
 
@@ -36,7 +36,7 @@ pub(super) async fn apply(
         .is_none()
         {
             progress(&format!(
-                "4.18 CDC reader {}/{}/{}: skipped: no registration",
+                "4.18 CDC reader {}/{}/{}: skipped: no capture credential",
                 environment.org, environment.project, environment.env
             ))?;
             continue;

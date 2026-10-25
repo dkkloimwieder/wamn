@@ -112,7 +112,7 @@ pub fn render_project_env_database(
 /// SCHEMA` needs one, so the CNPG operator creates the publication
 /// (`docs/plan/platform-ui.md` §4.10). It is the publication that
 /// [`create_publication_sql`](crate::sql::create_publication_sql) declares:
-/// `publication` over every table of `schema`, with
+/// `publication` over every table of `schemas`, with
 /// [`CDC_PUBLISH`](crate::sql::CDC_PUBLISH). The resource takes the database
 /// name, a valid Kubernetes name, and shares the namespace of its `Cluster`.
 ///
@@ -125,7 +125,7 @@ pub fn render_project_env_publication(
     cluster: &str,
     namespace: &str,
     publication: &str,
-    schema: &str,
+    schemas: &[String],
 ) -> Value {
     let database =
         project_env_database_name(&triple.org, &triple.project, triple.env.as_str(), instance);
@@ -147,7 +147,7 @@ pub fn render_project_env_publication(
             "cluster": { "name": cluster },
             "dbname": database,
             "name": publication,
-            "target": { "objects": [{ "tablesInSchema": schema }] },
+            "target": { "objects": schemas.iter().map(|schema| json!({"tablesInSchema": schema})).collect::<Vec<_>>() },
             "parameters": { "publish": crate::sql::CDC_PUBLISH },
             "publicationReclaimPolicy": "retain",
         },
@@ -167,7 +167,7 @@ mod tests {
             "acme-dev",
             "platform",
             "wamn_cdc_acme__billing__dev__k3m9x2p7",
-            "billing",
+            &["billing".to_owned()],
         );
         assert_eq!(
             cr,

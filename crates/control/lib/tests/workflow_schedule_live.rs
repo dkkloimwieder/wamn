@@ -466,6 +466,7 @@ impl Fixture {
             enabler,
             &self.digest,
             &declared(),
+            None,
         )
         .await
     }

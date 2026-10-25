@@ -536,9 +536,8 @@ struct Registration {
     slot: String,
     stream: String,
     enabled: bool,
-    /// The schema that the publication covers. `None` on a row from before
-    /// `migrations/system/0002_event_reader_schema.sql`.
-    schema: Option<String>,
+    /// The schema set that the publication covers. Older unregistered rows remain null.
+    schema: Option<Vec<String>>,
 }
 
 async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registration> {
@@ -794,9 +793,9 @@ struct PublicationShape {
 }
 
 /// Every way a live publication differs from `create_publication_sql` for the
-/// registered `schema`, one sentence each. An empty result means the
+/// registered schema set, one sentence each. An empty result means the
 /// publication matches.
-fn publication_drift(shape: &PublicationShape, schema: &str) -> Vec<String> {
+fn publication_drift(shape: &PublicationShape, schemas: &[String]) -> Vec<String> {
     let mut drift: Vec<String> = Vec::new();
     if shape.all_tables {
         drift.push("puballtables=true, declared false (FOR TABLES IN SCHEMA)".to_owned());
@@ -813,12 +812,15 @@ fn publication_drift(shape: &PublicationShape, schema: &str) -> Vec<String> {
     if shape.truncate {
         drift.push("pubtruncate=true, declared false".to_owned());
     }
-    match shape.schemas.as_slice() {
-        [published] if published == schema => {}
-        [published] => drift.push(format!(
-            "publishes schema {published}, registered schema {schema}"
-        )),
-        schemas => drift.push(format!("{} published schemas, declared 1", schemas.len())),
+    let published = shape
+        .schemas
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let registered = schemas.iter().collect::<std::collections::BTreeSet<_>>();
+    if published != registered {
+        drift.push(format!(
+            "publishes schemas {published:?}, registered schemas {registered:?}"
+        ));
     }
     if shape.tables != 0 {
         drift.push(format!(
@@ -867,12 +869,12 @@ fn slot_drift(shape: &SlotShape) -> Vec<String> {
 }
 
 /// Compare the live publication against `create_publication_sql`: the one
-/// registered schema, no explicit tables, never `FOR ALL TABLES`, and the three
+/// registered schema set, no explicit tables, never `FOR ALL TABLES`, and the three
 /// row operations the event plane carries with TRUNCATE excluded.
 async fn preflight_publication(
     client: &tokio_postgres::Client,
     publication: &str,
-    schema: &str,
+    schema: &[String],
 ) -> anyhow::Result<()> {
     let row = client
         .query_opt(
@@ -913,8 +915,8 @@ async fn preflight_publication(
     }
     tracing::info!(
         publication,
-        schema,
-        "preflight: publication matches its declaration (insert/update/delete, one schema)"
+        ?schema,
+        "preflight: publication matches its declaration (insert/update/delete, registered schemas)"
     );
     Ok(())
 }
@@ -2130,8 +2132,19 @@ mod tests {
     /// The declared substrate produces no drift, and each single departure from
     /// it produces exactly one named refusal reason.
     #[test]
+    fn publication_accepts_exactly_the_registered_schema_set() {
+        let shape = PublicationShape {
+            schemas: vec!["app".into(), "other".into()],
+            ..declared_publication()
+        };
+        assert!(publication_drift(&shape, &["other".into(), "app".into()]).is_empty());
+        assert!(!publication_drift(&shape, &["app".into()]).is_empty());
+        assert!(!publication_drift(&shape, &["app".into(), "unexpected".into()]).is_empty());
+    }
+
+    #[test]
     fn publication_and_slot_drift_name_every_departure_from_the_declaration() {
-        assert!(publication_drift(&declared_publication(), "app").is_empty());
+        assert!(publication_drift(&declared_publication(), &["app".to_owned()]).is_empty());
         assert!(slot_drift(&declared_slot()).is_empty());
 
         let truncating = PublicationShape {
@@ -2139,30 +2152,30 @@ mod tests {
             ..declared_publication()
         };
         assert_eq!(
-            publication_drift(&truncating, "app"),
+            publication_drift(&truncating, &["app".to_owned()]),
             vec!["pubtruncate=true, declared false".to_owned()]
         );
         let all_tables = PublicationShape {
             all_tables: true,
             ..declared_publication()
         };
-        assert_eq!(publication_drift(&all_tables, "app").len(), 1);
+        assert_eq!(publication_drift(&all_tables, &["app".to_owned()]).len(), 1);
         assert_eq!(
-            publication_drift(&declared_publication(), "billing"),
-            vec!["publishes schema app, registered schema billing".to_owned()]
+            publication_drift(&declared_publication(), &["billing".to_owned()]),
+            vec!["publishes schemas {\"app\"}, registered schemas {\"billing\"}".to_owned()]
         );
         let re_pointed = PublicationShape {
             schemas: vec!["app".to_owned(), "billing".to_owned()],
             tables: 3,
             ..declared_publication()
         };
-        assert_eq!(publication_drift(&re_pointed, "app").len(), 2);
+        assert_eq!(publication_drift(&re_pointed, &["app".to_owned()]).len(), 2);
         let no_updates = PublicationShape {
             update: false,
             ..declared_publication()
         };
         assert_eq!(
-            publication_drift(&no_updates, "app"),
+            publication_drift(&no_updates, &["app".to_owned()]),
             vec!["pubupdate=false, declared true".to_owned()]
         );
 

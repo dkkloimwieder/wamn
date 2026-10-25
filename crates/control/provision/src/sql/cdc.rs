@@ -80,16 +80,32 @@ pub fn ensure_schema_sql(schema: &str) -> String {
 /// only local dev and the test fixtures do. The provisioner applies the CNPG
 /// `Publication` CR instead (`docs/plan/platform-ui.md` §4.10).
 pub fn create_publication_sql(publication: &str, schema: &str) -> String {
+    create_publication_schemas_sql(publication, &[schema.to_owned()])
+}
+
+/// Create one publication over the environment's captured schema set.
+pub fn create_publication_schemas_sql(publication: &str, schemas: &[String]) -> String {
+    let target = if schemas.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " FOR TABLES IN SCHEMA {}",
+            schemas
+                .iter()
+                .map(|schema| quote_ident(schema))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     format!(
         "DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = {pub_lit}) THEN \
-             CREATE PUBLICATION {publication} FOR TABLES IN SCHEMA {schema} \
+             CREATE PUBLICATION {publication}{target} \
                WITH (publish = {publish}); \
            END IF; \
          END $$;",
         publication = quote_ident(publication),
         pub_lit = quote_literal(publication),
-        schema = quote_ident(schema),
         publish = quote_literal(CDC_PUBLISH),
     )
 }

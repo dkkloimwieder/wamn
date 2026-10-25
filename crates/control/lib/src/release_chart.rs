@@ -199,8 +199,7 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 }
 
 /// The roles a release implies (R4, epic decision D6): http iff the manifest
-/// has a route or workflow http attachment, materializer iff it has an event
-/// registration.
+/// has a route or workflow http attachment, materializer in every environment.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
     let tenant = wamn_control_provision::project_env_tenant(org, project, env);
@@ -250,7 +249,7 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
             environment: None,
         });
     }
-    if !manifest.workflow.registrations.is_empty() {
+    {
         let stream = wamn_control_provision::event_stream_name(org, project, env);
         let environment = [
             ("WAMN_MAT_STREAM", stream.as_str()),
@@ -875,10 +874,28 @@ mod tests {
         .expect("manifest");
         let mut input = input();
         input.roles = roles(&manifest, &input.org, &input.project, &input.env);
-        assert_eq!(input.roles.len(), 1);
+        assert_eq!(input.roles.len(), 2);
+        assert_eq!(input.roles[1].name, RoleName::Materializer);
         assert_eq!(input.roles[0].name, RoleName::Http);
         let values = values(&input).expect("values render");
         assert_eq!(values["roles"][0]["name"].as_str(), Some("http"));
+    }
+
+    #[test]
+    fn an_empty_release_still_renders_the_materializer() {
+        let manifest: ServingManifest = serde_json::from_value(serde_json::json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": []}, "components": [], "routes": [], "attachments": {},
+            "workflow": {"wirings": [], "attachments": {}}
+        }))
+        .unwrap();
+        let roles = roles(&manifest, "acme", "orders", "dev");
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].name, RoleName::Materializer);
+        assert_eq!(
+            roles[0].environment.as_ref().unwrap()["WAMN_MAT_STREAM"].as_str(),
+            Some(wamn_control_provision::event_stream_name("acme", "orders", "dev").as_str())
+        );
     }
 
     #[test]

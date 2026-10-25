@@ -13,7 +13,7 @@
 //! transaction makes the switch atomic. For `execution_type = 'role'` the
 //! enabler holds the execution role or `admin`, and the `workflow` user holds
 //! the execution role. `invoker` on a manual trigger needs no check.
-//! `invoker` on a schedule trigger runs as the `workflow` user with `admin`
+//! `invoker` on an event or schedule trigger runs as the `workflow` user with `admin`
 //! active, so it is assigning `admin`: the enabler holds `admin`, and the
 //! `workflow` user holds `admin`.
 //!
@@ -32,7 +32,7 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
-SELECT graph_json::text, wiring_hash, execution_role, trigger FROM catalog.workflows \
+SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, entity, ops, condition FROM catalog.workflows \
  WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5 \
    FOR UPDATE";
@@ -51,7 +51,7 @@ UPDATE catalog.workflows SET enabled = false \
    AND workflow_id = $4 AND version <> $5 AND enabled";
 
 const ENABLE_SQL: &str = "\
-UPDATE catalog.workflows SET enabled = true \
+UPDATE catalog.workflows SET enabled = true, enable_sequence = $6 \
  WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5";
 
@@ -77,6 +77,7 @@ pub enum WorkflowLifecycleErrorType {
     RoleNotHeldByEnabler,
     RoleNotHeldByWorkflowUser,
     Storage,
+    Broker,
 }
 
 impl WorkflowLifecycleErrorType {
@@ -88,6 +89,7 @@ impl WorkflowLifecycleErrorType {
             Self::RoleNotHeldByEnabler => "role-not-held-by-enabler",
             Self::RoleNotHeldByWorkflowUser => "role-not-held-by-workflow-user",
             Self::Storage => "storage",
+            Self::Broker => "broker",
         }
     }
 }
@@ -206,6 +208,10 @@ impl WorkflowVersion<'_> {
 ///
 /// [`WorkflowLifecycleErrorType::ApplyInProgress`] while another verb holds
 /// the lock; otherwise the predicate that refused.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the lifecycle boundary includes the optional event broker"
+)]
 pub async fn enable_workflow(
     system_url: &str,
     triple: &Triple,
@@ -214,6 +220,7 @@ pub async fn enable_workflow(
     enabler: &str,
     manifest_digest: &str,
     declared: &wamn_catalog::EnvironmentApplications,
+    events: Option<&crate::environment::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
     // Enable adds no declaration check: an application the environment does
     // not declare gates with no package of its own.
@@ -223,7 +230,17 @@ pub async fn enable_workflow(
         .unwrap_or_default();
     under_lock(system_url, triple, async || {
         let transaction = begin(project, workflow.tenant_id).await?;
-        enable_in(&transaction, workflow, enabler, manifest_digest, &packages).await?;
+        enable_in(
+            &transaction,
+            workflow,
+            enabler,
+            manifest_digest,
+            &packages,
+            declared,
+            triple,
+            events,
+        )
+        .await?;
         commit(transaction).await
     })
     .await
@@ -316,12 +333,19 @@ fn key<'a>(
     ]
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the enabling transaction uses the locked environment and broker"
+)]
 async fn enable_in(
     transaction: &Transaction<'_>,
     workflow: &WorkflowVersion<'_>,
     enabler: &str,
     manifest_digest: &str,
     packages: &std::collections::BTreeSet<String>,
+    declared: &wamn_catalog::EnvironmentApplications,
+    triple: &Triple,
+    events: Option<&crate::environment::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
     let version = workflow.version()?;
     let key = key(workflow, &version);
@@ -363,7 +387,7 @@ async fn enable_in(
     // callerless `invoker` (docs/plan/workflows.md R3).
     let assigned = match (execution_role.as_deref(), trigger.as_str()) {
         (Some(role), _) => Some(role),
-        (None, "schedule") => Some(ADMIN_ROLE),
+        (None, "schedule" | "event") => Some(ADMIN_ROLE),
         (None, _) => None,
     };
     if let Some(role) = assigned {
@@ -383,12 +407,60 @@ async fn enable_in(
         }
     }
 
+    let enable_sequence = if trigger == "event" {
+        let source_package: String = row.get(4);
+        let entity: String = row.get(5);
+        let stored_ops: Vec<String> = row.get(6);
+        let ops = serde_json::from_value::<Vec<wamn_event_reg::Op>>(serde_json::json!(stored_ops))
+            .map_err(WorkflowLifecycleError::stored)?;
+        let condition: Option<String> = row.get(7);
+        crate::author_workflow::validate_event_trigger(
+            transaction,
+            declared,
+            crate::author_workflow::WorkflowTrigger::Event {
+                source_package: &source_package,
+                entity: &entity,
+                ops: &ops,
+                condition: condition.as_deref(),
+            },
+        )
+        .await
+        .map_err(WorkflowLifecycleError::gate)?;
+        let events = events.ok_or_else(|| {
+            WorkflowLifecycleError::new(
+                WorkflowLifecycleErrorType::Broker,
+                "the environment has no event broker",
+            )
+        })?;
+        let tail = crate::event_streams::last_published_sequence(events, triple)
+            .await
+            .map_err(|error| {
+                WorkflowLifecycleError::with_source(
+                    WorkflowLifecycleErrorType::Broker,
+                    "read the environment event stream tail",
+                    error,
+                )
+            })?;
+        Some(i64::try_from(tail).map_err(|error| {
+            WorkflowLifecycleError::with_source(
+                WorkflowLifecycleErrorType::Broker,
+                "the stream sequence exceeds the catalog storage width",
+                error,
+            )
+        })?)
+    } else {
+        None
+    };
+
     transaction
         .execute(DISABLE_OTHERS_SQL, &key)
         .await
         .map_err(|error| storage("disable the enabled version", error))?;
     transaction
-        .execute(ENABLE_SQL, &key)
+        .execute(
+            ENABLE_SQL,
+            &[key[0], key[1], key[2], key[3], key[4], &enable_sequence],
+        )
         .await
         .map_err(|error| storage("enable the workflow version", error))?;
     Ok(())

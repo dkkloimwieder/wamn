@@ -55,7 +55,7 @@ pub(super) async fn configure(
             org: identity().org.clone(),
             project: identity().project.clone(),
             env: identity().environment.clone(),
-            schema: "receiving".to_owned(),
+            schemas: vec!["receiving".to_owned()],
             system_database_url: Some(inputs.system_pg_url.clone()),
             cluster: Some("route-auth-pg18".to_owned()),
             replication_password: replication_password.to_owned(),

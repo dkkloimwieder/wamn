@@ -36,6 +36,7 @@
 //! slot/publication/credentials. Separate environment streams and broker
 //! credentials limit event access. Regulated tiers use dedicated clusters.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -67,9 +68,8 @@ pub struct EnableCdcProjectEnvRequest {
     /// Environment slug.
     pub env: String,
 
-    /// The application DATA schema the publication covers (not the
-    /// `platform` auth schema).
-    pub schema: String,
+    /// The application data schemas that the publication covers.
+    pub schemas: Vec<String>,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): derive the
     /// target cluster, resolve the stored project-env instance suffix, and record
@@ -171,10 +171,14 @@ pub async fn enable_cdc_project_env(
     // `wamn_cdc_…` object name's 63-byte bound) before any effect.
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
-    if !crate::ident::is_bare_ident(&args.schema) {
+    if args
+        .schemas
+        .iter()
+        .any(|schema| !crate::ident::is_bare_ident(schema))
+    {
         anyhow::bail!(
             "--schema must be a bare lowercase identifier, got {:?}",
-            args.schema
+            args.schemas
         );
     }
 
@@ -245,14 +249,14 @@ pub async fn enable_cdc_project_env(
 
     // Render the artifacts the runbook applies.
     let role_sql = sql::ensure_replication_role_sql(&cdc_name, &args.replication_password);
-    let cdc_sql = cdc_sql_bundle(&args.schema, &cdc_name, &db_name);
+    let cdc_sql = cdc_sql_bundle(&args.schemas, &cdc_name, &db_name);
     let publication = wamn_control_provision::database::render_project_env_publication(
         &triple,
         &instance,
         &cluster,
         &args.cluster_namespace,
         &cdc_name,
-        &args.schema,
+        &args.schemas,
     );
     let secret_doc =
         render_project_env_cdc_secret_manifest(&triple, &instance, &args.namespace, &cdc_url);
@@ -287,15 +291,29 @@ pub async fn enable_cdc_project_env(
 /// and exclusion maps, then the replication role's grants. Package apply owns
 /// the map rows. Apply the role SQL to the cluster before this bundle.
 /// Every statement is idempotent (safe to apply again).
-fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
-    format!(
-        "{slot}\n{schema_guard};\n{entity_map};\n{exclusion_map};\n{grants}\n",
-        slot = sql::create_failover_slot_sql(cdc_name),
-        schema_guard = sql::ensure_schema_sql(schema),
-        entity_map = sql::ensure_entity_map_sql(schema),
-        exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
-        grants = sql::grant_replication_access_sql(db_name, cdc_name, schema),
-    )
+fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
+    let mut bundle = sql::create_failover_slot_sql(cdc_name);
+    if schemas.is_empty() {
+        writeln!(
+            bundle,
+            "\nGRANT CONNECT ON DATABASE {} TO {};",
+            wamn_pg_core::quote_ident(db_name),
+            wamn_pg_core::quote_ident(cdc_name)
+        )
+        .expect("write the empty capture grant");
+    }
+    for schema in schemas {
+        writeln!(
+            bundle,
+            "\n{schema_guard};\n{entity_map};\n{exclusion_map};\n{grants}",
+            schema_guard = sql::ensure_schema_sql(schema),
+            entity_map = sql::ensure_entity_map_sql(schema),
+            exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
+            grants = sql::grant_replication_access_sql(db_name, cdc_name, schema),
+        )
+        .expect("write CDC SQL into a string");
+    }
+    bundle
 }
 
 /// Record the CDC reader registration of `triple` in the registry
@@ -304,7 +322,7 @@ fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
 /// Secret are in place, so a registration names a reader that can start.
 /// Connects as superuser and `SET ROLE wamn_system` (the registry owner), then
 /// runs the pure `wamn-control-registry` builder. The publication and slot
-/// share `cdc_name`, and `schema` is the schema that the publication covers;
+/// share `cdc_name`, and `schemas` is the set that the publication covers;
 /// the stream and the Secret are named from the coordinate.
 ///
 /// # Errors
@@ -313,10 +331,16 @@ fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
 pub async fn record_event_reader(
     system_url: &str,
     triple: &Triple,
-    schema: &str,
+    schemas: &[String],
     cdc_name: &str,
     secret_namespace: Option<&str>,
 ) -> anyhow::Result<()> {
+    let schemas = schemas
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
     let env = triple.env.as_str();
     let stream = event_stream_name(&triple.org, &triple.project, env);
     let secret_name = project_env_cdc_secret_name(&triple.org, &triple.project, env);
@@ -342,7 +366,7 @@ pub async fn record_event_reader(
                     &secret_name,
                     &secret_namespace,
                     &true,
-                    &schema,
+                    &schemas,
                 ],
             )
             .await
@@ -368,7 +392,7 @@ mod tests {
     #[test]
     fn cdc_sql_bundle_orders_slot_schema_map_grants() {
         let bundle = cdc_sql_bundle(
-            "app",
+            &["app".to_owned(), "other".to_owned()],
             "wamn_cdc_acme__billing__dev",
             "wamn-db-acme--billing--dev",
         );
@@ -388,6 +412,7 @@ mod tests {
             .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\"")
             .expect("grants");
         assert!(!bundle.contains("PUBLICATION"));
+        assert!(bundle.contains("CREATE SCHEMA IF NOT EXISTS \"other\""));
         assert!(slot < schema && schema < entity_map);
         assert!(entity_map < exclusion_map && exclusion_map < grants);
     }

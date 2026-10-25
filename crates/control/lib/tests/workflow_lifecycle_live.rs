@@ -199,6 +199,16 @@ impl Fixture {
         document: &WiringDocument,
         execution: WorkflowExecution<'_>,
     ) -> Result<(), AuthorWorkflowError> {
+        self.author_trigger(document, execution, WorkflowTrigger::Manual)
+            .await
+    }
+
+    async fn author_trigger(
+        &mut self,
+        document: &WiringDocument,
+        execution: WorkflowExecution<'_>,
+        trigger: WorkflowTrigger<'_>,
+    ) -> Result<(), AuthorWorkflowError> {
         let transaction = self.project.transaction().await.unwrap();
         author_workflow(
             &self.control,
@@ -209,7 +219,7 @@ impl Fixture {
                 application: APPLICATION,
                 declared: &declared(),
                 document,
-                trigger: WorkflowTrigger::Manual,
+                trigger,
                 execution,
                 created_by: ALICE,
                 manifest_digest: &self.digest,
@@ -247,6 +257,7 @@ impl Fixture {
             enabler,
             &digest,
             &declared(),
+            None,
         )
         .await
     }
@@ -565,5 +576,246 @@ async fn the_migration_creates_the_table_of_the_full_schema() {
         .batch_execute(&format!("BEGIN;\n{SCHEDULES}\nCOMMIT;"))
         .await
         .expect("apply the schedule migration");
+    client
+        .batch_execute(include_str!(
+            "../../../../deploy/sql/migrations/project/0035_workflow_events.sql"
+        ))
+        .await
+        .expect("apply the event migration");
     assert_eq!(shape().await, fresh);
+}
+
+async fn capture_orders(fixture: &Fixture) {
+    use wamn_control_provision::sql;
+    fixture
+        .project
+        .batch_execute(&format!(
+            "CREATE SCHEMA orders; CREATE TABLE orders.orders (id int PRIMARY KEY); {}; {} {}",
+            sql::ensure_entity_map_sql("orders"),
+            sql::create_publication_sql("workflow_events", "orders"),
+            sql::upsert_entity_map_sql("orders")
+                .replace("$1", "'orders'")
+                .replace("$2", "'order'")
+                .replace("$3", "'orders'")
+        ))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn event_authorship_requires_a_captured_application_model() {
+    use wamn_event_wire::Op;
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = fixture().await;
+    capture_orders(&fixture).await;
+    let graph = workflow("changed", 1, "get", "orders_data");
+    fixture.green(&graph).await;
+    for (source_package, entity, ops, condition) in [
+        ("other", "order", vec![Op::Insert], None),
+        (APPLICATION, "missing", vec![Op::Insert], None),
+        (APPLICATION, "order", vec![], None),
+        (APPLICATION, "order", vec![Op::Insert, Op::Insert], None),
+        (APPLICATION, "order", vec![Op::Update], Some("new.[")),
+        (APPLICATION, "order", vec![Op::Update], Some(" ")),
+    ] {
+        let error = fixture
+            .author_trigger(
+                &graph,
+                WorkflowExecution::Invoker,
+                WorkflowTrigger::Event {
+                    source_package,
+                    entity,
+                    ops: &ops,
+                    condition,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.error_type(), AuthorWorkflowErrorType::Event);
+    }
+    let trigger = WorkflowTrigger::Event {
+        source_package: APPLICATION,
+        entity: "order",
+        ops: &[Op::Update, Op::Delete],
+        condition: Some("new.status != old.status"),
+    };
+    fixture
+        .author_trigger(&graph, WorkflowExecution::Invoker, trigger)
+        .await
+        .unwrap();
+    fixture
+        .author_trigger(&graph, WorkflowExecution::Invoker, trigger)
+        .await
+        .unwrap();
+    let row = fixture.project.query_one("SELECT source_package, entity, ops, condition, enable_sequence FROM catalog.workflows WHERE workflow_id = 'changed'", &[]).await.unwrap();
+    assert_eq!(row.get::<_, String>(0), APPLICATION);
+    assert_eq!(row.get::<_, String>(1), "order");
+    assert_eq!(row.get::<_, Vec<String>>(2), ["update", "delete"]);
+    assert_eq!(row.get::<_, String>(3), "new.status != old.status");
+    assert_eq!(row.get::<_, Option<i64>>(4), None);
+    for update in [
+        "condition = NULL",
+        "entity = 'missing'",
+        "ops = ARRAY['insert']",
+        "enabled = true",
+        "enable_sequence = 1",
+    ] {
+        assert!(
+            fixture
+                .project
+                .batch_execute(&format!(
+                    "UPDATE catalog.workflows SET {update} WHERE workflow_id = 'changed'"
+                ))
+                .await
+                .is_err()
+        );
+    }
+}
+
+/// The supplied broker credential needs stream management and event publication.
+#[tokio::test]
+#[ignore = "requires: WAMN_EVENT_NATS_URL, WAMN_EVENT_NATS_USERNAME, WAMN_EVENT_NATS_PASSWORD_FILE"]
+async fn event_enable_records_stream_tail_and_requires_admin() {
+    use std::time::Duration;
+    use wamn_control::environment::EventBroker;
+    use wamn_control_provision::events::{materializer_consumer_config, source_stream_config};
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = fixture().await;
+    capture_orders(&fixture).await;
+    let graph = workflow("changed", 1, "get", "orders_data");
+    fixture.green(&graph).await;
+    fixture
+        .author_trigger(
+            &graph,
+            WorkflowExecution::Invoker,
+            WorkflowTrigger::Event {
+                source_package: APPLICATION,
+                entity: "order",
+                ops: &[wamn_event_wire::Op::Update],
+                condition: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .enable("changed", 1, ALICE)
+            .await
+            .unwrap_err()
+            .error_type(),
+        WorkflowLifecycleErrorType::RoleNotHeldByEnabler
+    );
+    fixture.grant(ALICE, "admin").await;
+    fixture
+        .grant(&wamn_project_state::workflow_user_id().to_string(), "admin")
+        .await;
+    let events = EventBroker {
+        nats_url: std::env::var("WAMN_EVENT_NATS_URL").unwrap(),
+        nats_username: std::env::var("WAMN_EVENT_NATS_USERNAME").unwrap(),
+        nats_password_file: std::env::var_os("WAMN_EVENT_NATS_PASSWORD_FILE")
+            .unwrap()
+            .into(),
+        stream_replicas: 1,
+        dup_window_secs: 120,
+    };
+    let scope = triple();
+    let broker = async_nats::jetstream::new(
+        wamn_control::event_streams::connection_options(
+            &events.nats_username,
+            &events.nats_password_file,
+        )
+        .unwrap()
+        .connect(&events.nats_url)
+        .await
+        .unwrap(),
+    );
+    let config = source_stream_config(&scope, 1, Duration::from_secs(120));
+    let name = config.name.clone();
+    let mut stream = broker.create_stream(config).await.unwrap();
+    let subject = format!(
+        "evt.{}.{}.{}.order.update",
+        scope.org,
+        scope.project,
+        scope.env.as_str()
+    );
+    let consumer = materializer_consumer_config("unread", &subject, Duration::from_secs(30), 5);
+    let mut consumer = stream.create_consumer(consumer).await.unwrap();
+    let first = broker
+        .publish(subject.clone(), "before".into())
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let second = broker
+        .publish(subject.clone(), "before".into())
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(second.sequence > first.sequence);
+    assert_eq!(consumer.info().await.unwrap().delivered.stream_sequence, 0);
+    enable_workflow(
+        &fixture.project_url,
+        &scope,
+        &mut fixture.project,
+        &key("changed", 1),
+        ALICE,
+        &fixture.digest,
+        &declared(),
+        Some(&events),
+    )
+    .await
+    .unwrap();
+    let sequence = async |project: &Client| -> i64 {
+        project
+            .query_one(
+                "SELECT enable_sequence FROM catalog.workflows WHERE workflow_id = 'changed'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    };
+    assert_eq!(
+        sequence(&fixture.project).await,
+        i64::try_from(second.sequence).unwrap()
+    );
+    assert_eq!(stream.info().await.unwrap().state.consumer_count, 1);
+    disable_workflow(
+        &fixture.project_url,
+        &scope,
+        &mut fixture.project,
+        &key("changed", 1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sequence(&fixture.project).await,
+        i64::try_from(second.sequence).unwrap()
+    );
+    let third = broker
+        .publish(subject, "after".into())
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    enable_workflow(
+        &fixture.project_url,
+        &scope,
+        &mut fixture.project,
+        &key("changed", 1),
+        ALICE,
+        &fixture.digest,
+        &declared(),
+        Some(&events),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sequence(&fixture.project).await,
+        i64::try_from(third.sequence).unwrap()
+    );
+    assert_eq!(stream.info().await.unwrap().state.consumer_count, 1);
+    assert_eq!(consumer.info().await.unwrap().delivered.stream_sequence, 0);
+    broker.delete_stream(&name).await.unwrap();
 }

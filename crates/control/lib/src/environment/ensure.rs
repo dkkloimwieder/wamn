@@ -20,7 +20,8 @@ use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
+use base64::Engine as _;
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_control_registry::Triple;
 
@@ -225,26 +226,35 @@ pub async fn ensure(
         .context("commit the administrator rows")
 }
 
-/// Ensure CDC capture of the model schema read by event registrations: the source stream, the
-/// replication role, the slot, the `Publication` CR and the replication
-/// Secret, judged by the publication probe of [`cdc_in_place`]; then the CDC
-/// reader registration, recorded on every apply as an idempotent upsert, so a
-/// crash before the record is finished by the next apply. A package set with
-/// no event registration captures nothing, but still gets the source and
-/// advisory streams, which every host activates at start (wamn-7r3dt).
+/// Ensure capture of every model in the environment's installed applications.
+/// The slot and publication belong to the environment, as do its entity consumers.
 ///
 /// # Errors
 ///
-/// When registrations read several schemas, the event broker is not
-/// configured, or a write fails.
+/// When the event broker is absent or a substrate write fails.
 pub(super) async fn ensure_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
     manifests: &[wamn_schema_generator::PackageManifest],
 ) -> anyhow::Result<()> {
-    let Some(schema) = registered_schema(manifests)? else {
+    let captured = manifests
+        .iter()
+        .filter(|manifest| {
+            document
+                .applications
+                .values()
+                .any(|application| application.packages.contains(&manifest.package.id))
+        })
+        .collect::<Vec<_>>();
+    let schemas = captured
+        .iter()
+        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if schemas.is_empty() {
         return ensure_streams(platform, document, manifests).await;
-    };
+    }
     let triple = document.triple();
     let instance = read_project_env_instance(&platform.system_database_url, &triple).await?;
     let cdc_name = wamn_control_provision::cdc_object_name(
@@ -254,14 +264,44 @@ pub(super) async fn ensure_cdc(
         &instance,
     );
     let project = connect(&project_url(platform, &triple).await?).await?;
-    if !cdc_in_place(&project, &cdc_name, &schema).await? {
-        enable_cdc(platform, document, manifests, &schema, &project, &instance).await?;
+    let mut full = project
+        .query(
+            wamn_schema_control::select_replica_identity_sql(),
+            &[&schemas],
+        )
+        .await
+        .context("read captured replica identities")?
+        .into_iter()
+        .filter(|row| row.get::<_, String>(2) == "f")
+        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+        .collect::<std::collections::BTreeSet<_>>();
+    for manifest in &captured {
+        for model in manifest.models.values() {
+            if !full.insert((model.schema.clone(), model.table.clone())) {
+                continue;
+            }
+            let sql = wamn_schema_control::alter_replica_identity_sql(
+                &model.schema,
+                &model.table,
+                wamn_schema_control::ReplicaIdentity::Full,
+            );
+            project.batch_execute(&sql).await.with_context(|| {
+                format!(
+                    "capture {}.{} with full row images",
+                    model.schema, model.table
+                )
+            })?;
+        }
     }
+    if !cdc_in_place(&project, &cdc_name, &schemas).await? {
+        enable_cdc(platform, document, manifests, &schemas, &project, &instance).await?;
+    }
+    ensure_streams(platform, document, manifests).await?;
     let namespace = platform.target.namespace.as_str();
     crate::enable_cdc_project_env::record_event_reader(
         &platform.system_database_url,
         &triple,
-        &schema,
+        &schemas,
         &cdc_name,
         Some(namespace),
     )
@@ -283,8 +323,17 @@ async fn ensure_streams(
     let triple = document.triple();
     let tenant =
         wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
-    let consumers =
+    let mut consumers =
         wamn_control_provision::events::registration_consumers(&triple, &tenant, manifests);
+    consumers.extend(wamn_control_provision::events::entity_consumers(
+        &triple,
+        manifests.iter().filter(|manifest| {
+            document
+                .applications
+                .values()
+                .any(|application| application.packages.contains(&manifest.package.id))
+        }),
+    ));
     let broker = async_nats::jetstream::new(
         crate::event_streams::connection_options(
             &events.nats_username,
@@ -304,51 +353,13 @@ async fn ensure_streams(
     .await
 }
 
-/// Resolve registration entities against their source packages, as publish does.
-fn registered_schema(
-    manifests: &[wamn_schema_generator::PackageManifest],
-) -> anyhow::Result<Option<String>> {
-    let mut schemas = std::collections::BTreeSet::new();
-    for manifest in manifests {
-        let handlers = manifest
-            .custom_operations
-            .values()
-            .filter_map(|op| op.registration());
-        let workflows = manifest
-            .workflows
-            .values()
-            .filter_map(|workflow| workflow.registration.as_ref());
-        for registration in handlers.chain(workflows) {
-            let model = manifests
-                .iter()
-                .find(|source| source.package.id == registration.source_package)
-                .and_then(|source| source.models.get(&registration.entity))
-                .with_context(|| {
-                    format!(
-                        "registration source {} model {} is absent from the release",
-                        registration.source_package, registration.entity
-                    )
-                })?;
-            schemas.insert(model.schema.as_str());
-        }
-    }
-    match schemas.into_iter().collect::<Vec<_>>().as_slice() {
-        [] => Ok(None),
-        [schema] => Ok(Some((*schema).to_owned())),
-        several => bail!(
-            "the release's packages declare the schemas {several:?}; one environment captures \
-             one schema"
-        ),
-    }
-}
-
-/// Enable CDC of `schema`: the source stream, the replication role, the CDC
+/// Enable CDC of `schemas`: the source stream, the replication role, the CDC
 /// SQL on `project`, the `Publication` CR and the replication Secret.
 async fn enable_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
     manifests: &[wamn_schema_generator::PackageManifest],
-    schema: &str,
+    schemas: &[String],
     project: &tokio_postgres::Client,
     instance: &str,
 ) -> anyhow::Result<()> {
@@ -360,7 +371,7 @@ async fn enable_cdc(
         stream_replicas,
         dup_window_secs,
     } = platform.events.clone().context(
-        "the release registers model events and the environment has no CDC reader; \
+        "the environment captures application models and has no event broker; \
          set WAMN_EVENT_NATS_URL, WAMN_EVENT_NATS_USERNAME and WAMN_EVENT_NATS_PASSWORD_FILE",
     )?;
     let tenant =
@@ -371,15 +382,49 @@ async fn enable_cdc(
             .map(serde_json::to_string)
             .collect::<Result<Vec<_>, _>>()?;
     let namespace = platform.target.namespace.as_str();
+    // A schema-set change must preserve the credential held by the running reader.
+    let secret_name = wamn_control_provision::project_env_cdc_secret_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    let replication_password = match crate::kubectl::get::<serde_json::Value>(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        namespace,
+        "secret",
+        &secret_name,
+    )
+    .await?
+    {
+        Some(secret) => {
+            let encoded = secret["data"]["url"]
+                .as_str()
+                .context("the CDC Secret has no URL")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .context("decode the CDC credential")?;
+            let url = std::str::from_utf8(&bytes).context("decode the CDC URL")?;
+            let config: tokio_postgres::Config = url.parse().context("parse the CDC URL")?;
+            String::from_utf8(
+                config
+                    .get_password()
+                    .context("the CDC URL has no password")?
+                    .to_vec(),
+            )
+            .context("decode the replication password")?
+        }
+        None => random_password()?,
+    };
     let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(
         &crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
             org: document.org.clone(),
             project: document.project.clone(),
             env: document.env.clone(),
-            schema: schema.to_owned(),
+            schemas: schemas.to_vec(),
             system_database_url: Some(platform.system_database_url.clone()),
             cluster: None,
-            replication_password: random_password()?,
+            replication_password,
             db_host: platform.database_host.clone(),
             db_port: platform.database_port,
             namespace: namespace.to_owned(),
@@ -448,7 +493,7 @@ async fn admin_sql(platform: &Platform, sql: &str) -> anyhow::Result<()> {
 }
 
 /// Whether the environment's CDC is in place, judged by what it observes: the
-/// publication `cdc_name` captures exactly `schema` in database `project`, the
+/// publication `cdc_name` captures exactly `schemas` in database `project`, the
 /// connection the probe runs on. [`ensure_cdc`] writes the publication last
 /// among the CDC writes and records the reader on every apply.
 ///
@@ -458,16 +503,16 @@ async fn admin_sql(platform: &Platform, sql: &str) -> anyhow::Result<()> {
 pub async fn cdc_in_place(
     project: &tokio_postgres::Client,
     cdc_name: &str,
-    schema: &str,
+    schemas: &[String],
 ) -> anyhow::Result<bool> {
     Ok(project
         .query_one(
             "SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
          AND NOT p.puballtables \
-         AND (SELECT array_agg(n.nspname::text ORDER BY n.nspname) \
+         AND coalesce((SELECT array_agg(n.nspname::text ORDER BY n.nspname) \
               FROM pg_publication_namespace pn JOIN pg_namespace n ON n.oid = pn.pnnspid \
-              WHERE pn.pnpubid = p.oid) = ARRAY[$2::text])",
-            &[&cdc_name, &schema],
+              WHERE pn.pnpubid = p.oid), ARRAY[]::text[]) = ARRAY(SELECT DISTINCT unnest($2::text[]) ORDER BY 1))",
+            &[&cdc_name, &schemas],
         )
         .await
         .context("probe the CDC publication schema")?
@@ -657,71 +702,6 @@ fn shred(file: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn model_package(
-        id: &str,
-        schema: &str,
-        registered: bool,
-    ) -> wamn_schema_generator::PackageManifest {
-        let mut manifest: wamn_schema_generator::PackageManifest = serde_json::from_str(
-            include_str!("../../tests/fixtures/component_package/wamn.json"),
-        )
-        .unwrap();
-        manifest.package.id = id.to_owned();
-        for model in manifest.models.values_mut() {
-            model.schema = schema.to_owned();
-        }
-        manifest.custom_operations.clear();
-        manifest.workflows.clear();
-        if registered {
-            manifest.workflows.insert("observe".to_owned(), serde_json::from_value(serde_json::json!({
-                "wiring": "observe", "registration": {"source_package": id, "entity": "item", "ops": ["insert"]}
-            })).unwrap());
-        }
-        manifest
-    }
-
-    #[test]
-    fn no_registration_captures_no_schema() {
-        assert_eq!(
-            registered_schema(&[model_package("consumer", "consumer", false)]).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn registration_captures_only_its_source_model_schema() {
-        let consumer = model_package("consumer", "consumer", false);
-        let mut integration = model_package("integration", "integration", true);
-        integration
-            .workflows
-            .get_mut("observe")
-            .unwrap()
-            .registration
-            .as_mut()
-            .unwrap()
-            .source_package = "consumer".to_owned();
-        assert_eq!(
-            registered_schema(&[consumer, integration])
-                .unwrap()
-                .as_deref(),
-            Some("consumer")
-        );
-    }
-
-    #[test]
-    fn registrations_on_two_schemas_are_refused() {
-        let error = registered_schema(&[
-            model_package("consumer", "consumer", true),
-            model_package("integration", "integration", true),
-        ])
-        .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("one environment captures one schema")
-        );
-    }
 
     #[test]
     fn apply_writes_the_registry_reader_secret_of_the_cdc_reader() {

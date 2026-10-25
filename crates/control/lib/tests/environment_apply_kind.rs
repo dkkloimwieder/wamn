@@ -191,8 +191,7 @@ const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"
 const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
 /// Capture crash logs during rollout, before Helm can remove the pods.
 const ROLLOUT_SNAPSHOT: Duration = Duration::from_secs(30);
-/// A role image no WorkloadDeployment pulls: no fixture release has a
-/// registration, so no materializer renders.
+/// An image that the deliberately unplaced probe never pulls.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
 struct Run {
     work: PathBuf,
@@ -394,6 +393,7 @@ impl Run {
                 "--volumes",
                 &self.registry,
                 &format!("{}-events", self.cluster),
+                &format!("{}-apply-events", self.cluster),
             ])
             .output()
             .await;
@@ -1039,6 +1039,21 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             ],
         }))?,
     )?;
+    let event_config = work.join("apply-event-nats.json");
+    let event_password = work.join("apply-event-password");
+    std::fs::write(
+        &event_config,
+        serde_json::to_vec(
+            &json!({"authorization":{"users":[{"user":USER,"password":PASSWORD}]}}),
+        )?,
+    )?;
+    std::fs::write(&event_password, PASSWORD)?;
+    let event_credentials = wamn_test_infrastructure::event_broker::Credentials {
+        username: USER.into(),
+        password_file: event_password.clone(),
+    };
+    let event_server =
+        integration::start_broker(run, &event_config, &event_credentials, "apply-events").await?;
     let platform = Platform {
         auth_nats: None,
         system_database_url: system_url.clone(),
@@ -1057,7 +1072,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         database_port: 5432,
         host_group: Some(work.join("host-group.yaml")),
         pat_issuer: PatIssuerConfig::default(),
-        events: None,
+        events: Some(environment::EventBroker {
+            nats_url: event_server.clone(),
+            nats_username: USER.into(),
+            nats_password_file: event_password,
+            stream_replicas: 1,
+            dup_window_secs: 120,
+        }),
     };
     let document = |env: &str, route_host: &str| EnvironmentDocument {
         client_package: None,
@@ -1077,6 +1098,67 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         floors: std::collections::BTreeMap::new(),
     };
     let apply = async |document: &EnvironmentDocument, name: &str| -> anyhow::Result<()> {
+        let secret_name = format!(
+            "apply-events-{}--{}--{}",
+            document.org, document.project, document.env
+        );
+        let source = wamn_control_provision::events::source_stream_config(
+            &document.triple(),
+            1,
+            Duration::from_secs(120),
+        );
+        let secret = work.join(format!("{secret_name}.json"));
+        std::fs::write(
+            &secret,
+            serde_json::to_vec(&json!({
+                "apiVersion":"v1", "kind":"Secret", "metadata":{"name":secret_name,"namespace":NAMESPACE},
+                "stringData":{"password":PASSWORD,"binding.json":json!({
+                    "servers":event_server,"username":USER,"password":PASSWORD,"inbox-prefix":format!("_INBOX_{USER}"),
+                    "stream-allow":source.name,"subject-allow":source.subjects.join(","),
+                    "subscription-capacity-bytes":"4194304","subscription-capacity":"64","max-in-flight":"64"
+                }).to_string()}
+            }))?,
+        )?;
+        wamn_control::kubectl::kubectl(
+            &platform.target.kubeconfig,
+            &platform.target.context,
+            NAMESPACE,
+            &["apply", "-f", &secret.to_string_lossy()],
+            None,
+        )
+        .await?;
+        let mut group: Value = serde_yaml::from_slice(&std::fs::read(
+            platform.host_group.as_ref().context("host group")?,
+        )?)?;
+        group["env"]
+            .as_array_mut()
+            .context("host environment")?
+            .extend(
+                [
+                    ("WAMN_EVT_NATS_URL", event_server.as_str()),
+                    ("WAMN_EVT_NATS_USERNAME", USER),
+                    ("WAMN_EVT_NATS_PASSWORD_FILE", "/apply-events/password"),
+                    ("WAMN_MAT_NATS_BINDING_FILE", "/apply-events/binding.json"),
+                    ("WAMN_EVT_ORG", document.org.as_str()),
+                    ("WAMN_EVT_PROJECT", document.project.as_str()),
+                    ("WAMN_EVT_ENV", document.env.as_str()),
+                    ("WAMN_EVT_STREAM_REPLICAS", "1"),
+                    ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
+                ]
+                .map(|(name, value)| json!({"name":name,"value":value})),
+            );
+        group["volumes"]
+            .as_array_mut()
+            .context("host volumes")?
+            .push(json!({"name":"apply-events","secret":{"secretName":secret_name}}));
+        group["volumeMounts"]
+            .as_array_mut()
+            .context("host mounts")?
+            .push(json!({"name":"apply-events","mountPath":"/apply-events","readOnly":true}));
+        let file = work.join(format!("{}-event-host-group.yaml", document.env));
+        std::fs::write(&file, serde_yaml::to_string(&group)?)?;
+        let mut platform = platform.clone();
+        platform.host_group = Some(file);
         apply_with_diagnostics(&work, &platform, document, name).await
     };
     let name = release_name(ORG, PROJECT, "dev")?;

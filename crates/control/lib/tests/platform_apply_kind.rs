@@ -552,10 +552,7 @@ cluster.Cluster {{
         release.as_deref() == Some(digest.as_str()),
         "Receiving serves another release"
     );
-    // Receiving registers no event, so env apply enables no CDC and 4.18
-    // deploys no reader (owner ruling 2026-10-22). environment_apply_kind
-    // runs the CDC reader.
-    require_cdc_reader_skip(&applied)?;
+    // Capture and its reader exist even without an event registration.
     for (kind, name) in [
         ("deployment", "cdc-reader-test--receiving--dev"),
         ("secret", "wamn-cdc-test--receiving--dev"),
@@ -563,8 +560,8 @@ cluster.Cluster {{
         ensure!(
             kubectl::get::<Value>(&kubeconfig, &context, "hosts", kind, name)
                 .await?
-                .is_none(),
-            "Receiving has a {kind} {name} without an event registration"
+                .is_some(),
+            "Receiving has no {kind} {name} for application capture"
         );
     }
     // Env apply creates the number_sequence row of Receiving's purchase_order
@@ -694,7 +691,6 @@ cluster.Cluster {{
             "{title} did not skip"
         );
     }
-    require_cdc_reader_skip(&repeated)?;
     require_web_skip(&repeated)?;
     require_platform_ui_skip(&repeated)?;
     require_edge_skip(&repeated)?;
@@ -1405,16 +1401,6 @@ fn require_edge_skip(lines: &[String]) -> anyhow::Result<()> {
             .iter()
             .any(|line| line == "4.20 Edge bucket check: skipped: no bucket"),
         "missing edge no-bucket skip"
-    );
-    Ok(())
-}
-
-fn require_cdc_reader_skip(lines: &[String]) -> anyhow::Result<()> {
-    ensure!(
-        lines
-            .iter()
-            .any(|line| line == "4.18 CDC reader test/receiving/dev: skipped: no registration"),
-        "missing Receiving CDC reader skip"
     );
     Ok(())
 }

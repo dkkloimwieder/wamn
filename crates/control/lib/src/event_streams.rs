@@ -32,6 +32,31 @@ pub fn connection_options(
         .custom_inbox_prefix(format!("_INBOX_{username}")))
 }
 
+/// Read the publication-order boundary from stream info without changing broker state.
+pub async fn last_published_sequence(
+    events: &crate::environment::EventBroker,
+    scope: &Triple,
+) -> anyhow::Result<u64> {
+    let broker = async_nats::jetstream::new(
+        connection_options(&events.nats_username, &events.nats_password_file)?
+            .connect(&events.nats_url)
+            .await
+            .context("connect to the environment event broker")?,
+    );
+    let name =
+        wamn_control_provision::event_stream_name(&scope.org, &scope.project, scope.env.as_str());
+    let mut stream = broker
+        .get_stream(&name)
+        .await
+        .context("read the environment event stream")?;
+    Ok(stream
+        .info()
+        .await
+        .context("read the last published stream sequence")?
+        .state
+        .last_sequence)
+}
+
 /// Create missing broker objects with the caller's provisioning credential.
 /// Existing objects must match the fields their declaration owns before attachment.
 pub async fn provision(

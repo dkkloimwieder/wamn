@@ -86,8 +86,9 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
 
     let triple = Triple::new(ORG, PROJECT, ENV);
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let in_place = || cdc_in_place(&db, &cdc_name, "app");
-    let record = || record_event_reader(database.url(), &triple, "app", &cdc_name, None);
+    let schemas = vec!["app".to_owned(), "other".to_owned()];
+    let in_place = || cdc_in_place(&db, &cdc_name, &schemas);
+    let record = || record_event_reader(database.url(), &triple, &schemas, &cdc_name, None);
     let readers = || async {
         db.query_one(
             "SELECT count(*) FROM registry.event_readers WHERE org = $1",
@@ -108,15 +109,20 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
 
     // The publication is the observation.
     db.batch_execute(&format!(
-        "{};\n{}",
+        "{};\n{};\n{}",
         sql::ensure_schema_sql("app"),
-        sql::create_publication_sql(&cdc_name, "app")
+        sql::ensure_schema_sql("other"),
+        sql::create_publication_schemas_sql(&cdc_name, &schemas)
     ))
     .await
     .expect("the publication");
     assert!(in_place().await.expect("probe"), "CDC is in place");
 
-    assert!(!cdc_in_place(&db, &cdc_name, "another").await.unwrap());
+    assert!(
+        !cdc_in_place(&db, &cdc_name, &["another".to_owned()])
+            .await
+            .unwrap()
+    );
     db.batch_execute(&format!(
         "CREATE SCHEMA another; ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA another"
     ))
@@ -124,7 +130,7 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     .unwrap();
     assert!(!in_place().await.unwrap());
     db.batch_execute(&format!(
-        "ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA app"
+        "ALTER PUBLICATION \"{cdc_name}\" SET TABLES IN SCHEMA app, other"
     ))
     .await
     .unwrap();
@@ -132,5 +138,40 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
 
     // Every apply records the reader; recording it again leaves one row.
     record().await.expect("record the reader again");
+    assert_eq!(readers().await, 1);
+    assert!(
+        cdc_in_place(&db, &cdc_name, &["other".to_owned(), "app".to_owned()])
+            .await
+            .unwrap()
+    );
+    let registered: Vec<String> = db
+        .query_one(
+            "SELECT schema FROM registry.event_readers WHERE org = $1",
+            &[&ORG],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(registered, schemas);
+    db.batch_execute(
+        "ALTER TABLE registry.event_readers ALTER COLUMN schema TYPE text USING schema[1]",
+    )
+    .await
+    .unwrap();
+    db.batch_execute(include_str!(
+        "../../../../deploy/sql/migrations/system/0028_event_reader_schemas.sql"
+    ))
+    .await
+    .unwrap();
+    let migrated: Vec<String> = db
+        .query_one(
+            "SELECT schema FROM registry.event_readers WHERE org = $1",
+            &[&ORG],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(migrated, ["app"]);
+    record().await.unwrap();
     assert_eq!(readers().await, 1);
 }

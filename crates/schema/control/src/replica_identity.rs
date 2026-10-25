@@ -161,15 +161,17 @@ pub fn reconcile_replica_identity(
     models: &[ManagedModel],
     registrations: &[EventRegistration],
     current: &BTreeMap<(String, String), ReplicaIdentity>,
+    captured_schemas: &BTreeSet<String>,
 ) -> ReplicaIdentityPlan {
     let full = entities_requiring_full(package_id, models, registrations);
     let mut plan = ReplicaIdentityPlan::default();
     for model in models {
-        let desired = if full.contains(model.model_id.as_str()) {
-            ReplicaIdentity::Full
-        } else {
-            ReplicaIdentity::Default
-        };
+        let desired =
+            if captured_schemas.contains(&model.schema) || full.contains(model.model_id.as_str()) {
+                ReplicaIdentity::Full
+            } else {
+                ReplicaIdentity::Default
+            };
         let key = (model.schema.clone(), model.table.clone());
         match current.get(&key) {
             None => plan
@@ -332,7 +334,13 @@ mod tests {
             ),
             (("store".into(), "line_items".into()), ReplicaIdentity::Full),
         ]);
-        let plan = reconcile_replica_identity("shop", &models(), &registrations, &current);
+        let plan = reconcile_replica_identity(
+            "shop",
+            &models(),
+            &registrations,
+            &current,
+            &BTreeSet::new(),
+        );
         assert_eq!(plan.flips.len(), 2);
         assert_eq!(plan.pending_old_image_gap(), vec!["orders"]);
         assert_eq!(plan.skipped_absent, vec!["audit.notes"]);
@@ -366,7 +374,13 @@ mod tests {
         )];
         let current =
             BTreeMap::from([(("store".into(), "line_items".into()), ReplicaIdentity::Full)]);
-        let plan = reconcile_replica_identity("shop", &models(), &registrations, &current);
+        let plan = reconcile_replica_identity(
+            "shop",
+            &models(),
+            &registrations,
+            &current,
+            &BTreeSet::new(),
+        );
         assert_eq!(plan.flips.len(), 1);
         assert_eq!(plan.flips[0].to, ReplicaIdentity::Default);
         assert!(plan.pending_old_image_gap().is_empty());
@@ -396,9 +410,44 @@ mod tests {
             vec![Op::Delete],
             None,
         )];
-        let again = reconcile_replica_identity("shop", &models(), &registrations, &converged);
+        let again = reconcile_replica_identity(
+            "shop",
+            &models(),
+            &registrations,
+            &converged,
+            &BTreeSet::new(),
+        );
         assert!(again.is_noop());
         assert_eq!(again.unchanged.len(), 3);
+    }
+
+    #[test]
+    fn captured_models_keep_full_without_registrations() {
+        let current = BTreeMap::from([
+            (
+                ("store".into(), "sales_orders".into()),
+                ReplicaIdentity::Default,
+            ),
+            (("store".into(), "line_items".into()), ReplicaIdentity::Full),
+            (("audit".into(), "notes".into()), ReplicaIdentity::Default),
+        ]);
+        let plan = reconcile_replica_identity(
+            "shop",
+            &models(),
+            &[],
+            &current,
+            &BTreeSet::from(["store".to_owned(), "audit".to_owned()]),
+        );
+        assert_eq!(plan.flips.len(), 2);
+        assert!(
+            plan.flips
+                .iter()
+                .all(|flip| flip.to == ReplicaIdentity::Full)
+        );
+        assert_eq!(
+            plan.unchanged,
+            vec![("lines".into(), ReplicaIdentity::Full)]
+        );
     }
 
     #[test]

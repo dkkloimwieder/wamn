@@ -144,7 +144,7 @@ pub fn admit_component_digest(admit: AdmitComponentRequest) -> anyhow::Result<St
 }
 
 /// Configure the declared CDC reader and apply the existing SQL statements.
-/// The publication commits before slot creation, as in the psql file caller.
+/// Apply the slot and schema bundle before the publication, as env apply does.
 pub async fn configure_cdc(
     args: EnableCdcProjectEnvRequest,
     cluster: &Client,
@@ -158,7 +158,7 @@ pub async fn configure_cdc(
         .emit_secret
         .clone()
         .context("set the CDC Secret output path")?;
-    let schema = args.schema.clone();
+    let schemas = args.schemas.clone();
     let outcome = enable_cdc_project_env::enable_cdc_project_env(&args)
         .await
         .context("configure the declared CDC reader")?;
@@ -168,43 +168,24 @@ pub async fn configure_cdc(
     let role = configuration
         .get_user()
         .context("the CDC URL names its replication role")?;
-    let database = configuration
-        .get_dbname()
-        .context("the CDC URL names its project database")?;
     cluster
         .batch_execute(&std::fs::read_to_string(&role_path).context("read emitted CDC role SQL")?)
         .await
         .context("apply the emitted CDC role")?;
     project
-        .batch_execute(&sql::ensure_schema_sql(&schema))
+        .batch_execute(&outcome.cdc_sql)
         .await
-        .context("ensure the CDC schema")?;
+        .context("apply the declared CDC SQL")?;
     project
-        .batch_execute(&sql::create_publication_sql(role, &schema))
+        .batch_execute(&sql::create_publication_schemas_sql(role, &schemas))
         .await
         .context("create the declared CDC publication")?;
-    project
-        .batch_execute(&sql::create_failover_slot_sql(role))
-        .await
-        .context("create the declared CDC failover slot")?;
-    project
-        .batch_execute(&sql::ensure_entity_map_sql(&schema))
-        .await
-        .context("ensure the CDC entity map")?;
-    project
-        .batch_execute(&sql::ensure_cdc_exclusion_map_sql(&schema))
-        .await
-        .context("ensure the CDC exclusion map")?;
-    project
-        .batch_execute(&sql::grant_replication_access_sql(database, role, &schema))
-        .await
-        .context("apply the declared CDC grants")?;
     enable_cdc_project_env::record_event_reader(
         args.system_database_url
             .as_deref()
             .context("set the system database URL")?,
         &outcome.triple,
-        &schema,
+        &schemas,
         &outcome.cdc_name,
         args.secret_namespace.as_deref(),
     )

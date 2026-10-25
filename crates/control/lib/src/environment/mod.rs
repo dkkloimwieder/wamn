@@ -70,8 +70,7 @@ pub struct Platform {
     /// The identity service that issues the management-author PAT. Without
     /// it, `apply` issues no PAT.
     pub pat_issuer: PatIssuerConfig,
-    /// The event broker of CDC. Needed only when a release's packages declare
-    /// a model schema and the environment has no CDC reader yet.
+    /// The event broker for application capture and entity consumers.
     pub events: Option<EventBroker>,
     /// The scheduler NATS the verbs publish their auth changes on.
     /// [`Platform::from_env`] requires it. A test without hosts sets `None`.

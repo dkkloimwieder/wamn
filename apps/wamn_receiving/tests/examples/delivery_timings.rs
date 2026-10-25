@@ -278,11 +278,11 @@ async fn main() -> anyhow::Result<()> {
     } else {
         &RECEIVING_PACKAGES
     };
-    let consumers = registration_consumers(
-        &scope,
-        tenant,
-        &application_manifests(&repository, packages)?,
-    );
+    let manifests = application_manifests(&repository, packages)?;
+    let mut consumers = registration_consumers(&scope, tenant, &manifests);
+    consumers.extend(wamn_control_provision::events::entity_consumers(
+        &scope, &manifests,
+    ));
     let broker = event_broker::prepare(&directory, &scope, tenant, &source, &advisory, &consumers)?;
     private(
         &directory.join("compose.json"),

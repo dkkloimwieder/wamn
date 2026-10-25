@@ -465,7 +465,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
                     secret,
                     &None::<&str>,
                     &enabled,
-                    &schema,
+                    &schema.map(|schema| vec![schema]),
                 ],
             )
             .await
@@ -598,7 +598,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     assert!(
         err.to_string().contains(&format!(
             "{}: publication {cdc_name} differs from its declaration \
-             (publishes schema app, registered schema billing)",
+             (publishes schemas {{\"app\"}}, registered schemas {{\"billing\"}})",
             wamn_cdc_reader::CAPTURE_SHAPE_DRIFT_REFUSAL
         )),
         "{err:#}"

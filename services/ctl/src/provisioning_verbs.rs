@@ -1016,7 +1016,7 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         org: args.org,
         project: args.project,
         env: args.env,
-        schema: args.schema,
+        schemas: vec![args.schema],
         system_database_url: args.system_database_url,
         cluster: args.cluster,
         replication_password: args.replication_password,
@@ -1051,9 +1051,9 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
     } = &outcome;
 
     println!(
-        "cdc for project-env {triple}: publication/slot/role {cdc_name:?} over schema {:?} \
+        "cdc for project-env {triple}: publication/slot/role {cdc_name:?} over schemas {:?} \
          on cluster {cluster:?}; stream {stream:?}; replication secret {secret_name:?}",
-        request.schema,
+        request.schemas,
     );
 
     emit_text(

@@ -69,7 +69,14 @@ pub async fn reconcile(
         .into_iter()
         .collect::<Vec<_>>();
     let current = read_current_identities(client, &schemas).await?;
-    let plan = reconcile_replica_identity(package_id, models, &registrations, &current);
+    let captured_schemas = client.query("SELECT DISTINCT n.nspname::text FROM pg_publication_namespace p JOIN pg_namespace n ON n.oid = p.pnnspid", &[]).await.context("read captured schemas for replica identity")?.iter().map(|row| row.get(0)).collect::<BTreeSet<String>>();
+    let plan = reconcile_replica_identity(
+        package_id,
+        models,
+        &registrations,
+        &current,
+        &captured_schemas,
+    );
     if apply {
         for flip in &plan.flips {
             client

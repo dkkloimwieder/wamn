@@ -220,6 +220,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0027_org_connections.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0027_org_connections.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0028_event_reader_schemas.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0028_event_reader_schemas.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -397,6 +401,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         sql: include_str!(
             "../../../../deploy/sql/migrations/project/0034_drop_workflow_schedules.sql"
         ),
+    },
+    Migration {
+        relative_path: "migrations/project/0035_workflow_events.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0035_workflow_events.sql"),
     },
 ];
 

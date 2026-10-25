@@ -315,9 +315,14 @@ CREATE TABLE catalog.workflows (
     version        int         NOT NULL CHECK (version > 0),
     graph_json     jsonb       NOT NULL,
     wiring_hash    text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
-    trigger        text        NOT NULL CHECK (trigger IN ('manual', 'schedule')),
+    trigger        text        NOT NULL CHECK (trigger IN ('manual', 'schedule', 'event')),
     -- The five-field cron, evaluated in UTC, of a schedule trigger.
     schedule       text,
+    source_package text,
+    entity         text,
+    ops            text[],
+    condition      text,
+    enable_sequence bigint,
     execution_type text        NOT NULL CHECK (execution_type IN ('role', 'invoker')),
     execution_role text        CHECK (execution_role <> ''),
     enabled        boolean     NOT NULL DEFAULT false,
@@ -328,7 +333,21 @@ CREATE TABLE catalog.workflows (
     CONSTRAINT workflows_execution_identity_check
         CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)),
     CONSTRAINT workflows_schedule_check
-        CHECK ((trigger = 'schedule') = (schedule IS NOT NULL))
+        CHECK ((trigger = 'schedule') = (schedule IS NOT NULL)),
+    CONSTRAINT workflows_event_check CHECK (
+        (trigger = 'event' AND source_package IS NOT NULL AND source_package <> ''
+         AND entity IS NOT NULL AND entity <> '' AND ops IS NOT NULL
+         AND cardinality(ops) BETWEEN 1 AND 3
+         AND ops <@ ARRAY['insert', 'update', 'delete']::text[]
+         AND array_position(ops, NULL) IS NULL
+         AND cardinality(array_positions(ops, 'insert')) <= 1
+         AND cardinality(array_positions(ops, 'update')) <= 1
+         AND cardinality(array_positions(ops, 'delete')) <= 1
+         AND (condition IS NULL OR btrim(condition) <> '')
+         AND (enable_sequence IS NULL OR enable_sequence >= 0)
+         AND (NOT enabled OR enable_sequence IS NOT NULL))
+        OR (trigger <> 'event' AND source_package IS NULL AND entity IS NULL
+            AND ops IS NULL AND condition IS NULL AND enable_sequence IS NULL))
 );
 CREATE UNIQUE INDEX workflows_one_enabled
     ON catalog.workflows (tenant_id, environment, application, workflow_id)
@@ -341,13 +360,19 @@ AS $$
 BEGIN
     IF ROW(NEW.tenant_id, NEW.environment, NEW.application, NEW.workflow_id,
            NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.schedule,
+           NEW.source_package, NEW.entity, NEW.ops, NEW.condition,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
        ROW(OLD.tenant_id, OLD.environment, OLD.application, OLD.workflow_id,
            OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.schedule,
+           OLD.source_package, OLD.entity, OLD.ops, OLD.condition,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'workflow-version-immutable';
+    END IF;
+    IF NEW.enable_sequence IS DISTINCT FROM OLD.enable_sequence AND NOT NEW.enabled THEN
+        RAISE EXCEPTION USING ERRCODE = '55000',
+            MESSAGE = 'workflow-enable-sequence-requires-enable';
     END IF;
     RETURN NEW;
 END
