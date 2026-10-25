@@ -8,7 +8,7 @@
 //! and a TLS registry with a password on the kind network. The system
 //! database lives on the CNPG cluster and the verb reaches it through a port
 //! forward. The HTTP release renders its route role. The integration release
-//! renders its materializer and captures the consumer schema through CDC.
+//! renders its materializer and captures both application schemas through CDC.
 //!
 //! Checks, each recorded with its command and output in `report.json`:
 //! 1. The first apply creates the environment: its row, its database and
@@ -106,7 +106,12 @@
 //! Event NATS runs on the kind network with separate generated credentials.
 //! The integration applies one release containing `wamn_integration`,
 //! `rest_connector` and `rest_consumer_fixture`. Apply grants the application
-//! principal its declared consumer permission. A second release replaces
+//! principal its declared consumer permission. One publication and one logical
+//! slot capture `rest_consumer_fixture` and `wamn_integration`. Every captured
+//! entity table has full replica identity, and the reader registry names both
+//! schemas. Authored event workflows observe one update in each schema. Each
+//! delivery creates exactly one run of its own trigger and none of the other.
+//! A second release replaces
 //! `rest_connector` with `netsuite`, using an org-scoped OAuth1 credential.
 //! Export WAMN_HTTP_FIXTURE_CONSUMER_KEY, WAMN_HTTP_FIXTURE_CONSUMER_SECRET,
 //! WAMN_HTTP_FIXTURE_TOKEN, WAMN_HTTP_FIXTURE_TOKEN_SECRET and

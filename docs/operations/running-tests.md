@@ -568,8 +568,20 @@ These changes affect only temporary fixture files.
 
 A separate environment directory selects qualified Receiving for the remaining install and its unchanged rerun.
 Step 4.17 must serve that release.
-Receiving registers no event, so step 4.18 must report `skipped: no registration`, with no reader Deployment and no CDC Secret.
-`environment_apply_kind` runs the native CDC reader against a release with an event registration.
+Step 4.18 provisions capture from the schemas of the environment's application packages.
+Capture does not depend on an event workflow.
+
+`environment_apply_kind` reuses `rest_connector`, `rest_consumer_fixture`, and `wamn_integration`.
+It requires one publication and one logical replication slot for the environment.
+The publication and `registry.event_readers` must name both `rest_consumer_fixture` and `wamn_integration` schemas.
+Every captured entity table must use full replica identity (`relreplident = 'f'`).
+
+The test authors and enables an event workflow for `item` and another for `setting`.
+The native CDC reader captures one row update in each schema.
+Each delivery ID must identify exactly one run of its own trigger in `wamn_run.runs`.
+Neither trigger can receive a run from the other schema's change.
+The test waits at most 150 seconds for completed runs and broker acknowledgments.
+
 Step 4.19 must report `skipped: no bucket` for the upload and its check, with no web Job or completion record.
 Step 4.19.1 must roll out the control host and report `skipped: no bucket` for the platform UI upload and its check.
 The fixture selects identity's private local mail file in a memory volume, so the invite sends no external email.

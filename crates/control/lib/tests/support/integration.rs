@@ -394,8 +394,8 @@ pub async fn exercise(
         route_host: "integration.orders.example".into(),
         client_package: None,
         policy: POLICY.into(),
-        // The connector's application holds the three packages of its
-        // release (docs/plan/platform-config.md).
+        // The existing consumer and integration packages put this application's
+        // models in two schemas. The connector supplies the workflow components.
         applications: BTreeMap::from([(
             connector.to_owned(),
             wamn_catalog::ApplicationDefinition {
@@ -507,16 +507,75 @@ pub async fn exercise(
     document.release = DeclaredRelease::Digest(digest.clone());
     super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
     let (project, project_task) = connect(project_url.as_str()).await?;
-    let captured: Vec<String> = system
+    let capture = system
         .query_one(
-            "SELECT schema FROM registry.event_readers WHERE org=$1 AND project=$2 AND env=$3",
+            "SELECT schema, publication, slot FROM registry.event_readers WHERE org=$1 AND project=$2 AND env=$3",
             &[&ORG, &PROJECT, &ENVIRONMENT],
+        )
+        .await?;
+    let captured: Vec<String> = capture.get(0);
+    ensure!(
+        captured == [CONSUMER, "wamn_integration"],
+        "CDC must capture every installed application schema: {captured:?}"
+    );
+    let publication: String = capture.get(1);
+    let slot: String = capture.get(2);
+    let publications = project
+        .query("SELECT pubname::text FROM pg_publication", &[])
+        .await?;
+    let slots = project.query(
+        "SELECT slot_name::text FROM pg_replication_slots WHERE database = current_database() AND slot_type = 'logical'",
+        &[],
+    ).await?;
+    ensure!(
+        publications.len() == 1
+            && publications[0].get::<_, String>(0) == publication
+            && slots.len() == 1
+            && slots[0].get::<_, String>(0) == slot,
+        "the environment must have exactly its registered publication and logical slot"
+    );
+    let schemas: Vec<String> = project
+        .query_one(
+            "SELECT array_agg(n.nspname::text ORDER BY n.nspname) FROM pg_publication_namespace pn \
+         JOIN pg_namespace n ON n.oid = pn.pnnspid \
+         JOIN pg_publication p ON p.oid = pn.pnpubid WHERE p.pubname = $1",
+            &[&publication],
         )
         .await?
         .get(0);
     ensure!(
-        captured == [CONSUMER, "wamn_integration"],
-        "CDC must capture every installed application schema: {captured:?}"
+        schemas == captured,
+        "publication schemas differ: {schemas:?}"
+    );
+    // Capture maps identify application entities. History and control tables
+    // in the same schemas are explicitly excluded from entity events.
+    let tables: Value = project
+        .query_one(
+            "SELECT jsonb_agg(jsonb_build_object('schema', n.nspname, 'table', c.relname, \
+         'identity', c.relreplident, 'published', EXISTS (SELECT FROM pg_publication_tables p \
+         WHERE p.pubname = $1 AND p.schemaname = n.nspname AND p.tablename = c.relname)) \
+         ORDER BY n.nspname, c.relname) \
+         FROM (SELECT relation_oid FROM rest_consumer_fixture.wamn_entities \
+               UNION ALL SELECT relation_oid FROM wamn_integration.wamn_entities) e \
+         JOIN pg_class c ON c.oid = e.relation_oid JOIN pg_namespace n ON n.oid = c.relnamespace",
+            &[&publication],
+        )
+        .await?
+        .get(0);
+    ensure!(
+        tables
+            == json!([
+                {"schema":CONSUMER,"table":"item","identity":"f","published":true},
+                {"schema":"wamn_integration","table":"log","identity":"f","published":true},
+                {"schema":"wamn_integration","table":"setting","identity":"f","published":true}
+            ]),
+        "every captured table must be published with full replica identity: {tables}"
+    );
+    run.pass(
+        "one environment publication and slot capture both application schemas",
+        "SELECT registry.event_readers; SELECT pg_publication, pg_publication_namespace, pg_publication_tables, pg_class, pg_replication_slots",
+        json!({"schemas":schemas,"publication":publication,"slot":slot,"tables":tables}),
+        true,
     );
     if connector == "netsuite" {
         super::netsuite::seed(&project).await?;
@@ -585,7 +644,11 @@ pub async fn exercise(
         if connector == "netsuite" {
             super::netsuite::assertions(run, &project, &workflows).await
         } else {
-            assertions(run, &project, &tenant, &digest, &mut reader).await
+            let observed = assertions(run, &project, &tenant, &digest, &mut reader).await?;
+            disable_schedule(&workflows, connector, &pull.wiring_id).await?;
+            assert_schema_triggers(run, &project, &workflows, &events, &broker, &mut reader)
+                .await?;
+            Ok(observed)
         }
     }
     .await;
@@ -895,6 +958,187 @@ async fn start_reader(
         .spawn()
         .context("start production CDC reader")?;
     Ok(child)
+}
+
+/// Observe real CDC deliveries before comparing their IDs with workflow runs.
+async fn assert_schema_triggers(
+    run: &mut Run,
+    project: &tokio_postgres::Client,
+    workflows: &WorkflowEnvironment<'_>,
+    events: &environment::EventBroker,
+    broker: &event_broker::EventBroker,
+    reader: &mut Child,
+) -> anyhow::Result<()> {
+    let triggers = [
+        (CONSUMER, "item", "capture-item"),
+        ("wamn_integration", "setting", "capture-setting"),
+    ];
+    for (package, entity, workflow) in triggers {
+        let document: WiringDocument = serde_json::from_value(json!({
+            "format-version":"0.1", "wiring-id":workflow, "version":1, "entry":"observe",
+            "nodes":{"observe":{"component":"jsonata", "interface-version":"0.1.0",
+                "operation":"wamn:node/handler@0.1.0", "params":{"expression":"$"}}},
+            "edges":[]
+        }))?;
+        enable_trigger(
+            workflows,
+            "rest_connector",
+            &document,
+            workflow,
+            &[],
+            WorkflowTrigger::Event {
+                source_package: package,
+                entity,
+                ops: &[wamn_event_wire::Op::Update],
+                condition: None,
+            },
+            Some(events),
+        )
+        .await?;
+    }
+    let jetstream = async_nats::jetstream::new(
+        event_broker::connect(&broker.observer, &events.nats_url).await?,
+    );
+    let mut stream = jetstream
+        .get_stream(wamn_control_provision::event_stream_name(
+            ORG,
+            PROJECT,
+            ENVIRONMENT,
+        ))
+        .await?;
+    let mut sequence = stream.info().await?.state.last_sequence + 1;
+    project
+        .batch_execute("BEGIN; SET LOCAL app.operation = 'admin:capture-fixture'")
+        .await?;
+    project
+        .execute("SELECT set_config('app.user_id', $1, true)", &[&ENABLER])
+        .await?;
+    let txid: i64 = project
+        .query_one(
+            "SELECT pg_current_xact_id()::text::bigint % 4294967296",
+            &[],
+        )
+        .await?
+        .get(0);
+    ensure!(
+        project
+            .execute(
+                "UPDATE rest_consumer_fixture.item SET name = 'Capture changed' WHERE key = 'one'",
+                &[],
+            )
+            .await?
+            == 1,
+        "change exactly one consumer item"
+    );
+    ensure!(project.execute(
+        "UPDATE wamn_integration.setting SET value = '\"capture-changed\"'::jsonb WHERE key = 'last_synced_at'", &[],
+    ).await? == 1, "change exactly one integration setting");
+    project.batch_execute("COMMIT").await?;
+
+    let ids = triggers.map(|(_, _, workflow)| workflow.to_owned());
+    let mut deliveries = BTreeMap::new();
+    let deadline = Instant::now() + Duration::from_secs(150);
+    loop {
+        ensure!(
+            reader.try_wait()?.is_none(),
+            "CDC reader exited; read cdc-reader.log"
+        );
+        let tail = stream.info().await?.state.last_sequence;
+        while sequence <= tail {
+            let message = stream.get_raw_message(sequence).await?;
+            let envelope: Value = serde_json::from_slice(&message.payload)?;
+            if envelope["txid"] == txid {
+                let (package, entity, workflow) = triggers
+                    .iter()
+                    .find(|(package, entity, _)| {
+                        envelope["package_id"] == *package && envelope["entity"] == *entity
+                    })
+                    .context("the changed transaction emits only the two captured entities")?;
+                ensure!(envelope["op"] == "update", "expected an update: {envelope}");
+                ensure!(
+                    message.subject.as_str()
+                        == wamn_event_wire::subject(
+                            ORG,
+                            PROJECT,
+                            ENVIRONMENT,
+                            entity,
+                            wamn_event_wire::Op::Update,
+                        ),
+                    "the event subject must identify its entity"
+                );
+                let key = if *package == CONSUMER {
+                    "one"
+                } else {
+                    "last_synced_at"
+                };
+                ensure!(
+                    envelope["new"]["key"] == key,
+                    "wrong changed row: {envelope}"
+                );
+                let lsn = envelope["lsn"].as_u64().context("event LSN")?;
+                let delivery = format!(
+                    "event:{sequence}:{}",
+                    wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, lsn)
+                );
+                ensure!(
+                    deliveries.insert(*workflow, (sequence, delivery)).is_none(),
+                    "each row change must produce exactly one delivery"
+                );
+            }
+            sequence += 1;
+        }
+        let rows: Value = project.query_one(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object('workflow', wiring_id, 'delivery', invoked_by, \
+             'status', status, 'trigger', trigger_source) ORDER BY wiring_id), '[]') \
+             FROM wamn_run.runs WHERE tenant_id = $1 AND package_id = 'rest_connector' AND wiring_id = ANY($2)",
+            &[&workflows.tenant, &&ids[..]],
+        ).await?.get(0);
+        let runs = rows.as_array().context("capture trigger runs")?;
+        ensure!(runs.len() <= 2, "duplicate or cross-schema runs: {rows}");
+        if deliveries.len() == 2 && runs.len() == 2 {
+            let mut settled = true;
+            for ((package, entity, workflow), row) in triggers.iter().zip(runs) {
+                let (event_sequence, delivery) = &deliveries[workflow];
+                ensure!(
+                    row["workflow"] == *workflow
+                        && row["delivery"] == *delivery
+                        && row["trigger"] == "event",
+                    "wrong trigger or cross-schema delivery: {rows}"
+                );
+                ensure!(
+                    !matches!(
+                        row["status"].as_str(),
+                        Some("failed" | "infrastructure-failure" | "effect-uncertain")
+                    ),
+                    "capture workflow failed: {rows}"
+                );
+                settled &= row["status"] == "completed";
+                let durable = format!("entity_{}_{}_{}", package.len(), package, entity);
+                let mut consumer = stream
+                    .get_consumer::<async_nats::jetstream::consumer::pull::Config>(&durable)
+                    .await
+                    .map_err(anyhow::Error::from_boxed)?;
+                let info = consumer.info().await?;
+                settled &= info.ack_floor.stream_sequence >= *event_sequence
+                    && info.num_ack_pending == 0
+                    && info.num_pending == 0;
+            }
+            if settled {
+                run.pass(
+                    "changes in both schemas each reach only their own trigger once",
+                    "author and enable two event workflows; UPDATE item; UPDATE setting; read retained CDC deliveries; SELECT wamn_run.runs",
+                    json!({"transaction":txid,"deliveries":deliveries,"runs":rows}),
+                    true,
+                );
+                return Ok(());
+            }
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "schema triggers did not settle in 150 seconds: deliveries={deliveries:?}, runs={rows}"
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
 async fn assertions(
