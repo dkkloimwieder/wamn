@@ -44,14 +44,17 @@ fn repository() -> PathBuf {
 /// The component of `apps/edge_device` that its `wamn build` compiled. Run
 /// `wamn build apps/edge_device` first.
 fn device_component() -> PathBuf {
-    repository().join("apps/target/wamn/edge_device/components/device.wasm")
+    let path = repository().join("apps/target/wamn/edge_device/components/device.wasm");
+    assert!(path.is_file(), "run wamn build apps/edge_device first");
+    path
 }
 
-/// The pinned http-route guest, built as the Dockerfile builds it. The edge
-/// tests build it, or run `cargo build --release --target wasm32-wasip2 -p
-/// http-route` in `apps/` with `tools/guest-rustflags`.
+/// The pinned http-route guest from docs/operations/running-tests.md.
 fn route_guest() -> PathBuf {
-    repository().join("apps/target/wasm32-wasip2/release/http_route.wasm")
+    PathBuf::from(
+        std::env::var_os("WAMN_FLOW_HTTP_COMPONENT")
+            .expect("set WAMN_FLOW_HTTP_COMPONENT to the pinned http-route guest"),
+    )
 }
 
 /// Admit the component and assemble the release of `apps/edge_device` for
@@ -90,7 +93,9 @@ fn publish(
 }
 
 #[test]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, built edge_device package"]
 fn one_release_published_for_two_environments_has_one_digest() {
+    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT"]);
     let component = device_component();
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("release-one-digest-{}", std::process::id()));
@@ -206,9 +211,37 @@ async fn publish_through_publish_release(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, docker, built edge_device package"]
 async fn one_release_through_publish_release_for_two_environments_has_one_digest() {
+    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT", "docker"]);
     // The build writes the index that push-package reads the component from.
     device_component();
+    let Ok(address) = std::env::var("WAMN_RELEASE_ONE_DIGEST_REGISTRY") else {
+        let local = LocalRegistry::start("release-one-digest");
+        local.ready().await;
+        // Give publication its private registry without changing this
+        // multithreaded process's environment.
+        let status = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "one_release_through_publish_release_for_two_environments_has_one_digest",
+                "--include-ignored",
+                "--nocapture",
+            ])
+            .env("WAMN_RELEASE_ONE_DIGEST_REGISTRY", &local.address)
+            .env(
+                "WAMN_COMPONENT_ARTIFACT_BASE",
+                format!("{}/wamn/components", local.address),
+            )
+            .status()
+            .await
+            .expect("run publication with its private component repository");
+        assert!(
+            status.success(),
+            "release publication child failed: {status}"
+        );
+        return;
+    };
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("release-one-digest-publish-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("create the scratch directory");
@@ -238,19 +271,16 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
     .await
     .expect("provision the org and its policies");
 
-    let local = LocalRegistry::start("release-one-digest");
-    local.ready().await;
     let auth_file = root.join("config.json");
     std::fs::write(
         &auth_file,
         format!(
-            r#"{{"auths":{{"{}":{{"username":"wamn","password":"wamn"}},"127.0.0.1:9":{{"username":"wamn","password":"wamn"}}}}}}"#,
-            local.address
+            r#"{{"auths":{{"{address}":{{"username":"wamn","password":"wamn"}},"127.0.0.1:9":{{"username":"wamn","password":"wamn"}}}}}}"#,
         ),
     )
     .expect("write the registry credential");
     let registry = PackageRegistry {
-        artifact_base: format!("{}/wamn/packages", local.address),
+        artifact_base: format!("{address}/wamn/packages"),
         registry_auth_file: auth_file,
         insecure_registry: true,
         oci_ca_paths: Vec::new(),
@@ -259,12 +289,12 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
     push_package(&PushPackageRequest {
         package: repository().join("apps/edge_device"),
         registry: registry.clone(),
-        component_artifact_base: format!("{}/wamn/components", local.address),
+        component_artifact_base: format!("{address}/wamn/components"),
     })
     .await
     .expect("push the package");
 
-    let releases = format!("{}/wamn/releases", local.address);
+    let releases = format!("{address}/wamn/releases");
     let publish = async |environment: &str| {
         publish_through_publish_release(
             environment,

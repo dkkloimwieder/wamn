@@ -140,6 +140,20 @@ WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.was
   cargo test --offline -p wamn-control --test application_composition -- --include-ignored
 ```
 
+The edge bundle and release digest tests use the same pinned guest.
+Build `apps/edge_device` first, with `DATABASE_URL` set as [building](building.md#wamn-build) describes.
+Both targets are ignored by default because they need built components.
+The release publication case also needs Docker.
+It starts a private registry and passes its address as `WAMN_COMPONENT_ARTIFACT_BASE` to a child process.
+
+```bash
+"$CARGO_TARGET_DIR/debug/wamn" build apps/edge_device
+WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
+  cargo test --locked --offline -p wamn-control --test edge_bundle -- --include-ignored
+WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
+  cargo test --locked --offline -p wamn-control --test release_one_digest -- --include-ignored
+```
+
 The generated clients of the host routes run against the same HTTP shell.
 `control_client_live` serves each set and runs `apps/platform_ui/test/control-client.live.test.ts` and `control-org-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
 

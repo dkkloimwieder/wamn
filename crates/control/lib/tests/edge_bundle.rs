@@ -1,7 +1,7 @@
 //! The edge bundle carries the composed entry, pinned by its digest.
 //!
-//! Run `wamn build apps/edge_device` first, and build the pinned http-route
-//! guest as the edge tests do.
+//! Run `wamn build apps/edge_device` first, and set WAMN_FLOW_HTTP_COMPONENT
+//! to the pinned http-route guest. See docs/operations/running-tests.md.
 
 use std::path::{Path, PathBuf};
 
@@ -13,15 +13,19 @@ fn repository() -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, built edge_device package"]
 fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application() {
-    let route = repository().join("apps/target/wasm32-wasip2/release/http_route.wasm");
+    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT"]);
+    let route = PathBuf::from(std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").unwrap());
+    let component = repository().join("apps/target/wamn/edge_device/components/device.wasm");
+    assert!(component.is_file(), "run wamn build apps/edge_device first");
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("edge-bundle-entry-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
     write_package(
         &repository().join("apps/edge_device"),
         "device",
-        &repository().join("apps/target/wamn/edge_device/components/device.wasm"),
+        &component,
         &route,
         &PackageRelease {
             scope: EdgeScope {

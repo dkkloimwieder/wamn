@@ -143,7 +143,19 @@ fn invalid_ports_and_dependencies_refuse_publication() {
         admissions,
         documents,
     } = fixture();
-    assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
+    let assembled = assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
+    assert_eq!(
+        assembled
+            .published
+            .manifest
+            .components
+            .iter()
+            .find(|component| component.descriptor.component == "netsuite")
+            .unwrap()
+            .runtime_schema
+            .as_deref(),
+        Some("wamn_integration")
+    );
     let mut wrong_port = documents.clone();
     wrong_port[0]
         .1
