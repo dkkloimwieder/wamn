@@ -605,7 +605,7 @@ impl RouteAuthenticator for ControlRouteAuthenticator {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
 
     use serde_json::{Value, json};
     use wamn_catalog::{
@@ -622,7 +622,7 @@ mod tests {
     const UNAVAILABLE: (u16, &str) = (503, "authentication-unavailable");
 
     /// One HTTP route, `orders`, whose policy has `modes`.
-    fn routing(modes: &Value) -> FlowHttpRouting {
+    pub(crate) fn routing(modes: &Value) -> FlowHttpRouting {
         routing_policy(json!({"modes": modes}))
     }
 

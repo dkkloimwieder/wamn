@@ -727,6 +727,10 @@ fn overlay_manifest() -> Value {
     // a record history here.
     let maker = manifest["models"]["widget_maker"].as_object_mut().unwrap();
     maker.remove("audit_log");
+    let numbered = manifest["models"]["numbered_label"]
+        .as_object_mut()
+        .unwrap();
+    numbered.remove("audit_log");
     let tag = manifest["models"]["widget_tag"].as_object_mut().unwrap();
     tag.remove("audit_log");
     let model = manifest["models"]["widget"].as_object_mut().unwrap();

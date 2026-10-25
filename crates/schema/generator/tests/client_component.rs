@@ -99,6 +99,7 @@ fn tables_and_details_keep_paths_authored_labels_and_matching_formats() {
     let get = ir
         .models
         .iter_mut()
+        .filter(|model| model.name == "widget")
         .flat_map(|model| &mut model.operations)
         .find(|op| op.name == "get")
         .unwrap();
@@ -239,6 +240,7 @@ fn optional_and_nullable_controls_obey_wfe_scalar_types() {
     let op = ir
         .models
         .iter_mut()
+        .filter(|model| model.name == "widget")
         .flat_map(|model| &mut model.operations)
         .find(|op| op.name == "create")
         .unwrap();
@@ -257,6 +259,7 @@ fn optional_and_nullable_controls_obey_wfe_scalar_types() {
     field.type_name = "text".into();
     ir.models
         .iter_mut()
+        .filter(|model| model.name == "widget")
         .flat_map(|model| &mut model.operations)
         .find(|op| op.name == "create")
         .unwrap()
@@ -274,6 +277,7 @@ fn delete_has_confirmation_and_uses_the_operation_label() {
     let op = ir
         .models
         .iter_mut()
+        .filter(|model| model.name == "widget")
         .flat_map(|model| &mut model.operations)
         .find(|op| op.name == "delete")
         .unwrap();
@@ -293,6 +297,7 @@ fn unserved_operations_emit_no_description_and_generation_is_stable() {
     let op = ir
         .models
         .iter_mut()
+        .filter(|model| model.name == "widget")
         .flat_map(|model| &mut model.operations)
         .find(|op| op.name == "create")
         .unwrap();

@@ -1,7 +1,5 @@
 //! Numbering and caller-filled columns (`docs/plan/platform-config.md`,
-//! "Numbering"): one refusal test per build rule, the two-statement generated
-//! insert, the generated update of `updated_by`, and the generated
-//! `sequences::<name>::next` and `peek` bindings.
+//! "Numbering"): build refusals and generated SQL executed in PostgreSQL.
 
 use serde_json::{Value, json};
 use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, GenerateErrorType, GeneratedPackage};
@@ -116,14 +114,6 @@ fn refusal(catalog: &CatalogIr, manifest: &Value) -> (GenerateErrorType, String)
     (error.error_type(), error.to_string())
 }
 
-/// The source without whitespace, so an assertion does not depend on rustfmt.
-fn squashed(source: &str) -> String {
-    source
-        .split_whitespace()
-        .collect::<String>()
-        .replace(",)", ")")
-}
-
 fn text(package: &GeneratedPackage, path: &str) -> String {
     String::from_utf8(
         package
@@ -133,143 +123,6 @@ fn text(package: &GeneratedPackage, path: &str) -> String {
             .to_vec(),
     )
     .unwrap()
-}
-
-#[test]
-fn the_generated_insert_numbers_from_the_host_and_reads_the_actor_claim() {
-    let mut manifest = numbered();
-    manifest["models"]["gadget"]["fields"]["created_by"] = json!({"role": "actor"});
-    manifest["models"]["gadget"]["audit_log"]["columns"] = json!(["created_at", "created_by"]);
-    let package = run(
-        &actor_catalog("created_by", ColumnType::Uuid),
-        &manifest,
-        &QUERY_SOURCES,
-    )
-    .unwrap();
-    assert_eq!(
-        text(&package, "generated/sql/gadget/create.sql"),
-        "INSERT INTO gadget (stock_id, part_code, created_by)\n\
-         VALUES ($1::uuid, $2::text, current_setting('app.user_id')::uuid)\n\
-         RETURNING\n    \
-         created_at,\n    created_by,\n    id,\n    part_code,\n    row_version,\n    status,\n    stock_id;\n",
-    );
-    // The first statement: next-number with exactly the fields the pattern
-    // names, then the insert with the text it returned.
-    let data = squashed(&text(&package, "generated/data/gadget.rs"));
-    let next = data
-        .find(&squashed(r#"let part_code = wamn_postgres_statements::next_number("gadget_number", &[("stock_id", Some(stock_id.0.clone()))])"#))
-        .unwrap_or_else(|| panic!("no next-number call in\n{data}"));
-    let insert = data
-        .find("sql::create(transaction,stock_id,part_code)")
-        .unwrap();
-    assert!(next < insert);
-    // The create takes neither filled field from the caller.
-    let signature = &data[data.find("pubasyncfncreate(").unwrap()..];
-    let signature = &signature[..signature.find('{').unwrap()];
-    assert!(
-        !signature.contains("part_code") && !signature.contains("created_by"),
-        "{signature}"
-    );
-    let wit = text(
-        &package,
-        "generated/wit/deps/platform-gadget-gadget/package.wit",
-    );
-    assert!(!wit.contains("part-code: option") && !wit.contains("created-by: option"));
-
-    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
-    let model = object_named(overlay["relations"].as_array().unwrap(), "table", "gadget");
-    assert_eq!(
-        model["insert_fields"],
-        json!(["created_by", "part_code", "stock_id"])
-    );
-    // The numbered field is one caller: commands can call the sequence too.
-    assert!(
-        squashed(&text(&package, "generated/data/sequences.rs")).contains("pubmodgadget_number{")
-    );
-}
-
-#[test]
-fn every_sequence_gets_next_with_a_key_of_the_values_its_pattern_names() {
-    let mut manifest = manifest();
-    manifest["sequences"] = json!({
-        "pick_label": {
-            "pattern": "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"
-        },
-        "label": {"pattern": "L-{seq:n}"}
-    });
-    let package = run(&catalog(false), &manifest, &QUERY_SOURCES).unwrap();
-    let sequences = squashed(&text(&package, "generated/data/sequences.rs"));
-    for expected in [
-        "pub mod pick_label {",
-        "pub struct PickLabelKey {",
-        "pub batch_id: String,",
-        "pub async fn next(key: PickLabelKey) -> Result<String, wamn_postgres_statements::StatementError>",
-        r#"wamn_postgres_statements::next_number("pick_label", &[("batch_id", Some(batch_id))])"#,
-        "pub async fn peek(key: PickLabelKey) -> Result<String, wamn_postgres_statements::StatementError>",
-        r#"wamn_postgres_statements::peek_number("pick_label", &[("batch_id", Some(batch_id))])"#,
-    ] {
-        assert!(
-            sequences.contains(&squashed(expected)),
-            "{expected} in\n{sequences}"
-        );
-    }
-    // A bare pattern takes no key.
-    for expected in [
-        "pub mod label {",
-        "pub async fn next() -> Result<String, wamn_postgres_statements::StatementError>",
-        r#"wamn_postgres_statements::next_number("label", &[])"#,
-        "pub async fn peek() -> Result<String, wamn_postgres_statements::StatementError>",
-    ] {
-        assert!(
-            sequences.contains(&squashed(expected)),
-            "{expected} in\n{sequences}"
-        );
-    }
-    assert!(!sequences.contains("structLabelKey"), "{sequences}");
-    assert!(text(&package, "generated/data/mod.rs").contains("pub mod sequences {"));
-}
-
-/// An insert fills every actor field; an update fills `updated_by` on a
-/// change and never touches `created_by` (owner ruling 2026-10-23).
-#[test]
-fn an_update_fills_updated_by_and_never_created_by() {
-    let mut manifest = numbered();
-    manifest["models"]["gadget"]["fields"]["created_by"] = json!({"role": "actor"});
-    manifest["models"]["gadget"]["fields"]["updated_by"] = json!({"role": "actor"});
-    manifest["models"]["gadget"]["audit_log"]["columns"] =
-        json!(["created_at", "created_by", "updated_at", "updated_by"]);
-    let package = run(&stamped_catalog(), &manifest, &QUERY_SOURCES).unwrap();
-    let create = text(&package, "generated/sql/gadget/create.sql");
-    assert!(
-        create.starts_with(
-            "INSERT INTO gadget (stock_id, part_code, created_by, updated_by)\n\
-             VALUES ($1::uuid, $2::text, current_setting('app.user_id')::uuid, \
-             current_setting('app.user_id')::uuid)\n"
-        ),
-        "{create}"
-    );
-    let update = text(&package, "generated/sql/gadget/update.sql");
-    assert!(
-        update.contains(
-            "        updated_by = CASE\n            \
-             WHEN ($3::boolean AND $4::uuid::text IS DISTINCT FROM model.stock_id::text)\n            \
-             THEN current_setting('app.user_id')::uuid\n            \
-             ELSE model.updated_by\n        END,\n"
-        ),
-        "{update}"
-    );
-    assert!(!update.contains("created_by ="), "{update}");
-
-    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
-    let model = object_named(overlay["relations"].as_array().unwrap(), "table", "gadget");
-    assert_eq!(
-        model["insert_fields"],
-        json!(["created_by", "part_code", "stock_id", "updated_by"])
-    );
-    assert_eq!(
-        model["update_fields"],
-        json!(["row_version", "stock_id", "updated_by"])
-    );
 }
 
 #[test]
@@ -313,30 +166,6 @@ fn a_command_that_writes_an_actor_field_is_refused() {
     );
 }
 
-/// A sequence is independent of the records (owner ruling 2026-10-24): one
-/// that numbers no field builds, and so does one whose pattern names a key
-/// that no model has. Commands pass the keys.
-#[test]
-fn a_sequence_that_numbers_no_field_builds() {
-    let mut manifest = manifest();
-    manifest["sequences"] = json!({
-        "unused": {"pattern": "U{seq:n}"},
-        "dock_label": {"pattern": "{field:dock}-{seq:n,reset=dock}"}
-    });
-    let package = run(&catalog(false), &manifest, &QUERY_SOURCES).unwrap();
-    let sequences = squashed(&text(&package, "generated/data/sequences.rs"));
-    for expected in [
-        "pub mod unused {",
-        "pub mod dock_label {",
-        "pub dock: String,",
-    ] {
-        assert!(
-            sequences.contains(&squashed(expected)),
-            "{expected} in\n{sequences}"
-        );
-    }
-}
-
 #[test]
 fn per_on_the_key_field_is_refused() {
     let mut manifest = numbered();
@@ -378,11 +207,7 @@ fn an_integer_key_takes_only_a_bare_counter() {
     );
 
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
-    let package = run(&integer_key_catalog(), &manifest, &[]).unwrap();
-    assert!(
-        text(&package, "generated/sql/gadget/create.sql")
-            .contains("VALUES ($1::uuid, $2::text::int4)")
-    );
+    run(&integer_key_catalog(), &manifest, &[]).unwrap();
 }
 
 /// A model's numbered field needs a field of the model for each key its
@@ -627,42 +452,6 @@ fn undeclared_overlay(base: &Value) -> Value {
 }
 
 #[test]
-fn an_overlay_inherits_numbers_and_actor_stamps_without_field_declarations() {
-    let base = stamped_numbered();
-    for overlay in [undeclared_overlay(&base), overlay(base.clone())] {
-        let package = run_with_bases(
-            &stamped_catalog(),
-            &overlay,
-            &QUERY_SOURCES,
-            std::slice::from_ref(&base),
-        )
-        .unwrap();
-        let create = text(&package, "generated/sql/gadget/create.sql");
-        assert!(
-            create.contains("current_setting('app.user_id')::uuid"),
-            "{create}"
-        );
-        let update = text(&package, "generated/sql/gadget/update.sql");
-        assert!(
-            update.contains("updated_by = CASE")
-                && update.contains("THEN current_setting('app.user_id')::uuid"),
-            "{update}"
-        );
-        let rust = squashed(&text(&package, "generated/data/gadget.rs"));
-        assert!(
-            rust.contains(&squashed(r#"let part_code = wamn_postgres_statements::next_number("gadget_number", &[("stock_id", Some(stock_id.0.clone()))])"#)),
-            "{rust}"
-        );
-        let access = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
-        let model = object_named(access["relations"].as_array().unwrap(), "table", "gadget");
-        assert_eq!(
-            model["insert_fields"],
-            json!(["created_by", "part_code", "stock_id", "updated_by"])
-        );
-    }
-}
-
-#[test]
 fn an_overlay_cannot_supply_inherited_number_or_actor_fields() {
     let base = stamped_numbered();
     for action in ["create", "update"] {
@@ -758,4 +547,136 @@ fn an_overlay_command_cannot_write_inherited_number_or_actor_fields() {
             "{message}"
         );
     }
+}
+
+/// Run the emitted statements under their emitted column grants, including
+/// an overlay that omits the owner's field declarations.
+#[test]
+fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
+    let _lock = wamn_test_postgres::lock();
+    let base = stamped_numbered();
+    for manifest in [
+        base.clone(),
+        undeclared_overlay(&base),
+        overlay(base.clone()),
+    ] {
+        let package = run_with_bases(
+            &stamped_catalog(),
+            &manifest,
+            &QUERY_SOURCES,
+            std::slice::from_ref(&base),
+        )
+        .unwrap();
+        let database = wamn_catalog::test_database::tenant();
+        database.execute(&["CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(), part_code text UNIQUE NOT NULL,
+            stock_id uuid NOT NULL, status text NOT NULL DEFAULT 'open',
+            row_version bigint NOT NULL DEFAULT 1, created_at timestamptz NOT NULL DEFAULT now(),
+            created_by uuid NOT NULL, updated_by uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+            GRANT USAGE ON SCHEMA inventory TO wamn_app;
+            GRANT SELECT ON inventory.gadget TO wamn_app;"]).unwrap();
+        let access = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
+        let model = object_named(access["relations"].as_array().unwrap(), "table", "gadget");
+        assert_eq!(
+            model["insert_fields"],
+            json!(["created_by", "part_code", "stock_id", "updated_by"])
+        );
+        assert_eq!(
+            model["update_fields"],
+            json!(["row_version", "stock_id", "updated_by"])
+        );
+        let columns = |name: &str| {
+            model[name]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let grants = format!(
+            "GRANT INSERT ({}) ON inventory.gadget TO wamn_app; GRANT UPDATE ({}) ON inventory.gadget TO wamn_app;",
+            columns("insert_fields"),
+            columns("update_fields")
+        );
+        database.execute(&[&grants]).unwrap();
+        let first = "00000000-0000-4000-8000-000000000001";
+        let second = "00000000-0000-4000-8000-000000000002";
+        let stock = "00000000-0000-4000-8000-000000000003";
+        let create = text(&package, "generated/sql/gadget/create.sql");
+        database
+            .execute(&[&format!(
+                "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
+            SET app.user_id = '{first}'; PREPARE create_gadget AS {create}
+            EXECUTE create_gadget('{stock}', 'G-1');"
+            )])
+            .unwrap();
+        let row = database
+            .execute(&["SELECT id::text FROM inventory.gadget"])
+            .unwrap();
+        let id = row.trim();
+        let update = text(&package, "generated/sql/gadget/update.sql");
+        let actors = || {
+            database
+                .execute(&[
+                    "SELECT created_by::text || ',' || updated_by::text FROM inventory.gadget",
+                ])
+                .unwrap()
+                .trim()
+                .to_owned()
+        };
+        assert_eq!(actors(), format!("{first},{first}"));
+        // Both an omitted field and the same supplied value leave the actor alone.
+        for (present, value) in [(false, stock), (true, stock), (true, second)] {
+            let revision = database
+                .execute(&["SELECT row_version FROM inventory.gadget"])
+                .unwrap();
+            database
+                .execute(&[&format!(
+                    "SET ROLE wamn_app; SET search_path TO inventory, pg_catalog;
+                SET app.user_id = '{second}'; PREPARE update_gadget AS {update}
+                EXECUTE update_gadget('{id}', {}, {present}, '{value}');",
+                    revision.trim()
+                )])
+                .unwrap();
+            assert_eq!(
+                actors(),
+                format!("{first},{}", if value == stock { first } else { second })
+            );
+        }
+    }
+}
+
+/// PostgreSQL accepts the generated cast of a rendered number into an integer key.
+#[test]
+fn live_a_numbered_integer_key_inserts_the_rendered_number() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_catalog::test_database::tenant();
+    let mut manifest = numbered();
+    manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
+    manifest["models"]["gadget"]["fields"] = json!({"id": {"number": "gadget_number"}});
+    let create = manifest["models"]["gadget"]["operations"]["create"].clone();
+    manifest["models"]["gadget"]["operations"] = json!({"create": create});
+    let package = run(&integer_key_catalog(), &manifest, &[]).unwrap();
+    database
+        .execute(&[
+            "CREATE TABLE public.gadget (id int PRIMARY KEY, part_code text DEFAULT 'fixture',
+        stock_id uuid NOT NULL, status text DEFAULT 'open', row_version bigint DEFAULT 1,
+        created_at timestamptz DEFAULT now()); GRANT SELECT, INSERT ON public.gadget TO wamn_app;",
+        ])
+        .unwrap();
+    database
+        .execute(&[&format!(
+            "SET ROLE wamn_app; PREPARE create_gadget AS {}
+        EXECUTE create_gadget('00000000-0000-4000-8000-000000000003', '42');",
+            text(&package, "generated/sql/gadget/create.sql")
+        )])
+        .unwrap();
+    assert_eq!(
+        database
+            .execute(&["SELECT id FROM public.gadget"])
+            .unwrap()
+            .trim(),
+        "42"
+    );
 }

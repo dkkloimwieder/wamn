@@ -824,10 +824,11 @@ async fn production_operator_authentication_and_operation_authorization() {
         .expect("connect exact identity-reader generation");
     let http_url = secret_value(&http_secret, "url").expect("read callable-HTTP URL");
     let loaded_release = load_serving_release().expect("load the canonical serving release");
+    let postgres = project_postgres(AuthorityClass::CallableHttp, &http_url)
+        .expect("build project-specific callable-HTTP provider");
     let route_auth = routing(
         Arc::clone(&identity_reader),
-        project_postgres(AuthorityClass::CallableHttp, &http_url)
-            .expect("build project-specific callable-HTTP provider"),
+        Arc::clone(&postgres),
         Arc::clone(&loaded_release),
     )
     .await
@@ -1026,6 +1027,10 @@ async fn production_operator_authentication_and_operation_authorization() {
     .await
     .expect("a live PAT reaches router admission before its revocation");
     assert_eq!(in_use_admissions, 1);
+    assert!(
+        postgres.auth_cache().pat(&in_use.0).is_none(),
+        "the host without an auth bucket keeps no PAT approval"
+    );
     revoke_pat(admin.as_ref(), &in_use.1, &mut AuthDrops::default())
         .await
         .expect("revoke the PAT that just authenticated");

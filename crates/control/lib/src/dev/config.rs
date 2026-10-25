@@ -1729,15 +1729,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// The fixture application, or its overlay, as a repository package.
-    fn repository_package(name: &str) -> PathBuf {
-        if name == wamn_fixture_package::OVERLAY_PACKAGE_ID {
-            wamn_fixture_package::overlay_root()
-        } else {
-            wamn_fixture_package::package_root()
-        }
-    }
-
     pub(crate) fn complete_document(addresses: &[SocketAddr; ENDPOINT_COUNT]) -> Value {
         json!({
             (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[0]),
@@ -1952,8 +1943,11 @@ pub(crate) mod tests {
     #[test]
     fn overlay_dependencies_resolve_by_coordinate_and_report_ignored_sources() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
-        let overlay_root = repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID);
-        let base_root = repository_package(wamn_fixture_package::PACKAGE_ID);
+        // Resolution must not overwrite the live fixture's derived manifest.
+        let overlay = TempPackage::with_manifest(&overlay_manifest());
+        let base = TempPackage::with_manifest(&wamn_fixture_package::manifest_bytes());
+        let overlay_root = overlay.root().to_path_buf();
+        let base_root = base.root().to_path_buf();
         let ignored_root = overlay_root.clone();
         let mut document = complete_document(&addresses);
         document[PACKAGE_SOURCES] = json!([ignored_root, base_root]);
@@ -1973,10 +1967,7 @@ pub(crate) mod tests {
         assert_eq!(resolved.ignored_package_sources(), [overlay_root]);
         let base = &resolved.base_packages()[0];
         assert_eq!(base.alias(), "base_fixture");
-        assert_eq!(
-            base.root(),
-            repository_package(wamn_fixture_package::PACKAGE_ID)
-        );
+        assert_eq!(base.root(), base_root);
         assert_eq!(base.manifest().package.id, wamn_fixture_package::PACKAGE_ID);
         assert_eq!(
             base.component_digest().expected(),
@@ -2026,8 +2017,11 @@ pub(crate) mod tests {
     #[test]
     fn missing_and_ambiguous_dependencies_name_the_complete_search() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
-        let overlay_root = repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID);
-        let base_root = repository_package(wamn_fixture_package::PACKAGE_ID);
+        // Resolution must not overwrite the live fixture's derived manifest.
+        let overlay = TempPackage::with_manifest(&overlay_manifest());
+        let base = TempPackage::with_manifest(&wamn_fixture_package::manifest_bytes());
+        let overlay_root = overlay.root().to_path_buf();
+        let base_root = base.root().to_path_buf();
         let expected = wamn_schema_generator::PackageManifest::from_slice(&overlay_manifest())
             .expect("parse repository overlay")
             .base_dependencies
@@ -2057,11 +2051,8 @@ pub(crate) mod tests {
             &serde_json::to_vec(&ambiguous_document).expect("serialize ambiguous-source config"),
         )
         .expect("duplicate coordinates are a resolution concern");
-        let error = resolve_dev_packages(
-            &ambiguous_config,
-            &repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID),
-        )
-        .expect_err("multiple coordinate matches must refuse");
+        let error = resolve_dev_packages(&ambiguous_config, &overlay_root)
+            .expect_err("multiple coordinate matches must refuse");
         assert_eq!(
             error.error_type(),
             DevPackageErrorType::BaseDependencyAmbiguous
@@ -2070,11 +2061,7 @@ pub(crate) mod tests {
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(
             error.searched_roots(),
-            [
-                base_root.clone(),
-                repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID),
-                base_root
-            ]
+            [base_root.clone(), overlay_root, base_root]
         );
     }
 

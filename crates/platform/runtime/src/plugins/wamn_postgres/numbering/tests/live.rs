@@ -1007,6 +1007,14 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
     .await
     .expect("the held call renders");
     assert_eq!(number, "P-2");
+    let peek = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        live.peek("purchase_order", NO_KEYS),
+    )
+    .await
+    .expect("peek returns while the other transaction still holds the counter row")
+    .expect("peek reads the committed counter");
+    assert_eq!(peek, "P-1", "peek reads no uncommitted number");
     let set = live.set("serialized", "purchase_order", "po", "", 50);
     tokio::pin!(set);
     assert!(

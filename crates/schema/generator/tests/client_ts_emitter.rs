@@ -41,6 +41,8 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
         files.iter().map(GeneratedFile::path).collect::<Vec<_>>(),
         [
             "generated/client-ts/index.ts",
+            "generated/client-ts/number.ts",
+            "generated/client-ts/numbered_label.ts",
             "generated/client-ts/widget.ts",
             "generated/client-ts/widget_maker.ts",
             "generated/client-ts/widget_tag.ts",
@@ -91,6 +93,8 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "// @generated from the client-contract IR; do not edit.\n//\n",
             "// The wire contract lives in `@wamn/web-runtime`, which this package",
             " depends on.\n\n",
+            "export * as number from \"./number.js\";\n",
+            "export * as numberedLabel from \"./numbered_label.js\";\n",
             "export * as widget from \"./widget.js\";\n",
             "export * as widgetMaker from \"./widget_maker.js\";\n",
             "export * as widgetTag from \"./widget_tag.js\";\n",
@@ -277,7 +281,8 @@ fn a_declared_value_domain_types_as_a_union_of_its_literals() {
     );
 
     let mut widened = release();
-    let sort = widened.models[0]
+    let widget_index = fixture::widget_index(&widened);
+    let sort = widened.models[widget_index]
         .operations
         .iter_mut()
         .find(|operation| operation.name == "query")
@@ -342,12 +347,13 @@ fn the_release_route_supplies_the_method_and_the_template() {
 #[test]
 fn an_event_handler_emits_nothing_and_an_unexposed_operation_gets_no_function() {
     let mut ir = release();
-    let mut handler = ir.models[0].operations[0].clone();
+    let widget_index = fixture::widget_index(&ir);
+    let mut handler = ir.models[widget_index].operations[0].clone();
     handler.name = "widget_archived".to_owned();
     handler.type_ = "event_handler".to_owned();
     handler.operation = "platform-fixture:widget/widget-archived@2.1.0".to_owned();
-    ir.models[0].operations.push(handler);
-    ir.models[0]
+    ir.models[widget_index].operations.push(handler);
+    ir.models[widget_index]
         .operations
         .iter_mut()
         .find(|operation| operation.name == "get")
@@ -373,21 +379,23 @@ fn an_event_handler_emits_nothing_and_an_unexposed_operation_gets_no_function() 
 #[test]
 fn two_names_that_take_one_typescript_name_refuse_by_name() {
     let mut ir = release();
-    let template = ir.models[0].operations[0].clone();
+    let widget_index = fixture::widget_index(&ir);
+    let template = ir.models[widget_index].operations[0].clone();
     // `delete` is a reserved word and gains one underscore, so a sibling that
     // already spells the escape takes the same name.
     for (index, name) in ["delete_", "delete"].into_iter().enumerate() {
         let mut operation = template.clone();
         operation.name = name.to_owned();
         operation.operation = format!("platform-fixture:widget/collide-{index}@1.0.0");
-        ir.models[0].operations.push(operation);
+        ir.models[widget_index].operations.push(operation);
     }
     let refusal = emit_ts_client(&ir).expect_err("a duplicate TypeScript name refuses");
     assert_eq!(refusal.error_type(), ClientTsErrorType::NameCollision);
     assert!(refusal.to_string().contains("\"delete_\""), "{refusal}");
 
     let mut unnameable = release();
-    unnameable.models[0].operations[0].name = "9lives".to_owned();
+    let widget_index = fixture::widget_index(&unnameable);
+    unnameable.models[widget_index].operations[0].name = "9lives".to_owned();
     let refusal = emit_ts_client(&unnameable).expect_err("a name with no spelling refuses");
     assert_eq!(
         refusal.error_type(),
@@ -401,7 +409,8 @@ fn two_names_that_take_one_typescript_name_refuse_by_name() {
 #[test]
 fn a_contract_name_that_does_not_reverse_refuses_and_names_its_path() {
     let mut operation_name = release();
-    operation_name.models[0].operations[0].name = "listWidgets".to_owned();
+    let widget_index = fixture::widget_index(&operation_name);
+    operation_name.models[widget_index].operations[0].name = "listWidgets".to_owned();
     let refusal = emit_ts_client(&operation_name).expect_err("a capital does not reverse");
     assert_eq!(refusal.error_type(), ClientTsErrorType::IrreversibleName);
     let text = refusal.to_string();
@@ -410,7 +419,8 @@ fn a_contract_name_that_does_not_reverse_refuses_and_names_its_path() {
     assert!(text.contains("\"list_widgets\""), "{text}");
 
     let mut field_name = release();
-    let archive = field_name.models[0]
+    let widget_index = fixture::widget_index(&field_name);
+    let archive = field_name.models[widget_index]
         .operations
         .iter_mut()
         .find(|operation| operation.name == "archive")
@@ -431,9 +441,10 @@ fn a_contract_name_that_does_not_reverse_refuses_and_names_its_path() {
 #[test]
 fn the_emitted_bindings_are_byte_stable() {
     let mut ir = release();
+    let widget_index = fixture::widget_index(&ir);
     let first = emit_ts_client(&ir).unwrap();
     assert_eq!(first, emit_ts_client(&ir).unwrap());
-    ir.models[0].operations.reverse();
+    ir.models[widget_index].operations.reverse();
     assert_eq!(
         first,
         emit_ts_client(&ir).unwrap(),

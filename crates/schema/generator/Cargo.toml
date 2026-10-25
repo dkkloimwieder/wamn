@@ -26,6 +26,7 @@ wamn-record-history = { workspace = true }
 wamn-number-pattern = { workspace = true }
 
 [dev-dependencies]
+wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 proptest.workspace = true
 wamn-test-postgres = { workspace = true }

@@ -279,6 +279,35 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
                     .collect::<Vec<_>>(),
             "the orders do not name the caller {caller}: {actors:?}"
         );
+        for (field, value) in [
+            ("created_by", caller.as_str()),
+            ("purchase_order_number", "FORGED"),
+        ] {
+            let response = http
+                .post(format!("{}/purchase_order/create", application.endpoint))
+                .header(reqwest::header::HOST, &application.route_host)
+                .bearer_auth(&application.bearer)
+                .json(&json!([{
+                    "request_id": format!("supplied-{field}"),
+                    "idempotency_key": format!("supplied-{field}"),
+                    "supplier_id": supplier, field: value,
+                }]))
+                .send()
+                .await?;
+            let status = response.status();
+            let body: Value = response.json().await?;
+            ensure!(
+                status == reqwest::StatusCode::OK
+                    && body[0]["error"]
+                        == json!({"code": "invalid_input", "detail": {"field": "input"}}),
+                "the route accepted caller-supplied {field}: {status} {body}"
+            );
+        }
+        let count: i64 = client
+            .query_one("SELECT count(*) FROM receiving.purchase_order", &[])
+            .await?
+            .get(0);
+        ensure!(count == 2, "a refused create wrote an order");
         drop(client);
         connection.await??;
         Ok(())

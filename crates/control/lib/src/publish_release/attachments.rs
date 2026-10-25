@@ -469,11 +469,28 @@ mod tests {
     #[test]
     fn the_fixture_publishes_what_it_published_before_generated_route_entries() {
         let root = wamn_fixture_package::package_root();
-        let attachments = read_package_attachments(
+        let mut attachments = read_package_attachments(
             &[root.join("publication/attachments.json")],
             &[wamn_fixture_package::manifest_path()],
         )
         .expect("read the fixture attachments");
+        // The numbering fixture adds two routes. The original widget surface
+        // must still match its frozen routes and declaration below.
+        for (id, hash) in [
+            (
+                "number-issue-http",
+                "sha256:c653cc69ec8df292e19b4fca4fa4532fa9096ad30af62e844721c186e61c8cc9",
+            ),
+            (
+                "numbered-label-create-http",
+                "sha256:2d16ff9ab477b2198909f821c9ee700945ed4fd45a48f1750f3863af19b2f312",
+            ),
+        ] {
+            assert_eq!(
+                attachments.remove(id).unwrap().definition_hash.as_str(),
+                hash
+            );
+        }
         let routes = attachments
             .iter()
             .map(|(id, attachment)| (id.as_str(), attachment.definition_hash.as_str()))
@@ -481,11 +498,20 @@ mod tests {
         let digest = wamn_execution_contract::canonical_json_sha256(
             &serde_json::to_value(&attachments).expect("attachments serialize"),
         );
-        let declaration = crate::component_declaration::render_declaration_document(
+        let mut declaration = crate::component_declaration::render_declaration_document(
             &root.join("publication/components/fixture.json.in"),
             "tenant-a",
         )
         .expect("render the fixture declaration");
+        for operation in ["number/issue", "numbered-label/create"] {
+            assert!(
+                declaration["operations"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(&format!("platform-fixture:{operation}@2.1.0"))
+                    .is_some()
+            );
+        }
         let declaration = wamn_execution_contract::canonical_json_sha256(&declaration);
         assert_eq!(routes, FIXTURE_ROUTES);
         assert_eq!(digest, FIXTURE_ATTACHMENTS_DIGEST);

@@ -1131,3 +1131,157 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
     application.shutdown().await?;
     result
 }
+
+/// Local assembly does not run env apply, so install its sequence defaults
+/// under the administration role that owns configuration writes.
+fn seed_number_sequences(database: &wamn_test_postgres::Database) -> anyhow::Result<()> {
+    use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope};
+    let role = wamn_control_provision::workload_generation_role(
+        WorkloadRoleFamily::Administration,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: "acme",
+            project: "platform",
+            environment: "dev",
+            database: database.name(),
+        },
+        CredentialGeneration::A,
+    )?;
+    let caller = database
+        .execute(&["SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'"])?;
+    database.execute(&[
+        &wamn_control_provision::sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::Administration, database.name(), &role, "numbering-fixture", "2100-01-01T00:00:00Z",
+        ),
+        &format!("SET ROLE \"{role}\"; BEGIN; SET LOCAL app.user_id = '{}'; SET LOCAL app.operation = 'admin:seed-numbering';
+            INSERT INTO platform.number_sequence (application, name, pattern) VALUES
+            ('orders', 'label', 'L-{{seq:n}}'),
+            ('orders', 'pick_label', 'B{{seq:batch,per=batch_id,width=4}}-{{seq:line,reset=batch,width=3}}'),
+            ('orders', 'record_label', '{{field:stock_id}}-G{{seq:n,reset=stock_id,width=4}}'); COMMIT;", caller.trim()),
+    ])?;
+    Ok(())
+}
+
+/// Generated sequence bindings run in a guest command without any record.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let result = async {
+        seed_number_sequences(&project)?;
+        for (index, batch, keyed) in [
+            (1, "a", "B0001-001"),
+            (2, "a", "B0001-002"),
+            (3, "b", "B0002-001"),
+        ] {
+            let answer = paths
+                .route(
+                    "/number/issue",
+                    &json!([{
+                        "request_id": format!("number-{index}"),
+                        "value": {"idempotency_key": format!("number-{index}"), "batch_id": batch},
+                    }]),
+                )
+                .await?;
+            assert_eq!(
+                value(&answer)?,
+                &json!({
+                    "records": "0", "bare": format!("L-{index}"), "bare_peek": format!("L-{index}"),
+                    "keyed": keyed, "keyed_peek": keyed,
+                })
+            );
+        }
+        Ok(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
+/// An overlay with no field declarations inherits the numbered insert and actors.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/platform_fixture")
+        .canonicalize()?;
+    let overlay = base.with_file_name("platform_fixture_overlay");
+    let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
+    let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
+    let attachments = wamn_schema_generator::route_schema::read_package_attachments(&overlay)?;
+    std::fs::write(
+        scratch.path().join("environment.k"),
+        include_str!("../fixtures/local-environments/platform.k").replace(
+            "[\"platform_fixture\"]",
+            "[\"platform_fixture\", \"platform_fixture_overlay\"]",
+        ),
+    )?;
+    let application = LocalApplication::start(LocalApplicationConfig {
+        system_database_url: system.url(),
+        database_url: project.url(),
+        scratch: scratch.path(),
+        component_directory: &components,
+        flow_http_wasm: &flow_http,
+        tenant: "numbered-overlay",
+        org: "acme",
+        project: "platform",
+        environment: "dev",
+        schema: "inventory",
+        caller_role: "admin",
+        route_host: "platform.localhost",
+        packages: &[
+            LocalPackage {
+                root: &base,
+                component: "fixture",
+                wirings: &[],
+            },
+            LocalPackage {
+                root: &overlay,
+                component: "fixture_overlay",
+                wirings: &[],
+            },
+        ],
+        attachments: &attachments,
+    })
+    .await?;
+    let paths = Paths {
+        endpoint: application.endpoint.clone(),
+        host: application.route_host.clone(),
+        bearer: application.bearer.clone(),
+        client: reqwest::Client::new(),
+    };
+    let result = async {
+        seed_number_sequences(&project)?;
+        let caller = project.execute(&["SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'"])?;
+        for (index, number) in [(1, "a-G0001"), (2, "a-G0002")] {
+            let (status, answer) = paths.post("/overlay/numbered_label/create", &json!([{
+                "request_id": format!("overlay-{index}"), "idempotency_key": format!("overlay-{index}"), "stock_id": "a",
+            }])).await?;
+            assert_eq!(status, 200, "{answer}");
+            let row = value(&answer)?;
+            assert_eq!(row["number"], number);
+            assert_eq!(row["created_by"], caller.trim());
+            assert_eq!(row["updated_by"], caller.trim());
+        }
+        Ok(())
+    }.await;
+    application.shutdown().await?;
+    result
+}

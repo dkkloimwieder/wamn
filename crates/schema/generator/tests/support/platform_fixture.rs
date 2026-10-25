@@ -400,7 +400,50 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![Constraint::primary_key("widget_tag_id_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
     );
-    CatalogIr::new(vec![widget, widget_maker, widget_tag])
+    let numbered_label = Table::new(
+        "inventory",
+        "numbered_label",
+        vec![
+            Column::new(
+                "id",
+                ColumnType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("number", ColumnType::Text, false, None, None),
+            Column::new("stock_id", ColumnType::Text, false, None, None),
+            Column::new(
+                "edit_version",
+                ColumnType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+            Column::new(
+                "created_at",
+                ColumnType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+            Column::new("created_by", ColumnType::Uuid, false, None, None),
+            Column::new(
+                "updated_at",
+                ColumnType::Timestamptz,
+                false,
+                Some(ColumnDefault::CurrentTimestamp),
+                None,
+            ),
+            Column::new("updated_by", ColumnType::Uuid, false, None, None),
+        ],
+        vec![
+            Constraint::primary_key("numbered_label_id_pkey", ["id"]).unwrap(),
+            Constraint::unique("numbered_label_number_key", ["number"]).unwrap(),
+        ],
+        Vec::new(),
+    );
+    CatalogIr::new(vec![widget, widget_maker, widget_tag, numbered_label])
 }
 
 /// The name of [`unread_table`].

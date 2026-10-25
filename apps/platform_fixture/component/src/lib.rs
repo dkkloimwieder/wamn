@@ -5,6 +5,7 @@
 
 //! One package-grain component exporting every platform fixture operation.
 
+mod number;
 mod widget;
 mod widget_maker;
 

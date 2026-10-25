@@ -5,6 +5,14 @@
 
 /// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {
+    /// Generated `number.issue` accessor.
+    pub(crate) mod number_issue {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../target/wamn/platform_fixture/wamn/number_issue.rs"
+        ));
+    }
+
     /// Generated `widget.archive` accessor.
     pub(crate) mod widget_archive {
         include!(concat!(

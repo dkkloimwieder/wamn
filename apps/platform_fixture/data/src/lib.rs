@@ -12,6 +12,19 @@ pub mod widget_maker;
 
 pub use error::{AccessError, AccessErrorType};
 
+/// Count the records present when a sequence-only command runs.
+///
+/// # Errors
+///
+/// Returns the statement's database refusal.
+pub async fn count_widgets(
+    transaction: &mut wamn_postgres_statements::Transaction,
+) -> Result<i64, wamn_postgres_statements::StatementError> {
+    statements::wamn::number_issue::count_widgets(transaction)
+        .await
+        .map(|row| row.records.expect("COUNT returns a non-null value"))
+}
+
 /// The generated operations, one module for each model, and their refusal.
 pub mod generated {
     include!(concat!(

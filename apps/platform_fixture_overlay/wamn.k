@@ -10,12 +10,20 @@ manifest.Package {
         base_fixture = {
             package = "platform_fixture"
             version = "2.1.0"
-            digest = "sha256:b295b970ef0028f2f8305ea40ef66668dc2fdce8077e0374330c07dcff7e5872"
+            digest = "sha256:556bcfd0dcac60f4fba347e5c31258011eb27b9416d75dc7a7b9ffcdc0772cd0"
             operations = ["widget.archive"]
         }
     }
     required_platform_policy_contract = {id = "platform_fixture_data_access", state = "satisfied"}
     models = {
+        numbered_label = manifest.Model("numbered_label", "inventory") {
+            table = "numbered_label"
+            owner = "platform_fixture"
+            server_owned_fields = ["id", "number", "edit_version"]
+            operations: {
+                create: {writable_fields = ["stock_id"], result = "one"}
+            }
+        }
         # The base's widget, with one field the overlay owns.
         widget = manifest.Model("widget", "inventory") {
             table = "widget"

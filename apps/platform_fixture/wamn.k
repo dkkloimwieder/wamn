@@ -8,7 +8,26 @@ _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"
 manifest.Package {
     package = {id = "platform_fixture", version = "2.1.0", predecessor_version = "2.0.0"}
     required_platform_policy_contract = {id = "platform_fixture_data_access", state = "satisfied"}
+    sequences = {
+        label = {pattern = "L-{seq:n}"}
+        record_label = {pattern = "{field:stock_id}-G{seq:n,reset=stock_id,width=4}"}
+        pick_label = {pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"}
+    }
     models = {
+        numbered_label = manifest.Model("numbered_label", _schema) {
+            table = "numbered_label"
+            owner = "platform_fixture"
+            server_owned_fields = ["id", "number", "edit_version"]
+            fields = {
+                number = {number = "record_label"}
+                created_by = {role = "actor"}
+                updated_by = {role = "actor"}
+            }
+            audit_log = {columns = ["created_at", "created_by", "updated_at", "updated_by"]}
+            operations: {
+                create: {writable_fields = ["stock_id"], result = "one"}
+            }
+        }
         widget = manifest.Model("widget", _schema) {
             table = "widget"
             owner = "platform_fixture"
@@ -71,6 +90,29 @@ manifest.Package {
         }
     }
     custom_operations = {
+        "number.issue" = manifest.Command("number.issue") {
+            input.fields = [
+                manifest.request_id
+                manifest.idempotency_key
+                {path = "value.batch_id", type = "text"}
+            ]
+            result = {class = "one", fields = [
+                {path = "records", type = "int64"}
+                {path = "bare", type = "text"}
+                {path = "bare_peek", type = "text"}
+                {path = "keyed", type = "text"}
+                {path = "keyed_peek", type = "text"}
+            ]}
+            errors = ["invalid_input", "idempotency_conflict", *_errors_after_input]
+            idempotent_by = "claim"
+            statements = {
+                count_widgets = manifest.Statement("command/number", "count_widgets") {
+                    fetch = "one"
+                    parameters = []
+                    row = [manifest.int64("records")]
+                }
+            }
+        }
         "widget.archive" = manifest.Command("widget.archive") {
             input.fields = [
                 {path = "id", type = "uuid", references = {model = "widget"}}

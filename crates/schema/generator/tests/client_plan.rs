@@ -16,6 +16,7 @@ fn release() -> ClientContractIr {
 fn operation<'a>(ir: &'a mut ClientContractIr, name: &str) -> &'a mut OperationIr {
     ir.models
         .iter_mut()
+        .filter(|model| model.name == "widget")
         .flat_map(|model| model.operations.iter_mut())
         .find(|operation| operation.name == name)
         .expect("the platform fixture declares the operation")
@@ -23,7 +24,7 @@ fn operation<'a>(ir: &'a mut ClientContractIr, name: &str) -> &'a mut OperationI
 
 fn screen<'a>(plan: &'a ClientPlan<'a>, name: &str) -> &'a ScreenPlan<'a> {
     plan.screens()
-        .find(|screen| screen.name == name)
+        .find(|screen| screen.model == "widget" && screen.name == name)
         .expect("the plan holds a screen for the operation")
 }
 
@@ -40,7 +41,7 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
 
     let plan = ClientPlan::from_ir(&ir);
     assert_eq!(plan.package, "platform_fixture");
-    assert_eq!(plan.models.len(), 3, "a private operation keeps its model");
+    assert_eq!(plan.models.len(), 5, "a private operation keeps its model");
     assert_eq!(plan.models[widget].model.name, "widget");
     assert_eq!(
         plan.models[widget]
@@ -61,8 +62,14 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
         "the plan drops the event handler and sorts the rest by name"
     );
     assert!(
-        plan.screens()
-            .all(|screen| ["widget", "widget_maker", "widget_tag"].contains(&screen.model)),
+        plan.screens().all(|screen| [
+            "number",
+            "numbered_label",
+            "widget",
+            "widget_maker",
+            "widget_tag"
+        ]
+        .contains(&screen.model)),
         "every screen states the model that owns it"
     );
 }
@@ -303,8 +310,8 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         plan.screens()
             .filter(|screen| screen.role.is_supported())
             .count(),
-        10,
-        "the other screens keep their role, the second model lists and reads one, and the third updates"
+        12,
+        "the other screens keep their role, including both numbering operations"
     );
 }
 

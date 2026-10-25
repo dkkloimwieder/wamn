@@ -2693,17 +2693,18 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
-    let pg = Arc::new(
-        WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(guest_url)),
-            guest_pool_max_size: 1,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 2_000,
-            statement_timeout_ms: 5_000,
-            row_limit: 1_000,
-        })
-        .expect("the plugin builds from the guest generation's url"),
-    );
+    let mut pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let ttl = std::time::Duration::from_secs(3600);
+    pg.auth = crate::auth_cache::AuthCache::with_ttl(ttl);
+    let pg = Arc::new(pg);
     let (_nats, client) = crate::auth_cache::tests::nats().await;
     let writer = crate::auth_cache::tests::watched(&client, Some(TENANT), Arc::clone(&pg)).await;
     let scope = "dropped-instance-0";
@@ -2712,6 +2713,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         ..SessionClaims::default()
     };
+    let cached_at = std::time::Instant::now();
     pg.bind_session_claims(scope, &claims)
         .await
         .expect("the provisioned principal binds");
@@ -2731,7 +2733,6 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
         .expect("remove the user row after issuance");
     let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
     drops.principal(TENANT, LIVE_PRINCIPAL);
-    let published = std::time::Instant::now();
     writer.publish(drops).await;
     crate::auth_cache::tests::until("the drop reaches the memory", || {
         pg.auth_cache().provisioned(TENANT, LIVE_PRINCIPAL).is_err()
@@ -2743,7 +2744,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
         .expect_err("the bind after the drop reads again and refuses");
     assert!(refused.downcast_ref::<UnprovisionedPrincipal>().is_some());
     assert!(
-        published.elapsed() < crate::auth_cache::AUTH_TTL,
+        cached_at.elapsed() < ttl,
         "the drop, not the TTL, refused the bind"
     );
 
@@ -3753,4 +3754,162 @@ async fn live_an_unchecked_declared_statement_is_refused_when_it_runs() {
         .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
         .await
         .expect("drop the guest generation");
+}
+
+/// A cached PAT remains accepted after the database revoke until its identity
+/// drop arrives. The long TTL cannot expire during this test.
+#[tokio::test]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
+    use crate::plugins::route_authentication::{PlatformRouteAuthenticator, RouteAuthentication};
+    use wamn_platform_identity::{assign_project_role, create_service, issue_pat, revoke_pat};
+
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_control_provision::test_database::system();
+    let project = wamn_project_state::test_database::tenant_platform();
+    let admin = connect_raw(system.url()).await;
+    admin.batch_execute(&format!(
+        "SET ROLE wamn_system; \
+         SELECT set_config('app.user_id', '{LIVE_PLATFORM_PRINCIPAL}', false); \
+         INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); \
+         INSERT INTO registry.projects (org, id) VALUES ('org', 'project');"
+    )).await.unwrap();
+    let principal = create_service(&admin, "pat-drop-test", "PAT drop test")
+        .await
+        .unwrap();
+    assign_project_role(&admin, principal.id(), "org", "project", "admin")
+        .await
+        .unwrap();
+    let issued = issue_pat(
+        &admin,
+        principal.id(),
+        "drop",
+        std::time::Duration::from_secs(7200),
+    )
+    .await
+    .unwrap();
+    let project_admin = connect_raw(project.url()).await;
+    project_admin
+        .batch_execute("CREATE SCHEMA wamn_run")
+        .await
+        .unwrap();
+    let generation = |family| {
+        wamn_control_provision::workload_generation_role(
+            family,
+            wamn_control_provision::WorkloadRoleScope::ProjectEnvironment {
+                org: "org",
+                project: "project",
+                environment: "prod",
+                database: project.name(),
+            },
+            wamn_control_provision::CredentialGeneration::A,
+        )
+        .unwrap()
+    };
+    let administration = generation(wamn_control_provision::WorkloadRoleFamily::Administration);
+    let http = generation(wamn_control_provision::WorkloadRoleFamily::HttpAdmitter);
+    for (family, name) in [
+        (
+            wamn_control_provision::WorkloadRoleFamily::Administration,
+            &administration,
+        ),
+        (
+            wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
+            &http,
+        ),
+    ] {
+        project_admin
+            .batch_execute(
+                &wamn_control_provision::sql::prepare_workload_generation_sql(
+                    family,
+                    project.name(),
+                    name,
+                    "pat-drop",
+                    "2100-01-01T00:00:00Z",
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    project_admin.batch_execute(&format!(
+        "SET ROLE \"{administration}\"; SET app.user_id = '{LIVE_PLATFORM_PRINCIPAL}'; SET app.operation = 'admin:seed-pat-drop-fixture';"
+    )).await.unwrap();
+    project_admin.execute("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'service', 'pat-drop@example.test')",
+        &[&principal.id().as_str()]).await.unwrap();
+    let mut http_url = url::Url::parse(project.url()).unwrap();
+    http_url.set_username(&http).unwrap();
+    http_url.set_password(Some("pat-drop")).unwrap();
+    let config = WamnPostgresConfig {
+        credentials: None,
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 100,
+    };
+    let projects = StaticCredentialProvider::projects_from_json(
+        &serde_json::json!({"project": {"credentials": {
+            (AuthorityClass::CallableHttp.as_str()): http_url.as_str(),
+        }}})
+        .to_string(),
+        &config,
+    )
+    .unwrap();
+    let mut pg =
+        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)));
+    let ttl = std::time::Duration::from_secs(3600);
+    pg.auth = crate::auth_cache::AuthCache::with_ttl(ttl);
+    let pg = Arc::new(pg);
+    system
+        .execute(&[&wamn_control_provision::sql::grant_identity_reader_surface_sql()])
+        .unwrap();
+    let identity_reader = connect_raw(system.url()).await;
+    identity_reader
+        .batch_execute("SET ROLE wamn_identity_reader")
+        .await
+        .unwrap();
+    let authentication = RouteAuthentication::new(
+        Arc::new(identity_reader),
+        Arc::clone(&pg),
+        "org",
+        "project",
+        principal.subject(),
+    )
+    .await
+    .unwrap();
+    let route = crate::plugins::route_authentication::tests::routing(&serde_json::json!(["pat"]))
+        .with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_authentication(Arc::new(authentication)),
+        ));
+    let (_nats, client) = crate::auth_cache::tests::nats().await;
+    let writer =
+        crate::auth_cache::tests::watched(&client, Some("tenant-a"), Arc::clone(&pg)).await;
+    let authorization = format!("Bearer {}", issued.token());
+    let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
+    let cached_at = std::time::Instant::now();
+    let caller = request().await.unwrap().unwrap();
+    assert_eq!(caller.principal_id(), principal.id().as_str());
+    assert!(pg.auth_cache().pat(issued.token()).is_some());
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    revoke_pat(&admin, issued.record().prefix(), &mut drops)
+        .await
+        .unwrap();
+    assert!(
+        request().await.is_ok(),
+        "the cached PAT still answers before the drop"
+    );
+    writer.publish(drops).await;
+    crate::auth_cache::tests::until("the identity drop removes the PAT", || {
+        pg.auth_cache().pat(issued.token()).is_none()
+    })
+    .await;
+    assert_eq!(
+        request().await.unwrap_err(),
+        (401, "unauthorized".to_owned())
+    );
+    assert!(
+        cached_at.elapsed() < ttl,
+        "only the drop can expire this PAT approval"
+    );
 }

@@ -177,5 +177,65 @@
       ]
     },
     "registered-operation": "platform-fixture:widget/record-batch"
+  },
+  "number-issue-http": {
+    "type": "http",
+    "package-id": "platform_fixture",
+    "component": "fixture",
+    "operation": "platform-fixture:number/issue",
+    "definition-hash": "sha256:c653cc69ec8df292e19b4fca4fa4532fa9096ad30af62e844721c186e61c8cc9",
+    "definition": {
+      "id": "number-issue-http",
+      "type": "http",
+      "route": {
+        "path": "/number/issue"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "object",
+              "required": [
+                "idempotency_key",
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "batch_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "pat"
+      ]
+    },
+    "registered-operation": "platform-fixture:number/issue"
   }
 }

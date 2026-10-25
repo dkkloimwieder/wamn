@@ -23,3 +23,14 @@ CREATE TABLE inventory.widget_tag (
     label text NOT NULL,
     edit_version int8 NOT NULL DEFAULT 1
 );
+
+CREATE TABLE inventory.numbered_label (
+    id uuid CONSTRAINT numbered_label_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    number text NOT NULL CONSTRAINT numbered_label_number_key UNIQUE,
+    stock_id text NOT NULL,
+    edit_version bigint NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by uuid NOT NULL
+);
