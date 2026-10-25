@@ -1428,12 +1428,10 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
             LocalPackage {
                 root: &base,
                 component: "fixture",
-                wirings: &[],
             },
             LocalPackage {
                 root: &overlay,
                 component: "fixture_overlay",
-                wirings: &[],
             },
         ],
         attachments: &attachments,
