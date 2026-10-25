@@ -32,6 +32,7 @@ mod data_access;
 mod describe;
 mod error;
 mod generate;
+mod inheritance;
 mod manifest;
 mod materialize;
 pub mod operation_reference;

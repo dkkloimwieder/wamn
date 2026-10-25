@@ -433,12 +433,17 @@ fn generate_package(
     transactional: &StatementTransactionality,
 ) -> Result<crate::GeneratedPackage> {
     let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
+    let bases = crate::inheritance::load_base_manifests(
+        &crate::build::default_output_root(package_root),
+        &manifest,
+    )?;
     generate_from_manifest(
         catalog,
         &manifest_bytes,
         &manifest,
         package_root,
         transactional,
+        &bases,
     )
 }
 
@@ -450,6 +455,7 @@ pub(crate) fn generate_from_manifest(
     manifest: &PackageManifest,
     package_root: &Path,
     transactional: &StatementTransactionality,
+    bases: &[PackageManifest],
 ) -> Result<crate::GeneratedPackage> {
     let source_files = load_authored_sql(package_root, manifest)?;
     let authored_sql = source_files
@@ -457,12 +463,10 @@ pub(crate) fn generate_from_manifest(
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
 
-    generate(&GenerationInput::new(
-        catalog,
-        manifest_bytes,
-        &authored_sql,
-        transactional,
-    ))
+    generate(
+        &GenerationInput::new(catalog, manifest_bytes, &authored_sql, transactional)
+            .with_base_manifests(bases),
+    )
     .context("generate package artifacts")
 }
 
@@ -474,7 +478,11 @@ fn statement_corpus(
     catalog: &CatalogIr,
 ) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
     let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
-    statement_corpus_from_manifest(catalog, &manifest_bytes, &manifest, package_root)
+    let bases = crate::inheritance::load_base_manifests(
+        &crate::build::default_output_root(package_root),
+        &manifest,
+    )?;
+    statement_corpus_from_manifest(catalog, &manifest_bytes, &manifest, package_root, &bases)
 }
 
 /// The statement corpus and derived grants of compiled manifest bytes that the
@@ -484,6 +492,7 @@ pub(crate) fn statement_corpus_from_manifest(
     manifest_bytes: &[u8],
     manifest: &PackageManifest,
     package_root: &Path,
+    bases: &[PackageManifest],
 ) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
     let mut corpus = std::collections::BTreeMap::new();
     for source in load_authored_sql(package_root, manifest)? {
@@ -495,6 +504,7 @@ pub(crate) fn statement_corpus_from_manifest(
         manifest,
         package_root,
         &StatementTransactionality::default(),
+        bases,
     )?;
     for file in discovery.files() {
         if std::path::Path::new(file.path())
@@ -583,6 +593,11 @@ fn load_compiled_manifest(
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
+    let bases = crate::inheritance::load_base_manifests(
+        &crate::build::default_output_root(package_root),
+        &manifest,
+    )?;
+    let bytes = crate::inheritance::complete_manifest(&bytes, &bases)?;
     let derived = crate::derive_manifest(catalog, &bytes, &authored_sql)
         .context("derive the compiled manifest")?;
     // The canonical bytes (RFC 8785) that `wamn build` writes, so a package

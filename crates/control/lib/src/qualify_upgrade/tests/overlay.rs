@@ -30,6 +30,18 @@ fn compile(root: &Path) {
     wamn_schema_generator::write_compiled_manifest(root).unwrap();
 }
 
+async fn build_owner(owner: &Path, overlay: &Path, database_url: &str) {
+    use wamn_schema_generator::build::{BuildRequest, default_output_root, generate_package};
+
+    generate_package(&BuildRequest::new(
+        owner,
+        &default_output_root(overlay),
+        database_url,
+    ))
+    .await
+    .unwrap();
+}
+
 fn frozen_predecessor(source: &Path, target: &Path) {
     let output = |root: &Path, path: &str| match Path::new(path).strip_prefix("generated") {
         Ok(relative) => wamn_schema_generator::output_root(root).join(relative),
@@ -107,6 +119,12 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
         &[base_manifest, overlay_manifest.clone()],
     )
     .unwrap();
+    build_owner(
+        &wamn_fixture_package::package_root(),
+        &predecessor,
+        base.source_database.url(),
+    )
+    .await;
     wamn_schema_generator::materialize_package_verified_with_catalog(
         &projected,
         base.source_database.url(),
@@ -192,6 +210,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     apply_qualification_package(apply_request(generation.url(), &candidate))
         .await
         .unwrap();
+    build_owner(&base.root.join("candidate"), &candidate, generation.url()).await;
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
@@ -803,6 +822,12 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         .unwrap();
     let projected =
         wamn_schema_generator::project_package_catalog(&catalog, manifest, &installed).unwrap();
+    build_owner(
+        &wamn_fixture_package::package_root(),
+        &predecessor,
+        fixture.base.source_database.url(),
+    )
+    .await;
     wamn_schema_generator::materialize_package_from_catalog(&projected, &predecessor).unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: original_package_roots.clone(),
@@ -905,6 +930,12 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         .unwrap();
     let projected =
         wamn_schema_generator::project_package_catalog(&catalog, manifest, &installed).unwrap();
+    build_owner(
+        &fixture.base.root.join("candidate"),
+        &candidate,
+        generation.url(),
+    )
+    .await;
     wamn_schema_generator::materialize_package_from_catalog(&projected, &candidate).unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: successor_package_roots.clone(),

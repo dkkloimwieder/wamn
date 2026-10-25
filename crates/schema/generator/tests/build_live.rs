@@ -353,3 +353,54 @@ async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
     .await
     .expect("the top-level overlay migrates its nested base");
 }
+
+/// Owner declarations survive compilation at a caller-selected output root.
+#[tokio::test(flavor = "current_thread")]
+async fn overlay_builds_inherit_owner_fields_from_receipted_manifests() {
+    use wamn_schema_generator::build::generate_package;
+
+    let workspace = Workspace::new("inherited-fields");
+    workspace.edit_manifest(
+        "audit_log = {columns = [\"created_at\"], retention = \"P30D\"}",
+        "fields = {updated_by = {role = \"actor\"}}\n            audit_log = {columns = [\"created_at\", \"updated_at\", \"updated_by\"], retention = \"P30D\"}",
+    );
+    fs::write(
+        workspace.package().join("migrations/9999_actor.sql"),
+        "ALTER TABLE inventory.widget ADD COLUMN updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD COLUMN updated_by uuid NOT NULL;",
+    )
+    .unwrap();
+    let database = wamn_test_postgres::database();
+    let output = workspace.root.join("selected-output");
+    generate_package(&BuildRequest::new(
+        &workspace.package(),
+        &output,
+        database.url(),
+    ))
+    .await
+    .unwrap();
+    let request = BuildRequest::new(&workspace.overlay(), &output, database.url());
+    generate_package(&request).await.unwrap();
+    let manifest: Value = serde_json::from_slice(
+        &fs::read(
+            package_output(&output, wamn_fixture_package::OVERLAY_PACKAGE_ID).join("wamn.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        manifest["models"]["widget"]["fields"]["updated_by"]["role"],
+        "actor"
+    );
+
+    let base_path = package_output(&output, wamn_fixture_package::PACKAGE_ID).join("wamn.json");
+    let mut changed = fs::read(&base_path).unwrap();
+    changed.push(b' ');
+    fs::write(base_path, changed).unwrap();
+    let error = generate_package(&request).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("manifest differs from its build receipt"),
+        "{error:#}"
+    );
+}

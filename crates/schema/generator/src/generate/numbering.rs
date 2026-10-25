@@ -155,6 +155,12 @@ fn validate_numbered_field(
     let ty = column(table, field)
         .expect("model fields were validated")
         .column_type();
+    if !matches!(ty, ColumnType::Text | ColumnType::Int32 | ColumnType::Int64) {
+        return Err(invalid(format!(
+            "{model_name}.{field} is {}; a numbered field must be text, int32 or int64",
+            ty.as_str()
+        )));
+    }
     if ty != ColumnType::Text && !pattern.is_bare_counter() {
         return Err(invalid(format!(
             "{model_name}.{field} is {}, not text, so sequence {sequence} takes a bare {{seq:<counter>}} pattern only",

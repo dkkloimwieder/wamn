@@ -248,16 +248,32 @@ pub(super) fn manifest() -> Value {
 
 pub(super) fn run(
     catalog: &CatalogIr,
-    manifest: &Value,
+    value: &Value,
     sources: &[AuthoredSql<'_>],
 ) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+    run_with_bases(catalog, value, sources, &[manifest()])
+}
+
+pub(super) fn run_with_bases(
+    catalog: &CatalogIr,
+    manifest: &Value,
+    sources: &[AuthoredSql<'_>],
+    bases: &[Value],
+) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+    let bases = bases
+        .iter()
+        .map(|base| PackageManifest::from_slice(&serde_json::to_vec(base).unwrap()).unwrap())
+        .collect::<Vec<_>>();
     let bytes = serde_json::to_vec(manifest).unwrap();
-    generate(&GenerationInput::new(
-        catalog,
-        &bytes,
-        sources,
-        &StatementTransactionality::default(),
-    ))
+    generate(
+        &GenerationInput::new(
+            catalog,
+            &bytes,
+            sources,
+            &StatementTransactionality::default(),
+        )
+        .with_base_manifests(&bases),
+    )
 }
 
 pub(super) fn artifact_json(package: &GeneratedPackage, path: &str) -> Value {

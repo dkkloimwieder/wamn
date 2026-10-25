@@ -15,7 +15,7 @@ use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnType, Constraint};
 mod support;
 use support::{
     QUERY_SOURCES, artifact_json, catalog, manifest, object_named, rebuilt_table, replacing_table,
-    run, table,
+    run, run_with_bases, table,
 };
 
 /// The gadget fixture with a numbered `part_code`, keyed per stock, and a
@@ -94,6 +94,21 @@ fn integer_key_catalog() -> CatalogIr {
         .chain([Constraint::primary_key("gadget_id_pkey", ["id"]).unwrap()])
         .collect();
     replacing_table(&base, rebuilt_table(gadget, columns, constraints))
+}
+
+fn refusal_with_base(
+    catalog: &CatalogIr,
+    manifest: &Value,
+    base: &Value,
+) -> (GenerateErrorType, String) {
+    let error = run_with_bases(
+        catalog,
+        manifest,
+        &QUERY_SOURCES,
+        std::slice::from_ref(base),
+    )
+    .expect_err("the manifest was accepted");
+    (error.error_type(), error.to_string())
 }
 
 fn refusal(catalog: &CatalogIr, manifest: &Value) -> (GenerateErrorType, String) {
@@ -422,25 +437,27 @@ fn a_numbered_field_that_is_not_text_takes_only_a_bare_counter() {
         .as_array_mut()
         .unwrap()
         .push(json!("line_no"));
-    let catalog = actor_catalog("line_no", ColumnType::Int64);
-    for pattern in ["{seq:n,width=4}", "L{seq:n}", "{seq:n,reset=stock_id}"] {
-        manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
-        let (kind, message) = refusal(&catalog, &manifest);
-        assert_eq!(
-            kind,
-            GenerateErrorType::InvalidModel,
+    for ty in [ColumnType::Int32, ColumnType::Int64] {
+        let catalog = actor_catalog("line_no", ty);
+        for pattern in ["{seq:n,width=4}", "L{seq:n}", "{seq:n,reset=stock_id}"] {
+            manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
+            let (kind, message) = refusal(&catalog, &manifest);
+            assert_eq!(
+                kind,
+                GenerateErrorType::InvalidModel,
+                "{pattern}: {message}"
+            );
+            assert!(
+            message.contains(&format!(
+                "gadget.line_no is {}, not text, so sequence gadget_number takes a bare {{seq:<counter>}} pattern only", ty.as_str()
+            )),
             "{pattern}: {message}"
         );
-        assert!(
-            message.contains(
-                "gadget.line_no is int64, not text, so sequence gadget_number takes a bare {seq:<counter>} pattern only"
-            ),
-            "{pattern}: {message}"
-        );
-    }
+        }
 
-    manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
-    run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+        manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
+        run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+    }
 }
 
 /// An actor field is a uuid field named `created_by` or `updated_by`.
@@ -460,7 +477,13 @@ fn an_actor_field_is_a_uuid_created_by_or_updated_by() {
     // selects no base column, so the actor rule refuses it.
     let mut text_actor = overlay(manifest.clone());
     text_actor["models"]["gadget"]["fields"] = json!({"created_by": {"role": "actor"}});
-    let (kind, message) = refusal(&actor_catalog("created_by", ColumnType::Text), &text_actor);
+    let mut base = manifest.clone();
+    base["models"]["gadget"]["fields"] = text_actor["models"]["gadget"]["fields"].clone();
+    let (kind, message) = refusal_with_base(
+        &actor_catalog("created_by", ColumnType::Text),
+        &text_actor,
+        &base,
+    );
     assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
@@ -499,14 +522,21 @@ fn overlay(mut manifest: Value) -> Value {
 #[test]
 fn an_overlay_is_checked_against_the_relation_owners_fields() {
     let note = actor_catalog("note", ColumnType::Text);
-    let mut numbered = overlay(numbered());
+    let mut base = numbered();
+    let mut numbered = overlay(base.clone());
     numbered["models"]["gadget"]["field_owners"] = json!({"note": "acme_inventory"});
     // The overlay numbers the owner's field by the owner's key.
-    run(&note, &numbered, &QUERY_SOURCES).unwrap();
+    run_with_bases(
+        &note,
+        &numbered,
+        &QUERY_SOURCES,
+        std::slice::from_ref(&base),
+    )
+    .unwrap();
 
     let mut own_number = numbered.clone();
     own_number["models"]["gadget"]["fields"] = json!({"note": {"number": "gadget_number"}});
-    let (kind, message) = refusal(&note, &own_number);
+    let (kind, message) = refusal_with_base(&note, &own_number, &base);
     assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
@@ -519,7 +549,8 @@ fn an_overlay_is_checked_against_the_relation_owners_fields() {
     own_key["sequences"]["gadget_number"]["pattern"] = json!("{field:note}-{seq:n,reset=note}");
     own_key["models"]["gadget"]["operations"]["create"]["writable_fields"] =
         json!(["stock_id", "note"]);
-    let (kind, message) = refusal(&note, &own_key);
+    base["sequences"] = own_key["sequences"].clone();
+    let (kind, message) = refusal_with_base(&note, &own_key, &base);
     assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
@@ -531,10 +562,200 @@ fn an_overlay_is_checked_against_the_relation_owners_fields() {
     // The owner's actor field is the overlay's to stamp.
     let mut base_actor = overlay(manifest());
     base_actor["models"]["gadget"]["fields"] = json!({"updated_by": {"role": "actor"}});
-    run(
+    base["models"]["gadget"]["fields"] = base_actor["models"]["gadget"]["fields"].clone();
+    run_with_bases(
         &actor_catalog("updated_by", ColumnType::Uuid),
         &base_actor,
         &QUERY_SOURCES,
+        &[base],
     )
     .unwrap();
+}
+
+#[test]
+fn numbered_fields_accept_only_text_int32_and_int64() {
+    for ty in [
+        ColumnType::Boolean,
+        ColumnType::Float64,
+        ColumnType::Bytes,
+        ColumnType::Numeric,
+        ColumnType::Timestamptz,
+        ColumnType::Json,
+        ColumnType::Uuid,
+        ColumnType::Text,
+        ColumnType::Int32,
+        ColumnType::Int64,
+    ] {
+        let mut manifest = numbered();
+        manifest["models"]["gadget"]["fields"] = json!({"serial": {"number": "gadget_number"}});
+        manifest["models"]["gadget"]["server_owned_fields"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("serial"));
+        manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
+        let catalog = actor_catalog("serial", ty);
+        if matches!(ty, ColumnType::Text | ColumnType::Int32 | ColumnType::Int64) {
+            run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+        } else {
+            let (kind, message) = refusal(&catalog, &manifest);
+            assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+            assert!(
+                message.contains("a numbered field must be text, int32 or int64"),
+                "{ty:?}: {message}"
+            );
+        }
+    }
+}
+
+fn stamped_numbered() -> Value {
+    let mut base = numbered();
+    base["models"]["gadget"]["fields"]["created_by"] = json!({"role": "actor"});
+    base["models"]["gadget"]["fields"]["updated_by"] = json!({"role": "actor"});
+    base["models"]["gadget"]["audit_log"]["columns"] =
+        json!(["created_at", "created_by", "updated_at", "updated_by"]);
+    base
+}
+
+fn undeclared_overlay(base: &Value) -> Value {
+    let mut overlay = overlay(base.clone());
+    overlay["models"]["gadget"]
+        .as_object_mut()
+        .unwrap()
+        .remove("fields");
+    overlay.as_object_mut().unwrap().remove("sequences");
+    overlay
+}
+
+#[test]
+fn an_overlay_inherits_numbers_and_actor_stamps_without_field_declarations() {
+    let base = stamped_numbered();
+    for overlay in [undeclared_overlay(&base), overlay(base.clone())] {
+        let package = run_with_bases(
+            &stamped_catalog(),
+            &overlay,
+            &QUERY_SOURCES,
+            std::slice::from_ref(&base),
+        )
+        .unwrap();
+        let create = text(&package, "generated/sql/gadget/create.sql");
+        assert!(
+            create.contains("current_setting('app.user_id')::uuid"),
+            "{create}"
+        );
+        let update = text(&package, "generated/sql/gadget/update.sql");
+        assert!(
+            update.contains("updated_by = CASE")
+                && update.contains("THEN current_setting('app.user_id')::uuid"),
+            "{update}"
+        );
+        let rust = squashed(&text(&package, "generated/data/gadget.rs"));
+        assert!(
+            rust.contains(&squashed(r#"let part_code = wamn_postgres_statements::next_number("gadget_number", &[("stock_id", Some(stock_id.0.clone()))])"#)),
+            "{rust}"
+        );
+        let access = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
+        let model = object_named(access["relations"].as_array().unwrap(), "table", "gadget");
+        assert_eq!(
+            model["insert_fields"],
+            json!(["created_by", "part_code", "stock_id", "updated_by"])
+        );
+    }
+}
+
+#[test]
+fn an_overlay_cannot_supply_inherited_number_or_actor_fields() {
+    let base = stamped_numbered();
+    for action in ["create", "update"] {
+        for field in ["part_code", "created_by", "updated_by"] {
+            let mut overlay = undeclared_overlay(&base);
+            overlay["models"]["gadget"]["operations"][action]["writable_fields"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(field));
+            let (kind, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
+            assert_eq!(kind, GenerateErrorType::InvalidOperation, "{message}");
+            assert!(
+                message.contains(&format!(
+                    "gadget.{action} exposes server-owned field {field}"
+                )) || message.contains(&format!("gadget.{action} writes gadget.{field}")),
+                "{message}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_overlay_cannot_change_or_add_the_owners_number_or_actor_declaration() {
+    let base = stamped_numbered();
+    for (field, declaration) in [
+        ("part_code", json!({"number": "other_sequence"})),
+        ("created_by", json!({"number": "gadget_number"})),
+        ("part_code", json!({"role": "actor"})),
+        ("stock_id", json!({"number": "gadget_number"})),
+        ("stock_id", json!({"role": "actor"})),
+    ] {
+        let mut overlay = undeclared_overlay(&base);
+        overlay["models"]["gadget"]["fields"] = json!({(field): declaration});
+        let (kind, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
+        assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
+        assert!(
+            message.contains("disagrees with the number or actor declaration"),
+            "{message}"
+        );
+    }
+    let mut overlay = overlay(base.clone());
+    overlay["sequences"]["gadget_number"]["pattern"] = json!("OTHER-{seq:n}");
+    let (_, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
+    assert!(
+        message.contains("sequence gadget_number disagrees"),
+        "{message}"
+    );
+}
+
+#[test]
+fn an_overlay_requires_its_declared_owner_and_relation() {
+    let base = stamped_numbered();
+    let overlay = undeclared_overlay(&base);
+    let error = run_with_bases(&stamped_catalog(), &overlay, &QUERY_SOURCES, &[]).unwrap_err();
+    assert!(
+        error.to_string().contains("needs the compiled manifest"),
+        "{error}"
+    );
+    let mut wrong_version = base.clone();
+    wrong_version["package"]["version"] = json!("9.0.0");
+    let (_, message) = refusal_with_base(&stamped_catalog(), &overlay, &wrong_version);
+    assert!(message.contains("needs the compiled manifest"), "{message}");
+    let mut wrong_relation = base;
+    wrong_relation["models"]["gadget"]["table"] = json!("other_table");
+    let (_, message) = refusal_with_base(&stamped_catalog(), &overlay, &wrong_relation);
+    assert!(
+        message.contains("has no relation inventory.gadget"),
+        "{message}"
+    );
+}
+
+#[test]
+fn an_overlay_command_cannot_write_inherited_number_or_actor_fields() {
+    let base = stamped_numbered();
+    for field in ["part_code", "created_by", "updated_by"] {
+        let mut overlay = undeclared_overlay(&base);
+        let mut command = support::projection_operation();
+        command["type"] = json!("command");
+        command["permission"] = json!("quality.check_gadget");
+        command["idempotent_by"] = json!("claim");
+        command["input"]["fields"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"path": "idempotency_key", "type": "text", "nullable": false}));
+        command["transaction"] = json!("explicit_per_input");
+        command["automatic_retry"] = json!(false);
+        command["relations"][0]["update_fields"] = json!([field]);
+        overlay["custom_operations"] = json!({"quality.check_gadget": command});
+        let (kind, message) = refusal_with_base(&stamped_catalog(), &overlay, &base);
+        assert_eq!(kind, GenerateErrorType::InvalidOperation, "{message}");
+        assert!(
+            message.contains(&format!("quality.check_gadget writes gadget.{field}")),
+            "{message}"
+        );
+    }
 }

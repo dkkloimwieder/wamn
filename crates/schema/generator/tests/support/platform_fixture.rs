@@ -41,6 +41,10 @@ pub(crate) fn try_generate_with_sql(
     value: &Value,
     authored: &[(String, Vec<u8>)],
 ) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+    let bases = [wamn_schema_generator::PackageManifest::from_slice(
+        &serde_json::to_vec(&manifest()).unwrap(),
+    )
+    .unwrap()];
     let manifest = serde_json::to_vec(value).expect("serialize platform fixture manifest");
     let sources = authored
         .iter()
@@ -54,12 +58,15 @@ pub(crate) fn try_generate_with_sql(
                     .contains(source.path())
         })
         .collect::<Vec<_>>();
-    generate(&GenerationInput::new(
-        catalog,
-        &manifest,
-        &sources,
-        &StatementTransactionality::default(),
-    ))
+    generate(
+        &GenerationInput::new(
+            catalog,
+            &manifest,
+            &sources,
+            &StatementTransactionality::default(),
+        )
+        .with_base_manifests(&bases),
+    )
 }
 
 pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>> {

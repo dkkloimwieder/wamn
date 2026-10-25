@@ -189,9 +189,17 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
         PackageManifest::from_slice(&serde_json::to_vec(&with_placeholder_types(&authored))?)
             .context("parse the authored manifest")?;
     let dependencies = dependencies(&request.output_root, &provisional)?;
+    let bases = crate::inheritance::load_base_manifests(&request.output_root, &provisional)?;
 
     let database = VerificationDatabase::create(&request.database_url).await?;
-    let built = pass_one_and_two(package_root, &database.url, &provisional, &mut authored).await;
+    let built = pass_one_and_two(
+        package_root,
+        &database.url,
+        &provisional,
+        &mut authored,
+        &bases,
+    )
+    .await;
     database.drop().await?;
     let (canonical, files) = built?;
 
@@ -222,6 +230,7 @@ async fn pass_one_and_two(
     database_url: &str,
     provisional: &PackageManifest,
     authored: &mut Value,
+    bases: &[PackageManifest],
 ) -> Result<(Vec<u8>, BTreeMap<PathBuf, Vec<u8>>)> {
     // Pass one.
     migrate(database_url, package_root, provisional).await?;
@@ -233,6 +242,7 @@ async fn pass_one_and_two(
     let described = describe_statements(database_url, &corpus).await?;
     apply_statement_types(authored, &described)?;
     let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
+    let typed = crate::inheritance::complete_manifest(&typed, bases)?;
     let manifest = PackageManifest::from_slice(&typed).context("parse the typed manifest")?;
     let catalog = introspect_with_manifest(database_url, package_root, &manifest).await?;
     // The build refuses correctness only (owner ruling 2026-10-18): a missing
@@ -254,7 +264,7 @@ async fn pass_one_and_two(
     let manifest =
         PackageManifest::from_slice(&canonical).context("parse the canonical manifest")?;
     let (corpus, grants) =
-        statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root)?;
+        statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root, bases)?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
@@ -266,8 +276,14 @@ async fn pass_one_and_two(
         .await
         .context("join PostgreSQL connection task")?
         .context("drive PostgreSQL connection")?;
-    let package =
-        generate_from_manifest(&catalog, &canonical, &manifest, package_root, &verdicts?)?;
+    let package = generate_from_manifest(
+        &catalog,
+        &canonical,
+        &manifest,
+        package_root,
+        &verdicts?,
+        bases,
+    )?;
     let client = client_bindings(package_root, &manifest, &package)?;
     let mut files = expected_files(&package)?
         .into_iter()

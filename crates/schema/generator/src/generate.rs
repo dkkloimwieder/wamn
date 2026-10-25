@@ -117,10 +117,12 @@ pub struct GenerationInput<'a> {
     manifest_json: &'a [u8],
     authored_sql: &'a [AuthoredSql<'a>],
     transactional: &'a StatementTransactionality,
+    base_manifests: &'a [PackageManifest],
 }
 
 impl<'a> GenerationInput<'a> {
     /// Construct a generation input from exact in-memory artifacts.
+    /// Supply each overlay model's owner through [`Self::with_base_manifests`].
     pub const fn new(
         catalog: &'a CatalogIr,
         manifest_json: &'a [u8],
@@ -132,7 +134,15 @@ impl<'a> GenerationInput<'a> {
             manifest_json,
             authored_sql,
             transactional,
+            base_manifests: &[],
         }
+    }
+
+    /// Supply the compiled manifests of the exact base builds used by this package.
+    #[must_use]
+    pub const fn with_base_manifests(mut self, bases: &'a [PackageManifest]) -> Self {
+        self.base_manifests = bases;
+        self
     }
 }
 
@@ -302,6 +312,8 @@ pub fn derive_manifest(
 /// artifact. It reads and writes only the bytes it is handed.
 pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, GenerateError> {
     let mut manifest = PackageManifest::from_slice(input.manifest_json)?;
+    validate_operation_vocabulary(&manifest)?;
+    crate::inheritance::inherit_model_fields(&mut manifest, input.base_manifests)?;
     complete_enum_fields(input.catalog, &mut manifest);
     validate(input, &manifest)?;
 
