@@ -11,9 +11,11 @@ const GOOGLE_PROVIDER_VERSION: &str = "7.1.0";
 /// Render validated project JSON as the bytes of `main.tf.json`.
 ///
 /// The caller owns project validation and the existing GCS state bucket.
-/// It writes no import block, because an import of a missing cluster or pool
-/// refuses the plan. Lifecycle guards refuse replacement of the cluster and
-/// pools. This function performs no I/O.
+/// It writes no import block for the cluster or pools, because an import of
+/// a missing cluster or pool refuses the plan. It imports the kind registry,
+/// the DNS zone and the guard's state binding, which outlive a teardown.
+/// Lifecycle guards refuse their destruction and the replacement of the
+/// cluster and pools. This function performs no I/O.
 ///
 /// # Errors
 ///
@@ -102,6 +104,30 @@ pub fn render_project_tofu(
         }
         pools.insert(pool.name, resource);
     }
+    let registry = &project.kind_registry;
+    let zone = &project.dns_zone;
+    let guard = &project.guard_state;
+    let guard_member = format!("serviceAccount:{}", guard.service_account);
+    let imports = json!([
+        {
+            "to": "google_artifact_registry_repository.kind",
+            "id": format!(
+                "projects/{}/locations/{}/repositories/{}",
+                project.project_id, registry.location, registry.repository_id
+            ),
+        },
+        {
+            "to": "google_dns_managed_zone.zone",
+            "id": format!("projects/{}/managedZones/{}", project.project_id, zone.name),
+        },
+        {
+            "to": "google_storage_bucket_iam_member.guard_state",
+            "id": format!(
+                "b/{} roles/storage.objectUser {guard_member} guard-state",
+                guard.bucket
+            ),
+        },
+    ]);
     let document = json!({
         "terraform": {
             "required_providers": {
@@ -140,7 +166,46 @@ pub fn render_project_tofu(
                 "port_range": "443", "ip_protocol": "TCP",
                 "load_balancing_scheme": "EXTERNAL_MANAGED",
             }},
+            "google_artifact_registry_repository": {"kind": {
+                "project": project.project_id,
+                "location": registry.location,
+                "repository_id": registry.repository_id,
+                "description": registry.description,
+                "format": "DOCKER",
+                "docker_config": {"immutable_tags": true},
+                "cleanup_policies": [{
+                    "id": format!("delete-older-than-{}-days", registry.cleanup_older_than_days),
+                    "action": "DELETE",
+                    "condition": {
+                        "tag_state": "ANY",
+                        "older_than": format!("{}s", u64::from(registry.cleanup_older_than_days) * 86_400),
+                    },
+                }],
+                "lifecycle": {"prevent_destroy": true},
+            }},
+            "google_dns_managed_zone": {"zone": {
+                "project": project.project_id,
+                "name": zone.name,
+                "dns_name": zone.dns_name,
+                "description": zone.description,
+                "visibility": "public",
+                "lifecycle": {"prevent_destroy": true},
+            }},
+            "google_storage_bucket_iam_member": {"guard_state": {
+                "bucket": guard.bucket,
+                "role": "roles/storage.objectUser",
+                "member": guard_member,
+                "condition": {
+                    "title": "guard-state",
+                    "expression": format!(
+                        "resource.name.startsWith(\"projects/_/buckets/{}/objects/guard/\")",
+                        guard.bucket
+                    ),
+                },
+                "lifecycle": {"prevent_destroy": true},
+            }},
         },
+        "import": imports,
         "data": {
             "google_compute_network_endpoint_group": {"edge": {
                 "name": project.edge.neg_name, "zone": project.edge.neg_zone,
@@ -168,6 +233,30 @@ struct ProjectInput {
     node_service_account: String,
     node_pools: Vec<NodePool>,
     edge: Edge,
+    kind_registry: KindRegistry,
+    dns_zone: DnsZone,
+    guard_state: GuardState,
+}
+
+#[derive(Deserialize)]
+struct KindRegistry {
+    repository_id: String,
+    location: String,
+    description: String,
+    cleanup_older_than_days: u32,
+}
+
+#[derive(Deserialize)]
+struct DnsZone {
+    name: String,
+    dns_name: String,
+    description: String,
+}
+
+#[derive(Deserialize)]
+struct GuardState {
+    bucket: String,
+    service_account: String,
 }
 
 #[derive(Deserialize)]
@@ -278,7 +367,7 @@ mod tests {
             })
         );
         let resources = &rendered["resource"];
-        assert_eq!(resources.as_object().unwrap().len(), 7);
+        assert_eq!(resources.as_object().unwrap().len(), 10);
         let clusters = resources["google_container_cluster"].as_object().unwrap();
         assert_eq!(clusters.len(), 1);
         let cluster = &clusters["cluster"];
@@ -365,8 +454,69 @@ mod tests {
                 ])
             );
         }
-        // An import of a missing cluster or pool refuses the plan (wamn-02nkn).
-        assert!(rendered.get("import").is_none());
+        // An import of a missing cluster or pool refuses the plan (wamn-02nkn),
+        // so only the three project resources that outlive a teardown import.
+        assert_eq!(
+            rendered["import"],
+            json!([
+                {
+                    "to": "google_artifact_registry_repository.kind",
+                    "id": "projects/wamn-dev/locations/us-central1/repositories/wamn-kind",
+                },
+                {
+                    "to": "google_dns_managed_zone.zone",
+                    "id": "projects/wamn-dev/managedZones/wamn-dev",
+                },
+                {
+                    "to": "google_storage_bucket_iam_member.guard_state",
+                    "id": "b/wamn-dev-tofu-state roles/storage.objectUser \
+                           serviceAccount:wamn-guard@wamn-dev.iam.gserviceaccount.com guard-state",
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn project_resources_match_the_live_objects_and_refuse_destruction() {
+        let rendered: Value =
+            serde_json::from_slice(&render_project_tofu(&project(), "state", "dev").unwrap())
+                .unwrap();
+        let resources = &rendered["resource"];
+        assert_eq!(
+            resources["google_artifact_registry_repository"]["kind"],
+            json!({
+                "project": "wamn-dev", "location": "us-central1", "repository_id": "wamn-kind",
+                "description": "kind test pushes of upgrade-environment", "format": "DOCKER",
+                "docker_config": {"immutable_tags": true},
+                "cleanup_policies": [{
+                    "id": "delete-older-than-7-days", "action": "DELETE",
+                    "condition": {"tag_state": "ANY", "older_than": "604800s"},
+                }],
+                "lifecycle": {"prevent_destroy": true},
+            })
+        );
+        assert_eq!(
+            resources["google_dns_managed_zone"]["zone"],
+            json!({
+                "project": "wamn-dev", "name": "wamn-dev", "dns_name": "wamn.dev.",
+                "description": "wamn.dev public zone", "visibility": "public",
+                "lifecycle": {"prevent_destroy": true},
+            })
+        );
+        assert_eq!(
+            resources["google_storage_bucket_iam_member"]["guard_state"],
+            json!({
+                "bucket": "wamn-dev-tofu-state", "role": "roles/storage.objectUser",
+                "member": "serviceAccount:wamn-guard@wamn-dev.iam.gserviceaccount.com",
+                "condition": {
+                    "title": "guard-state",
+                    "expression": "resource.name.startsWith(\"projects/_/buckets/wamn-dev-tofu-state/objects/guard/\")",
+                },
+                "lifecycle": {"prevent_destroy": true},
+            })
+        );
+        // The state bucket stays out of OpenTofu: it holds OpenTofu's own state.
+        assert!(resources.get("google_storage_bucket").is_none());
     }
 
     #[test]

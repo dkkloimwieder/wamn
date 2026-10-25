@@ -1,4 +1,5 @@
-//! The project document declares the GCP cluster and its node pools.
+//! The project document declares the GCP cluster, its node pools, and the
+//! project resources that OpenTofu imports.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -23,6 +24,37 @@ pub struct ProjectDocument {
     pub node_service_account: String,
     pub node_pools: Vec<NodePool>,
     pub edge: Edge,
+    pub kind_registry: KindRegistry,
+    pub dns_zone: DnsZone,
+    pub guard_state: GuardState,
+}
+
+/// The Artifact Registry repository for kind test pushes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KindRegistry {
+    pub repository_id: String,
+    pub location: String,
+    pub description: String,
+    /// The cleanup policy deletes every tag older than this.
+    pub cleanup_older_than_days: u32,
+}
+
+/// The public Cloud DNS zone. OpenTofu owns the zone, not its records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DnsZone {
+    pub name: String,
+    pub dns_name: String,
+    pub description: String,
+}
+
+/// The guard's object access under `guard/` in the state bucket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuardState {
+    pub bucket: String,
+    pub service_account: String,
 }
 
 /// The Service-owned endpoint group used by the TCP proxy.
@@ -128,15 +160,43 @@ impl ProjectDocument {
             ensure!(name(value, 63), "{field} is not a lowercase name");
         }
         ensure!(
-            self.node_service_account
-                .split_once('@')
-                .is_some_and(|(account, domain)| {
-                    name(account, usize::MAX)
-                        && domain
-                            .strip_suffix(".iam.gserviceaccount.com")
-                            .is_some_and(|project| name(project, usize::MAX))
-                }),
+            service_account(&self.node_service_account),
             "node_service_account is not a GCP service account email"
+        );
+        ensure!(
+            name(&self.kind_registry.repository_id, 63),
+            "kind_registry.repository_id is not a lowercase name"
+        );
+        let location: Vec<_> = self.kind_registry.location.split('-').collect();
+        ensure!(
+            location.len() == 2 && lower(location[0]) && {
+                let region = location[1].trim_end_matches(|c: char| c.is_ascii_digit());
+                lower(region) && region.len() < location[1].len()
+            },
+            "kind_registry.location is not a GCP region"
+        );
+        ensure!(
+            self.kind_registry.cleanup_older_than_days > 0,
+            "kind_registry.cleanup_older_than_days is zero"
+        );
+        ensure!(
+            name(&self.dns_zone.name, 63),
+            "dns_zone.name is not a lowercase name"
+        );
+        ensure!(
+            self.dns_zone
+                .dns_name
+                .strip_suffix('.')
+                .is_some_and(|dns_name| dns_name.split('.').all(|part| token(part, "-"))),
+            "dns_zone.dns_name is not a DNS name that ends with a dot"
+        );
+        ensure!(
+            name(&self.guard_state.bucket, 63),
+            "guard_state.bucket is not a lowercase bucket name"
+        );
+        ensure!(
+            service_account(&self.guard_state.service_account),
+            "guard_state.service_account is not a GCP service account email"
         );
         ensure!(!self.node_pools.is_empty(), "node_pools is empty");
         let mut pools = BTreeSet::new();
@@ -198,6 +258,15 @@ impl ProjectDocument {
     }
 }
 
+fn service_account(value: &str) -> bool {
+    value.split_once('@').is_some_and(|(account, domain)| {
+        name(account, usize::MAX)
+            && domain
+                .strip_suffix(".iam.gserviceaccount.com")
+                .is_some_and(|project| name(project, usize::MAX))
+    })
+}
+
 fn label(value: &str) -> bool {
     value
         .split_once('=')
@@ -218,6 +287,12 @@ mod tests {
             "pod_secondary_range_name": "pods", "service_secondary_range_name": "services",
             "node_service_account": "wamn-nodes@wamn-dev.iam.gserviceaccount.com",
             "edge": {"neg_name": "wamn-edge", "neg_zone": "us-central1-a"},
+            "kind_registry": {
+                "repository_id": "wamn-kind", "location": "us-central1",
+                "description": "kind test pushes of upgrade-environment", "cleanup_older_than_days": 7
+            },
+            "dns_zone": {"name": "wamn-dev", "dns_name": "wamn.dev.", "description": "wamn.dev public zone"},
+            "guard_state": {"bucket": "wamn-dev-tofu-state", "service_account": "wamn-guard@wamn-dev.iam.gserviceaccount.com"},
             "node_pools": [
                 {"name": "main", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "", "taint": ""},
                 {"name": "bench", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "role=bench-host", "taint": "role=bench-host:NoSchedule"},
@@ -258,7 +333,14 @@ mod tests {
 
     #[test]
     fn kcl_and_json_refuse_fields_the_schema_lacks() {
-        for pointer in ["", "/node_pools/0", "/edge"] {
+        for pointer in [
+            "",
+            "/node_pools/0",
+            "/edge",
+            "/kind_registry",
+            "/dns_zone",
+            "/guard_state",
+        ] {
             let mut unknown = document();
             unknown.pointer_mut(pointer).unwrap()["unknown"] = json!("refused");
             let source = format!("import project\nproject.Project {}\n", kcl_value(&unknown));
@@ -290,6 +372,13 @@ mod tests {
             ("/node_pools/0/taint", json!("role=main:unknown")),
             ("/node_pools/1/name", json!("main")),
             ("/node_pools", json!([])),
+            ("/kind_registry/repository_id", json!("Kind")),
+            ("/kind_registry/location", json!("us-central1-a")),
+            ("/kind_registry/cleanup_older_than_days", json!(0)),
+            ("/dns_zone/name", json!("Zone")),
+            ("/dns_zone/dns_name", json!("wamn.dev")),
+            ("/guard_state/bucket", json!("State")),
+            ("/guard_state/service_account", json!("guard@example.com")),
         ] {
             let mut bad = document();
             *bad.pointer_mut(pointer).unwrap() = value;

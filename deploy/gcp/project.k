@@ -11,6 +11,14 @@ project.Project {
     service_secondary_range_name = "services"
     node_service_account = "wamn-nodes@wamn-dev.iam.gserviceaccount.com"
     edge = {neg_name = "wamn-edge", neg_zone = "us-central1-a"}
+    kind_registry = {
+        repository_id = "wamn-kind"
+        location = "us-central1"
+        description = "kind test pushes of upgrade-environment"
+        cleanup_older_than_days = 7
+    }
+    dns_zone = {name = "wamn-dev", dns_name = "wamn.dev.", description = "wamn.dev public zone"}
+    guard_state = {bucket = "wamn-dev-tofu-state", service_account = "wamn-guard@wamn-dev.iam.gserviceaccount.com"}
     node_pools = [
         {
             name = "main"

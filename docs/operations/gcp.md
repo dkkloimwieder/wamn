@@ -148,10 +148,10 @@ The teardown keeps these resources, and the install expects them. The owner make
 - The project custom role `wamnAgentTofuRead`, bound to `wamn-agent@wamn-dev` with no condition. It holds only `dns.managedZones.get` and `storage.buckets.getIamPolicy`, so that the agent's `tofu plan` can read the DNS zone and the IAM policy of the state bucket. It grants no write.
 - The Google service account `wamn-edge`, its `roles/storage.objectViewer` binding on `gs://wamn-dev-web`, and the Workload Identity binding of `edge/wamn-edge-web` (section 4.20).
 - The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
-- The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases.
+- The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases. `wamn-kind` deletes every tag that is older than 7 days. [project.k](../../deploy/gcp/project.k) declares `wamn-kind`, and OpenTofu imports it in section 4.2.
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
-- The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone.
+- The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone, and OpenTofu imports it in section 4.2. OpenTofu does not own the records or the binding.
 - The Google service account `wamn-blob`, its bucket binding and its `roles/artifactregistry.reader` binding on `wamn`.
 - The firewall rule that permits load balancer traffic to nginx on TCP port 8443. OpenTofu owns the load balancer objects in section 4.20.
 
@@ -267,7 +267,7 @@ gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$SA \
   --role=roles/billing.projectManager --condition=None
 ```
 
-The guard reads and writes `guard/state.json` in the state bucket, so give `$SA` object access on `gs://wamn-dev-tofu-state`. Deploy the function. The Pub/Sub trigger calls it as the same service account, which needs the invoker role on the function. The grant takes about a minute to apply, and until then the log shows `403` answers:
+The guard reads and writes `guard/state.json` in the state bucket, so give `$SA` the role `roles/storage.objectUser` on `gs://wamn-dev-tofu-state`, with the condition `guard-state` that admits only objects under `guard/`. `project.k` declares this binding, and OpenTofu imports it in section 4.2. The state bucket stays out of OpenTofu, because it holds the state of OpenTofu. Deploy the function. The Pub/Sub trigger calls it as the same service account, which needs the invoker role on the function. The grant takes about a minute to apply, and until then the log shows `403` answers:
 
 ```bash
 gcloud functions deploy wamn-guard --gen2 --project wamn-dev --region us-central1 \
@@ -376,7 +376,7 @@ $CARGO_TARGET_DIR/debug/wamn-ctl project render deploy/gcp/project.k \
   --state-bucket wamn-dev-tofu-state --state-prefix project "$W/project"
 ```
 
-The renderer writes `main.tf.json`. It writes no import block, because an import of a missing cluster or pool refuses the plan.
+The renderer writes `main.tf.json`. It writes no import block for the cluster or pools, because an import of a missing cluster or pool refuses the plan. It writes import blocks for `wamn-kind`, the zone `wamn-dev` and the guard binding on the state bucket, because a teardown keeps them. After the first apply, these imports change nothing. OpenTofu refuses to destroy the three resources.
 
 Install OpenTofu from the checkout with `tools/install-tofu`. The installer prints the path to its binary:
 
@@ -393,14 +393,15 @@ With the agent's credentials, initialize OpenTofu in the rendered directory:
 )
 ```
 
-Save the plan for the cluster and pools, and post its text to the owner:
+Save the plan for the cluster, the pools and the three imported resources, and post its text to the owner:
 
 ```bash
 (
   cd "$W/project"
   "$TOFU" plan -out=cluster.plan -target=google_container_cluster.cluster \
     -target=google_container_node_pool.main -target=google_container_node_pool.pg \
-    -target=google_container_node_pool.bench
+    -target=google_container_node_pool.bench -target=google_artifact_registry_repository.kind \
+    -target=google_dns_managed_zone.zone -target=google_storage_bucket_iam_member.guard_state
   "$TOFU" show -no-color cluster.plan > plan.txt
 )
 ```
@@ -429,7 +430,9 @@ After the apply, make sure that the plan shows no changes:
 (
   cd "$W/project"
   "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool.main \
-    -target=google_container_node_pool.pg -target=google_container_node_pool.bench
+    -target=google_container_node_pool.pg -target=google_container_node_pool.bench \
+    -target=google_artifact_registry_repository.kind -target=google_dns_managed_zone.zone \
+    -target=google_storage_bucket_iam_member.guard_state
 )
 ```
 
