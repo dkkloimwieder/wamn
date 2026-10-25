@@ -19,15 +19,13 @@ mod bindings {
 }
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
 use serde_json::Value;
 use wamn_event_reg::{EventRegistration, RegistrationInput};
 use wamn_event_wire::{DerivedEvent, Envelope};
 use wamn_materializer::{
     DecideError, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict, VerifiedSourceEventId,
-    decide, decide_derived, serviceable,
-    sql::{select_known_package_ids_sql, select_registrations_sql},
+    decide, decide_derived, serviceable, sql::select_known_package_ids_sql,
     verified_derived_source_event_id, verified_source_event_id,
 };
 
@@ -35,9 +33,6 @@ use bindings::events::MessageHandle as Message;
 use bindings::wamn::jetstream::registration::{self, ConsumerConfig};
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::types::{PgError, SqlValue};
-use bindings::wamn::router_delivery::delivery::{
-    self, DeliveryError, DeliveryOutcome, DeliveryRequest, ParentCausation, Source,
-};
 use bindings::wasmcloud::nats::types::HeaderEntry as Header;
 
 struct Component;
@@ -199,6 +194,7 @@ fn pg_name(error: &PgError) -> String {
 
 struct Serving {
     registration: EventRegistration,
+    enable_sequence: u64,
     condition: Option<wamn_materializer::CompiledCondition>,
     resident_tenant: String,
 }
@@ -206,26 +202,6 @@ struct Serving {
 struct LoadedServings {
     servings: Vec<Serving>,
     known_packages: BTreeSet<String>,
-}
-
-fn durable_name(tenant: &str, package_id: &str, registration_id: &str) -> String {
-    let sanitize = |raw: &str| -> String {
-        raw.chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect()
-    };
-    format!(
-        "mat_{}_{}_{}",
-        sanitize(tenant),
-        sanitize(package_id),
-        sanitize(registration_id)
-    )
 }
 
 fn nats_message_ids(headers: &[Header]) -> Vec<&str> {
@@ -248,44 +224,24 @@ async fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String
         };
         known_packages.insert(package_id.clone());
     }
-    let rows = client::query(select_registrations_sql(), Vec::new())
+    let document = registration::triggers()
         .await
-        .map_err(|error| pg_name(&error))?
-        .rows;
+        .map_err(|error| format!("{error:?}"))?;
+    let rows: Vec<wamn_materializer::workflow::EventTrigger> =
+        serde_json::from_str(&document).map_err(|error| error.to_string())?;
     let mut servings = Vec::with_capacity(rows.len());
     for row in rows {
-        let (
-            Some(SqlValue::Text(registration_id)),
-            Some(SqlValue::Text(package_id)),
-            Some(document),
-            Some(SqlValue::Text(resident_tenant)),
-        ) = (row.first(), row.get(1), row.get(2), row.get(3))
-        else {
-            return Err("registration row shape".into());
+        let registration = EventRegistration {
+            schema_version: wamn_event_reg::SCHEMA_VERSION.to_owned(),
+            registration_id: row.workflow_id,
+            package_id: row.application,
+            source_package_id: row.source_package,
+            entity: row.entity,
+            ops: row.ops,
+            condition: row.condition,
+            input: RegistrationInput::Event,
         };
-        let document = match document {
-            SqlValue::Text(document) | SqlValue::Json(document) => document,
-            other => return Err(format!("registration document shape: {other:?}")),
-        };
-        let registration = match EventRegistration::from_json(document) {
-            Ok(registration) => registration,
-            Err(error) => {
-                counters.held_registrations += 1;
-                eprintln!(
-                    "wamn::materializer HELD registration {registration_id}: invalid document ({error})"
-                );
-                continue;
-            }
-        };
-        if registration.registration_id != *registration_id
-            || registration.package_id != *package_id
-        {
-            counters.held_registrations += 1;
-            eprintln!(
-                "wamn::materializer HELD registration {registration_id}: trusted identity columns disagree with its document"
-            );
-            continue;
-        }
+        let registration_id = &registration.registration_id;
         let condition = match serviceable(&registration) {
             Ok(condition) => condition,
             Err(DecideError::UnserviceableCondition(reason)) => {
@@ -299,7 +255,8 @@ async fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String
         servings.push(Serving {
             registration,
             condition,
-            resident_tenant: resident_tenant.clone(),
+            resident_tenant: required("WAMN_MAT_TENANT")?,
+            enable_sequence: row.enable_sequence,
         });
     }
     Ok(LoadedServings {
@@ -308,21 +265,8 @@ async fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String
     })
 }
 
-struct PreparedMessage {
-    message: Message,
-    payload: Value,
-    stream_seq: u64,
-    source_event_id: String,
-    parent_causation: Option<wamn_event_wire::Causation>,
-}
-
 enum Preparation {
-    Deliver {
-        payload: Value,
-        stream_seq: u64,
-        source_event_id: String,
-        parent_causation: Option<wamn_event_wire::Causation>,
-    },
+    Deliver { source_event_id: String },
     Ack,
     Nack,
     Terminate(&'static str),
@@ -498,139 +442,17 @@ fn prepare_message(
             return Preparation::Terminate("poison-source-id");
         }
     };
-    let parent_causation = match &source {
-        SourceEvent::Cdc(envelope) => envelope.causation.clone(),
-        SourceEvent::Derived(event) => Some(event.causation.clone()),
-    };
+    if stream_seq <= serving.enable_sequence {
+        return Preparation::Ack;
+    }
     match verdict {
-        Verdict::Deliver(payload) => Preparation::Deliver {
-            payload,
-            stream_seq,
-            source_event_id,
-            parent_causation,
-        },
+        Verdict::Deliver(_) => Preparation::Deliver { source_event_id },
         Verdict::Skip(reason) => {
             record_skip(counters, serving, reason);
             Preparation::Ack
         }
         Verdict::Refuse(reason) => refuse_message(serving, message, stream_seq, counters, &reason),
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeliveryDisposition {
-    Ack,
-    Retry,
-    Terminate(&'static str),
-}
-
-fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> DeliveryDisposition {
-    match result {
-        // A registration delivery sends no tag, so not-modified is a completed read.
-        Ok(
-            DeliveryOutcome::Respond(_)
-            | DeliveryOutcome::Emit(_)
-            | DeliveryOutcome::Discard
-            | DeliveryOutcome::NotModified,
-        ) => DeliveryDisposition::Ack,
-        // Partial completion never permits repeating the whole delivery.
-        Ok(DeliveryOutcome::PartiallyCompleted(_)) => {
-            DeliveryDisposition::Terminate("router-terminal")
-        }
-        Ok(DeliveryOutcome::Failed(failure)) => {
-            DeliveryDisposition::Terminate(match failure.failure_type {
-                delivery::FailureType::Terminal => "router-terminal",
-                delivery::FailureType::RetryExhausted => "router-retry-exhausted",
-                delivery::FailureType::InvalidInput => "router-invalid-input",
-                delivery::FailureType::HopLimit => "router-hop-limit",
-                delivery::FailureType::UnreleasedCaller => "router-unreleased-caller",
-                delivery::FailureType::MissingDedupId => "router-missing-dedup-id",
-                delivery::FailureType::RespondWithoutCaller => "router-respond-without-caller",
-                delivery::FailureType::SecondVerdict => "router-second-verdict",
-            })
-        }
-        Err(
-            DeliveryError::SourceNotFound
-            | DeliveryError::InvalidRequest
-            | DeliveryError::InvalidPayload
-            | DeliveryError::FreshCredentialRequired(_),
-        ) => DeliveryDisposition::Terminate("router-deterministic-refusal"),
-        Err(DeliveryError::PermissionDenied(_)) => {
-            DeliveryDisposition::Terminate("router-permission-denied")
-        }
-        Ok(DeliveryOutcome::Cancelled) | Err(DeliveryError::ExecutionFailed) => {
-            DeliveryDisposition::Retry
-        }
-    }
-}
-
-async fn deliver(
-    registration_identity: &str,
-    delivery_id: String,
-    payload: &Value,
-    parent_causation: Option<&wamn_event_wire::Causation>,
-) -> Result<DeliveryOutcome, DeliveryError> {
-    let payload = serde_json::to_string(payload).map_err(|_| DeliveryError::InvalidPayload)?;
-    delivery::deliver(DeliveryRequest {
-        source: Source::Registration(registration_identity.to_string()),
-        delivery_id,
-        payload,
-        caller: None,
-        trace: None,
-        parent_causation: parent_causation.map(|parent| ParentCausation {
-            root: parent.root.clone(),
-            depth: parent.depth,
-        }),
-        if_none_match: None,
-    })
-    .await
-    .outcome
-}
-
-fn event_delivery_id(registration_id: &str, stream_seq: u64, source_event_id: &str) -> String {
-    format!("{registration_id}:event:{stream_seq}:{source_event_id}")
-}
-
-fn batch_delivery_id(registration_id: &str, messages: &[PreparedMessage]) -> String {
-    let mut delivery_id = format!("{registration_id}:batch");
-    for prepared in messages {
-        write!(delivery_id, ":{}", prepared.stream_seq).expect("write to String is infallible");
-    }
-    delivery_id
-}
-
-fn batch_payload(messages: &[PreparedMessage]) -> Value {
-    ordered_batch_payload(messages.iter().map(|prepared| &prepared.payload))
-}
-
-fn ordered_batch_payload<'a>(payloads: impl IntoIterator<Item = &'a Value>) -> Value {
-    Value::Array(payloads.into_iter().cloned().collect())
-}
-
-fn batch_parent_causation(messages: &[PreparedMessage]) -> Option<&wamn_event_wire::Causation> {
-    common_root_parent_causation(
-        messages
-            .iter()
-            .map(|message| message.parent_causation.as_ref()),
-    )
-}
-
-fn common_root_parent_causation<'a>(
-    parents: impl IntoIterator<Item = Option<&'a wamn_event_wire::Causation>>,
-) -> Option<&'a wamn_event_wire::Causation> {
-    let mut parents = parents.into_iter();
-    let first = parents.next()??;
-    let mut deepest = first;
-    for candidate in parents {
-        let candidate = candidate?;
-        if candidate.root != first.root {
-            return None;
-        }
-        if candidate.depth > deepest.depth {
-            deepest = candidate;
-        }
-    }
-    Some(deepest)
 }
 
 async fn acknowledge(message: &Message, counters: &mut Counters) {
@@ -662,41 +484,17 @@ async fn terminate(message: &Message, reason: &'static str, counters: &mut Count
     }
 }
 
-async fn settle_delivery(
-    result: &Result<DeliveryOutcome, DeliveryError>,
-    messages: &[&Message],
-    config: &Config,
-    counters: &mut Counters,
-) {
-    match delivery_disposition(result) {
-        DeliveryDisposition::Ack => {
-            counters.deliveries += 1;
-            for message in messages {
-                acknowledge(message, counters).await;
-            }
-        }
-        DeliveryDisposition::Retry => {
-            eprintln!("wamn::materializer router delivery did not settle: {result:?}");
-            for message in messages {
-                nack(message, config, counters).await;
-            }
-        }
-        DeliveryDisposition::Terminate(reason) => {
-            for message in messages {
-                terminate(message, reason, counters).await;
-            }
-        }
-    }
-}
-
 async fn serve(
     config: &Config,
-    serving: &Serving,
+    servings: &[&Serving],
     known_packages: &BTreeSet<String>,
     counters: &mut Counters,
 ) {
-    let registration = &serving.registration;
-    let registration_identity = registration.qualified_id();
+    let registration = &servings[0].registration;
+    let durable = wamn_materializer::workflow::entity_durable(
+        &registration.source_package_id,
+        &registration.entity,
+    );
     let filter = format!(
         "evt.{}.{}.{}.{}.>",
         config.org,
@@ -709,11 +507,7 @@ async fn serve(
         registration.registration_id.clone(),
         ConsumerConfig {
             stream_name: config.stream.clone(),
-            durable: durable_name(
-                &config.tenant,
-                &registration.package_id,
-                &registration.registration_id,
-            ),
+            durable: durable.clone(),
             filter_subject: filter,
             ack_wait_ms: config.ack_wait_ms,
             max_deliver: config.max_deliver,
@@ -727,15 +521,7 @@ async fn serve(
         );
         return;
     }
-    let consumer = match bindings::events::open_pull_consumer(
-        config.stream.clone(),
-        durable_name(
-            &config.tenant,
-            &registration.package_id,
-            &registration.registration_id,
-        ),
-    )
-    .await
+    let consumer = match bindings::events::open_pull_consumer(config.stream.clone(), durable).await
     {
         Ok(consumer) => consumer,
         Err(error) => {
@@ -763,62 +549,71 @@ async fn serve(
             return;
         }
     };
-    let mut prepared = Vec::with_capacity(messages.len());
     for message in messages {
-        match prepare_message(config, serving, known_packages, &message, counters) {
-            Preparation::Deliver {
-                payload,
-                stream_seq,
-                source_event_id,
-                parent_causation,
-            } => prepared.push(PreparedMessage {
-                message,
-                payload,
-                stream_seq,
-                source_event_id,
-                parent_causation,
-            }),
-            Preparation::Ack => acknowledge(&message, counters).await,
-            Preparation::Nack => nack(&message, config, counters).await,
-            Preparation::Terminate(reason) => terminate(&message, reason, counters).await,
-        }
-    }
-    match registration.input {
-        RegistrationInput::Event => {
-            for prepared in prepared {
-                let delivery_id = event_delivery_id(
-                    &registration_identity,
-                    prepared.stream_seq,
-                    &prepared.source_event_id,
-                );
-                let result = deliver(
-                    &registration_identity,
-                    delivery_id,
-                    &prepared.payload,
-                    prepared.parent_causation.as_ref(),
-                )
-                .await;
-                settle_delivery(&result, &[&prepared.message], config, counters).await;
+        let mut source_event_id = None;
+        let mut refused = false;
+        for serving in servings {
+            match prepare_message(config, serving, known_packages, &message, counters) {
+                Preparation::Deliver {
+                    source_event_id: id,
+                } => source_event_id = Some(id),
+                Preparation::Ack => {}
+                Preparation::Nack => {
+                    nack(&message, config, counters).await;
+                    refused = true;
+                    break;
+                }
+                Preparation::Terminate(reason) => {
+                    terminate(&message, reason, counters).await;
+                    refused = true;
+                    break;
+                }
             }
         }
-        RegistrationInput::Batch if !prepared.is_empty() => {
-            counters.batches += 1;
-            let delivery_id = batch_delivery_id(&registration_identity, &prepared);
-            let payload = batch_payload(&prepared);
-            let result = deliver(
-                &registration_identity,
-                delivery_id,
-                &payload,
-                batch_parent_causation(&prepared),
-            )
-            .await;
-            let messages = prepared
-                .iter()
-                .map(|prepared| &prepared.message)
-                .collect::<Vec<_>>();
-            settle_delivery(&result, &messages, config, counters).await;
+        if refused {
+            continue;
         }
-        RegistrationInput::Batch => {}
+        let contents = message.message();
+        // Even an empty guest match set reaches the transaction: enabled rows
+        // can change between this sweep and admission.
+        let source_event_id = source_event_id.or_else(|| {
+            let source = wamn_materializer::workflow::SourceEvent::decode(&contents.body).ok()?;
+            let headers = contents.headers.clone().unwrap_or_default();
+            source
+                .identity(
+                    &config.tenant,
+                    &config.project,
+                    &config.env,
+                    &nats_message_ids(&headers),
+                )
+                .map(|id| id.as_str().to_owned())
+        });
+        let Some(source_event_id) = source_event_id else {
+            terminate(&message, "poison-source-id", counters).await;
+            continue;
+        };
+        let Ok(envelope) = String::from_utf8(contents.body) else {
+            terminate(&message, "poison-invalid-envelope", counters).await;
+            continue;
+        };
+        match registration::admit(
+            registration.source_package_id.clone(),
+            registration.entity.clone(),
+            envelope,
+            message.sequence(),
+            source_event_id,
+        )
+        .await
+        {
+            Ok(()) => {
+                counters.deliveries += 1;
+                acknowledge(&message, counters).await;
+            }
+            Err(error) => {
+                eprintln!("wamn::materializer batch admission failed: {error:?}");
+                nack(&message, config, counters).await;
+            }
+        }
     }
 }
 
@@ -861,8 +656,18 @@ async fn run_service() {
                 .await;
             }
             Ok(loaded) => {
+                let mut entities = BTreeMap::<_, Vec<_>>::new();
                 for serving in &loaded.servings {
-                    serve(&config, serving, &loaded.known_packages, &mut counters).await;
+                    entities
+                        .entry((
+                            &serving.registration.source_package_id,
+                            &serving.registration.entity,
+                        ))
+                        .or_default()
+                        .push(serving);
+                }
+                for servings in entities.values() {
+                    serve(&config, servings, &loaded.known_packages, &mut counters).await;
                 }
             }
             Err(error) => {
@@ -891,7 +696,6 @@ async fn run_service() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bindings::wamn::router_delivery::delivery::{DeliveryFailure, FailureType};
     use wamn_event_wire::{Causation, Op};
 
     #[test]
@@ -917,6 +721,7 @@ mod tests {
             },
             condition: None,
             resident_tenant: "tenant".into(),
+            enable_sequence: 0,
         }
     }
 
@@ -1061,129 +866,5 @@ mod tests {
             Some(&1)
         );
         assert_eq!(counters.skip_entity, 0);
-    }
-
-    #[test]
-    fn router_completion_matrix_separates_deterministic_poison_from_retry() {
-        let failed = Ok(DeliveryOutcome::Failed(DeliveryFailure {
-            failure_type: FailureType::InvalidInput,
-            code: None,
-            message: "bad event".into(),
-        }));
-        assert_eq!(
-            delivery_disposition(&failed),
-            DeliveryDisposition::Terminate("router-invalid-input")
-        );
-        for result in [
-            Ok(DeliveryOutcome::Cancelled),
-            Err(DeliveryError::ExecutionFailed),
-        ] {
-            assert_eq!(delivery_disposition(&result), DeliveryDisposition::Retry);
-        }
-        for result in [
-            Err(DeliveryError::SourceNotFound),
-            Err(DeliveryError::InvalidRequest),
-            Err(DeliveryError::InvalidPayload),
-        ] {
-            assert_eq!(
-                delivery_disposition(&result),
-                DeliveryDisposition::Terminate("router-deterministic-refusal")
-            );
-        }
-        let permission_denied = Err(DeliveryError::PermissionDenied(
-            delivery::PermissionDenial {
-                operation: "wamn-receiving:receipt/get@2.0.0".into(),
-            },
-        ));
-        assert_eq!(
-            delivery_disposition(&permission_denied),
-            DeliveryDisposition::Terminate("router-permission-denied")
-        );
-        let fresh_required = Err(DeliveryError::FreshCredentialRequired(
-            delivery::PermissionDenial {
-                operation: "wamn-receiving:receipt/get@2.0.0".into(),
-            },
-        ));
-        assert_eq!(
-            delivery_disposition(&fresh_required),
-            DeliveryDisposition::Terminate("router-deterministic-refusal")
-        );
-        for result in [
-            Ok(DeliveryOutcome::Discard),
-            Ok(DeliveryOutcome::NotModified),
-            Ok(DeliveryOutcome::Respond("{}".into())),
-            Ok(DeliveryOutcome::Emit(delivery::Emission {
-                event: "{}".into(),
-                dedup_id: "author-key".into(),
-            })),
-        ] {
-            assert_eq!(delivery_disposition(&result), DeliveryDisposition::Ack);
-        }
-    }
-
-    #[test]
-    fn batch_payload_preserves_fetch_order() {
-        let inputs = [
-            serde_json::json!({"event": "insert", "new": {"id": "first"}}),
-            serde_json::json!({"event": "update", "new": {"id": "second"}}),
-        ];
-        assert_eq!(
-            ordered_batch_payload(&inputs),
-            serde_json::json!([inputs[0], inputs[1]])
-        );
-    }
-
-    #[test]
-    fn a_batch_propagates_the_deepest_parent_only_with_one_truthful_root() {
-        let parents = [
-            Causation {
-                run: "run-a".into(),
-                root: "root".into(),
-                depth: 2,
-            },
-            Causation {
-                run: "run-b".into(),
-                root: "root".into(),
-                depth: 5,
-            },
-            Causation {
-                run: "run-c".into(),
-                root: "root".into(),
-                depth: 5,
-            },
-        ];
-        assert_eq!(
-            common_root_parent_causation(parents.iter().map(Some))
-                .map(|parent| parent.run.as_str()),
-            Some("run-b")
-        );
-    }
-
-    #[test]
-    fn a_batch_with_mixed_roots_mints_a_new_root() {
-        let parents = [
-            Causation {
-                run: "run-a".into(),
-                root: "root-a".into(),
-                depth: 2,
-            },
-            Causation {
-                run: "run-b".into(),
-                root: "root-b".into(),
-                depth: 5,
-            },
-        ];
-        assert_eq!(common_root_parent_causation(parents.iter().map(Some)), None);
-    }
-
-    #[test]
-    fn a_batch_with_any_missing_parent_mints_a_new_root() {
-        let parent = Causation {
-            run: "run-a".into(),
-            root: "root".into(),
-            depth: 2,
-        };
-        assert_eq!(common_root_parent_causation([Some(&parent), None]), None);
-        assert_eq!(common_root_parent_causation([None]), None);
     }
 }

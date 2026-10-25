@@ -610,6 +610,20 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
 }
 
 pub(super) async fn seed_materializer_trigger_rows(project: &Client) -> anyhow::Result<()> {
+    let graph = wamn_schema_generator::operation_reference::read_authored_document(
+        &overlay_package_root().join("publication/wirings/quality_create_inspection.json"),
+        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+    )?;
+    let graph: wamn_catalog::WiringDocument = serde_json::from_value(graph)?;
+    let principal = wamn_project_state::workflow_user_id().to_string();
+    project.execute(
+        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
+        &[&identity().tenant.as_str(), &principal],
+    ).await?;
+    project.execute(
+        "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, enabled, created_by) VALUES ($1, $2, 'receiving', $3, $4, $5::text::jsonb, $6, 'event', $7, 'receipt', ARRAY['insert'], 0, 'invoker', true, $8::text::uuid) ON CONFLICT DO NOTHING",
+        &[&identity().tenant.as_str(), &identity().environment, &graph.wiring_id, &i32::try_from(graph.version)?, &serde_json::to_string(&graph)?, &graph.wiring_hash().as_str(), &BASE_PACKAGE_ID, &principal],
+    ).await?;
     seed_materializer_order(
         project,
         "00000000-0000-0000-0000-000000000304",

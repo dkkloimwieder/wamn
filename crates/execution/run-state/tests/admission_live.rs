@@ -298,7 +298,7 @@ result_json,state_json,status,terminal_reason,updated_at', \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
            ASSERT actual = \
-             'durability_class,environment,execution_principal_id,execution_role,\
+             'durability_class,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
 idempotency_key,input_json,invoked_by,invoked_by_user_id,manifest_digest,node_digests_json,\
 package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,wiring_hash,wiring_id,wiring_version', \
                   'runs INSERT columns (the event and manual run grains) drifted: ' || coalesce(actual, '<none>'); \

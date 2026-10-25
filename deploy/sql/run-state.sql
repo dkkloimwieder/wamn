@@ -434,7 +434,8 @@ CREATE TABLE wamn_run.runs (
     -- explicit IS NOT NULL arms keep PostgreSQL CHECK's NULL truth value from
     -- admitting a half-record. Existing flow rows stay truthful; they are not
     -- backfilled with an identity that was never recorded. The later arms admit
-    -- event runs with no caller, and manual and schedule workflow runs under
+    -- stored event runs from a registration with no caller, and event, manual
+    -- and schedule workflow runs under
     -- their executing principal and role.
     CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
@@ -465,6 +466,20 @@ CREATE TABLE wamn_run.runs (
        AND wiring_id IS NOT NULL AND wiring_id <> ''
        AND wiring_version IS NOT NULL AND wiring_version > 0
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND binding_world_json IS NULL)
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND trigger_source IS NOT DISTINCT FROM 'event'
+       AND registration_id IS NULL
+       AND service_principal_id IS NULL
+       AND wiring_id IS NOT NULL AND wiring_id <> ''
+       AND wiring_version IS NOT NULL AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND manifest_digest IS NOT NULL
+       AND node_digests_json IS NOT NULL AND jsonb_typeof(node_digests_json) = 'object'
+       AND execution_principal_id IS NOT NULL
+       AND execution_role IS NOT NULL AND execution_role <> ''
+       AND invoked_by IS NOT NULL AND invoked_by <> ''
        AND binding_world_json IS NULL)
       OR
       (flow_id IS NULL AND flow_version IS NULL
@@ -499,11 +514,12 @@ CREATE TABLE wamn_run.runs (
        AND invoked_by_user_id IS NULL
        AND binding_world_json IS NULL)
     ),
-    -- Only a manual or a schedule workflow run carries an execution identity,
+    -- Only an event, manual or schedule workflow run carries an execution identity,
     -- an invoker and frozen node digests.
     CONSTRAINT runs_execution_identity_check CHECK (
       trigger_source IS NOT DISTINCT FROM 'manual'
       OR trigger_source IS NOT DISTINCT FROM 'schedule'
+      OR trigger_source IS NOT DISTINCT FROM 'event'
       OR (execution_principal_id IS NULL AND execution_role IS NULL
           AND invoked_by IS NULL AND invoked_by_user_id IS NULL
           AND node_digests_json IS NULL)

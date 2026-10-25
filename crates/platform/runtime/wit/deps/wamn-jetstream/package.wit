@@ -23,4 +23,10 @@ interface registration {
 
   /// Create the admitted registration consumer or refuse configuration drift.
   prepare: async func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;
+
+  /// Read enabled event workflow rows of the host's environment applications.
+  triggers: async func() -> result<string, js-error>;
+
+  /// Admit all matching workflows for one message in one host transaction.
+  admit: async func(source-package: string, entity: string, envelope: string, sequence: u64, source-event-id: string) -> result<_, js-error>;
 }

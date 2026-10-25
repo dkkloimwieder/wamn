@@ -6261,6 +6261,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-materializer"
+version = "0.1.0"
+dependencies = [
+ "jmespath",
+ "serde",
+ "serde_json",
+ "wamn-event-reg",
+ "wamn-event-wire",
+]
+
+[[package]]
 name = "wamn-number-pattern"
 version = "0.1.0"
 
@@ -6363,6 +6374,7 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-integration-tests",
  "wamn-platform-identity",
+ "wamn-project-state",
  "wamn-record-history",
  "wamn-run-state",
  "wamn-runtime",
@@ -6467,6 +6479,7 @@ dependencies = [
  "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-materializer",
  "wamn-number-pattern",
  "wamn-package-artifact",
  "wamn-pg-core",
@@ -6679,6 +6692,7 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-integration-tests",
  "wamn-platform-identity",
+ "wamn-project-state",
  "wamn-runtime",
  "wamn-schema-generator",
  "wamn-test-infrastructure",

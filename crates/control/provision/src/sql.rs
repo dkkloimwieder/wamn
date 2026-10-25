@@ -285,9 +285,9 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
 /// A schedule carries its application service principal. A manual workflow
 /// run carries its executing principal and role, its invoker and its frozen
 /// node digests (`wamn_run_state::queue::insert_manual_run_sql`). The list
-/// reaches no binding world, legacy flow, event ancestry, capture or
+/// reaches no binding world, legacy flow, capture or
 /// caller-outcome column.
-pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 19] = [
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 22] = [
     "tenant_id",
     "package_id",
     "manifest_digest",
@@ -307,6 +307,9 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 19] = [
     "input_json",
     "status",
     "durability_class",
+    "event_source_run_id",
+    "event_root_run_id",
+    "event_depth",
 ];
 
 /// The `run_queue` columns an event or schedule admission writes. The FIFO position, the
@@ -752,7 +755,29 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
     // without this on every write that changes an indexed column.
     sql.push(' ');
     sql.push_str(&grant_tenant_key_execute_sql(EXECUTOR_PLATFORM_ROLE));
+    sql.push_str(&grant_executor_history_reads_sql());
     sql
+}
+
+/// Grant event admission the entity maps and actor lookup columns of model histories.
+/// Run again after package history tables are installed.
+pub fn grant_executor_history_reads_sql() -> String {
+    format!(
+        " DO $event_history$ DECLARE s record; h record; BEGIN \
+         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_name}) THEN RETURN; END IF; \
+         FOR s IN SELECT n.nspname FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid \
+             WHERE c.relname = 'wamn_entities' AND c.relkind = 'r' LOOP \
+           EXECUTE format('GRANT USAGE ON SCHEMA %I TO {role}', s.nspname); \
+           EXECUTE format('GRANT SELECT ON TABLE %I.wamn_entities TO {role}', s.nspname); \
+           FOR h IN EXECUTE format('SELECT DISTINCT c.relname FROM %I.wamn_entities m \
+               JOIN pg_class c ON c.relnamespace = %L::regnamespace \
+               AND c.relname = m.table_name || ''_history''', s.nspname, s.nspname) LOOP \
+             EXECUTE format('GRANT SELECT (row_key, type, transaction_id, position, changed_by) ON TABLE %I.%I TO {role}', s.nspname, h.relname); \
+           END LOOP; \
+         END LOOP; END $event_history$;",
+        role = quote_ident(EXECUTOR_PLATFORM_ROLE),
+        role_name = quote_literal(EXECUTOR_PLATFORM_ROLE),
+    )
 }
 
 /// The materializer's complete production read surface: the installed package
@@ -1284,7 +1309,10 @@ mod tests {
     fn the_executor_platform_surface_is_column_exact_on_every_write() {
         let sql = grant_executor_platform_surface_sql("wamn_run");
         assert_eq!(
-            surface_grants(WorkloadRoleFamily::ExecutorPlatform, &sql),
+            surface_grants(WorkloadRoleFamily::ExecutorPlatform, &sql)
+                .split(" DO $event_history$")
+                .next()
+                .unwrap(),
             "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
              REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, \"wamn_run\" \
@@ -1314,7 +1342,7 @@ mod tests {
              \"trigger_source\", \"registration_id\", \"service_principal_id\", \
              \"execution_principal_id\", \"execution_role\", \"invoked_by\", \
              \"invoked_by_user_id\", \"node_digests_json\", \"idempotency_key\", \"input_json\", \
-             \"status\", \"durability_class\") \
+             \"status\", \"durability_class\", \"event_source_run_id\", \"event_root_run_id\", \"event_depth\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT SELECT, DELETE ON TABLE \"wamn_run\".\"run_queue\" \
              TO \"wamn_executor_platform\"; \

@@ -1011,11 +1011,9 @@ pub enum ServingRegistrationInput {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RegistrationDelivery {
-    /// Walk the wiring inline: the wiring of an event handler.
-    #[default]
-    Walk,
     /// Start a workflow run through the queue: a declared workflow
     /// (docs/plan/workflow-feature.md 4.2).
+    #[default]
     Queue,
 }
 
@@ -1039,8 +1037,7 @@ pub struct ServingRegistration {
     pub ops: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub input: ServingRegistrationInput,
-    /// Left out when it is `walk`, so a release with no workflow keeps its
-    /// bytes and digest.
+    /// The retained manifest delivery marker. Event starts use workflow rows.
     #[serde(default, skip_serializing_if = "is_default")]
     pub delivery: RegistrationDelivery,
 }
@@ -1867,7 +1864,7 @@ mod tests {
             entity: "orders".into(),
             ops: BTreeSet::from(["insert".to_string()]),
             input: ServingRegistrationInput::Event,
-            delivery: RegistrationDelivery::Walk,
+            delivery: RegistrationDelivery::Queue,
         }
     }
 
@@ -2840,7 +2837,7 @@ mod tests {
                     entity: "widget".into(),
                     ops: BTreeSet::from(["insert".into()]),
                     input: ServingRegistrationInput::Event,
-                    delivery: RegistrationDelivery::Walk,
+                    delivery: RegistrationDelivery::Queue,
                 },
             ),
             ("overlay::widget-created".to_owned(), registration()),

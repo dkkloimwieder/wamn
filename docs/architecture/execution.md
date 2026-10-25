@@ -451,16 +451,23 @@ The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wam
 The `wamn-ctl workflow park`, `release` and `runs` commands call it ([queued automation](../operations/queued-automation.md)).
 Its SQL lives in `wamn-run-state` beside the claim SQL.
 
-An application event starts a workflow that the package declares in `wamn.json` under `workflows`.
-The declaration names the wiring and a registration: the source package, the entity, and the row operations.
-The registration can add a JMESPath `condition` over the event, and the materializer delivers only the events for which it holds.
-Apply-package writes the registration row under the workflow id, and publish derives a `ServingRegistration` for the named wiring.
-The wiring can enter at any node, while an event handler's wiring enters at the handler.
-The materializer delivers the event, and the host admits it as a queued run under the authority of the release that declares the workflow.
-The executor credential inserts only the event run columns, and the delivery id is the idempotency key, so a redelivered event admits one run.
-The queue runs the wiring with no caller, and an event handler's wiring still walks when its event arrives.
-A node that needs an operation grant refuses, so an event workflow runs palette nodes.
-`list` shows an event run with the trigger `event`, and `park` and `release` act on it.
+An event workflow is an enabled row of `catalog.workflows` in an environment application.
+Its trigger names the source package, entity, operations, and an optional JMESPath condition over the old and new images.
+Env apply creates one durable consumer per captured entity.
+The materializer reads trigger rows and admits all matching workflows for one message through one host transaction.
+Admission resolves each graph against the serving release and freezes its node digests.
+The materializer acknowledges the message after that transaction commits.
+
+The workflow identity and delivery id form the idempotency key, so redelivery creates no second run.
+A trigger matches only stream sequences greater than its `enable_sequence`.
+
+Each event run executes as the workflow user with its execution role, or `admin` for a callerless invoker.
+The run records the delivery id in `invoked_by`.
+Admission reads the changed record's history inside the same transaction and records its actor in `invoked_by_user_id`.
+It matches the transaction's low 32 bits, the typed primary key, and the operation, then takes the highest history position.
+An absent history row or actor leaves the invoking user null.
+A former event handler runs as a one-node workflow under a run row.
+`list`, `park`, and `release` operate on these event runs.
 
 A package declares no schedule (docs/plan/workflows.md R9).
 A schedule workflow is a row of `catalog.workflows` with trigger `schedule` and a five-field cron in UTC, parsed by `croner`.

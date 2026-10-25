@@ -273,6 +273,9 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
           "operations":{(node.operation.clone()):node.serving}}],
         "routes":[],"attachments":{},"workflow":{"wirings":[wamn_catalog::ServingWiring::new("automation", document.clone())]}
     }))?;
+    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'automation')", &[&TENANT, &workflow_user]).await?;
+    admin.execute("INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)", &[&TENANT, &serde_json::to_string(&document)?, &graph_hash.as_str(), &workflow_user]).await?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -421,6 +424,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
             &admin,
             &workflows,
             jsonata::Execution {
+                release: &release,
                 driver: &driver,
                 postgres: &postgres,
                 scope: &scope,

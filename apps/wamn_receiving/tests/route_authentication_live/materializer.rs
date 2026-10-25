@@ -2,10 +2,6 @@
 
 use super::*;
 
-/// The `wamn:materializer` platform principal id, pinned by
-/// `crates/identity/project-state`.
-const MATERIALIZER_PRINCIPAL: &str = "968bd0cc-e612-5d29-9d6c-af1993b8df0a";
-
 /// The materializer durable and advisory stream before one trigger. A trigger
 /// delivers exactly one more event and emits no advisory, so a stage can run
 /// again on the same cluster.
@@ -61,31 +57,21 @@ pub(super) async fn assert_materializer_causation(
     } = phase.clone();
     let (project, project_task) = connect(&project_url).await?;
 
-    let registrations = project
-        .query(
-            "SELECT package_id, entity_id, registration::text FROM catalog.event_registrations \
-             WHERE tenant_id = $1 ORDER BY package_id COLLATE \"C\", registration_id COLLATE \"C\"",
-            &[&identity().tenant.as_str()],
-        )
-        .await
-        .context("read the installed event-registration set")?;
+    let triggers = project.query(
+        "SELECT workflow_id, source_package, entity, ops FROM catalog.workflows WHERE tenant_id = $1 AND environment = $2 AND application = 'receiving' AND enabled AND trigger = 'event'",
+        &[&identity().tenant.as_str(), &identity().environment],
+    ).await.context("read enabled event workflows")?;
     anyhow::ensure!(
-        registrations.len() == 1,
-        "Receiving release installed {} registrations instead of one",
-        registrations.len()
+        triggers.len() == 1,
+        "Receiving requires one enabled event workflow"
     );
-    let registration = &registrations[0];
-    let registration_document: Value = serde_json::from_str(&registration.get::<_, String>(2))
-        .context("parse the installed event registration")?;
+    let trigger = &triggers[0];
     anyhow::ensure!(
-        registration.get::<_, String>(0) == OVERLAY_PACKAGE_ID
-            && registration.get::<_, String>(1) == "receipt"
-            && registration_document["registration-id"] == "quality.create_inspection"
-            && registration_document["package-id"] == OVERLAY_PACKAGE_ID
-            && registration_document["source-package-id"] == BASE_PACKAGE_ID
-            && registration_document["entity"] == "receipt"
-            && registration_document["ops"] == serde_json::json!(["insert"]),
-        "installed event registration is not the exact Acme receipt binding: {registration_document}"
+        trigger.get::<_, String>(0) == "quality_create_inspection"
+            && trigger.get::<_, String>(1) == BASE_PACKAGE_ID
+            && trigger.get::<_, String>(2) == "receipt"
+            && trigger.get::<_, Vec<String>>(3) == ["insert"],
+        "the event workflow differs from the Acme receipt binding"
     );
 
     let jetstream = async_nats::jetstream::new(nats);
@@ -204,10 +190,11 @@ pub(super) async fn assert_materializer_causation(
             && inspection_rows[0].get::<_, i32>(1) == 1,
         "receipt {receipt_id} did not materialize to exactly one pending revision-1 inspection"
     );
-    // Spec test 4: the post-commit handler write stamps the materializer principal.
+    // The queued event workflow stamps its executing principal.
     anyhow::ensure!(
-        inspection_rows[0].get::<_, String>(2) == MATERIALIZER_PRINCIPAL,
-        "the quality.create_inspection write did not stamp wamn:materializer as created_by"
+        inspection_rows[0].get::<_, String>(2)
+            == wamn_project_state::workflow_user_id().to_string(),
+        "the quality.create_inspection write did not stamp the workflow user as created_by"
     );
 
     let settled_deadline = std::time::Instant::now() + Duration::from_secs(30);

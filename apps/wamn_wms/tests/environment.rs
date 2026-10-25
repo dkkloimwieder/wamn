@@ -908,58 +908,36 @@ pub fn package_manifest_at(root: &Path) -> anyhow::Result<wamn_schema_generator:
     .with_context(|| format!("parse {}", path.display()))
 }
 
-/// The materializer consumer of each registration of the WMS package
-/// `manifest`, as the operator declares it to provisioning: the workflow
-/// `movement_label` today.
-///
-/// The durable name is the one the materializer attaches to
-/// (`mat_<tenant>_<package>_<registration>`), and the filter is the
-/// registration entity's subjects in this environment.
+/// One durable consumer for every captured entity in the WMS package.
 pub fn declared_consumers(
     manifest: &wamn_schema_generator::PackageManifest,
 ) -> Vec<async_nats::jetstream::consumer::pull::Config> {
-    let sanitize = |value: &str| {
-        value
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>()
-    };
-    let handlers = manifest
-        .custom_operations
-        .iter()
-        .filter_map(|(name, operation)| Some((name, operation.registration()?)));
-    let workflows = manifest
-        .workflows
-        .iter()
-        .filter_map(|(name, workflow)| Some((name, workflow.registration.as_ref()?)));
-    handlers
-        .chain(workflows)
-        .map(|(name, registration)| {
-            wamn_control_provision::events::materializer_consumer_config(
-                &format!(
-                    "mat_{}_{}_{}",
-                    sanitize(identity().tenant.as_str()),
-                    sanitize(&manifest.package.id),
-                    sanitize(name)
-                ),
-                &format!(
-                    "evt.{}.{}.{}.{}.>",
-                    identity().org,
-                    identity().project,
-                    identity().environment,
-                    wamn_event_wire::subject_token(&registration.entity)
-                ),
-                Duration::from_secs(30),
-                5,
-            )
-        })
-        .collect()
+    wamn_control_provision::events::entity_consumers(
+        &wamn_control_registry::Triple::new(
+            identity().org.clone(),
+            identity().project.clone(),
+            identity().environment.clone(),
+        ),
+        [manifest],
+    )
+}
+
+async fn seed_event_workflow(project: &tokio_postgres::Client) -> anyhow::Result<()> {
+    let graph = wamn_schema_generator::operation_reference::read_authored_document(
+        &package_root().join("publication/wirings/inventory_move_and_label.json"),
+        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+    )?;
+    let graph: wamn_catalog::WiringDocument = serde_json::from_value(graph)?;
+    let principal = wamn_project_state::workflow_user_id().to_string();
+    project.execute(
+        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
+        &[&identity().tenant.as_str(), &principal],
+    ).await?;
+    project.execute(
+        "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, condition, enable_sequence, execution_type, enabled, created_by) VALUES ($1, $2, 'wamn_wms', $3, $4, $5::text::jsonb, $6, 'event', 'wamn_wms', 'packaging', ARRAY['update'], 'old.location_id != new.location_id', 0, 'invoker', true, $7::text::uuid) ON CONFLICT DO NOTHING",
+        &[&identity().tenant.as_str(), &identity().environment, &graph.wiring_id, &i32::try_from(graph.version)?, &serde_json::to_string(&graph)?, &graph.wiring_hash().as_str(), &principal],
+    ).await?;
+    Ok(())
 }
 
 /// Enable the same CDC and registry-reader credentials as the WMS script,
@@ -1013,6 +991,7 @@ pub async fn configure_cdc(
         emit_secret: Some(secret_path.clone()),
     };
     let (project, task) = connect(&route.database_url).await?;
+    seed_event_workflow(project.as_ref()).await?;
     let result = shared::configure_cdc(args, project.as_ref(), project.as_ref()).await;
     drop(project);
     task.abort();

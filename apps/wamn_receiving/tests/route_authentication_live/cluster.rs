@@ -37,9 +37,7 @@ use wamn_test_infrastructure::secrets::{HostSecret, HostSecretsInput, derive_hos
 
 use super::{connect, identity, repository_root, routes};
 use resources::{Resources, checked, write_private};
-use wamn_control_provision::events::{
-    advisory_stream_config, materializer_consumer_config, source_stream_config,
-};
+use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker::{self, EventBroker};
 
@@ -200,61 +198,27 @@ fn journey_inputs(
     }
 }
 
-/// The materializer consumer of each registration of the packages at
-/// `roots`, as the operator declares it to provisioning.
+/// One durable consumer for every captured entity in the installed packages.
 fn declared_consumers<'a>(
     roots: impl IntoIterator<Item = &'a Path>,
 ) -> anyhow::Result<Vec<async_nats::jetstream::consumer::pull::Config>> {
-    let mut consumers = Vec::new();
-    let sanitize = |value: &str| {
-        value
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>()
-    };
-    for root in roots {
-        let path = wamn_schema_generator::package_manifest_path(root);
-        let manifest = wamn_schema_generator::PackageManifest::from_slice(&fs::read(path)?)?;
-        for (name, operation) in &manifest.custom_operations {
-            if let Some(registration) = &operation.registration {
-                let durable = format!(
-                    "mat_{}_{}_{}",
-                    sanitize(identity().tenant.as_str()),
-                    sanitize(&manifest.package.id),
-                    sanitize(name)
-                );
-                ensure!(
-                    !consumers.iter().any(
-                        |consumer: &async_nats::jetstream::consumer::pull::Config| consumer
-                            .durable_name
-                            .as_deref()
-                            == Some(durable.as_str())
-                    ),
-                    "the app registrations have colliding durable names"
-                );
-                let filter = format!(
-                    "evt.{}.{}.{}.{}.>",
-                    identity().org,
-                    identity().project,
-                    identity().environment,
-                    wamn_event_wire::subject_token(&registration.entity)
-                );
-                consumers.push(materializer_consumer_config(
-                    &durable,
-                    &filter,
-                    Duration::from_secs(30),
-                    5,
-                ));
-            }
-        }
-    }
-    Ok(consumers)
+    let manifests = roots
+        .into_iter()
+        .map(|root| {
+            let path = wamn_schema_generator::package_manifest_path(root);
+            Ok(wamn_schema_generator::PackageManifest::from_slice(
+                &fs::read(path)?,
+            )?)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(wamn_control_provision::events::entity_consumers(
+        &Triple::new(
+            identity().org.clone(),
+            identity().project.clone(),
+            identity().environment.clone(),
+        ),
+        &manifests,
+    ))
 }
 
 async fn postgres_ready(cluster: &Resources, address: Ipv4Addr, port: u16) -> anyhow::Result<()> {

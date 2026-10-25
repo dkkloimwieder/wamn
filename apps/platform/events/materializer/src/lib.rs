@@ -5,6 +5,7 @@ mod context;
 mod decide;
 mod input;
 pub mod sql;
+pub mod workflow;
 
 pub use condition::{CompiledCondition, ConditionOutcome, compile_condition};
 pub use context::{RowTenant, derived_event_context, event_context, row_tenant};

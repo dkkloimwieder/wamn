@@ -53,6 +53,9 @@ use wamn_workflow::{
     QueueService, QueueServiceConfig, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
 };
 
+#[path = "workflow_schedule_live/event_batch.rs"]
+mod event_batch;
+
 const TENANT: &str = "schedule-live";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";

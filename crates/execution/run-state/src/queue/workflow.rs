@@ -48,30 +48,29 @@ pub fn select_automation_run_sql() -> &'static str {
         AND input_json = $10::text::jsonb"
 }
 
-/// Admit one event run: a registration started a released wiring, and the run
-/// executes with no caller. Binds are those of [`insert_automation_run_sql`],
-/// with the registration id as `$8`.
+/// Admit one event workflow with its executor, actor, frozen nodes and delivery id.
+/// Binds: tenant, application, release, environment, workflow, version, hash,
+/// principal, role, delivery, actor, node digests, key, input, durability,
+/// source run, root run, depth.
 pub fn insert_event_run_sql() -> String {
     format!(
         "INSERT INTO runs (tenant_id, package_id, manifest_digest, environment, \
-             wiring_id, wiring_version, wiring_hash, trigger_source, registration_id, \
-             idempotency_key, input_json, status, durability_class) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'event', $8, $9, \
-                 $10::text::jsonb, '{dispatched}', $11) \
+             wiring_id, wiring_version, wiring_hash, trigger_source, \
+             execution_principal_id, execution_role, invoked_by, invoked_by_user_id, \
+             node_digests_json, idempotency_key, input_json, status, durability_class, \
+             event_source_run_id, event_root_run_id, event_depth) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'event', $8::text::uuid, $9, $10, \
+                 $11::text::uuid, $12::text::jsonb, $13, $14::text::jsonb, '{dispatched}', $15, $16, $17, $18) \
          ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
          RETURNING run_id",
         dispatched = RunStatus::Dispatched.as_sql(),
     )
 }
 
-/// The run a repeated event start admitted first, like
-/// [`select_automation_run_sql`], with the registration id as `$8`.
+/// Read the original event run by tenant, idempotency key and input.
 pub fn select_event_run_sql() -> &'static str {
-    "SELECT run_id FROM runs WHERE tenant_id = $1 AND package_id = $2 \
-        AND manifest_digest = $3 AND environment = $4 AND wiring_id = $5 \
-        AND wiring_version = $6 AND wiring_hash = $7 AND trigger_source = 'event' \
-        AND registration_id = $8 AND idempotency_key = $9 \
-        AND input_json = $10::text::jsonb"
+    "SELECT run_id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2 \
+        AND trigger_source = 'event' AND input_json = $3::text::jsonb"
 }
 
 /// Admit one manual run of an environment workflow (docs/plan/workflows.md

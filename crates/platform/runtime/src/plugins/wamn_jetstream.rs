@@ -1,7 +1,7 @@
 //! Host-owned registration activation and event publication.
 //!
 //! Native `wasmcloud:nats` owns materializer attachment, delivery and settlement.
-//! This module retains exact release-registration selection, durable drift
+//! This module selects enabled event workflows, retains durable drift
 //! checks, and host-only derived-event publication. Broker advisories replace
 //! the payload DLQ.
 
@@ -488,19 +488,9 @@ impl WamnJetstream {
         ])
     }
 
-    /// Attach the release this process serves — reader 3 of the release-manifest
-    /// loaded release, consulted by reference. This plugin never loads, parses or
-    /// digest-verifies a manifest, and keeps no copy of one: the loaded release already
-    /// holds the digest-named document for the life of the process, and a
-    /// digest-named object has no stale state to refresh or invalidate.
-    ///
-    /// # Where the release gate starts, and where it stops
-    ///
-    /// `None` means this host was given no release, and then every consumer bind
-    /// is REFUSED. A host that cannot name the registrations of a release cannot
-    /// decide that an event belongs to one, and delivering it anyway would hand
-    /// the identity back to the guest sweep this gate took it from.
-    ///
+    /// Bind the host release and its environment applications. A missing
+    /// release refuses every consumer attachment. Enabled workflow rows
+    /// supply the event subscriptions inside that scope.
     pub fn with_release(mut self, release: Option<Arc<LoadedRelease>>) -> Self {
         self.release = release;
         self
@@ -839,6 +829,7 @@ fn subject_source(subject: &str) -> Option<(&str, &str)> {
 
 fn require_registration(
     release: Option<&LoadedRelease>,
+    triggers: &[wamn_materializer::workflow::EventTrigger],
     coordinates: &EventCoordinates,
     stream: &str,
     package_id: &str,
@@ -856,7 +847,6 @@ fn require_registration(
         "evt.{}.{}.{}.",
         coordinates.org, coordinates.project, coordinates.environment,
     );
-    let manifest = release.manifest();
     if release.scope().environment.as_str() != coordinates.environment.as_ref()
         || stream
             != stream_name(
@@ -870,15 +860,12 @@ fn require_registration(
             "{UNREGISTERED_SOURCE}: stream or filter differs from the platform event binding"
         ));
     }
-    let qualified_registration_id = format!("{package_id}::{registration_id}");
-    let registration = manifest
-        .workflow
-        .registrations
-        .get(&qualified_registration_id)
+    let registration = triggers
+        .iter()
+        .find(|trigger| trigger.application == package_id && trigger.workflow_id == registration_id)
         .ok_or_else(|| {
             format!(
-                "{UNREGISTERED_SOURCE}: the carried release has no registration \
-                 {qualified_registration_id:?}"
+                "{UNREGISTERED_SOURCE}: no enabled event trigger {package_id:?}/{registration_id:?}"
             )
         })?;
     let (entity, op) = subject_source(filter_subject).ok_or_else(|| {
@@ -888,7 +875,12 @@ fn require_registration(
         )
     })?;
     let any_op = op == ">" || op == "*";
-    if subject_token(&registration.entity) != entity || (!any_op && !registration.ops.contains(op))
+    if subject_token(&registration.entity) != entity
+        || (!any_op
+            && !registration
+                .ops
+                .iter()
+                .any(|candidate| candidate.as_str() == op))
     {
         return Err(format!(
             "{UNREGISTERED_SOURCE}: registration {registration_id:?} does not source entity \
@@ -914,12 +906,22 @@ fn exact_consumer_config_drift(
 
 async fn prepare_consumer(
     plugin: &WamnJetstream,
+    postgres: &crate::plugins::WamnPostgres,
     config: &registration::ConsumerConfig,
     package_id: &str,
     registration_id: &str,
 ) -> Result<(), JsError> {
+    let release = plugin
+        .release
+        .as_deref()
+        .ok_or_else(|| JsError::Other(UNREGISTERED_SOURCE.into()))?;
+    let triggers = postgres
+        .event_triggers(&plugin.event_coordinates.project, release)
+        .await
+        .map_err(|error| JsError::Other(error.to_string()))?;
     require_registration(
         plugin.release.as_deref(),
+        &triggers,
         &plugin.event_coordinates,
         &config.stream_name,
         package_id,
@@ -927,6 +929,17 @@ async fn prepare_consumer(
         &config.filter_subject,
     )
     .map_err(JsError::Other)?;
+    let trigger = triggers
+        .iter()
+        .find(|trigger| trigger.application == package_id && trigger.workflow_id == registration_id)
+        .ok_or_else(|| JsError::Other(UNREGISTERED_SOURCE.into()))?;
+    if config.durable
+        != wamn_materializer::workflow::entity_durable(&trigger.source_package, &trigger.entity)
+    {
+        return Err(JsError::Other(format!(
+            "{UNREGISTERED_SOURCE}: durable differs from the entity consumer"
+        )));
+    }
     if config.max_deliver == 0 || config.ack_wait_ms == 0 {
         return Err(JsError::Other(
             "registration delivery and acknowledgement bounds must be nonzero".into(),
@@ -958,23 +971,107 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<std::sync::A
     ctx.try_get_plugin::<WamnJetstream>(WAMN_JETSTREAM_ID)
 }
 
+fn event_plugins<T: 'static + Send>(
+    accessor: &Accessor<T, SharedCtx>,
+) -> wash_runtime::wasmtime::Result<(
+    Arc<WamnJetstream>,
+    Arc<crate::plugins::WamnPostgres>,
+    String,
+)> {
+    accessor.with(|mut access| {
+        let ctx = access.get();
+        Ok((
+            plugin_of(&ctx)?,
+            ctx.try_get_plugin::<crate::plugins::WamnPostgres>(
+                crate::plugins::wamn_postgres::WAMN_POSTGRES_ID,
+            )?,
+            ctx.component_id.to_string(),
+        ))
+    })
+}
+
 impl registration::Host for ActiveCtx<'_> {}
 
 impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
+    async fn triggers(
+        accessor: &Accessor<T, Self>,
+    ) -> wash_runtime::wasmtime::Result<Result<String, JsError>> {
+        let (plugin, postgres, component) = event_plugins(accessor)?;
+        let Some(release) = plugin.release.as_deref() else {
+            return Ok(Err(JsError::Other(UNREGISTERED_SOURCE.into())));
+        };
+        if let Err(error) = postgres.require_event_materializer(&component, release) {
+            return Ok(Err(JsError::Other(error.to_string())));
+        }
+        Ok(
+            match postgres
+                .event_triggers(&plugin.event_coordinates.project, release)
+                .await
+            {
+                Ok(triggers) => serde_json::to_string(&triggers)
+                    .map_err(|error| JsError::Other(error.to_string())),
+                Err(error) => Err(JsError::Other(error.to_string())),
+            },
+        )
+    }
+
+    async fn admit(
+        accessor: &Accessor<T, Self>,
+        source_package: String,
+        entity: String,
+        envelope: String,
+        sequence: u64,
+        source_event_id: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
+        let (plugin, postgres, component) = event_plugins(accessor)?;
+        let Some(release) = plugin.release.as_deref() else {
+            return Ok(Err(JsError::Other(UNREGISTERED_SOURCE.into())));
+        };
+        if let Err(error) = postgres.require_event_materializer(&component, release) {
+            return Ok(Err(JsError::Other(error.to_string())));
+        }
+        Ok(postgres
+            .admit_event_batch(
+                &plugin.event_coordinates.project,
+                release,
+                &crate::plugins::wamn_postgres::EventBatchAdmission {
+                    source_package: &source_package,
+                    entity: &entity,
+                    envelope: &envelope,
+                    sequence,
+                    source_event_id: &source_event_id,
+                },
+            )
+            .await
+            .map_err(|error| JsError::Other(error.to_string())))
+    }
+
     async fn prepare(
         accessor: &Accessor<T, Self>,
         package_id: String,
         registration_id: String,
         config: registration::ConsumerConfig,
     ) -> wash_runtime::wasmtime::Result<Result<(), JsError>> {
-        let (plugin, component_id) = accessor.with(|mut access| {
+        let (plugin, postgres, component_id) = accessor.with(|mut access| {
             let ctx = access.get();
-            Ok::<_, wash_runtime::wasmtime::Error>((plugin_of(&ctx)?, ctx.component_id.to_string()))
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.try_get_plugin::<crate::plugins::WamnPostgres>(
+                    crate::plugins::wamn_postgres::WAMN_POSTGRES_ID,
+                )?,
+                ctx.component_id.to_string(),
+            ))
         })?;
+        let Some(release) = plugin.release.as_deref() else {
+            return Ok(Err(JsError::Other(UNREGISTERED_SOURCE.into())));
+        };
+        if let Err(error) = postgres.require_event_materializer(&component_id, release) {
+            return Ok(Err(JsError::Other(error.to_string())));
+        }
         let claim = plugin.claim_for(&component_id);
         let span = js_span(&claim, &component_id, "prepare-registration", None);
         let started = std::time::Instant::now();
-        let result = prepare_consumer(&plugin, &config, &package_id, &registration_id)
+        let result = prepare_consumer(&plugin, &postgres, &config, &package_id, &registration_id)
             .instrument(span)
             .await;
         record_effect_ms(
@@ -994,10 +1091,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use wamn_catalog::{
-        PackageCoordinate, ServingManifest, ServingRegistration, ServingRegistrationInput,
-        ServingRelease, ServingWiring,
-    };
+    use wamn_catalog::{PackageCoordinate, ServingManifest, ServingRelease};
 
     use super::*;
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
@@ -1328,30 +1422,17 @@ mod tests {
         assert!(cfg.nats_url.is_none());
     }
 
-    /// A serving release registering exactly one entity's ops.
-    fn release_registering(entity: &str, ops: &[&str]) -> ServingManifest {
-        let registration = ServingRegistration {
-            package_id: "cat".into(),
-            source_package_id: "cat".into(),
-            wiring_id: "event-handler".into(),
-            wiring_version: 1,
-            entity: entity.to_string(),
-            ops: ops.iter().copied().map(String::from).collect(),
-            input: ServingRegistrationInput::Event,
-            delivery: wamn_catalog::RegistrationDelivery::Walk,
-        };
+    /// Trigger rows work with a release that declares no registrations.
+    fn release_without_registrations() -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::new(),
             BTreeSet::new(),
-            BTreeSet::from([ServingWiring::new(
-                "cat",
-                wamn_catalog::fixture_graph("event-handler", 1),
-            )]),
+            BTreeSet::new(),
             BTreeMap::new(),
-            BTreeMap::from([("cat::r1".to_string(), registration)]),
+            BTreeMap::new(),
         )
         .expect("the fixture release is valid")
     }
@@ -1359,7 +1440,7 @@ mod tests {
     #[test]
     fn registration_preparation_requires_the_exact_release_source() {
         let manifest = LoadedRelease::load_canonical_bytes(
-            &release_registering("widgets", &["insert"]).canonical_bytes(),
+            &release_without_registrations().canonical_bytes(),
             "fixture",
             wamn_engine::release_manifest::ReleaseScope::new("tenant", "prod").with_applications(
                 [(
@@ -1372,6 +1453,15 @@ mod tests {
             ),
         )
         .expect("the fixture release loads");
+        let triggers = vec![wamn_materializer::workflow::EventTrigger {
+            application: "cat".into(),
+            workflow_id: "r1".into(),
+            source_package: "cat".into(),
+            entity: "widgets".into(),
+            ops: vec![Op::Insert],
+            condition: None,
+            enable_sequence: 0,
+        }];
         let coordinates = EventCoordinates {
             org: "fixture".into(),
             project: "proj".into(),
@@ -1379,6 +1469,7 @@ mod tests {
         };
         require_registration(
             Some(&manifest),
+            &triggers,
             &coordinates,
             "EVT_7_fixture_4_proj_4_prod",
             "cat",
@@ -1394,6 +1485,7 @@ mod tests {
             assert!(
                 require_registration(
                     Some(&manifest),
+                    &triggers,
                     &coordinates,
                     &foreign_stream,
                     "cat",
@@ -1406,6 +1498,7 @@ mod tests {
         assert!(
             require_registration(
                 None,
+                &triggers,
                 &coordinates,
                 "EVT_7_fixture_4_proj_4_prod",
                 "cat",
@@ -1426,6 +1519,7 @@ mod tests {
             assert!(
                 require_registration(
                     Some(&manifest),
+                    &triggers,
                     &coordinates,
                     "EVT_7_fixture_4_proj_4_prod",
                     "cat",
@@ -1440,6 +1534,7 @@ mod tests {
         assert!(
             require_registration(
                 Some(&manifest),
+                &triggers,
                 &coordinates,
                 "EVT_7_fixture_4_proj_4_prod",
                 "cat",
@@ -1452,6 +1547,7 @@ mod tests {
         assert!(
             require_registration(
                 Some(&manifest),
+                &triggers,
                 &coordinates,
                 "EVT_7_fixture_4_proj_4_prod",
                 "cat",
@@ -1464,6 +1560,7 @@ mod tests {
         assert!(
             require_registration(
                 Some(&manifest),
+                &triggers,
                 &coordinates,
                 "EVT_7_fixture_4_proj_4_prod",
                 "other_package",

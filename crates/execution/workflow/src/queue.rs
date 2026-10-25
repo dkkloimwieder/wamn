@@ -437,6 +437,7 @@ async fn drain_one(
                         run,
                         wiring_hash: workflow.wiring_hash,
                         node_digests: workflow.node_digests,
+                        causation: workflow.causation,
                         identity: WorkflowIdentity {
                             principal_id: workflow.execution_principal_id,
                             role: workflow.execution_role,
@@ -500,6 +501,10 @@ async fn drive_claim(
     result_only: bool,
     request: QueueDriverRequest,
 ) -> anyhow::Result<()> {
+    let causation = match &request {
+        QueueDriverRequest::Workflow(request) => request.causation.clone(),
+        _ => None,
+    };
     let workflow_run = matches!(request, QueueDriverRequest::Workflow(_));
     let candidate_coordinate = match &request {
         QueueDriverRequest::Released(_) | QueueDriverRequest::Workflow(_) => None,
@@ -673,11 +678,11 @@ async fn drive_claim(
                     operation,
                     payload: event.clone(),
                     dedup_id,
-                    causation: Causation {
+                    causation: causation.unwrap_or_else(|| Causation {
                         run: run_id.to_owned(),
                         root: run_id.to_owned(),
                         depth: 0,
-                    },
+                    }),
                 })
                 .await;
             match publish {

@@ -41,6 +41,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 wamn-control = { workspace = true }
 wamn-platform-identity = { workspace = true }
+wamn-project-state = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-control-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }

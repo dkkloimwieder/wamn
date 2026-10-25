@@ -1796,7 +1796,7 @@ fn derive_serving_registrations(
                     entity: declaration.entity.clone(),
                     ops: serving_ops(declaration),
                     input: wamn_catalog::ServingRegistrationInput::Event,
-                    delivery: wamn_catalog::RegistrationDelivery::Walk,
+                    delivery: wamn_catalog::RegistrationDelivery::Queue,
                 },
             );
         }

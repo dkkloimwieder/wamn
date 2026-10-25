@@ -7,11 +7,10 @@
 use serde_json::json;
 use wash_runtime::host::probes::Liveness;
 
-use wamn_runtime::plugins::wamn_postgres::{EventRunAdmission, EventRunAdmitted};
+use wamn_runtime::plugins::wamn_postgres::EventBatchAdmission;
 
 use super::{
-    Node, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver, SERVICE, TENANT, WamnJetstream,
-    WamnPostgres, drain_one,
+    Node, QueueScope, RouterDriver, SERVICE, TENANT, WamnJetstream, WamnPostgres, drain_one,
 };
 use crate::{PostgresWorkflows, StartRequest, Trigger, WorkflowErrorType, Workflows as _};
 
@@ -41,6 +40,7 @@ pub(super) fn node(bytes: Vec<u8>) -> Node {
 }
 
 pub(super) struct Execution<'a> {
+    pub(super) release: &'a wamn_engine::release_manifest::LoadedRelease,
     pub(super) driver: &'a RouterDriver,
     pub(super) postgres: &'a WamnPostgres,
     pub(super) scope: &'a QueueScope,
@@ -105,65 +105,53 @@ pub(super) async fn run(
 
 /// An event-started run enters the queue through the host's executor
 /// credential, under the release's authority (wamn-upl3.6). The queue runs it
-/// with no caller, and the contract lists, parks and releases it.
+/// as the workflow user, and the contract lists, parks and releases it.
 async fn event_run(
     admin: &tokio_postgres::Client,
     workflows: &PostgresWorkflows,
     execution: &Execution<'_>,
 ) -> anyhow::Result<()> {
-    let wiring_hash: String = admin
-        .query_one(
-            "SELECT wiring_hash FROM catalog.wirings WHERE tenant_id = $1 AND wiring_id = 'echo'",
-            &[&TENANT],
-        )
-        .await?
-        .get(0);
-    let row = json!({"event": "insert", "new": {
+    let envelope = json!({"op": "insert", "new": {
         "id": "m-2", "idempotency_key": "k-2", "kind": "move", "packaging_id": "p-2",
-        "from_location_id": "l-0", "to_location_id": "l-3", "quantity": "1"}});
-    let manifest_digest: String = admin
-        .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-            &[&TENANT],
-        )
-        .await?
-        .get(0);
-    let mut admission = EventRunAdmission {
-        package_id: "automation",
-        manifest_digest: &manifest_digest,
-        environment: "test",
-        wiring_id: "echo",
-        wiring_version: 1,
-        wiring_hash: &wiring_hash,
-        registration_id: "automation::movement_label",
-        idempotency_key: "automation::movement_label:event:7:e-7",
-        input: &row,
+        "from_location_id": "l-0", "to_location_id": "l-3", "quantity": "1"},
+        "package_id": "automation", "entity": "movement", "table": "movement", "lsn": 7,
+        "txid": 1, "commit_ts": "2026-10-25T00:00:00Z"})
+    .to_string();
+    let source_id = wamn_event_wire::msg_id(&execution.scope.project, "test", 7);
+    let mut admission = EventBatchAdmission {
+        source_package: "automation",
+        entity: "movement",
+        envelope: &envelope,
+        sequence: 7,
+        source_event_id: &source_id,
     };
-    let EventRunAdmitted::Queued { run_id: run } = execution
+    execution
         .postgres
-        .admit_event_run(QUEUE_CLAIM_SCOPE, &admission)
-        .await?
-    else {
-        anyhow::bail!("the first delivery of an event conflicted");
-    };
-    assert_eq!(
+        .admit_event_batch(&execution.scope.project, execution.release, &admission)
+        .await?;
+    execution
+        .postgres
+        .admit_event_batch(&execution.scope.project, execution.release, &admission)
+        .await?;
+    let runs = admin
+        .query(
+            "SELECT run_id FROM wamn_run.runs WHERE trigger_source = 'event'",
+            &[],
+        )
+        .await?;
+    assert_eq!(runs.len(), 1, "redelivery admits no second run");
+    let run: String = runs[0].get(0);
+    let mut other: serde_json::Value = serde_json::from_str(&envelope)?;
+    other["new"]["id"] = "m-3".into();
+    let other = other.to_string();
+    admission.envelope = &other;
+    assert!(
         execution
             .postgres
-            .admit_event_run(QUEUE_CLAIM_SCOPE, &admission)
-            .await?,
-        EventRunAdmitted::Queued {
-            run_id: run.clone()
-        },
-        "a redelivered event admits no second run"
-    );
-    let other = json!({"event": "insert", "new": {"id": "m-3"}});
-    admission.input = &other;
-    assert_eq!(
-        execution
-            .postgres
-            .admit_event_run(QUEUE_CLAIM_SCOPE, &admission)
-            .await?,
-        EventRunAdmitted::Conflict
+            .admit_event_batch(&execution.scope.project, execution.release, &admission)
+            .await
+            .is_err(),
+        "changed input must conflict"
     );
 
     let listed = workflows.list(10).await?;
@@ -201,7 +189,7 @@ async fn event_run(
     );
     let stored = admin
         .query_one(
-            "SELECT status, result_json::text, trigger_source, registration_id, \
+            "SELECT status, result_json::text, trigger_source, execution_principal_id::text, \
                     service_principal_id IS NULL FROM wamn_run.runs WHERE run_id = $1",
             &[&run],
         )
@@ -213,7 +201,10 @@ async fn event_run(
             "movement_id": "m-2", "packaging_id": "p-2", "location_id": "l-3"}}])
     );
     assert_eq!(stored.get::<_, String>(2), "event");
-    assert_eq!(stored.get::<_, String>(3), "automation::movement_label");
+    assert_eq!(
+        stored.get::<_, String>(3),
+        wamn_project_state::workflow_user_id().to_string()
+    );
     assert!(
         stored.get::<_, bool>(4),
         "an event run has no service principal"

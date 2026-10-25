@@ -209,12 +209,13 @@ fn materializer_stream() -> &'static str {
     &STREAM
 }
 
-/// The durable consumer of the Acme inspection handler.
+/// The durable consumer of the Receiving receipt entity.
 fn materializer_durable() -> &'static str {
     static DURABLE: LazyLock<String> = LazyLock::new(|| {
         format!(
-            "mat_{}_client_acme_receiving_quality_create_inspection",
-            identity().tenant
+            "entity_{}_{}_receipt",
+            BASE_PACKAGE_ID.len(),
+            wamn_event_wire::subject_token(BASE_PACKAGE_ID)
         )
     });
     &DURABLE

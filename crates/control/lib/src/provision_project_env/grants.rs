@@ -92,7 +92,7 @@ impl StableGrantSet {
         database: &str,
         required_database: &str,
         grants: &[RoleAcl],
-        retention_targets: &[(String, String)],
+        dynamic_targets: &[(String, String)],
     ) -> anyhow::Result<()> {
         match self {
             Self::ManagementAdmitter => {
@@ -120,9 +120,13 @@ impl StableGrantSet {
                 verify_session_role_reader_grants(role, database, required_database, grants)
             }
             Self::Retention => verify_retention_grants(role, database, grants),
-            Self::ExecutorPlatform => {
-                verify_executor_platform_grants(role, database, required_database, grants)
-            }
+            Self::ExecutorPlatform => verify_executor_platform_grants(
+                role,
+                database,
+                required_database,
+                grants,
+                dynamic_targets,
+            ),
             Self::HttpAdmitter => {
                 verify_http_admitter_grants(role, database, required_database, grants)
             }
@@ -130,7 +134,7 @@ impl StableGrantSet {
                 verify_event_materializer_grants(role, database, required_database, grants)
             }
             Self::AuditRetention => {
-                verify_audit_retention_grants(role, database, grants, retention_targets)
+                verify_audit_retention_grants(role, database, grants, dynamic_targets)
             }
             Self::Administration => {
                 verify_administration_grants(role, database, required_database, grants)
@@ -208,7 +212,7 @@ pub(super) async fn verify_role_grants(
             } => {
                 // The audit retention grants follow the retention source that
                 // the retention verb reads, in this same database.
-                let retention_targets = if grant_set == StableGrantSet::AuditRetention {
+                let dynamic_targets = if grant_set == StableGrantSet::AuditRetention {
                     client
                         .query(AUDIT_RETENTION_TARGETS_SQL, &[])
                         .await
@@ -218,6 +222,8 @@ pub(super) async fn verify_role_grants(
                         .into_iter()
                         .map(|row| (row.get("schema_name"), row.get("history_name")))
                         .collect()
+                } else if grant_set == StableGrantSet::ExecutorPlatform {
+                    executor_history_targets(&client).await?
                 } else {
                     Vec::new()
                 };
@@ -226,7 +232,7 @@ pub(super) async fn verify_role_grants(
                     &database,
                     required_database,
                     &grants,
-                    &retention_targets,
+                    &dynamic_targets,
                 )?;
             }
             expectation => {
@@ -521,6 +527,32 @@ pub(super) fn verify_session_role_reader_grants(
     Ok(())
 }
 
+/// The installed entity maps and their model history tables, independent of ACLs.
+async fn executor_history_targets(
+    client: &(impl GenericClient + Sync),
+) -> anyhow::Result<Vec<(String, String)>> {
+    let schemas = client.query(
+        "SELECT n.nspname::text FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE c.relname = 'wamn_entities' AND c.relkind = 'r'", &[],
+    ).await.context("read entity map schemas for executor grants")?;
+    let mut targets = Vec::new();
+    for row in schemas {
+        let schema: String = row.get(0);
+        targets.push((schema.clone(), "wamn_entities".into()));
+        let statement = format!(
+            "SELECT DISTINCT c.relname::text FROM {}.wamn_entities m JOIN pg_class c ON c.relnamespace = $1::text::regnamespace AND c.relname = m.table_name || '_history'",
+            wamn_pg_core::quote_ident(&schema),
+        );
+        for row in client
+            .query(&statement, &[&schema])
+            .await
+            .context("read model histories for executor grants")?
+        {
+            targets.push((schema.clone(), row.get(0)));
+        }
+    }
+    Ok(targets)
+}
+
 /// THE EXECUTOR-PLATFORM DENIAL MATRIX (`wamn-0h0g.22.37`).
 ///
 /// EQUALITY against the server's own `aclexplode` answer, never containment: a
@@ -545,6 +577,7 @@ fn verify_executor_platform_grants(
     database: &str,
     required_database: &str,
     grants: &[RoleAcl],
+    history_targets: &[(String, String)],
 ) -> anyhow::Result<()> {
     if grants.is_empty() {
         anyhow::ensure!(
@@ -657,6 +690,37 @@ fn verify_executor_platform_grants(
                 format!("{relation}.{column}"),
                 privilege.to_string(),
             ));
+        }
+    }
+    for (schema, relation) in history_targets {
+        expected.insert((
+            "schema".into(),
+            schema.clone(),
+            schema.clone(),
+            "USAGE".into(),
+        ));
+        if relation == "wamn_entities" {
+            expected.insert((
+                "relation".into(),
+                schema.clone(),
+                relation.clone(),
+                "SELECT".into(),
+            ));
+        } else {
+            for column in [
+                "row_key",
+                "type",
+                "transaction_id",
+                "position",
+                "changed_by",
+            ] {
+                expected.insert((
+                    "column".into(),
+                    schema.clone(),
+                    format!("{relation}.{column}"),
+                    "SELECT".into(),
+                ));
+            }
         }
     }
     anyhow::ensure!(

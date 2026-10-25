@@ -85,6 +85,7 @@ pub struct ProductionClaimError {
     type_: ProductionClaimErrorType,
     operation: &'static str,
     detail: String,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl ProductionClaimError {
@@ -98,6 +99,22 @@ impl ProductionClaimError {
             type_,
             operation,
             detail: detail.into(),
+            source: None,
+        }
+    }
+
+    /// Retain the underlying failure at a host admission boundary.
+    pub fn with_source(
+        type_: ProductionClaimErrorType,
+        operation: &'static str,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        let source = source.into();
+        Self {
+            type_,
+            operation,
+            detail: source.to_string(),
+            source: Some(source),
         }
     }
 
@@ -122,7 +139,11 @@ impl Display for ProductionClaimError {
     }
 }
 
-impl std::error::Error for ProductionClaimError {}
+impl std::error::Error for ProductionClaimError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_deref().map(|source| source as _)
+    }
+}
 
 /// Caller result stored before a queue run becomes terminal.
 #[derive(Debug, Clone, PartialEq)]

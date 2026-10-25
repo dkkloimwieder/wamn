@@ -90,7 +90,7 @@ pub fn select_production_claim_sql() -> String {
                 r.wiring_hash, r.binding_world_json::text, r.package_id, \
                 r.service_principal_id::text, r.trigger_source, \
                 r.execution_principal_id::text, r.execution_role, \
-                r.node_digests_json::text \
+                r.node_digests_json::text, r.event_root_run_id, r.event_depth \
            FROM candidate \
            JOIN runs AS r \
              ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",

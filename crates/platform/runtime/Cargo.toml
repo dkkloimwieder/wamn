@@ -27,6 +27,7 @@ wamn-catalog = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
+wamn-materializer = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-project-state = { workspace = true }

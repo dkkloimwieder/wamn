@@ -2,7 +2,6 @@
 //! and the bridge settles the delivery. A route never reaches this module.
 
 use opentelemetry::KeyValue;
-use wamn_catalog::RegistrationDelivery;
 use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome,
     EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureType as WireFailureType,
@@ -12,7 +11,6 @@ use wamn_event_wire::Causation;
 use wamn_execution_host::{RouterDeliveryBridge, WiringCall, WiringDelivery, WiringPreload};
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 use wamn_runtime::plugins::wamn_jetstream::DerivedPublishRequest;
-use wamn_runtime::plugins::wamn_postgres::{EventRunAdmission, EventRunAdmitted};
 
 use crate::router_response::{InterruptedResponse, PartialEvidence};
 use crate::{RouterDriver, RouterDriverRequest};
@@ -43,29 +41,9 @@ impl WiringDelivery for RouterDriver {
             attributes,
             deadline_adjustments,
         } = call;
-        if let SourceRef::Registration(registration_id) = source
-            && bridge
-                .release()
-                .manifest()
-                .workflow
-                .registrations
-                .get(registration_id)
-                .is_some_and(|registration| registration.delivery == RegistrationDelivery::Queue)
-        {
-            return self
-                .admit_event_run(
-                    bridge,
-                    EventCall {
-                        registration_id,
-                        package_id,
-                        wiring_id,
-                        wiring_version,
-                        delivery_id: &delivery_id,
-                        payload: &payload,
-                        attributes,
-                    },
-                )
-                .await;
+        if matches!(source, SourceRef::Registration(_)) {
+            // Event workflows enter through the host batch admission boundary.
+            return Err(DeliveryError::SourceNotFound);
         }
         let release = bridge.release().scope();
         let request = RouterDriverRequest {
@@ -106,96 +84,6 @@ impl WiringDelivery for RouterDriver {
                 lower_with_evidence(delivery.outcome, delivery.partial)
             }
             Err(error) => refuse(bridge, attributes, &error),
-        }
-    }
-}
-
-/// One delivery of a workflow registration, which the host admits as a run.
-struct EventCall<'a> {
-    registration_id: &'a str,
-    package_id: &'a str,
-    wiring_id: &'a str,
-    wiring_version: u32,
-    delivery_id: &'a str,
-    payload: &'a serde_json::Value,
-    attributes: &'a [KeyValue],
-}
-
-impl RouterDriver {
-    /// Admit a workflow registration's event as a queued run, under the
-    /// authority of the release that declares the workflow (`wamn-upl3.6`).
-    /// The queue runs it with no caller. The delivery id is the idempotency
-    /// key, so a redelivered event admits no second run.
-    async fn admit_event_run(
-        &self,
-        bridge: &RouterDeliveryBridge,
-        call: EventCall<'_>,
-    ) -> Result<DeliveryOutcome, DeliveryError> {
-        let manifest = bridge.release().manifest();
-        let Some((_, _, graph_hash)) = manifest
-            .workflow
-            .wirings
-            .iter()
-            .filter(|wiring| wiring.package_id == call.package_id)
-            .map(wamn_catalog::ServingWiring::identity)
-            .find(|(wiring_id, wiring_version, _)| {
-                *wiring_id == call.wiring_id && *wiring_version == call.wiring_version
-            })
-        else {
-            tracing::warn!(
-                registration = call.registration_id,
-                "a workflow registration names a wiring absent from the release"
-            );
-            return Err(DeliveryError::SourceNotFound);
-        };
-        let Ok(wiring_version) = i32::try_from(call.wiring_version) else {
-            return Err(DeliveryError::InvalidRequest);
-        };
-        let admitted = self
-            .operations()
-            .postgres
-            .admit_event_run(
-                crate::queue::QUEUE_CLAIM_SCOPE,
-                &EventRunAdmission {
-                    package_id: call.package_id,
-                    manifest_digest: bridge.release().release().manifest_digest.as_str(),
-                    environment: &bridge.release().scope().environment,
-                    wiring_id: call.wiring_id,
-                    wiring_version,
-                    wiring_hash: graph_hash.as_str(),
-                    registration_id: call.registration_id,
-                    idempotency_key: call.delivery_id,
-                    input: call.payload,
-                },
-            )
-            .await;
-        match admitted {
-            Ok(EventRunAdmitted::Queued { run_id }) => {
-                tracing::info!(
-                    registration = call.registration_id,
-                    run_id = %run_id,
-                    "an event started a queued workflow run"
-                );
-                bridge.record(call.attributes, DeliveryClass::Delivered);
-                Ok(DeliveryOutcome::Discard)
-            }
-            Ok(EventRunAdmitted::Conflict) => {
-                tracing::warn!(
-                    registration = call.registration_id,
-                    delivery = call.delivery_id,
-                    "the delivery id belongs to a different run"
-                );
-                Err(DeliveryError::InvalidRequest)
-            }
-            // The event stays unacknowledged, and JetStream redelivers it.
-            Err(error) => {
-                tracing::warn!(
-                    registration = call.registration_id,
-                    error = %error,
-                    "the event run was not admitted"
-                );
-                Err(DeliveryError::ExecutionFailed)
-            }
         }
     }
 }

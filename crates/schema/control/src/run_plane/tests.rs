@@ -528,6 +528,7 @@ fn runs_manual_grain_check_mirrors_are_exact() {
         check("runs_execution_identity_check"),
         "CHECK (NOT trigger_source IS DISTINCT FROM 'manual'::text \
          OR NOT trigger_source IS DISTINCT FROM 'schedule'::text \
+         OR NOT trigger_source IS DISTINCT FROM 'event'::text \
          OR execution_principal_id IS NULL AND execution_role IS NULL \
          AND invoked_by IS NULL AND invoked_by_user_id IS NULL \
          AND node_digests_json IS NULL)"

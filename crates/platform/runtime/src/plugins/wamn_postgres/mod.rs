@@ -63,6 +63,7 @@ mod claims;
 mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
+mod event_batch;
 mod numbering;
 mod operation;
 mod operation_transaction;
@@ -97,9 +98,9 @@ pub use credential_exactness::{
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
 pub use event_admission::{
-    EventRunAdmission, EventRunAdmitted, ManualRunAdmission, ManualRunAdmitted,
-    ScheduleRunAdmission, ScheduleRunAdmitted, due_text,
+    ManualRunAdmission, ManualRunAdmitted, ScheduleRunAdmission, ScheduleRunAdmitted, due_text,
 };
+pub use event_batch::EventBatchAdmission;
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation_transaction::{CommitFailure, OperationTransaction};
 pub use pool::{

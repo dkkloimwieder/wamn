@@ -178,6 +178,7 @@ pub struct WorkflowRunRequest {
     pub node_digests: BTreeMap<String, String>,
     /// The principal the run executes as, and its one active role.
     pub identity: WorkflowIdentity,
+    pub causation: Option<Causation>,
 }
 
 /// The principal a workflow run executes as, with its one active role.
@@ -491,6 +492,7 @@ impl RouterDriver {
             wiring_hash,
             node_digests,
             identity,
+            causation,
         } = request;
         // A workflow run's package id is its application, a name the
         // environment declares with its packages, never a package.
@@ -546,7 +548,7 @@ impl RouterDriver {
             run,
             active,
             ExecutionClosure::Released,
-            None,
+            causation,
             Some(PlatformComponent::Executor),
             Some(&identity),
         )
@@ -1654,7 +1656,7 @@ mod tests {
                         entity: "order".to_owned(),
                         ops: BTreeSet::from(["created".to_owned()]),
                         input: ServingRegistrationInput::Event,
-                        delivery: wamn_catalog::RegistrationDelivery::Walk,
+                        delivery: wamn_catalog::RegistrationDelivery::Queue,
                     },
                 )]),
             },

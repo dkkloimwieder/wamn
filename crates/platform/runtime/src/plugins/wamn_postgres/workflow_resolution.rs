@@ -390,7 +390,7 @@ impl WamnPostgres {
     }
 
     /// Run `read` in one read transaction under the executor credential.
-    async fn executor_read<T>(
+    pub(super) async fn executor_read<T>(
         &self,
         project: &str,
         tenant_id: &str,

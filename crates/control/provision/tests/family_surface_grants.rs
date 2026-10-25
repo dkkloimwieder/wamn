@@ -399,6 +399,9 @@ fn expected_executor_grants() -> Vec<String> {
     // R3).
     for column in [
         "durability_class",
+        "event_source_run_id",
+        "event_root_run_id",
+        "event_depth",
         "environment",
         "execution_principal_id",
         "execution_role",
@@ -598,7 +601,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "run_id",
         "binding_world_json",
         "flow_id",
-        "event_source_run_id",
         "capture_mode",
         "invocation_context",
         "caller_outcome_json",

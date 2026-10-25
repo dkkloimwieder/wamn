@@ -472,6 +472,9 @@ pub(super) async fn reconcile_record_history_triggers(
         "record-history-trigger-mismatch: the owned relations carry {observed:?}, but the declarations derive {expected:?}"
     );
     let grants_changed = reconcile_audit_retention_grants(tx).await?;
+    tx.batch_execute(&wamn_control_provision::sql::grant_executor_history_reads_sql())
+        .await
+        .context("grant event admission its history reads")?;
     Ok(!functions.is_empty()
         || !statements.is_empty()
         || !dropped_functions.is_empty()

@@ -64,7 +64,7 @@ pub struct ProductionCandidate {
     pub binding_world: CandidateBindingWorld,
 }
 
-/// What a manual or schedule workflow run froze at admission (docs/plan/workflows.md R3,
+/// What an event, manual or schedule workflow run froze at admission (docs/plan/workflows.md R3,
 /// R2): the graph hash, the principal it executes as, its one active role,
 /// and the component digest of every node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +73,7 @@ pub struct ProductionWorkflow {
     pub execution_principal_id: String,
     pub execution_role: String,
     pub node_digests: std::collections::BTreeMap<String, String>,
+    pub causation: Option<wamn_event_wire::Causation>,
 }
 
 /// The composed outcome of one claim transaction, decided before COMMIT.
@@ -1414,7 +1415,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let workflow_hash = wiring_hash.clone();
     let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
         // A released wiring: an automation run under its service principal,
-        // or an event run with no caller. The grain check tells them apart.
+        // or a workflow run under its principal. The grain check tells them apart.
         (None, None, Some(hash), None) if !hash.is_empty() => None,
         (Some(flow_id), Some(flow_version), None, None)
             if !flow_id.is_empty() && flow_version > 0 =>
@@ -1459,13 +1460,30 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             "candidate-caller-grain-corrupt",
         ));
     }
-    let workflow = decode_workflow(
+    let mut workflow = decode_workflow(
         workflow_hash,
         row_value::<Option<String>>(row, 15, "trigger source")?.as_deref(),
         row_value(row, 16, "execution principal")?,
         row_value(row, 17, "execution role")?,
         row_value(row, 18, "node digests")?,
     )?;
+    if let Some(workflow) = workflow.as_mut() {
+        let root: Option<String> = row_value(row, 19, "event root")?;
+        let depth: Option<i32> = row_value(row, 20, "event depth")?;
+        if let (Some(root), Some(depth)) = (root, depth) {
+            workflow.causation = Some(wamn_event_wire::Causation {
+                run: row_value(row, 0, "run id")?,
+                root,
+                depth: u32::try_from(depth).map_err(|error| {
+                    ProductionClaimError::with_source(
+                        ProductionClaimErrorType::Contract,
+                        "decode event depth",
+                        error,
+                    )
+                })?,
+            });
+        }
+    }
     if workflow.is_some() && (candidate.is_some() || service_principal_id.is_some()) {
         return Err(ProductionClaimError::new(
             ProductionClaimErrorType::Contract,
@@ -1490,7 +1508,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     })
 }
 
-/// The frozen execution of a manual or schedule workflow run, or none for
+/// The frozen execution of an event, manual or schedule workflow run, or none for
 /// every other grain, which carries none of its columns.
 fn decode_workflow(
     wiring_hash: Option<String>,
@@ -1507,7 +1525,7 @@ fn decode_workflow(
         )
     };
     match (
-        matches!(trigger_source, Some("manual" | "schedule")),
+        matches!(trigger_source, Some("manual" | "schedule" | "event")),
         wiring_hash,
         execution_principal_id,
         execution_role,
@@ -1527,6 +1545,7 @@ fn decode_workflow(
                 execution_principal_id,
                 execution_role,
                 node_digests,
+                causation: None,
             })))
         }
         _ => Err(corrupt()),
