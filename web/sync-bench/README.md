@@ -37,8 +37,20 @@ node bench/run.mjs --out <results.json>
 ## Live screen
 
 [`live.html`](live.html) is the packaging screen on a live host: shape A over the real feed.
+Open `/urn:wamn:project-env:<org>:<project>:<env>:<instance>/live.html`, the audience path that application screens use.
+Vite serves `live.html` at that path. A static deployment must do the same.
+The outbox database uses the project and environment from that path and `userId` from the cookie session.
+The page renews the session on load and offers sign-in when renewal fails.
 The page calls the release under `/wamn` on its own origin. `?poll=` sets the follow interval in milliseconds.
+The create form records a request with a UUIDv7 id. The row shows as tentative until the feed returns that id.
+The status line shows pending and refused counts, the last send, the last feed read, and storage protection.
+The page reads `navigator.storage.persisted()` and never requests storage protection.
+The Not uploaded panel shows each refused request beside the current row.
+Resubmit records the edited create with the same id and a new request hash before it discards the refused entry.
+Discard removes the entry and reverts its tentative row.
 [`bench/follow.mjs`](bench/follow.mjs) opens it in headless Chrome and forwards `/wamn` to the host with the caller's token.
+That fixture supplies `WAMN_USER_ID` from its operator principal and `WAMN_AUD` from its environment coordinates with the test-only instance suffix `localapp`.
+The driver uses them for its mocked session reply and page route because the fixture has no identity service.
 The test `local_feed` in `apps/wamn_wms/tests` runs it against a local WMS host:
 
 ```bash

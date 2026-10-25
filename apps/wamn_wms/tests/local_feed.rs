@@ -70,7 +70,33 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
     .await?;
     let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
+    let (identity, identity_connection) =
+        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
+    let identity_connection = tokio::spawn(identity_connection);
     let result = async {
+        let scope = crate::environment::identity();
+        let subject = wamn_platform_identity::operator_subject(
+            &scope.org,
+            &scope.project,
+            &scope.environment,
+        )?;
+        let user = wamn_platform_identity::resolve_subject(
+            &identity,
+            wamn_platform_identity::PrincipalType::Service,
+            &subject,
+        )
+        .await?
+        .context("the local application's operator principal")?;
+        // This PAT fixture has no registered session instance or identity service.
+        // The browser's mocked session uses this test-only instance suffix.
+        let audience = wamn_control_provision::session_target::session_audience(
+            &wamn_control_registry::Triple::new(
+                scope.org.clone(),
+                scope.project.clone(),
+                scope.environment.as_str(),
+            ),
+            "localapp",
+        )?;
         crate::business_fixture::seed_fixture(&admin, 1).await?;
         let bench = app.join("../../web/sync-bench").canonicalize()?;
         let mut driver = tokio::process::Command::new("node")
@@ -79,6 +105,8 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
             .env("WAMN_ENDPOINT", &application.endpoint)
             .env("WAMN_ROUTE_HOST", &application.route_host)
             .env("WAMN_BEARER", &application.bearer)
+            .env("WAMN_USER_ID", user.id().as_str())
+            .env("WAMN_AUD", audience)
             .env("WAMN_LOCATION_ID", LOCATION_A_ID)
             .env("WAMN_FIRST_ID", PACKAGING_ID)
             .stdin(Stdio::piped())
@@ -125,6 +153,8 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
     .await;
     drop(admin);
     connection.abort();
+    drop(identity);
+    identity_connection.abort();
     application.shutdown().await?;
     result
 }

@@ -40,7 +40,7 @@ export const shown = (value: number | string) => roundHalfAwayFromZero(value, 0)
  * The packaging table of one shape: the generated columns over virtual rows,
  * then the groups and the totals. Both shapes render through this component.
  */
-export function PackagingView(props: { label: string; source: ViewSource }) {
+export function PackagingView(props: { label: string; source: ViewSource; tentative?: (id: string) => boolean }) {
   const source = untrack(() => props.source);
   const table = createTable<PackagingRow>({
     source: { ids: source.ids, get: source.get },
@@ -82,7 +82,18 @@ export function PackagingView(props: { label: string; source: ViewSource }) {
               window={virtualizer}
               layout="table"
               columns={() => columns.length}
-              renderRow={(id) => <TableRow table={table} id={id} />}
+              renderRow={(id) => (
+                <TableRow
+                  table={table}
+                  id={id}
+                  formatValue={(value, column) => (
+                    <>
+                      {String(value ?? "")}
+                      {column.id === "packaging_code" && props.tentative?.(id) ? " (tentative)" : ""}
+                    </>
+                  )}
+                />
+              )}
             />
           )}
         />

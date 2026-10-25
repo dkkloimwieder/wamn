@@ -9,7 +9,8 @@
  * It then prints `DELETE <id>` and waits for one line on stdin: the caller
  * deletes that row in the database, and the screen must drop it.
  *
- * Environment: WAMN_ENDPOINT, WAMN_ROUTE_HOST, WAMN_BEARER, WAMN_LOCATION_ID
+ * Environment: WAMN_ENDPOINT, WAMN_ROUTE_HOST, WAMN_BEARER, WAMN_USER_ID,
+ * WAMN_AUD (the fixture session audience), WAMN_LOCATION_ID
  * (a location of the scope), WAMN_FIRST_ID (a row the list returns).
  * Run `pnpm run build` first. The last line is the result as JSON.
  */
@@ -23,6 +24,9 @@ import { uuidv7 } from "../../runtime/src/sync/ids.ts";
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
 const routeHost = process.env.WAMN_ROUTE_HOST;
 const bearer = process.env.WAMN_BEARER;
+const userId = process.env.WAMN_USER_ID;
+const audience = process.env.WAMN_AUD;
+if (!userId || !audience) throw new Error("WAMN_USER_ID and WAMN_AUD are required");
 const locationId = process.env.WAMN_LOCATION_ID;
 const firstId = process.env.WAMN_FIRST_ID;
 /** The follow interval of the page, and how long a change may take: two polls. */
@@ -63,6 +67,13 @@ const browser = await chromium.launch({ channel: "chrome", headless: true });
 let result;
 try {
   const page = await browser.newPage();
+  // The fixture supplies the user and audience. Its PAT remains opaque.
+  await page.route("**/password/renew", (route) => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 15 * 60;
+    return route.fulfill({
+      json: { sub: userId, expires_at: expiresAt, login_expires_at: expiresAt },
+    });
+  });
   await page.route("**/wamn/**", async (route) => {
     const url = new URL(route.request().url());
     const path = `${url.pathname.replace(/^\/wamn/, "")}${url.search}`;
@@ -84,7 +95,7 @@ try {
     });
   });
   const row = (id) => page.locator(`[data-shape="a"] tr[data-row="${id}"]`);
-  await page.goto(`${server.resolvedUrls.local[0]}live.html?poll=${POLL_MS}`);
+  await page.goto(`${server.resolvedUrls.local[0]}${audience}/live.html?poll=${POLL_MS}`);
   await row(firstId).waitFor({ timeout: 60_000 });
   if (reads.list !== 1) throw new Error(`the screen listed ${reads.list} times before the write`);
 
