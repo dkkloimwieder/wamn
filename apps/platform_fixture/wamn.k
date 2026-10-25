@@ -17,7 +17,7 @@ manifest.Package {
         numbered_label = manifest.Model("numbered_label", _schema) {
             table = "numbered_label"
             owner = "platform_fixture"
-            server_owned_fields = ["id", "number", "edit_version"]
+            server_owned_fields = ["number", "edit_version"]
             fields = {
                 number = {number = "record_label"}
                 created_by = {role = "actor"}

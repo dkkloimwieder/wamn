@@ -10,7 +10,7 @@ manifest.Package {
         base_fixture = {
             package = "platform_fixture"
             version = "2.1.0"
-            digest = "sha256:556bcfd0dcac60f4fba347e5c31258011eb27b9416d75dc7a7b9ffcdc0772cd0"
+            digest = "sha256:5a39f0961c2a47181b150baf9b1fabff4c0bb60c9d8e5570380023f4eace67ec"
             operations = ["widget.archive"]
         }
     }
@@ -19,7 +19,7 @@ manifest.Package {
         numbered_label = manifest.Model("numbered_label", "inventory") {
             table = "numbered_label"
             owner = "platform_fixture"
-            server_owned_fields = ["id", "number", "edit_version"]
+            server_owned_fields = ["number", "edit_version"]
             operations: {
                 create: {writable_fields = ["stock_id"], result = "one"}
             }
