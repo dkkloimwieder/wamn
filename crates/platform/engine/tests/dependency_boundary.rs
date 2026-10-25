@@ -72,6 +72,10 @@ const ACCEPTED: &[(&str, &str)] = &[
     ("tokio", "timers, files and channels"),
     ("tracing", "spans and events"),
     (
+        "tracing-opentelemetry",
+        "OpenTelemetrySpanExt sets an invocation span's remote parent",
+    ),
+    (
         "wamn-catalog",
         "the release manifest and admitted components",
     ),
