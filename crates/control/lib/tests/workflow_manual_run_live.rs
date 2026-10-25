@@ -517,27 +517,37 @@ fn host(postgres: &Arc<WamnPostgres>, release: &Arc<LoadedRelease>) -> HostRoute
 }
 
 impl Fixture {
-    fn driver(&self, release: &Arc<LoadedRelease>) -> Arc<RouterDriver> {
+    async fn driver(&self, release: &Arc<LoadedRelease>) -> Arc<RouterDriver> {
+        let operations = Arc::new(
+            OperationHost::new(
+                Arc::clone(&self.engine),
+                Arc::clone(&self.postgres),
+                Arc::new(HttpTransport::new().unwrap()),
+                Arc::new(WamnCredentials::empty()),
+                Arc::clone(&self.logging),
+                Arc::from([]),
+                Arc::clone(release),
+                Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
+                OperationScope {
+                    project: PROJECT.to_owned(),
+                    schema: Some("application_data".to_owned()),
+                    owner_prefix: "manual-live".to_owned(),
+                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+                },
+            )
+            .unwrap(),
+        );
+        // Compile and initialize before claiming a run. Cold JSONata compilation
+        // otherwise shares the first node's 30-second deadline. If it expires,
+        // cancelling the load leaves the run leased for another attempt.
+        let preparing = std::time::Instant::now();
+        operations
+            .prepare_released(&Arc::from([self.read.clone(), self.jsonata.clone()]))
+            .await
+            .expect("prepare the fixture release before queue execution");
+        eprintln!("manual-live release preparation: {:?}", preparing.elapsed());
         Arc::new(RouterDriver::new(
-            Arc::new(
-                OperationHost::new(
-                    Arc::clone(&self.engine),
-                    Arc::clone(&self.postgres),
-                    Arc::new(HttpTransport::new().unwrap()),
-                    Arc::new(WamnCredentials::empty()),
-                    Arc::clone(&self.logging),
-                    Arc::from([]),
-                    Arc::clone(release),
-                    Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
-                    OperationScope {
-                        project: PROJECT.to_owned(),
-                        schema: Some("application_data".to_owned()),
-                        owner_prefix: "manual-live".to_owned(),
-                        warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-                    },
-                )
-                .unwrap(),
-            ),
+            operations,
             RouterDriverConfig {
                 cache_capacity: WiringCacheCapacity::default(),
             },
@@ -678,7 +688,7 @@ impl Fixture {
     /// dispatched or running.
     async fn drain(&self, release: &Arc<LoadedRelease>) {
         let service = QueueService::bind(
-            self.driver(release),
+            self.driver(release).await,
             Arc::clone(&self.postgres),
             Arc::new(WamnJetstream::from_env()),
             release,
@@ -691,10 +701,12 @@ impl Fixture {
         .await
         .expect("bind the queue service");
         let (_stop, stopping) = tokio::sync::watch::channel(true);
+        let draining = std::time::Instant::now();
         tokio::time::timeout(Duration::from_secs(60), service.serve(stopping))
             .await
             .expect("the queue drains the release's backlog")
             .expect("queue service");
+        eprintln!("manual-live queue drain: {:?}", draining.elapsed());
         service.revoke();
     }
 
