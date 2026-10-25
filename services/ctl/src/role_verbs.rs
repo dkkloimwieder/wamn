@@ -3,8 +3,8 @@
 //! `revoke-permission` (docs/plan/platform-ui.md §4.1).
 
 use clap::Args;
-use wamn_control::role_permissions;
-use wamn_control::user_roles::{self, EnvironmentTarget, UserRoleOutcome, UserRoleRequest};
+use wamn_control::role_permission;
+use wamn_control::user_role::{self, EnvironmentTarget, UserRoleOutcome, UserRoleRequest};
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
 
 /// One user role of one environment, for one user named by email.
@@ -70,7 +70,7 @@ fn print(verb: &str, role: &str, outcome: &UserRoleOutcome) {
 /// Give the user the role and print the result.
 pub async fn grant(args: UserRoleArgs) -> anyhow::Result<()> {
     let role = args.role.clone();
-    let outcome = user_roles::grant_role(&request(args), &changes().await?).await?;
+    let outcome = user_role::grant_role(&request(args), &changes().await?).await?;
     print("granted", &role, &outcome);
     Ok(())
 }
@@ -78,7 +78,7 @@ pub async fn grant(args: UserRoleArgs) -> anyhow::Result<()> {
 /// Take the role from the user and print the result.
 pub async fn revoke(args: UserRoleArgs) -> anyhow::Result<()> {
     let role = args.role.clone();
-    let outcome = user_roles::revoke_role(&request(args), &changes().await?).await?;
+    let outcome = user_role::revoke_role(&request(args), &changes().await?).await?;
     print("revoked", &role, &outcome);
     Ok(())
 }
@@ -156,7 +156,7 @@ pub struct PermissionArgs {
 /// Create the empty authored role and print the result.
 pub async fn create_role(args: RoleArgs) -> anyhow::Result<()> {
     let created =
-        role_permissions::create_role_in(&args.environment.target(), &args.role, &changes().await?)
+        role_permission::create_role_in(&args.environment.target(), &args.role, &changes().await?)
             .await?;
     let state = if created { "created" } else { "unchanged" };
     println!("{state}: role {}", args.role);
@@ -166,7 +166,7 @@ pub async fn create_role(args: RoleArgs) -> anyhow::Result<()> {
 /// Delete the authored role and print the result.
 pub async fn delete_role(args: RoleArgs) -> anyhow::Result<()> {
     let deleted =
-        role_permissions::delete_role_in(&args.environment.target(), &args.role, &changes().await?)
+        role_permission::delete_role_in(&args.environment.target(), &args.role, &changes().await?)
             .await?;
     let state = if deleted { "deleted" } else { "unchanged" };
     println!("{state}: role {}", args.role);
@@ -175,7 +175,7 @@ pub async fn delete_role(args: RoleArgs) -> anyhow::Result<()> {
 
 /// Grant the operation to the role and print the result.
 pub async fn grant_permission(args: PermissionArgs) -> anyhow::Result<()> {
-    let outcome = role_permissions::grant_permission_in(
+    let outcome = role_permission::grant_permission_in(
         &args.environment.target(),
         &args.role,
         &args.operation,
@@ -193,7 +193,7 @@ pub async fn grant_permission(args: PermissionArgs) -> anyhow::Result<()> {
 
 /// Remove the operation from the role and print the result.
 pub async fn revoke_permission(args: PermissionArgs) -> anyhow::Result<()> {
-    role_permissions::revoke_permission_in(
+    role_permission::revoke_permission_in(
         &args.environment.target(),
         &args.role,
         &args.operation,

@@ -236,16 +236,15 @@ async fn exercise(
         request(case, 200).await?;
     }
     let user = format!("{role}@example.test");
-    let removed =
-        wamn_control::user_roles::revoke_role_on(project, &args.tenant, &user, role, auth)
-            .await
-            .context("remove this user's permission-bearing role")?;
+    let removed = wamn_control::user_role::revoke_role_on(project, &args.tenant, &user, role, auth)
+        .await
+        .context("remove this user's permission-bearing role")?;
     ensure!(
         removed.changed,
         "test role assignment was missing before removal"
     );
     request("role_removed", 403).await?;
-    wamn_control::user_roles::grant_role_on(project, &args.tenant, &user, role, auth)
+    wamn_control::user_role::grant_role_on(project, &args.tenant, &user, role, auth)
         .await
         .context("restore this user's tenant role")?;
     request("role_restored", 200).await?;

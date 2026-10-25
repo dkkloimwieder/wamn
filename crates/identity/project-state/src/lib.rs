@@ -14,8 +14,8 @@
 //!
 //! # What it is — and is not
 //!
-//! The tables are the AUTH/RBAC half of plan item 2.4: [`USERS`], [`ROLES`] (+
-//! the user↔role linkage [`USER_ROLES`]), [`PERMISSIONS`], [`API_KEYS`], and
+//! The tables are the AUTH/RBAC half of plan item 2.4: [`USER`], [`ROLE`] (+
+//! the user↔role linkage [`USER_ROLE`]), [`PERMISSION`], [`API_KEY`], and
 //! the platform configuration tables of `docs/plan/platform-config.md`:
 //! [`EXTERNAL_SYSTEM`], [`CONNECTION`], [`INTEGRATION_ALLOW`],
 //! [`PROJECT_CONNECTION`], [`NUMBER_SEQUENCE`], [`NUMBER_COUNTER`] and
@@ -30,7 +30,7 @@
 //!
 //! # Claim integration (3.5 / 4.2)
 //!
-//! [`USER_ID_CLAIM`] (`app.user_id`) resolves to a `users.id` (`uuid`) — the
+//! [`USER_ID_CLAIM`] (`app.user_id`) resolves to a `user.id` (`uuid`) — the
 //! ownership target the 3.5 RLS builder reads. [`ROLE_CLAIM`] (`app.role`)
 //! resolves to a `role.name` (text) — the role-gate target. [`TENANT_CLAIM`]
 //! (`app.tenant`) is the RLS floor every table keys on. The claims are injected
@@ -56,7 +56,7 @@ pub const TENANT_CLAIM: &str = "app.tenant";
 
 /// The per-user claim the 3.5 RLS builder reads as
 /// `NULLIF(current_setting('app.user_id', true), '')::uuid` — so the ownership
-/// target ([`USERS`]`.id`) is a `uuid`.
+/// target ([`USER`]`.id`) is a `uuid`.
 pub const USER_ID_CLAIM: &str = "app.user_id";
 
 /// The claim that names the source of a write (`app.operation`): an operation
@@ -66,10 +66,10 @@ pub const OPERATION_CLAIM: &str = "app.operation";
 
 /// The per-role claim the 3.5 RLS builder reads as
 /// `COALESCE(current_setting('app.role', true), '') IN (...)` — so the gate
-/// compares against [`ROLES`]`.name` (text).
+/// compares against [`ROLE`]`.name` (text).
 pub const ROLE_CLAIM: &str = "app.role";
 
-/// A user's account status — the `users.status` CHECK domain. `4.2` decides
+/// A user's account status — the `user.status` CHECK domain. `4.2` decides
 /// whether a status may authenticate; this schema only constrains the value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserStatus {
@@ -107,7 +107,7 @@ impl std::fmt::Display for UserStatus {
     }
 }
 
-/// The kind of principal a user row names, the `users.type` CHECK domain.
+/// The kind of principal a user row names, the `user.type` CHECK domain.
 ///
 /// The column has no default, so every insert names its type. A type does not
 /// change how a principal authenticates.
@@ -242,13 +242,13 @@ impl Table {
 }
 
 /// Application accounts. `id` (`uuid`) is the [`USER_ID_CLAIM`] ownership target.
-pub const USERS: Table = Table {
+pub const USER: Table = Table {
     name: "user",
     columns: &["id", "type", "email", "display_name", "status"],
 };
 
 /// Named roles. `name` is the [`ROLE_CLAIM`] gate target.
-pub const ROLES: Table = Table {
+pub const ROLE: Table = Table {
     name: "role",
     columns: &["tenant_id", "name"],
 };
@@ -259,19 +259,19 @@ pub const ROLES: Table = Table {
 pub const ADMIN_ROLE: &str = "admin";
 
 /// The user↔role linkage (many-to-many).
-pub const USER_ROLES: Table = Table {
+pub const USER_ROLE: Table = Table {
     name: "user_role",
     columns: &["tenant_id", "user_id", "role_name"],
 };
 
 /// Role → permission grants (read by 4.3 AuthZ).
-pub const PERMISSIONS: Table = Table {
+pub const PERMISSION: Table = Table {
     name: "permission",
     columns: &["tenant_id", "role_name", "permission"],
 };
 
 /// The api-key substrate. `key_hash` is a one-way digest, never the raw key.
-pub const API_KEYS: Table = Table {
+pub const API_KEY: Table = Table {
     name: "api_key",
     columns: &["tenant_id", "user_id", "key_hash", "prefix"],
 };
@@ -338,14 +338,14 @@ pub const SETTING: Table = Table {
 };
 
 /// Every table in the system schema, in dependency order (a superset FK order:
-/// users and roles before the linkage / permissions / api_keys that reference
+/// user and role before the linkage / permission / api_key that reference
 /// them, and each configuration table after the tables it references).
 pub const TABLES: &[Table] = &[
-    USERS,
-    ROLES,
-    USER_ROLES,
-    PERMISSIONS,
-    API_KEYS,
+    USER,
+    ROLE,
+    USER_ROLE,
+    PERMISSION,
+    API_KEY,
     ENVIRONMENT,
     EXTERNAL_SYSTEM,
     CONNECTION,
@@ -490,6 +490,6 @@ mod tests {
 
     #[test]
     fn qualified_prepends_the_schema() {
-        assert_eq!(USERS.qualified(), "platform.\"user\"");
+        assert_eq!(USER.qualified(), "platform.\"user\"");
     }
 }

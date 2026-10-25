@@ -17,7 +17,7 @@ use std::fmt;
 
 use wamn_pg_core::quote_literal;
 use wamn_project_state::{
-    OPERATION_CLAIM, PlatformComponent, USER_ID_CLAIM, USERS, UserType, WORKFLOW_USER_NAME,
+    OPERATION_CLAIM, PlatformComponent, USER, USER_ID_CLAIM, UserType, WORKFLOW_USER_NAME,
     workflow_user_id,
 };
 
@@ -101,7 +101,7 @@ pub fn platform_principals_sql(platform_domain: &str) -> Result<String, Platform
         writeln!(
             sql,
             "INSERT INTO {} (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
-            USERS.qualified(),
+            USER.qualified(),
             quote_literal(&component.principal_id().to_string()),
             quote_literal(UserType::Platform.as_str()),
             quote_literal(&format!("{}@{platform_domain}", component.as_str())),
@@ -112,7 +112,7 @@ pub fn platform_principals_sql(platform_domain: &str) -> Result<String, Platform
     writeln!(
         sql,
         "INSERT INTO {} (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
-        USERS.qualified(),
+        USER.qualified(),
         quote_literal(&workflow_user_id().to_string()),
         quote_literal(UserType::Service.as_str()),
         quote_literal(&format!("{WORKFLOW_USER_NAME}@{platform_domain}")),

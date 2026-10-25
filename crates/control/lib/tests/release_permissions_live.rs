@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use wamn_platform_identity::auth_changes::AuthDrops;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_control::role_permissions::{
+use wamn_control::role_permission::{
     create_role, delete_role, grant_permission, revoke_permission,
 };
 use wamn_test_infrastructure::locked_database::{self, LockedDatabase};

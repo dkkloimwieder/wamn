@@ -29,19 +29,19 @@ use wamn_session::verifier::SessionVerifier;
 use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::session_keys::IssuerKeys;
 
-/// The users row of one active service or user principal, each role it
+/// The user row of one active service or user principal, each role it
 /// holds and each permission of that role. A principal without roles yields
 /// one row with a null role.
-const QUEUED_RUN_CALLER_SQL: &str = "SELECT users.id::text, users.type, user_roles.role_name, \
-         permissions.permission \
-    FROM platform.\"user\" AS users \
-    LEFT JOIN platform.user_role AS user_roles \
-      ON user_roles.tenant_id = $1 AND user_roles.user_id = users.id \
-    LEFT JOIN platform.permission AS permissions \
-      ON permissions.tenant_id = user_roles.tenant_id \
-     AND permissions.role_name = user_roles.role_name \
-   WHERE users.id = $2::text::uuid \
-     AND users.type IN ('service', 'user') AND users.status = 'active'";
+const QUEUED_RUN_CALLER_SQL: &str = "SELECT \"user\".id::text, \"user\".type, user_role.role_name, \
+         permission.permission \
+    FROM platform.\"user\" AS \"user\" \
+    LEFT JOIN platform.user_role AS user_role \
+      ON user_role.tenant_id = $1 AND user_role.user_id = \"user\".id \
+    LEFT JOIN platform.permission AS permission \
+      ON permission.tenant_id = user_role.tenant_id \
+     AND permission.role_name = user_role.role_name \
+   WHERE \"user\".id = $2::text::uuid \
+     AND \"user\".type IN ('service', 'user') AND \"user\".status = 'active'";
 
 /// Resolve the principal of a queued run against its current tenant status
 /// and role grants.

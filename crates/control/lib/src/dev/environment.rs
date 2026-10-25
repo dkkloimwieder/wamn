@@ -704,7 +704,7 @@ pub async fn grant_operator_admin_role(
         .await
         .context("connect to grant the admin role")?;
     let connection = tokio::spawn(connection);
-    let granted = crate::user_roles::grant_role_on(
+    let granted = crate::user_role::grant_role_on(
         &mut client,
         tenant,
         &format!("{subject}@{platform_domain}"),

@@ -457,7 +457,7 @@ pub async fn revoke_user_role(
 const USER_EXISTS_SQL: &str = "SELECT 1 FROM platform.\"user\" \
     WHERE id = $1::text::uuid AND type = 'user'";
 
-const USERS_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
+const USER_LIST_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
     FROM platform.\"user\" u \
@@ -465,9 +465,9 @@ const USERS_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
     WHERE u.type = 'user' \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
 
-const ROLES_SQL: &str = "SELECT name FROM platform.role WHERE tenant_id = $1 ORDER BY name";
+const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role WHERE tenant_id = $1 ORDER BY name";
 
-const PERMISSIONS_SQL: &str = "SELECT permission FROM platform.permission \
+const PERMISSION_LIST_SQL: &str = "SELECT permission FROM platform.permission \
     WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission";
 
 /// One application user with the roles it holds.
@@ -505,7 +505,7 @@ pub async fn application_users(
     tenant: &str,
 ) -> Result<Vec<ApplicationUserRow>, AdministrationError> {
     Ok(client
-        .query(USERS_SQL, &[&tenant])
+        .query(USER_LIST_SQL, &[&tenant])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -524,7 +524,7 @@ pub async fn role_names(
     tenant: &str,
 ) -> Result<Vec<String>, AdministrationError> {
     Ok(client
-        .query(ROLES_SQL, &[&tenant])
+        .query(ROLE_LIST_SQL, &[&tenant])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -540,7 +540,7 @@ pub async fn permission_rows(
 ) -> Result<Vec<String>, AdministrationError> {
     require_role(client, tenant, role).await?;
     Ok(client
-        .query(PERMISSIONS_SQL, &[&tenant, &role])
+        .query(PERMISSION_LIST_SQL, &[&tenant, &role])
         .await
         .map_err(|error| database_error(&error))?
         .iter()

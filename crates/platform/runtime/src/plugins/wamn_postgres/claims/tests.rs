@@ -845,23 +845,23 @@ const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 /// type checks. The guest login reads it, so the
 /// fixture grants the stable ACL role what the production floor grants: usage
 /// on the schema and select on the table.
-const ENSURE_LIVE_USERS_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; \
+const ENSURE_LIVE_USER_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; \
      CREATE TABLE IF NOT EXISTS platform.\"user\" ( \
          id uuid NOT NULL, \
          PRIMARY KEY (id)); \
      GRANT USAGE ON SCHEMA platform TO wamn_app; \
      GRANT SELECT ON platform.\"user\" TO wamn_app;";
 
-/// Install the users floor in one disposable database and name the principals
+/// Install the user floor in one disposable database and name the principals
 /// that own a row there.
-pub(in crate::plugins::wamn_postgres) async fn ensure_live_users_rows(
+pub(in crate::plugins::wamn_postgres) async fn ensure_live_user_rows(
     admin_url: &str,
     principals: &[&str],
 ) {
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!(
-            "{ENSURE_GUEST_ACL_ROLE_SQL} {ENSURE_LIVE_USERS_TABLE_SQL}"
+            "{ENSURE_GUEST_ACL_ROLE_SQL} {ENSURE_LIVE_USER_TABLE_SQL}"
         ))
         .await
         .expect("install the live platform.\"user\" floor");
@@ -2257,7 +2257,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&cold_parse_fixture_sql(&schema, &role))
@@ -2431,7 +2431,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2542,7 +2542,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
 /// The platform principal is the third case: `wamn:executor` carries its own
 /// row, which provisioning writes, so it binds like any other principal.
 #[tokio::test]
-async fn live_a_bind_refuses_a_principal_with_no_users_row() {
+async fn live_a_bind_refuses_a_principal_with_no_user_row() {
     const TENANT: &str = "unprovisioned";
     const ABSENT_PRINCIPAL: &str = "11111111-2222-4333-8444-555555555555";
     let _lock = wamn_test_postgres::lock();
@@ -2553,7 +2553,7 @@ async fn live_a_bind_refuses_a_principal_with_no_users_row() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2612,7 +2612,7 @@ async fn live_a_bind_refuses_a_principal_with_no_users_row() {
 /// it clears or its TTL ends (`wamn-f2qud`).
 #[tokio::test]
 #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
-async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
+async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
     const TENANT: &str = "removed";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2622,7 +2622,7 @@ async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2682,7 +2682,7 @@ async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
 /// (`wamn-f2qud`).
 #[tokio::test]
 #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
-async fn live_a_drop_refuses_a_removed_users_row_on_the_next_bind() {
+async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     const TENANT: &str = "dropped";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2692,7 +2692,7 @@ async fn live_a_drop_refuses_a_removed_users_row_on_the_next_bind() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2836,7 +2836,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -3020,7 +3020,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, &[LIVE_PRINCIPAL]).await;
+    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,

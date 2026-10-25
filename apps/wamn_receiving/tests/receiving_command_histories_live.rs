@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
-use wamn_control::user_roles::{grant_role_on, revoke_role_on};
+use wamn_control::user_role::{grant_role_on, revoke_role_on};
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
 
 use database::{

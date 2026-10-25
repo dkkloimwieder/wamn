@@ -27,7 +27,7 @@ use wash_runtime::wasmtime::component::{Accessor, Instance, ResourceAny, Val};
 use wash_runtime::wit::WitInterface;
 
 use crate::plugins::wamn_postgres::claims::tests::{
-    LIVE_PRINCIPAL, ensure_live_users_rows, live_guest_url,
+    LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url,
 };
 use crate::plugins::wamn_postgres::{
     ClassCredentials, ReleaseIdentity, SessionClaims, WAMN_POSTGRES_ID, WamnPostgres,
@@ -246,7 +246,7 @@ async fn fixture() -> (
 ) {
     let database = wamn_test_postgres::database();
     let url = live_guest_url(database.url(), TENANT).await;
-    ensure_live_users_rows(database.url(), &[LIVE_PRINCIPAL]).await;
+    ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     let schema = include_str!("../../../../../../../deploy/sql/app-schema.sql");
     let start = schema
         .find("CREATE TABLE IF NOT EXISTS platform.write_log")

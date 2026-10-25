@@ -11,8 +11,8 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
-use wamn_control::role_permissions;
-use wamn_control::user_roles::{self, EnvironmentTarget, UserRoleRequest};
+use wamn_control::role_permission;
+use wamn_control::user_role::{self, EnvironmentTarget, UserRoleRequest};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -125,7 +125,7 @@ async fn grant_service_operator(
         user: email,
         role: ITEM_READER.to_owned(),
     };
-    let outcome = user_roles::grant_role(&request, &AuthChanges::default())
+    let outcome = user_role::grant_role(&request, &AuthChanges::default())
         .await
         .context("grant the authored role")?;
     anyhow::ensure!(outcome.changed, "the first grant wrote no row");
@@ -1203,7 +1203,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         ("service@example.invalid", ITEM_READER),
         ("Person@Example.invalid", ITEM_READER),
     ] {
-        let outcome = user_roles::grant_role(&request(user, role), &AuthChanges::default())
+        let outcome = user_role::grant_role(&request(user, role), &AuthChanges::default())
             .await
             .unwrap_or_else(|error| panic!("grant {role} to {user}: {error:#}"));
         assert!(
@@ -1211,7 +1211,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
             "the grant of {role} to {user} wrote no row"
         );
     }
-    let again = user_roles::grant_role(
+    let again = user_role::grant_role(
         &request("service@example.invalid", ITEM_READER),
         &AuthChanges::default(),
     )
@@ -1230,7 +1230,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         ("nobody@example.invalid", ITEM_READER, "env apply"),
         ("twin@example.invalid", ITEM_READER, "names 2 users"),
     ] {
-        let error = user_roles::grant_role(&request(user, role), &AuthChanges::default())
+        let error = user_role::grant_role(&request(user, role), &AuthChanges::default())
             .await
             .expect_err("the grant must refuse");
         assert!(
@@ -1241,27 +1241,27 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     let mut wrong_env = request("person@example.invalid", ITEM_READER);
     wrong_env.env = OTHER_ENVIRONMENT.to_owned();
     assert!(
-        user_roles::grant_role(&wrong_env, &AuthChanges::default())
+        user_role::grant_role(&wrong_env, &AuthChanges::default())
             .await
             .is_err(),
         "a registry target without a recorded instance was accepted"
     );
 
-    let revoked = user_roles::revoke_role(
+    let revoked = user_role::revoke_role(
         &request("person@example.invalid", ADMIN_ROLE),
         &AuthChanges::default(),
     )
     .await
     .expect("revoke admin");
     assert!(revoked.changed);
-    let revoked = user_roles::revoke_role(
+    let revoked = user_role::revoke_role(
         &request("service@example.invalid", ITEM_READER),
         &AuthChanges::default(),
     )
     .await
     .expect("revoke the authored role");
     assert!(revoked.changed);
-    let unchanged = user_roles::revoke_role(
+    let unchanged = user_role::revoke_role(
         &request("service@example.invalid", ITEM_READER),
         &AuthChanges::default(),
     )
@@ -1281,18 +1281,18 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         tenant: TENANT.to_owned(),
     };
     assert!(
-        role_permissions::create_role_in(&target, "clerk", &AuthChanges::default())
+        role_permission::create_role_in(&target, "clerk", &AuthChanges::default())
             .await
             .expect("create an authored role")
     );
-    user_roles::grant_role(
+    user_role::grant_role(
         &request("service@example.invalid", "clerk"),
         &AuthChanges::default(),
     )
     .await
     .expect("grant the created role");
     // R18 (4): a grant stores the root with no serving release to check.
-    let granted = role_permissions::grant_permission_in(
+    let granted = role_permission::grant_permission_in(
         &target,
         "clerk",
         OPERATION_REFERENCE,
@@ -1301,7 +1301,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     .await
     .expect("a grant stores the root");
     assert_eq!(granted.rows_added, 1);
-    role_permissions::revoke_permission_in(
+    role_permission::revoke_permission_in(
         &target,
         "clerk",
         OPERATION_REFERENCE,
@@ -1309,7 +1309,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     )
     .await
     .expect("revoke the stored root");
-    let error = role_permissions::revoke_permission_in(
+    let error = role_permission::revoke_permission_in(
         &target,
         "clerk",
         OPERATION_REFERENCE,
@@ -1319,7 +1319,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     .expect_err("a revoke of an unheld permission refuses");
     assert!(format!("{error:#}").contains("does not hold"), "{error:#}");
     assert!(
-        role_permissions::delete_role_in(&target, "clerk", &AuthChanges::default())
+        role_permission::delete_role_in(&target, "clerk", &AuthChanges::default())
             .await
             .expect("delete the authored role")
     );

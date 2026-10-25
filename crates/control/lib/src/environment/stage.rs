@@ -257,12 +257,12 @@ pub async fn materialize_application_principals(
             drops.principal(tenant, principal.id().as_str());
         }
         let role = format!("application-{}", package.package.id.replace('_', "-"));
-        crate::role_permissions::create_role(&transaction, tenant, &role, &mut drops).await?;
+        crate::role_permission::create_role(&transaction, tenant, &role, &mut drops).await?;
         for permission in crate::publish_release::application_dependency_permissions(
             package,
             &dependency_manifests,
         )? {
-            crate::role_permissions::grant_permission(
+            crate::role_permission::grant_permission(
                 &transaction,
                 tenant,
                 &role,

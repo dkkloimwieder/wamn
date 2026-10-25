@@ -11,7 +11,7 @@ use wamn_run_state::intent_store::{Begun, Intent, StoredOutcome};
 
 use super::WriteLogStore;
 use crate::plugins::wamn_postgres::claims::tests::{
-    LIVE_PRINCIPAL, ensure_live_users_rows, live_guest_url,
+    LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url,
 };
 use crate::plugins::wamn_postgres::{
     ClassCredentials, SessionClaims, WamnPostgres, WamnPostgresConfig,
@@ -42,7 +42,7 @@ fn write_log_sql() -> &'static str {
 async fn tenant_database(tenant: &str) -> (wamn_test_postgres::Database, Arc<WamnPostgres>) {
     let database = wamn_test_postgres::database();
     let guest_url = live_guest_url(database.url(), tenant).await;
-    ensure_live_users_rows(database.url(), &[LIVE_PRINCIPAL]).await;
+    ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     database
         .execute(&[write_log_sql()])
         .expect("install the write log");

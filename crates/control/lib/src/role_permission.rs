@@ -12,7 +12,7 @@ use wamn_platform_identity::application;
 pub use wamn_platform_identity::application::PermissionGrantOutcome;
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 
-use crate::user_roles::{EnvironmentTarget, connect_target};
+use crate::user_role::{EnvironmentTarget, connect_target};
 use wamn_control_provision::operation_grants::{
     OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     operation_grant_floor_check_sql,

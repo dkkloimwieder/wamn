@@ -55,14 +55,14 @@ const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
 
 /// Each role that the active user holds, with each permission of that
 /// role.
-const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
-    FROM platform.\"user\" AS users \
-    JOIN platform.user_role AS user_roles \
-      ON user_roles.tenant_id = $1 AND user_roles.user_id = users.id \
-    LEFT JOIN platform.permission AS permissions \
-      ON permissions.tenant_id = user_roles.tenant_id \
-      AND permissions.role_name = user_roles.role_name \
-    WHERE users.id = $2::text::uuid AND users.status = 'active'";
+const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
+    FROM platform.\"user\" AS \"user\" \
+    JOIN platform.user_role AS user_role \
+      ON user_role.tenant_id = $1 AND user_role.user_id = \"user\".id \
+    LEFT JOIN platform.permission AS permission \
+      ON permission.tenant_id = user_role.tenant_id \
+      AND permission.role_name = user_role.role_name \
+    WHERE \"user\".id = $2::text::uuid AND \"user\".status = 'active'";
 
 /// The application authority a caller holds now: whether it holds `admin`,
 /// and the stable operation references its other roles grant under the loaded
