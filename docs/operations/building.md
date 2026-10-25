@@ -109,7 +109,8 @@ The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.
 Each member is embedded with its bytes unchanged.
 The composed component replaces the overlay's virtualized output.
-The composer does not compare the base bytes with the digest pin in `wamn.json`. Publication checks the pin.
+`wamn build` compares each base component's bytes with the digest pin in `wamn.json` before compilation and before reporting a package as current.
+Publication repeats this comparison.
 
 Last, the build copies each component that the package owns and each palette component that its wirings name to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
 `wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component.

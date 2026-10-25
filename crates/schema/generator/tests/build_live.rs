@@ -9,8 +9,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_schema_generator::build::{BuildRequest, build_components, build_package, package_output};
+use sha2::{Digest as _, Sha256};
+use wamn_schema_generator::build::{
+    BuildRequest, build_components, build_package, generate_package, package_output,
+};
 use wamn_schema_generator::receipt;
+use wamn_schema_generator::{GenerateError, GenerateErrorType, PackageManifest};
 
 /// A test-owned copy of the fixture and its overlay, side by side.
 struct Workspace {
@@ -265,6 +269,94 @@ async fn statement_types_are_derived_and_nullability_only_widens() {
         format!("{error:#}").contains("row value note is declared not null"),
         "{error:#}"
     );
+}
+
+/// A changed base component must invalidate its pin even when its manifest
+/// and the overlay's inputs still match the current build.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
+    let workspace = Workspace::new("stale-base-pin");
+    let database = wamn_test_postgres::database();
+    let output_root = workspace.root.join("target/wamn");
+    let base_request = BuildRequest::new(&workspace.package(), &output_root, database.url());
+    let base = generate_package(&base_request)
+        .await
+        .expect("generate the base");
+    let base_output = package_output(&output_root, &base.package.id);
+
+    // Supply component output without invoking the guest compiler. This test
+    // exercises build admission before compilation or composition starts.
+    let record_component = |output: &Path, bytes: &[u8]| {
+        let manifest =
+            PackageManifest::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
+        let name = manifest.components.keys().next().unwrap().clone();
+        let path = format!("components/{name}.wasm");
+        let digest = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
+        fs::create_dir_all(output.join("components")).unwrap();
+        fs::write(output.join(&path), bytes).unwrap();
+        let mut built = receipt::read(output).unwrap();
+        built.outputs.components = vec![receipt::ReceiptComponent {
+            name,
+            path,
+            sha256: digest.clone(),
+        }];
+        fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes()).unwrap();
+        digest
+    };
+    let pin = record_component(&base_output, b"\0asm\x0d\0\x01\0");
+    let overlay = workspace.overlay();
+    let manifest_path = overlay.join("wamn.k");
+    let manifest =
+        PackageManifest::from_slice(&wamn_schema_generator::compile_manifest(&overlay).unwrap())
+            .unwrap();
+    let source = fs::read_to_string(&manifest_path).unwrap();
+    fs::write(
+        &manifest_path,
+        source.replace(&manifest.base_dependencies["base_fixture"].digest, &pin),
+    )
+    .unwrap();
+    let request = BuildRequest::new(&overlay, &output_root, database.url());
+    let built = generate_package(&request)
+        .await
+        .expect("generate the overlay");
+    let output = package_output(&output_root, &built.package.id);
+    record_component(&output, b"\0asm\x0d\0\x01\0");
+    // Enable component builds only after generation, so a current build must
+    // check its base without calling Cargo.
+    fs::write(workspace.root.join("Cargo.toml"), "[workspace]\n").unwrap();
+    build_package(&request)
+        .await
+        .expect("accept the matching base pin");
+
+    let built_digest = record_component(&base_output, b"\0asm\x0d\0\x01\0\0\x02\x01x");
+    assert_eq!(
+        receipt::read(&base_output).unwrap().outputs.manifest,
+        base.outputs.manifest
+    );
+    let before = snapshot(&output);
+    let current_error = build_package(&request)
+        .await
+        .expect_err("a current build accepted a stale base pin");
+    assert_eq!(
+        before,
+        snapshot(&output),
+        "a refused current build changed its output"
+    );
+    fs::write(overlay.join("input.txt"), "changed input").unwrap();
+    let fresh_error = build_package(&request)
+        .await
+        .expect_err("a fresh build accepted a stale base pin");
+    for error in [current_error, fresh_error] {
+        let refusal = error
+            .downcast_ref::<GenerateError>()
+            .expect("typed refusal");
+        assert_eq!(refusal.error_type(), GenerateErrorType::InvalidComponent);
+        assert_eq!(refusal.object(), Some(base.package.id.as_str()));
+        let message = error.to_string();
+        for expected in [&built.package.id, &base.package.id, &pin, &built_digest] {
+            assert!(message.contains(expected), "{message} lacks {expected}");
+        }
+    }
 }
 
 /// Step 7 composes an overlay whose `operations` object names a base

@@ -28,11 +28,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 
-use crate::PackageManifest;
 use crate::authoring::COMPILED_MANIFEST_NAME;
 use crate::build::{BuildRequest, package_output};
 use crate::generate::sha256;
 use crate::receipt::{self, BuildReceipt, RECEIPT_FILE, ReceiptComponent};
+use crate::{GenerateError, GenerateErrorType, PackageManifest};
 
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";
@@ -94,6 +94,7 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     if !workspace.join("Cargo.toml").is_file() {
         return Ok(receipt);
     }
+    let bases = base_components(&request.output_root, &manifest)?;
     let repository = workspace.join("..");
     let rustflags = guest_rustflags(&repository).await?;
     let virtualization: Virtualization = read_json(&repository.join(VIRTUALIZATION))?;
@@ -142,7 +143,7 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     }
     for (name, built) in owned {
         let built = virtualize(&repository, &virtualization, &allowlist, built).await?;
-        let file = compose(request, &repository, &manifest, &built.file).await?;
+        let file = compose(&repository, &manifest, &built.file, &bases).await?;
         records.push((name, file));
     }
 
@@ -422,22 +423,14 @@ async fn run_tool(mut command: Command, partial: &Path, output: &Path, what: &st
     fs::rename(partial, output).with_context(|| format!("write {}", output.display()))
 }
 
-/// Compose an overlay with the bases its manifest pins in
-/// `base_dependencies`. The composer returns an overlay that calls no base
-/// unchanged. A package without bases is returned as it is.
-async fn compose(
-    request: &BuildRequest,
-    repository: &Path,
+/// Resolve the built base components and check their bytes against the pins.
+pub(crate) fn base_components(
+    output_root: &Path,
     manifest: &PackageManifest,
-    file: &Path,
-) -> Result<PathBuf> {
-    if manifest.base_dependencies.is_empty() {
-        return Ok(file.to_owned());
-    }
-    let mut command = tool(repository, COMPOSER);
-    command.arg("--overlay").arg(file);
+) -> Result<Vec<PathBuf>> {
+    let mut bases = Vec::new();
     for dependency in manifest.base_dependencies.values() {
-        let base_output = package_output(&request.output_root, &dependency.package);
+        let base_output = package_output(output_root, &dependency.package);
         let base_receipt = receipt::read(&base_output).with_context(|| {
             format!(
                 "read the build of base {}; build it first",
@@ -461,9 +454,39 @@ async fn compose(
                 dependency.package
             );
         };
-        command
-            .arg("--base")
-            .arg(component_file(&base_output, &base_receipt, base_component)?);
+        let (file, digest) = component_file(&base_output, &base_receipt, base_component)?;
+        if digest != dependency.digest {
+            return Err(GenerateError::for_object(
+                GenerateErrorType::InvalidComponent,
+                format!(
+                    "package {} pins base {} to {}, but its built component digest is {}",
+                    manifest.package.id, dependency.package, dependency.digest, digest
+                ),
+                dependency.package.as_str(),
+            )
+            .into());
+        }
+        bases.push(file);
+    }
+    Ok(bases)
+}
+
+/// Compose an overlay with the bases its manifest pins in
+/// `base_dependencies`. The composer returns an overlay that calls no base
+/// unchanged. A package without bases is returned as it is.
+async fn compose(
+    repository: &Path,
+    manifest: &PackageManifest,
+    file: &Path,
+    bases: &[PathBuf],
+) -> Result<PathBuf> {
+    if bases.is_empty() {
+        return Ok(file.to_owned());
+    }
+    let mut command = tool(repository, COMPOSER);
+    command.arg("--overlay").arg(file);
+    for base in bases {
+        command.arg("--base").arg(base);
     }
     // The composed component replaces the overlay's output.
     let partial = file.with_extension(format!("wasm.composed.{}", std::process::id()));
@@ -480,7 +503,7 @@ async fn compose(
 
 /// The file of the component `name` that a base's `build.json` records,
 /// checked against its digest.
-fn component_file(output: &Path, receipt: &BuildReceipt, name: &str) -> Result<PathBuf> {
+fn component_file(output: &Path, receipt: &BuildReceipt, name: &str) -> Result<(PathBuf, String)> {
     let entry = receipt
         .outputs
         .components
@@ -494,13 +517,14 @@ fn component_file(output: &Path, receipt: &BuildReceipt, name: &str) -> Result<P
         })?;
     let path = output.join(&entry.path);
     let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let digest = sha256(&bytes);
     ensure!(
-        sha256(&bytes) == entry.sha256,
+        digest == entry.sha256,
         "{} differs from its build.json entry; build {} again",
         path.display(),
         receipt.package.id
     );
-    Ok(path)
+    Ok((path, digest))
 }
 
 /// The component names of the nodes of every wiring in `publication/wirings/`.

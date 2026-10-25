@@ -164,6 +164,7 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
             }) {
                 continue;
             }
+            crate::components::base_components(&request.output_root, &manifest)?;
         }
         return Ok(Some(receipt));
     }
