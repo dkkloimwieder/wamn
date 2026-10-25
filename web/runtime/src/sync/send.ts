@@ -1,7 +1,7 @@
 import type { Reply, Send } from "@wfe/sync";
 
 import { newRequestId } from "../supplied.js";
-import type { Outcome, Transport } from "../wire.js";
+import type { InvokeOptions, Outcome, Transport } from "../wire.js";
 
 /** The transport, generated bindings and session renewal for one outbox. */
 export interface SendOptions<Requests extends Record<string, unknown>> {
@@ -10,6 +10,7 @@ export interface SendOptions<Requests extends Record<string, unknown>> {
     readonly [Operation in keyof Requests]: (
       transport: Transport,
       items: readonly Requests[Operation][],
+      options?: InvokeOptions,
     ) => Promise<Outcome<unknown>>;
   };
   readonly renew: () => Promise<boolean>;
@@ -23,15 +24,20 @@ export function createSend<Requests extends Record<string, unknown>>(options: Se
     }
     const binding = options.bindings[entry.operation]!;
     const send = () =>
-      binding(options.transport, [
-        {
-          ...(entry.request as object),
-          idempotencyKey: entry.request_hash,
-          requestId: newRequestId(),
-        } as Requests[string],
-      ]);
+      binding(
+        options.transport,
+        [
+          {
+            ...(entry.request as object),
+            idempotencyKey: entry.request_hash,
+            requestId: newRequestId(),
+          } as Requests[string],
+        ],
+        { signal },
+      );
     if (signal.aborted) return { ok: false, retriable: true };
     let outcome = await send();
+    if (signal.aborted) return { ok: false, retriable: true };
     if (outcome.status === "refused" && outcome.code === "unauthenticated") {
       try {
         if (!(await options.renew()) || signal.aborted) return { ok: false, retriable: true };
@@ -40,7 +46,7 @@ export function createSend<Requests extends Record<string, unknown>>(options: Se
       }
       outcome = await send();
     }
-    return reply(outcome);
+    return signal.aborted ? { ok: false, retriable: true } : reply(outcome);
   };
 }
 

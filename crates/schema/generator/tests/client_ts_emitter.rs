@@ -83,7 +83,9 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "{operation}"
         );
         assert!(
-            widget.contains(&format!("export async function {function}(")),
+            widget.contains(&format!(
+                "export async function {function}(\n  transport: Transport,\n  items: readonly {stem}Request[],\n  options?: {{ signal?: AbortSignal }},\n):"
+            )),
             "{operation}"
         );
         assert!(
@@ -110,6 +112,23 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
             "export * as widgetTag from \"./widget_tag.js\";\n",
         )
     );
+}
+
+#[test]
+fn every_binding_passes_abort_options_to_the_transport() {
+    let files = emit_ts_client(&release()).unwrap();
+    for file in &files {
+        let source = std::str::from_utf8(file.bytes()).unwrap();
+        for binding in source.split("export async function ").skip(1) {
+            let binding = binding.split("\n}\n").next().unwrap();
+            assert!(
+                binding.contains("  options?: { signal?: AbortSignal },\n):"),
+                "{binding}"
+            );
+            assert!(binding.contains("await transport.invoke({"), "{binding}");
+            assert!(binding.contains("    }, options),\n"), "{binding}");
+        }
+    }
 }
 
 /// Defect 1 of the Epic 2 review. A bounded list and a page return an

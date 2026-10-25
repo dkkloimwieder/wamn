@@ -1,9 +1,18 @@
+import "fake-indexeddb/auto";
 import type { OutboxEntry, Reply } from "@wfe/sync";
 import { describe, expect, it, vi } from "vitest";
 
+import { outbox } from "../../wfe/packages/sync/src/outbox.js";
 import { createSend, outboxDatabase, requestHash } from "../src/sync/index.js";
 import { createTransport } from "../src/transport.js";
-import { reviveOutcome, toWire, type OperationRoute, type Transport } from "../src/wire.js";
+import {
+  reviveOutcome,
+  toWire,
+  type InvokeOptions,
+  type OperationRoute,
+  type Transport,
+  type WireRequest,
+} from "../src/wire.js";
 
 const operation = "fixture:row/create@1.0.0";
 const route: OperationRoute = {
@@ -43,19 +52,23 @@ async function create(
     requestId: string;
     label: string;
   }[],
+  options?: InvokeOptions,
 ) {
   return reviveOutcome<{ id: string }>(
-    await transport.invoke({
-      ...route,
-      items: items.map((item) =>
-        toWire(item, {
-          idempotency_key: "idempotencyKey",
-          request_id: "requestId",
-          id: "id",
-          label: "label",
-        }),
-      ),
-    }),
+    await transport.invoke(
+      {
+        ...route,
+        items: items.map((item) =>
+          toWire(item, {
+            idempotency_key: "idempotencyKey",
+            request_id: "requestId",
+            id: "id",
+            label: "label",
+          }),
+        ),
+      },
+      options,
+    ),
     { id: "id" },
   );
 }
@@ -175,6 +188,54 @@ describe("send", () => {
     expect(requests).toHaveLength(1);
   });
 
+  it.each([false, true])("close aborts fetch and keeps the outbox entry pending (renewal: %s)", async (renewed) => {
+    let attempts = 0;
+    let signal: AbortSignal | null | undefined;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+      attempts += 1;
+      if (renewed && attempts === 1) return new Response(null, { status: 401 });
+      signal = init?.signal;
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+      });
+    });
+    const transport = createTransport({ baseUrl: "https://app.test", fetch });
+    const renew = vi.fn(async () => true);
+    const send = vi.fn(createSend({ transport, bindings: { [operation]: create }, renew }));
+    const database = outboxDatabase("fixture", "dev", crypto.randomUUID());
+    const box = outbox({ database, send, probe: async () => true });
+    try {
+      const queued = await box.enqueue(entry());
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(renewed ? 2 : 1));
+      expect(box.entries()[0]?.state).toBe("sending");
+      const replay = box.replay();
+      box.close();
+      expect(signal?.aborted).toBe(true);
+      await replay;
+      expect(await send.mock.results[0]!.value).toEqual(retriable);
+      expect(renew).toHaveBeenCalledTimes(renewed ? 1 : 0);
+      expect(box.entries()).toEqual([{ ...queued, state: "pending" }]);
+
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(database);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        const stored = await new Promise<OutboxEntry[]>((resolve, reject) => {
+          const request = db.transaction("outbox").objectStore("outbox").getAll();
+          request.onsuccess = () => resolve(request.result as OutboxEntry[]);
+          request.onerror = () => reject(request.error);
+        });
+        expect(stored).toEqual([{ ...queued, state: "pending" }]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      box.close();
+    }
+  });
+
   it.each(["absent", "toString"])("refuses the unknown operation %s", async (name) => {
     const { send, fetch, renew } = harness(completed);
     expect(await send({ ...entry(), operation: name }, new AbortController().signal)).toEqual({
@@ -188,7 +249,11 @@ describe("send", () => {
 
   it("refuses a partial outcome", async () => {
     const transport: Transport = {
-      invoke: async () => ({ status: "partiallyCompleted", committedResult: {}, failedOutcome: null }),
+      invoke: async (_request: WireRequest, _options?: InvokeOptions) => ({
+        status: "partiallyCompleted",
+        committedResult: {},
+        failedOutcome: null,
+      }),
     };
     const send = createSend({ transport, bindings: { [operation]: create }, renew: async () => true });
     expect(await send(entry(), new AbortController().signal)).toEqual({

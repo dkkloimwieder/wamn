@@ -179,6 +179,35 @@ describe("a transport failure", () => {
     contract,
   };
 
+  it.each(["read", "write", "each"])(
+    "passes the abort signal to fetch for %s and returns uncertainty",
+    async (call) => {
+      const controller = new AbortController();
+      let received: AbortSignal | null | undefined;
+      const transport = createTransport({
+        baseUrl: "https://example.test",
+        fetch: (_url, init) => {
+          received = init?.signal;
+          return new Promise((_resolve, reject) => {
+            received?.addEventListener("abort", () => reject(received?.reason), { once: true });
+          });
+        },
+      });
+      const request = {
+        ...route,
+        method: call === "read" ? "GET" : "POST",
+        items: [{ request_id: "r1" }],
+      };
+      const pending =
+        call === "each"
+          ? transport.invokeEach!(request, { signal: controller.signal })
+          : transport.invoke(request, { signal: controller.signal });
+      expect(received).toBe(controller.signal);
+      controller.abort();
+      expect(await pending).toMatchObject(call === "each" ? [{ status: "uncertain" }] : { status: "uncertain" });
+    },
+  );
+
   it("is uncertain, because the request may have run", async () => {
     const transport = createTransport({
       baseUrl: "https://example.test",

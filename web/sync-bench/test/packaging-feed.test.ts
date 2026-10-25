@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { JsonValue, Transport, WireRequest } from "@wamn/web-runtime";
+import type { InvokeOptions, JsonValue, Transport, WireRequest } from "@wamn/web-runtime";
 import { CursorExpired } from "@wfe/sync";
 import { canonicalJson, packagingFeed, packagingKey } from "../src/packaging-feed";
 
@@ -20,7 +20,7 @@ const wireRow = {
 /** A transport that answers each request with the next value, and records it. */
 function transport(values: JsonValue[], seen: WireRequest[] = []): Transport {
   return {
-    async invoke(request) {
+    async invoke(request, _options?: InvokeOptions) {
       seen.push(request);
       const value = values.shift();
       if (value === undefined) throw new Error("no answer left");
@@ -63,7 +63,7 @@ describe("packagingFeed", () => {
 
   it("refuses a list that did not complete", async () => {
     const feed = packagingFeed({
-      async invoke() {
+      async invoke(_request: WireRequest, _options?: InvokeOptions) {
         return { status: "refused", code: "permission_denied", detail: null };
       },
     } as Transport);
@@ -98,7 +98,7 @@ describe("packagingFeed", () => {
 
   it("throws CursorExpired when the host no longer holds the cursor", async () => {
     const feed = packagingFeed({
-      async invoke() {
+      async invoke(_request: WireRequest, _options?: InvokeOptions) {
         return { status: "refused", code: "cursor_expired", detail: null };
       },
     } as Transport);

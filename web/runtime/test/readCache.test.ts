@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { afterWrites, createTransport } from "../src/transport.js";
-import type { ResponseContract, Transport, WireRequest } from "../src/wire.js";
+import type { InvokeOptions, ResponseContract, Transport, WireRequest } from "../src/wire.js";
 
 const GET = "private, no-cache";
 const LIST = "private, max-age=10, stale-while-revalidate=60";
@@ -299,7 +299,9 @@ describe("a write listener", () => {
   });
 
   it("is never called by a transport that has no onWrite", () => {
-    const bare: Transport = { invoke: () => Promise.reject(new Error("unused")) };
+    const bare: Transport = {
+      invoke: (_request: WireRequest, _options?: InvokeOptions) => Promise.reject(new Error("unused")),
+    };
     expect(() => afterWrites(bare, [], () => undefined)()).not.toThrow();
   });
 

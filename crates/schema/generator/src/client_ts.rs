@@ -588,12 +588,12 @@ fn emit_operation(
     .expect("write");
     writeln!(
         source,
-        "export async function {function}(\n  transport: Transport,\n  items: readonly {type_stem}Request[],\n): Promise<Outcome<{type_stem}Result>> {{"
+        "export async function {function}(\n  transport: Transport,\n  items: readonly {type_stem}Request[],\n  options?: {{ signal?: AbortSignal }},\n): Promise<Outcome<{type_stem}Result>> {{"
     )
     .expect("write");
     writeln!(
         source,
-        "  return reviveOutcome<{type_stem}Result>(\n    await transport.invoke({{\n      ...{route_const},\n      items: items.map((item) => toWire(item, {request_fields})),\n    }}),\n    {result_fields_const},\n  );\n}}"
+        "  return reviveOutcome<{type_stem}Result>(\n    await transport.invoke({{\n      ...{route_const},\n      items: items.map((item) => toWire(item, {request_fields})),\n    }}, options),\n    {result_fields_const},\n  );\n}}"
     )
     .expect("write");
     if feed {
@@ -645,7 +645,7 @@ fn write_changes(
     write_map_members(source, fields, 5)?;
     writeln!(
         source,
-        "        }},\n      }},\n    }},\n  }},\n  \"next_cursor\": \"nextCursor\",\n  \"complete\": \"complete\",\n}};\n\n/** The list route of `{operation}`, read with its feed part. */\nexport const {stem}_CHANGES_ROUTE: OperationRoute = {{\n  ...{route_const},\n  contract: {{ ...{route_const}.contract, resultClass: \"changes\" }},\n}};\n\n/**\n * Read the changes of `{operation}` in the scope of `request` since `cursor`,\n * at most `limit` of them. A list page returns the first cursor.\n */\nexport async function changes(\n  transport: Transport,\n  request: Omit<{type_stem}Request, \"cursor\" | \"limit\" | \"sort\" | \"feed\">,\n  cursor: string,\n  limit?: number,\n): Promise<Outcome<{type_stem}Changes>> {{\n  const feed = limit === undefined ? {{ cursor }} : {{ cursor, limit }};\n  return reviveOutcome<{type_stem}Changes>(\n    await transport.invoke({{\n      ...{stem}_CHANGES_ROUTE,\n      items: [toWire({{ ...request, feed }}, {request_fields})],\n    }}),\n    {stem}_CHANGES_FIELDS,\n  );\n}}"
+        "        }},\n      }},\n    }},\n  }},\n  \"next_cursor\": \"nextCursor\",\n  \"complete\": \"complete\",\n}};\n\n/** The list route of `{operation}`, read with its feed part. */\nexport const {stem}_CHANGES_ROUTE: OperationRoute = {{\n  ...{route_const},\n  contract: {{ ...{route_const}.contract, resultClass: \"changes\" }},\n}};\n\n/**\n * Read the changes of `{operation}` in the scope of `request` since `cursor`,\n * at most `limit` of them. A list page returns the first cursor.\n */\nexport async function changes(\n  transport: Transport,\n  request: Omit<{type_stem}Request, \"cursor\" | \"limit\" | \"sort\" | \"feed\">,\n  cursor: string,\n  limit?: number,\n  options?: {{ signal?: AbortSignal }},\n): Promise<Outcome<{type_stem}Changes>> {{\n  const feed = limit === undefined ? {{ cursor }} : {{ cursor, limit }};\n  return reviveOutcome<{type_stem}Changes>(\n    await transport.invoke({{\n      ...{stem}_CHANGES_ROUTE,\n      items: [toWire({{ ...request, feed }}, {request_fields})],\n    }}, options),\n    {stem}_CHANGES_FIELDS,\n  );\n}}"
     )
     .expect("write");
     Ok(())

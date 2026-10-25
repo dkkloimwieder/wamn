@@ -14,6 +14,7 @@ import { createReadStore, writeTouches, type ReadReply } from "./readCache.js";
 import type {
   ErrorCase,
   FieldMap,
+  InvokeOptions,
   JsonValue,
   Outcome,
   ResponseContract,
@@ -490,10 +491,14 @@ export function createTransport(options: TransportOptions): Transport & Required
     }
   };
   /** Send one request, and return its reply or the uncertainty of a failed send. */
-  const exchange = async (request: WireRequest): Promise<HttpReply | Outcome<JsonValue>> => {
+  const exchange = async (
+    request: WireRequest,
+    invokeOptions?: InvokeOptions,
+  ): Promise<HttpReply | Outcome<JsonValue>> => {
     const read = request.method === "GET";
     const headers: { [name: string]: string } = {};
     const init: RequestInit = { method: request.method, headers };
+    if (invokeOptions?.signal !== undefined) init.signal = invokeOptions.signal;
     let target = request.template;
     if (read) {
       // A read carries its one item in the query string, and has no body.
@@ -568,17 +573,17 @@ export function createTransport(options: TransportOptions): Transport & Required
         signal?.removeEventListener("abort", abort);
       }
     },
-    async invoke(request: WireRequest): Promise<Outcome<JsonValue>> {
+    async invoke(request: WireRequest, options?: InvokeOptions): Promise<Outcome<JsonValue>> {
       const requestId = request.method === "GET" ? null : submittedRequestId(request);
-      const reply = await exchange(request);
+      const reply = await exchange(request, options);
       return isReply(reply) ? classify(request.contract, requestId, reply) : reply;
     },
-    async invokeEach(request: WireRequest): Promise<readonly Outcome<JsonValue>[]> {
+    async invokeEach(request: WireRequest, options?: InvokeOptions): Promise<readonly Outcome<JsonValue>[]> {
       if (request.method === "GET") {
         return request.items.map(() => uncertain("a read sends exactly one request item"));
       }
       const requestIds = request.items.map(itemRequestId);
-      const reply = await exchange(request);
+      const reply = await exchange(request, options);
       return isReply(reply) ? classifyEach(request.contract, requestIds, reply) : requestIds.map(() => reply);
     },
     onWrite(listener: (writes: readonly string[] | null) => void): () => void {

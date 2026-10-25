@@ -106,6 +106,11 @@ export type Outcome<T> =
 /** Everything one operation sends except its items. */
 export type OperationRoute = Omit<WireRequest, "items">;
 
+/** Cancellation for one transport call. */
+export interface InvokeOptions {
+  readonly signal?: AbortSignal;
+}
+
 /**
  * The transport an application supplies.
  *
@@ -113,7 +118,7 @@ export type OperationRoute = Omit<WireRequest, "items">;
  * of the response into one `Outcome`. The bindings only state what to send.
  */
 export interface Transport {
-  invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
+  invoke(request: WireRequest, options?: InvokeOptions): Promise<Outcome<JsonValue>>;
   /** Whether the application origin answers its health probe within three seconds. */
   probe?(signal?: AbortSignal): Promise<boolean>;
   /**
@@ -121,7 +126,7 @@ export interface Transport {
    * identity, and returns one outcome for each item, in order. The release
    * runs each item on its own. A transport without it sends one item a call.
    */
-  invokeEach?(request: WireRequest): Promise<readonly Outcome<JsonValue>[]>;
+  invokeEach?(request: WireRequest, options?: InvokeOptions): Promise<readonly Outcome<JsonValue>[]>;
   /**
    * Calls `listener` with the write's `writes` after each write settles,
    * whatever its outcome, and returns the function that stops it. A page
@@ -235,12 +240,16 @@ export async function callOperation<T>(
   transport: Transport,
   binding: OperationBinding,
   items: readonly unknown[],
+  options?: InvokeOptions,
 ): Promise<Outcome<T>> {
   return reviveOutcome<T>(
-    await transport.invoke({
-      ...binding.route,
-      items: items.map((item) => toWire(item, binding.request)),
-    }),
+    await transport.invoke(
+      {
+        ...binding.route,
+        items: items.map((item) => toWire(item, binding.request)),
+      },
+      options,
+    ),
     binding.result,
   );
 }
@@ -253,13 +262,17 @@ export async function callEach<T>(
   transport: Transport,
   binding: OperationBinding,
   items: readonly unknown[],
+  options?: InvokeOptions,
 ): Promise<readonly Outcome<T>[]> {
   if (transport.invokeEach === undefined) {
     throw new Error("this transport sends no call with many outer inputs");
   }
-  const outcomes = await transport.invokeEach({
-    ...binding.route,
-    items: items.map((item) => toWire(item, binding.request)),
-  });
+  const outcomes = await transport.invokeEach(
+    {
+      ...binding.route,
+      items: items.map((item) => toWire(item, binding.request)),
+    },
+    options,
+  );
   return outcomes.map((outcome) => reviveOutcome<T>(outcome, binding.result));
 }
