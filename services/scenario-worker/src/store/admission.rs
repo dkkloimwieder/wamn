@@ -1,46 +1,8 @@
-//! Gate and Publish access to the scoped PROJECT database.
+//! Gate access to the scoped project database.
 //!
-//! Residency (wamn-0h0g.8.5.4): everything here runs on the SECOND connection —
-//! a scoped `wamn_management_admitter` generation on this environment's PROJECT
-//! database (wamn-0h0g.8.5.3 landed the input).
-//!
-//! # What wamn-0h0g.8.5.5 left standing
-//!
-//! A gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it (ratified spec
-//! §5.1). The sequential per-ordinal reserve→admit→poll→evaluate→finalize loop
-//! was the resumption protocol for effectful cases, and the effect-free clause
-//! deleted the thing it remembered; the control-database half it wrote to went
-//! with it, under the owner ruling of 2026-08-25 that a relation whose writer,
-//! reader and keying all die does not survive. So the gate verb lives HERE now,
-//! on the one connection it still needs, and it opens no transaction at all.
-//!
-//! The surface is deliberately narrow: gate reads the two postures that can
-//! refuse a document, while Publish appends exactly seven `catalog.wirings`
-//! columns after the control-store green-report guard. That is the whole of
-//! what the admitter credential is used for (`MANAGEMENT_ADMITTER_*` in
-//! `crates/control/provision/src/sql.rs`). A column absent from those lists is
-//! DENIED, not merely unmentioned, so a wider query fails closed at runtime
-//! rather than compile-time.
-//!
-//! Both read the component facts of the package from its package artifact
-//! (wamn-vavs4.6, R2), not from this connection: the descriptor layers of the
-//! artifact under the tag `<package_id>-<version>`, pulled from the registry
-//! only with a pull-only registry credential. That is the read publish makes.
-//! No database is read for a package fact.
-//!
-//! # How this connection reaches a governed row at all (`wamn-0h0g.22.17`)
-//!
-//! Not by a claim. `wamn_management_admitter` is a project-environment-scoped
-//! family — `WorkloadRoleScope::ProjectEnvironment` has no tenant field, so its
-//! login name never encoded one — and the tenant floor derives its key from
-//! `current_user`. The floor is narrowed `TO wamn_app`, and PostgreSQL
-//! default-denies when RLS is enabled and no policy matches the connected role,
-//! so before this bead the admitter read every one of these relations at
-//! `ERROR: permission denied for function current_tenant_key`. It now reaches
-//! them through the one permissive `TO wamn_platform` arm each governed relation
-//! carries, which admits every tenant in the database; the `tenant_id = $1`
-//! predicates on reads and the surface-owned `tenant_id` value on Publish are
-//! what narrow every operation back down.
+//! The gate reads environment posture through `wamn_management_admitter`.
+//! Component facts come from the package artifact. Publication through this
+//! legacy command is refused. Workflows are authored in the environment.
 
 use std::error::Error;
 use std::fmt;
@@ -50,15 +12,11 @@ use anyhow::{Context as _, bail};
 use serde_json::Value;
 use tokio::time::{sleep, timeout};
 use tokio_postgres::config::Host;
-use tokio_postgres::error::SqlState;
-use tokio_postgres::types::ToSql;
-use tokio_postgres::{Client, Config, NoTls, Row};
+use tokio_postgres::{Client, Config, NoTls};
 
 use wamn_authoring_model::GateRefusal;
 use wamn_authoring_model::gate::{judge_gate_document, validate_gate_cases};
-use wamn_catalog::{
-    AdmittedComponent, ComponentPackageScope, WiringDocument, validate_wiring_compatibility,
-};
+use wamn_catalog::{AdmittedComponent, ComponentPackageScope};
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
 };
@@ -104,87 +62,8 @@ pub(crate) const MANAGEMENT_ADMISSION_UNAVAILABLE: &str = "management-admission-
 
 /// One request never waits indefinitely for a dead admission endpoint.
 const ADMISSION_CONNECT_ATTEMPTS: usize = 3;
-const ADMISSION_OPERATION_ATTEMPTS: usize = ADMISSION_CONNECT_ATTEMPTS;
 const ADMISSION_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const ADMISSION_RETRY_DELAY: Duration = Duration::from_millis(100);
-
-/// Append exactly the seven columns management `Publish` is granted.
-const INSERT_WIRING_SQL: &str = "\
-INSERT INTO catalog.wirings (\
-       tenant_id, package_id, package_version, wiring_id, version, \
-       graph_json, wiring_hash\
-     ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) \
-ON CONFLICT DO NOTHING";
-
-/// Distinguish an exact retry from a conflicting immutable definition.
-const EXACT_WIRING_SQL: &str = "\
-SELECT EXISTS (\
-    SELECT 1 FROM catalog.wirings \
-     WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-       AND wiring_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
-       AND wiring_hash = $7\
-    )";
-
-// THE CANDIDATE LOOKUP IS DELETED (wamn-0h0g.8.28), not moved.
-//
-// A query of `catalog.wirings` by the submitted document's hash stood here and
-// resolved the gate's candidate from the STORED ROW. It was leftover coupling
-// from the retired reservation protocol, and execution refuted it: authorship
-// refuses to write that row without a green report for its own hash, and this
-// was the only producer of the report. Nothing could be gated a first time, per
-// DOCUMENT — so no bootstrap step would have sufficed either.
-//
-// The gate now reads `catalog.wirings` NOT AT ALL. Its candidate is the document
-// the command carries, which is what the ratified stateless-gate model meant by
-// a report REPRODUCIBLE FROM THE DOCUMENT.
-
-/// Project-side result of parsing and compatibility-checking one publication.
-#[derive(Debug)]
-pub(crate) enum PreparePublishResult {
-    Ready(Box<PreparedWiringPublication>),
-    InvalidDocument {
-        detail: String,
-    },
-    /// The parsed document does not match the current admitted component facts.
-    ExecutableDrift,
-}
-
-/// Publication facts derived by the server and opaque to the management route.
-///
-/// Keeping every stored value private makes the route's green-report lookup a
-/// guard over the SAME hash the append uses; no caller-supplied hash can enter
-/// the write after that check.
-#[derive(Debug)]
-pub(crate) struct PreparedWiringPublication {
-    tenant_id: Box<str>,
-    package_id: Box<str>,
-    package_version: Box<str>,
-    document: WiringDocument,
-    stored_version: i32,
-    graph_json: String,
-    wiring_hash: Box<str>,
-}
-
-impl PreparedWiringPublication {
-    pub(crate) fn wiring_id(&self) -> &str {
-        &self.document.wiring_id
-    }
-
-    pub(crate) fn version(&self) -> u32 {
-        self.document.version
-    }
-
-    pub(crate) fn wiring_hash(&self) -> &str {
-        &self.wiring_hash
-    }
-}
-
-/// Result of the immutable project-side append after the caller's green guard.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AppendPublishResult {
-    Published,
-    ExecutableDrift,
-}
 
 /// Bounded refusal after the pinned admission endpoint could not reconnect.
 ///
@@ -394,185 +273,6 @@ impl AdmissionSurface {
         }
     }
 
-    async fn ensure_connection(&mut self) -> Result<(), AdmissionEndpointUnavailable> {
-        if self
-            .connection
-            .as_ref()
-            .is_some_and(|connection| !connection.client.is_closed())
-        {
-            return Ok(());
-        }
-        self.reconnect().await
-    }
-
-    async fn query_one(
-        &mut self,
-        statement: &str,
-        parameters: &[&(dyn ToSql + Sync)],
-        action: &'static str,
-    ) -> anyhow::Result<Row> {
-        for attempt in 1..=ADMISSION_OPERATION_ATTEMPTS {
-            self.ensure_connection().await?;
-            let result = self
-                .connection
-                .as_ref()
-                .expect("ensure_connection installs a connection")
-                .client
-                .query_one(statement, parameters)
-                .await;
-            match result {
-                Ok(row) => return Ok(row),
-                Err(error) if connection_was_lost(&error) => {
-                    self.connection.take();
-                    tracing::warn!(attempt, %error, "project admission query lost its connection");
-                    if attempt < ADMISSION_OPERATION_ATTEMPTS {
-                        sleep(ADMISSION_RETRY_DELAY).await;
-                    }
-                }
-                Err(error) => return Err(error).context(action),
-            }
-        }
-        Err(self.endpoint_unavailable().into())
-    }
-
-    async fn execute(
-        &mut self,
-        statement: &str,
-        parameters: &[&(dyn ToSql + Sync)],
-        action: &'static str,
-    ) -> anyhow::Result<u64> {
-        for attempt in 1..=ADMISSION_OPERATION_ATTEMPTS {
-            self.ensure_connection().await?;
-            let result = self
-                .connection
-                .as_ref()
-                .expect("ensure_connection installs a connection")
-                .client
-                .execute(statement, parameters)
-                .await;
-            match result {
-                Ok(changed) => return Ok(changed),
-                Err(error) if connection_was_lost(&error) => {
-                    self.connection.take();
-                    tracing::warn!(attempt, %error, "project admission write lost its connection");
-                    if attempt < ADMISSION_OPERATION_ATTEMPTS {
-                        sleep(ADMISSION_RETRY_DELAY).await;
-                    }
-                }
-                Err(error) => return Err(error).context(action),
-            }
-        }
-        Err(self.endpoint_unavailable().into())
-    }
-
-    /// Parse, validate and derive the immutable facts for management `Publish`.
-    ///
-    /// This phase deliberately does not write. Its opaque result exposes only
-    /// the derived identity the management verb needs to read the CONTROL
-    /// store's gate report. The caller may pass it to [`Self::append_publish`]
-    /// only after that exact report exists and is green.
-    pub(crate) async fn prepare_publish(
-        &mut self,
-        package_id: &str,
-        package_version: &str,
-        submitted_document: &Value,
-    ) -> anyhow::Result<PreparePublishResult> {
-        let document = match WiringDocument::parse(submitted_document) {
-            Ok(document) => document,
-            Err(error) => {
-                return Ok(PreparePublishResult::InvalidDocument {
-                    detail: error.to_string(),
-                });
-            }
-        };
-        let stored_version = match i32::try_from(document.version) {
-            Ok(version) => version,
-            Err(error) => {
-                return Ok(PreparePublishResult::InvalidDocument {
-                    detail: format!(
-                        "wiring {:?} version {} exceeds the storage width: {error}",
-                        document.wiring_id, document.version
-                    ),
-                });
-            }
-        };
-        let scope = ComponentPackageScope::new(
-            self.tenant_id.to_string(),
-            package_id.to_owned(),
-            package_version.to_owned(),
-        )
-        .context("publication package coordinate is invalid")?;
-        let components = match self.component_facts(&scope).await? {
-            Ok(components) => components,
-            Err(refusal) => {
-                return Ok(PreparePublishResult::InvalidDocument {
-                    detail: refusal.to_string(),
-                });
-            }
-        };
-        let wiring_hash = document.wiring_hash().as_str().to_owned();
-        if validate_wiring_compatibility(&document, &scope, &components).is_err() {
-            return Ok(PreparePublishResult::ExecutableDrift);
-        }
-        let graph_json = serde_json::to_string(&document)
-            .context("serialize the validated wiring document for storage")?;
-        Ok(PreparePublishResult::Ready(Box::new(
-            PreparedWiringPublication {
-                tenant_id: self.tenant_id.clone(),
-                package_id: package_id.into(),
-                package_version: package_version.into(),
-                document,
-                stored_version,
-                graph_json,
-                wiring_hash: wiring_hash.into(),
-            },
-        )))
-    }
-
-    /// Append one validated publication after the management verb's green-report
-    /// guard, converging an exact retry and refusing conflicting immutable facts.
-    pub(crate) async fn append_publish(
-        &mut self,
-        publication: &PreparedWiringPublication,
-    ) -> anyhow::Result<AppendPublishResult> {
-        if publication.tenant_id.as_ref() != self.tenant_id.as_ref() {
-            bail!("prepared publication belongs to another admission tenant");
-        }
-        let tenant_id = self.tenant_id.to_string();
-        let package_id = publication.package_id.to_string();
-        let package_version = publication.package_version.to_string();
-        let wiring_id = publication.wiring_id().to_owned();
-        let wiring_hash = publication.wiring_hash().to_owned();
-        let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
-            &tenant_id,
-            &package_id,
-            &package_version,
-            &wiring_id,
-            &publication.stored_version,
-            &publication.graph_json,
-            &wiring_hash,
-        ];
-        self.execute(
-            INSERT_WIRING_SQL,
-            &parameters,
-            "append the gated wiring definition",
-        )
-        .await?;
-        let exact: bool = self
-            .query_one(
-                EXACT_WIRING_SQL,
-                &parameters,
-                "verify the stored wiring definition",
-            )
-            .await?
-            .get(0);
-        Ok(if exact {
-            AppendPublishResult::Published
-        } else {
-            AppendPublishResult::ExecutableDrift
-        })
-    }
-
     /// The admitted component facts of `scope`: the descriptors of the
     /// package's artifact, read the way publish reads them. A package with
     /// no artifact in the registry is the inner `Err`, which the gate
@@ -602,23 +302,6 @@ fn sanitized_postgres_endpoint(config: &Config) -> Box<str> {
     let port = config.get_ports().first().copied().unwrap_or(5432);
     let database = config.get_dbname().unwrap_or("<missing-database>");
     format!("postgresql://{host}:{port}/{database}").into()
-}
-
-/// PostgreSQL can deliver the forced-drop reason before marking the client
-/// closed. These operator-termination states therefore trigger the same
-/// reconnect as `Error::is_closed` instead of escaping as a statement error.
-fn connection_was_lost(error: &tokio_postgres::Error) -> bool {
-    error.is_closed()
-        || error.code().is_some_and(|code| {
-            [
-                SqlState::ADMIN_SHUTDOWN,
-                SqlState::CRASH_SHUTDOWN,
-                SqlState::CANNOT_CONNECT_NOW,
-                SqlState::DATABASE_DROPPED,
-                SqlState::IDLE_SESSION_TIMEOUT,
-            ]
-            .contains(code)
-        })
 }
 
 /// Bind the parsed admission input to the exact facts the server must report.
@@ -683,34 +366,6 @@ fn admission_acl_expectations() -> Vec<AclExpectation> {
             AclTarget::Table(format!("catalog.{relation}").into()),
             "SELECT",
             true,
-        ));
-    }
-    // Publish appends exactly the seven values its project-side statement names.
-    // The table-wide negative stays alongside them: a column-exact grant must
-    // not silently widen into authority over future columns.
-    for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
-        acl.push(AclExpectation::new(
-            AclTarget::Column {
-                relation: "catalog.wirings".into(),
-                column: column.into(),
-            },
-            "INSERT",
-            true,
-        ));
-    }
-    acl.push(AclExpectation::new(
-        AclTarget::Column {
-            relation: "catalog.wirings".into(),
-            column: "created_at".into(),
-        },
-        "INSERT",
-        false,
-    ));
-    for privilege in ["INSERT", "UPDATE", "DELETE"] {
-        acl.push(AclExpectation::new(
-            AclTarget::Table("catalog.wirings".into()),
-            privilege,
-            false,
         ));
     }
     acl

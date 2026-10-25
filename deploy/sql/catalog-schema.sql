@@ -274,24 +274,6 @@ CREATE TRIGGER connection_instances_delete_immutable
     BEFORE DELETE ON catalog.connection_instances
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
-CREATE TABLE catalog.wirings (
-    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
-    package_id      text        NOT NULL CHECK (package_id <> ''),
-    package_version text        NOT NULL CHECK (package_version <> ''),
-    wiring_id       text        NOT NULL CHECK (wiring_id <> ''),
-    version         int         NOT NULL CHECK (version > 0),
-    graph_json      jsonb       NOT NULL,
-    wiring_hash     text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
-    created_at      timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT wirings_pkey
-        PRIMARY KEY (tenant_id, package_id, package_version, wiring_id, version),
-    CONSTRAINT wirings_package_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version),
-    CONSTRAINT wirings_definition_key
-        UNIQUE (tenant_id, package_id, package_version, wiring_id, wiring_hash)
-);
-
 CREATE TABLE catalog.wiring_tombstones (
     tenant_id   text        NOT NULL CHECK (tenant_id <> ''),
     package_id  text        NOT NULL CHECK (package_id <> ''),
@@ -458,18 +440,6 @@ CREATE TRIGGER package_upgrade_stages_guard
 REVOKE ALL ON FUNCTION catalog.guard_package_upgrade_stage_change() FROM PUBLIC;
 REVOKE ALL ON catalog.package_upgrade_stages FROM PUBLIC, wamn_app;
 
-CREATE TABLE catalog.event_registrations (
-    tenant_id       text  NOT NULL CHECK (tenant_id <> ''),
-    package_id      text  NOT NULL CHECK (package_id <> ''),
-    registration_id text  NOT NULL CHECK (registration_id <> ''),
-    entity_id       text  NOT NULL CHECK (entity_id <> ''),
-    registration    jsonb NOT NULL,
-    CONSTRAINT event_registrations_pkey
-        PRIMARY KEY (tenant_id, package_id, registration_id)
-);
-CREATE INDEX event_registrations_by_entity
-    ON catalog.event_registrations (tenant_id, package_id, entity_id);
-
 -- The recorded floor of each installed package (docs/plan/platform-deploy.md
 -- R13, R16): the version `env apply` contracted it to at step 9. A floor only
 -- advances along `predecessor_version`; `apply` refuses a document that omits
@@ -496,10 +466,10 @@ BEGIN
         'releases',
         'connection_requirements',
         'connection_instances',
-        'connection_generations', 'connection_bindings', 'wirings',
+        'connection_generations', 'connection_bindings',
         'wiring_tombstones', 'workflows',
         'package_upgrade_qualifications',
-        'event_registrations', 'package_upgrade_stages', 'package_floors'
+        'package_upgrade_stages', 'package_floors'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
@@ -529,7 +499,7 @@ BEGIN
         'packages', 'package_migrations', 'package_definition_owners',
         'releases',
         'connection_requirements', 'connection_generations',
-        'wirings', 'wiring_tombstones',
+        'wiring_tombstones',
         'package_upgrade_qualifications'
     ] LOOP
         EXECUTE format(
@@ -552,10 +522,8 @@ GRANT SELECT ON catalog.packages,
     catalog.connection_instances,
     catalog.connection_generations,
     catalog.connection_bindings,
-    catalog.wirings,
     catalog.wiring_tombstones,
-    catalog.workflows,
-    catalog.event_registrations
+    catalog.workflows
 TO wamn_app;
 
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;

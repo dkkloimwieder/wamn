@@ -105,8 +105,8 @@ pub use observation::{
 #[doc(inline)]
 pub use observation_sql::{
     catalog_schema_present_sql, count_retired_authored_ordering_rows_sql,
-    count_stale_registration_keys_sql, select_app_run_queue_authority_sql,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
@@ -218,8 +218,6 @@ pub enum RunPlaneActionKind {
     RepairRunCapturePrivilege,
     /// Remove every guest-visible table and column privilege on `run_queue`.
     RemoveAppRunQueueAuthority,
-    /// Strip retired keys from stored registrations.
-    StripRetiredRegistrationKeys,
 }
 
 /// One reconcile action: the SQL to run and what it targets (for reporting).
@@ -251,15 +249,6 @@ impl RunPlanePlan {
     pub fn is_noop(&self) -> bool {
         self.actions.is_empty()
     }
-}
-
-/// Strip retired registration keys that fail the current declaration parser.
-///
-/// Runs as the superuser across all tenants and preserves every retained key.
-pub fn strip_retired_registration_keys_sql() -> &'static str {
-    "UPDATE catalog.event_registrations \
-     SET registration = registration - 'state' - 'partition-key' \
-     WHERE registration ?| ARRAY['state', 'partition-key']"
 }
 
 // ---------------------------------------------------------------------------

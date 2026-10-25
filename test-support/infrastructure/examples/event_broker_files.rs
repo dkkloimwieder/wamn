@@ -17,9 +17,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::consumer::pull;
 use serde_json::Value;
-use wamn_control_provision::events::{
-    advisory_stream_config, registration_consumers, source_stream_config,
-};
+use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
@@ -40,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     let replicas: usize = arguments[6].parse().context("parse the stream replicas")?;
     let source = source_stream_config(&scope, replicas, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, replicas);
-    let consumers = declared_consumers(&scope, tenant, &arguments[7..])?;
+    let consumers = declared_consumers(&scope, &arguments[7..])?;
     let broker = event_broker::prepare(&work, &scope, tenant, &source, &advisory, &consumers)?;
     // One --consumer-config argument of enable-cdc-project-env per line.
     fs::write(
@@ -66,13 +64,8 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The materializer consumers of the event registrations that the given
-/// package manifests declare, by the rule the development loop also uses.
-fn declared_consumers(
-    scope: &Triple,
-    tenant: &str,
-    manifests: &[String],
-) -> anyhow::Result<Vec<pull::Config>> {
+/// The materializer consumers of captured entities in the supplied packages.
+fn declared_consumers(scope: &Triple, manifests: &[String]) -> anyhow::Result<Vec<pull::Config>> {
     let manifests = manifests
         .iter()
         .map(|path| {
@@ -81,10 +74,7 @@ fn declared_consumers(
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let mut consumers = registration_consumers(scope, tenant, &manifests);
-    consumers.extend(wamn_control_provision::events::entity_consumers(
-        scope, &manifests,
-    ));
+    let consumers = wamn_control_provision::events::entity_consumers(scope, &manifests);
     Ok(consumers)
 }
 

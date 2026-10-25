@@ -59,7 +59,6 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         packages: &[LocalPackage {
             root: &app,
             component: "wms",
-            wirings: &[],
         }],
         attachments: &attachments,
     })

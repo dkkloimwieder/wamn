@@ -5,7 +5,6 @@ use std::str::FromStr as _;
 mod platform_verbs;
 mod print_platform_principals;
 mod project_verbs;
-mod publish_wired_release;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
@@ -86,7 +85,6 @@ enum Command {
     /// Reconcile generated package data privileges after apply-package.
     ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
-    AuthorWiring(release_verbs::AuthorWiringArgs),
     /// Bind one admitted component's declared connection alias to an
     /// environment-owned instance carrying a host-held credential handle.
     BindConnection(component_verbs::BindConnectionArgs),
@@ -97,12 +95,9 @@ enum Command {
     ///
     /// PRECONDITION: run `env apply` for this environment FIRST; it reconciles the run plane `wamn_run`. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(release_verbs::PublishReleaseArgs),
-    /// Mint a PAT in memory, gate and author wirings, and publish their release.
-    PublishWiredRelease(publish_wired_release::PublishWiredReleaseArgs),
-
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
-    /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
+    /// Detect or repair REPLICA IDENTITY drift on captured models.
     ReconcileReplicaIdentity(package_verbs::ReconcileReplicaIdentityArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
@@ -165,9 +160,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await
         }
-        Command::AuthorWiring(args) => release_verbs::author(args).await,
         Command::PublishRelease(args) => release_verbs::publish(args).await,
-        Command::PublishWiredRelease(args) => publish_wired_release::run(args).await,
 
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),
         Command::ReconcileReplicaIdentity(args) => {

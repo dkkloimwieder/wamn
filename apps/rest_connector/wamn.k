@@ -41,10 +41,4 @@ manifest.Package {
     }
     connections = ["postgres"]
     components = {rest_connector = {connections = ["postgres"]}}
-    workflows = {
-        pushed = {
-            wiring = "rest_item_pushed"
-            registration = {source_package = "rest_consumer_fixture", entity = "item", ops = ["insert"]}
-        }
-    }
 }

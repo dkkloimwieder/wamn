@@ -60,9 +60,8 @@ use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
     BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneActionKind,
     RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql,
-    count_retired_authored_ordering_rows_sql, count_stale_registration_keys_sql, plan_run_plane,
-    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
-    select_authoring_effective_column_privileges_sql,
+    count_retired_authored_ordering_rows_sql, plan_run_plane, select_app_run_queue_authority_sql,
+    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
@@ -1308,13 +1307,6 @@ async fn observe(
                 obs.definition_owners_type_column = true;
             }
             obs.catalog_tables.insert(table.clone());
-        }
-        if obs.catalog_tables.contains("event_registrations") {
-            obs.stale_registration_key_rows = client
-                .query_one(count_stale_registration_keys_sql(), &[])
-                .await
-                .context("count retired registration keys")?
-                .get(0);
         }
     }
     Ok(obs)

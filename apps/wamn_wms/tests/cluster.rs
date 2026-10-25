@@ -541,7 +541,7 @@ async fn run_created(
                 artifact_base: document.release_artifact_base.clone(),
                 route_host: document.route_host.clone(),
                 applications: [(
-                    "wms".to_owned(),
+                    "wamn_wms".to_owned(),
                     wamn_catalog::ApplicationDefinition {
                         packages: manifest
                             .release

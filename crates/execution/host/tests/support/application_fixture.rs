@@ -212,7 +212,6 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}
         ],
         "attachments": {},
-        "workflow": {"wirings": [], "attachments": {}},
         "host-routes": [HostRouteSet::Application],
     });
     // The manifest's own serialization leaves out its empty sections.

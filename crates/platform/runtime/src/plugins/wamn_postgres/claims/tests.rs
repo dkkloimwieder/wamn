@@ -508,13 +508,13 @@ fn claim_sql_is_fully_bound_with_no_interpolation() {
 fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
     for required in [
         "FROM catalog.releases AS release",
-        "release_manifest.manifest #> '{workflow,wirings}'",
+        "FROM catalog.workflows AS workflow",
         "release.manifest_digest = $3",
-        "member.package_id = $12",
-        "wiring.value ->> 'package-id' = member.package_id",
-        "wiring.value -> 'graph' ->> 'wiring-id' = $5",
-        "(wiring.value -> 'graph' ->> 'version')::integer = $6",
-        "wiring.value -> 'graph' AS graph_json",
+        "workflow.application = $12",
+        "workflow.tenant_id = $1 AND workflow.environment = $4",
+        "workflow.workflow_id = $5",
+        "workflow.version = $6",
+        "SELECT workflow.graph_json",
         "component.tenant_id = executing_member.tenant_id",
         "component.package_id = executing_member.package_id",
         "LEFT JOIN release_component AS component",
@@ -545,14 +545,13 @@ fn effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback() {
         "execution_bundles",
         "plan_hash",
         "frame_id",
-        "flow_id",
+        ".flow_id",
         "artifact_hash =",
         "requirement_name =",
         "catalog_id",
         "catalog_version",
         "gated_catalog_version",
         "catalog_heads",
-        "catalog.wirings",
     ] {
         assert!(!sql.contains(retired), "effect authority retains {retired}");
     }
@@ -639,6 +638,7 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
         entry: crate::plugins::connection_http::InvocationEntry::Wiring(
             crate::plugins::connection_http::WiringPosition {
                 package_id: "package_a".to_string(),
+                wiring_hash: format!("sha256:{}", "a".repeat(64)),
                 wiring_id: "orders".to_string(),
                 wiring_version: 3,
                 node_id: node_id.to_string(),

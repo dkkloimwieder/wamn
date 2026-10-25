@@ -225,8 +225,6 @@ mod tests {
             },
             components.into_iter().collect(),
             BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeMap::new(),
             BTreeMap::new(),
         )
         .expect("the fixture manifest is valid")

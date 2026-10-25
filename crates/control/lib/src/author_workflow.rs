@@ -9,7 +9,7 @@
 //! component, interface version and operation, and the graph is judged over
 //! those per-node facts.
 //!
-//! The hash is bound exactly as [`crate::author_wiring`] binds it: the gate
+//! The hash is bound exactly as the graph gate binds it: the gate
 //! produces it, and the control store must hold a green gate report under it.
 //! An exact resubmission converges. Other bytes under the same version refuse.
 //! A version is authored disabled; [`crate::workflow_lifecycle`] enables it.
@@ -28,7 +28,7 @@ use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workflow_schedule};
 
-use crate::author_wiring::{AuthorWiringError, read_gate_verdict, require_green_report};
+use std::path::Path;
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
@@ -124,22 +124,6 @@ impl AuthorWorkflowError {
             detail: detail.into(),
             source: Some(Box::new(source)),
         }
-    }
-
-    /// The gate-report refusal of [`crate::author_wiring`], under this
-    /// boundary's prefix.
-    fn report(error: AuthorWiringError) -> Self {
-        let type_ = match error.error_type() {
-            crate::author_wiring::AuthorWiringErrorType::Storage => {
-                AuthorWorkflowErrorType::Storage
-            }
-            _ => AuthorWorkflowErrorType::Report,
-        };
-        Self::with_source(
-            type_,
-            "the control store holds no green gate report for this graph",
-            error,
-        )
     }
 
     /// Stable refusal class for callers that must not match display text.
@@ -355,7 +339,7 @@ pub(crate) async fn validate_event_trigger(
 /// Gate and append one disabled workflow version in the caller's transaction.
 ///
 /// `control` is the CONTROL-database connection the gate report is read on,
-/// as for [`crate::author_wiring::author_wiring`].
+/// as for workflow authoring.
 pub async fn author_workflow(
     control: &Client,
     transaction: &Transaction<'_>,
@@ -393,10 +377,8 @@ pub async fn author_workflow(
         document,
     )
     .await?;
-    let verdict = read_gate_verdict(control, request.tenant_id, &hash)
-        .await
-        .map_err(AuthorWorkflowError::report)?;
-    require_green_report(verdict, document, &hash).map_err(AuthorWorkflowError::report)?;
+    let verdict = read_gate_verdict(control, request.tenant_id, &hash).await?;
+    require_green_report(verdict, document, &hash)?;
 
     let version = i32::try_from(document.version).map_err(|error| {
         AuthorWorkflowError::with_source(
@@ -505,6 +487,83 @@ pub async fn author_workflow_in_databases(
 
 fn storage(context: &'static str, error: tokio_postgres::Error) -> AuthorWorkflowError {
     AuthorWorkflowError::with_source(AuthorWorkflowErrorType::Storage, context, error)
+}
+
+pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWorkflowError> {
+    // The document names each package operation by reference, and the version
+    // comes from the wamn.json of the package that holds it.
+    let value = wamn_schema_generator::operation_reference::read_authored_document(
+        path,
+        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+    )
+    .map_err(|error| {
+        AuthorWorkflowError::with_source(
+            AuthorWorkflowErrorType::Document,
+            format!("read wiring document {}", path.display()),
+            error,
+        )
+    })?;
+    WiringDocument::parse(&value).map_err(|error| {
+        AuthorWorkflowError::with_source(
+            AuthorWorkflowErrorType::Document,
+            format!("wiring document {} is not a valid wiring", path.display()),
+            error,
+        )
+    })
+}
+
+pub(crate) async fn read_gate_verdict(
+    control: &Client,
+    tenant_id: &str,
+    wiring_hash: &DefinitionHash,
+) -> Result<Option<bool>, AuthorWorkflowError> {
+    control
+        .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant_id])
+        .await
+        .map_err(|error| storage("claim the gate-report tenant", error))?;
+    let hash = wiring_hash.as_str();
+    let report = control
+        .query_opt(
+            "SELECT passed FROM wamn_run.gate_reports WHERE tenant_id = $1 AND wiring_hash = $2",
+            &[&tenant_id, &hash],
+        )
+        .await
+        .map_err(|error| storage("read the wiring's gate report", error))?;
+    Ok(report.map(|row| row.get(0)))
+}
+
+/// Require a GREEN verdict from the report read under this document's own hash.
+///
+/// The hash is the whole binding. This decides only what the control store
+/// answered for that exact key, so a green report belonging to another document
+/// cannot reach here as `Some(true)` — it is not under this key at all, and
+/// arrives as the same `None` a never-gated document does.
+pub(crate) fn require_green_report(
+    verdict: Option<bool>,
+    document: &WiringDocument,
+    wiring_hash: &DefinitionHash,
+) -> Result<(), AuthorWorkflowError> {
+    match verdict {
+        Some(true) => Ok(()),
+        Some(false) => Err(AuthorWorkflowError::new(
+            AuthorWorkflowErrorType::Report,
+            format!(
+                "wiring {:?} version {} was gated and REFUSED at {}",
+                document.wiring_id,
+                document.version,
+                wiring_hash.as_str()
+            ),
+        )),
+        None => Err(AuthorWorkflowError::new(
+            AuthorWorkflowErrorType::Report,
+            format!(
+                "wiring {:?} version {} has no gate report at {}",
+                document.wiring_id,
+                document.version,
+                wiring_hash.as_str()
+            ),
+        )),
+    }
 }
 
 #[cfg(test)]

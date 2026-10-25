@@ -144,7 +144,7 @@ pub fn drain_app_role_sessions_sql() -> String {
 /// (`wamn-vavs4.6`). Runtime connection state is deliberately absent: an empty
 /// case set executes nothing, while a nonempty set reaches the effect posture
 /// before any binding could be relevant (`wamn-10yt.10.14`).
-pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 1] = ["wirings"];
+pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 0] = [];
 
 /// Catalog relations read by callable-HTTP connection authorization.
 ///
@@ -179,23 +179,6 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
         ])
 }
 
-/// Every `catalog.wirings` column written by management `Publish`.
-///
-/// The document supplies `wiring_id`, `version` and `graph_json`; the command
-/// supplies `package_id` and `package_version`; the server fixes `tenant_id`
-/// from the admission surface and derives `wiring_hash` from the parsed
-/// document. `created_at` keeps its storage default, so granting it would be
-/// authority the production INSERT cannot exercise (`wamn-0h0g.7.7`).
-pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
-    "tenant_id",
-    "package_id",
-    "package_version",
-    "wiring_id",
-    "version",
-    "graph_json",
-    "wiring_hash",
-];
-
 /// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
 ///
 /// Released and candidate resolution read these through the platform pool,
@@ -205,8 +188,7 @@ pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 7] = [
-    "wirings",
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 6] = [
     "workflows",
     "connection_requirements",
     "connection_bindings",
@@ -486,13 +468,6 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
         )
         .expect("writing to a String cannot fail");
     }
-    let wiring_insert = quoted_column_list(&MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS);
-    write!(
-        sql,
-        " GRANT INSERT ({wiring_insert}) ON TABLE catalog.\"wirings\" TO {role};"
-    )
-    .expect("writing to a String cannot fail");
-    // The wiring tenant index evaluates this function during INSERT.
     sql.push(' ');
     sql.push_str(&grant_tenant_key_execute_sql(MANAGEMENT_ADMITTER_ROLE));
     sql
@@ -781,11 +756,11 @@ pub fn grant_executor_history_reads_sql() -> String {
 }
 
 /// The materializer's complete production read surface: the installed package
-/// identities used for source validation and the tenant-scoped registration
-/// documents. It holds no catalog write, run-plane grant, or routine grant.
-pub const EVENT_MATERIALIZER_CATALOG_RELATIONS: [&str; 2] = ["event_registrations", "packages"];
+/// identities used for source validation. It holds no catalog write,
+/// run-plane grant, or routine grant.
+pub const EVENT_MATERIALIZER_CATALOG_RELATIONS: [&str; 1] = ["packages"];
 
-/// Converge the stable event-materializer role to its exact two-table catalog
+/// Converge the stable event-materializer role to its exact package catalog
 /// read surface. Revocation spans every authority-bearing project schema so an
 /// out-of-band widening is removed on replay.
 pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
@@ -1183,27 +1158,6 @@ mod tests {
                  \"wamn_management_admitter\""
             )));
         }
-        let wiring_insert = sql
-            .find(
-                "GRANT INSERT (\"tenant_id\", \"package_id\", \"package_version\", \
-                 \"wiring_id\", \"version\", \"graph_json\", \"wiring_hash\") \
-                 ON TABLE catalog.\"wirings\" TO \"wamn_management_admitter\"",
-            )
-            .expect("column-exact Publish grant");
-        assert!(usage < wiring_insert);
-        assert_eq!(
-            MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS,
-            [
-                "tenant_id",
-                "package_id",
-                "package_version",
-                "wiring_id",
-                "version",
-                "graph_json",
-                "wiring_hash",
-            ],
-            "the grant must remain the exact production Publish INSERT"
-        );
         for forbidden in [
             "GRANT SELECT ON TABLE \"wamn_run\"",
             "ON TABLE \"wamn_run\".\"runs\" TO",
@@ -1320,7 +1274,6 @@ mod tests {
              REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, \"wamn_run\" \
              FROM \"wamn_executor_platform\"; \
              GRANT USAGE ON SCHEMA catalog, platform, \"wamn_run\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"workflows\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_executor_platform\"; \

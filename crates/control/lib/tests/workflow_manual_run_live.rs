@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
     ComponentDeclaration, ComponentDescriptor, HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION,
-    ServingManifest, ServingWiring, WiringDocument,
+    ServingManifest, WiringDocument,
 };
 use wamn_control::author_workflow::{
     AuthorWorkflowErrorType, AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
@@ -58,9 +58,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     WamnPostgresConfig,
 };
 use wamn_schema_control::BareSchemaName;
-use wamn_workflow::{
-    QueueService, QueueServiceConfig, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
-};
+use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
 const TENANT: &str = "manual-live";
 const PROJECT: &str = "default";
@@ -202,24 +200,13 @@ fn workflow(version: u32, operation: &str) -> WiringDocument {
     .expect("the workflow graph is structurally valid")
 }
 
-/// The released wiring that names the jsonata node. Nothing starts it.
-fn palette(version: u32) -> WiringDocument {
-    WiringDocument::parse(&json!({
-        "format-version": "0.1", "wiring-id": "palette", "version": version, "entry": "shape",
-        "nodes": {"shape": {"component": "jsonata", "interface-version": "0.1.0",
-            "operation": JSONATA_OPERATION, "params": {"expression": "$"}}},
-        "edges": [], "cases": []
-    }))
-    .expect("the palette wiring is structurally valid")
-}
-
 /// A release of `orders` serving the application host routes. `read` adds
 /// the read component, and `palette` versions the released wiring, so two
 /// releases with the same components still differ by digest.
 fn manifest(
     read: Option<&wamn_catalog::AdmittedComponent>,
     jsonata: &wamn_catalog::AdmittedComponent,
-    palette_version: u32,
+    _palette_version: u32,
 ) -> ServingManifest {
     let mut components = vec![json!({"package-id": APPLICATION,
         "descriptor": ComponentDescriptor::new(jsonata.clone(), Vec::new()),
@@ -235,7 +222,6 @@ fn manifest(
         "release": {"packages": [{"package-id": APPLICATION, "package-version": "1.0.0"}]},
         "components": components,
         "routes": [], "attachments": {},
-        "workflow": {"wirings": [ServingWiring::new(APPLICATION, palette(palette_version))]},
         "host-routes": [HostRouteSet::Application],
     }))
     .expect("the fixture release is valid")
@@ -546,12 +532,7 @@ impl Fixture {
             .await
             .expect("prepare the fixture release before queue execution");
         eprintln!("manual-live release preparation: {:?}", preparing.elapsed());
-        Arc::new(RouterDriver::new(
-            operations,
-            RouterDriverConfig {
-                cache_capacity: WiringCacheCapacity::default(),
-            },
-        ))
+        Arc::new(RouterDriver::new(operations))
     }
 
     /// Author `document` as `wamn-ctl workflow author` does: over its own

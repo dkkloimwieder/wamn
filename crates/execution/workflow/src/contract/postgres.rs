@@ -2,15 +2,12 @@
 
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, Transaction};
-use wamn_catalog::ServingManifest;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
-    insert_automation_run_sql, insert_run_queue_sql, list_workflow_runs_sql, park_queued_run_sql,
-    release_parked_run_sql, select_automation_run_sql, select_run_queue_state_sql,
+    list_workflow_runs_sql, park_queued_run_sql, release_parked_run_sql, select_run_queue_state_sql,
 };
-use wamn_runtime::plugins::route_authentication::queued_run_caller;
 
-use super::{StartRequest, Trigger, WorkflowError, WorkflowErrorType, WorkflowRun, Workflows};
+use super::{WorkflowError, WorkflowErrorType, WorkflowRun, Workflows};
 
 /// Why a park or a release changed nothing: the run's status, whether a queue
 /// row exists, whether it is parked, and whether a replica holds a live lease.
@@ -20,11 +17,6 @@ struct QueueState {
     parked: bool,
     leased: bool,
 }
-
-/// The release a start reads its wiring from, by its manifest digest.
-const READ_RELEASE_SQL: &str = "\
-SELECT canonical_bytes FROM catalog.releases \
- WHERE tenant_id = $1 AND manifest_digest = $2";
 
 /// The workflow contract over one tenant and environment.
 ///
@@ -71,35 +63,6 @@ impl PostgresWorkflows {
         &self.environment
     }
 
-    /// The published release of the request, in this tenant. The manifest
-    /// names no tenant or environment (R1): the row's tenant is the scope.
-    async fn release(
-        &self,
-        transaction: &Transaction<'_>,
-        manifest_digest: &str,
-    ) -> Result<ServingManifest, WorkflowError> {
-        let bytes: Vec<u8> = transaction
-            .query_opt(READ_RELEASE_SQL, &[&self.tenant(), &manifest_digest])
-            .await
-            .map_err(|error| WorkflowError::storage("read the release", error))?
-            .ok_or_else(|| {
-                WorkflowError::new(
-                    WorkflowErrorType::Refused,
-                    format!("release {manifest_digest} is not installed"),
-                )
-            })?
-            .try_get(0)
-            .map_err(|error| WorkflowError::storage("read the release bytes", error))?;
-        let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes).map_err(|error| {
-            WorkflowError::with_source(
-                WorkflowErrorType::Refused,
-                "the release snapshot does not parse",
-                error,
-            )
-        })?;
-        Ok(manifest)
-    }
-
     /// Bind the transaction to the run plane and the release tenant.
     async fn scope(&self, transaction: &Transaction<'_>) -> Result<(), WorkflowError> {
         transaction
@@ -110,46 +73,6 @@ impl PostgresWorkflows {
             .await
             .map_err(|error| WorkflowError::storage("scope the transaction", error))?;
         Ok(())
-    }
-
-    /// Check the request against the release, and return the frozen wiring
-    /// hash and the durability class. The release carries the wiring's graph,
-    /// verified against its hash when the release was read.
-    async fn admit(
-        &self,
-        transaction: &Transaction<'_>,
-        request: &StartRequest,
-    ) -> Result<(String, String), WorkflowError> {
-        let refused = |message: String| WorkflowError::new(WorkflowErrorType::Refused, message);
-        let release = self.release(transaction, &request.manifest_digest).await?;
-        let wiring = release
-            .workflow
-            .wirings
-            .iter()
-            .find(|wiring| {
-                let (wiring_id, wiring_version, _) = wiring.identity();
-                wiring.package_id == request.package_id
-                    && wiring_id == request.wiring_id
-                    && wiring_version == request.wiring_version
-            })
-            .ok_or_else(|| {
-                refused(format!(
-                    "wiring {}/{} version {} is absent from the release",
-                    request.package_id, request.wiring_id, request.wiring_version
-                ))
-            })?;
-        let policy = transaction
-            .query_opt(
-                "SELECT durability_class FROM environment_policies WHERE tenant_id = $1 AND expected_environment = $2 FOR SHARE",
-                &[&self.tenant(), &self.environment()],
-            )
-            .await
-            .map_err(|error| WorkflowError::storage("read the environment policy", error))?
-            .ok_or_else(|| refused("the environment policy is absent".to_owned()))?;
-        let durability: String = policy
-            .try_get(0)
-            .map_err(|error| WorkflowError::storage("read the durability class", error))?;
-        Ok((wiring.identity().2.as_str().to_owned(), durability))
     }
 
     /// The facts that name why a park or a release changed nothing.
@@ -182,93 +105,6 @@ impl PostgresWorkflows {
 
 #[async_trait::async_trait]
 impl Workflows for PostgresWorkflows {
-    async fn start(&self, request: &StartRequest) -> Result<String, WorkflowError> {
-        if request.idempotency_key.is_empty() {
-            return Err(WorkflowError::new(
-                WorkflowErrorType::Refused,
-                "the idempotency key is empty",
-            ));
-        }
-        let version = i32::try_from(request.wiring_version).map_err(|_| {
-            WorkflowError::new(
-                WorkflowErrorType::Refused,
-                "the wiring version does not fit",
-            )
-        })?;
-        let input = serde_json::to_string(&request.input)
-            .map_err(|error| WorkflowError::storage("encode the input", error))?;
-        let mut client = self.client.lock().await;
-        let transaction = client
-            .transaction()
-            .await
-            .map_err(|error| WorkflowError::storage("begin the start", error))?;
-        self.scope(&transaction).await?;
-        let (wiring_hash, durability) = self.admit(&transaction, request).await?;
-        let Trigger::Automation {
-            service_principal_id: principal,
-        } = &request.trigger;
-        queued_run_caller(&transaction, self.tenant(), principal, None)
-            .await
-            .map_err(|error| {
-                WorkflowError::with_source(
-                    WorkflowErrorType::Refused,
-                    "the service principal does not admit the start",
-                    error,
-                )
-            })?;
-        let tenant = self.tenant();
-        let environment = self.environment();
-        let mut binds: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![
-            &tenant,
-            &request.package_id,
-            &request.manifest_digest,
-            &environment,
-            &request.wiring_id,
-            &version,
-            &wiring_hash,
-        ];
-        binds.push(principal);
-        binds.extend([
-            &request.idempotency_key as &(dyn tokio_postgres::types::ToSql + Sync),
-            &input,
-        ]);
-        let mut insert_binds = binds.clone();
-        insert_binds.push(&durability);
-        let (insert_sql, select_sql) = (insert_automation_run_sql(), select_automation_run_sql());
-        let inserted = transaction
-            .query_opt(&insert_sql, &insert_binds)
-            .await
-            .map_err(|error| WorkflowError::storage("admit the run", error))?;
-        let run_id: String = if let Some(row) = inserted {
-            let run_id: String = row
-                .try_get(0)
-                .map_err(|error| WorkflowError::storage("read the run id", error))?;
-            transaction
-                .execute(insert_run_queue_sql(), &[&self.tenant(), &run_id])
-                .await
-                .map_err(|error| WorkflowError::storage("queue the run", error))?;
-            run_id
-        } else {
-            transaction
-                .query_opt(select_sql, &binds)
-                .await
-                .map_err(|error| WorkflowError::storage("read the first run", error))?
-                .ok_or_else(|| {
-                    WorkflowError::new(
-                        WorkflowErrorType::Conflict,
-                        "the idempotency key was used for a different request",
-                    )
-                })?
-                .try_get(0)
-                .map_err(|error| WorkflowError::storage("read the first run id", error))?
-        };
-        transaction
-            .commit()
-            .await
-            .map_err(|error| WorkflowError::storage("commit the start", error))?;
-        Ok(run_id)
-    }
-
     async fn park(&self, run_id: &str) -> Result<(), WorkflowError> {
         let mut client = self.client.lock().await;
         let transaction = client

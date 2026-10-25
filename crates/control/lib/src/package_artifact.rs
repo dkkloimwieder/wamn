@@ -598,7 +598,7 @@ fn source_components(
 
 /// The component names of the nodes of every wiring in `publication/wirings/`,
 /// each with the `params.store_alias` values its nodes give it.
-fn wiring_components(root: &Path) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>> {
+pub(crate) fn wiring_components(root: &Path) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>> {
     let directory = root.join("publication/wirings");
     let mut names = BTreeMap::<String, BTreeSet<String>>::new();
     let entries = match std::fs::read_dir(&directory) {
@@ -735,6 +735,27 @@ struct VerifiedPackage {
     components: Vec<VerifiedComponent>,
 }
 
+/// Refuse package declarations before the reader drops retired fields.
+fn refuse_workflow_declarations(bytes: &[u8]) -> anyhow::Result<()> {
+    let manifest: serde_json::Value = serde_json::from_slice(bytes)?;
+    ensure!(
+        manifest.get("workflows").is_none(),
+        "a package cannot declare workflows; author workflows in the environment"
+    );
+    if let Some(operations) = manifest
+        .get("custom_operations")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (name, operation) in operations {
+            ensure!(
+                operation.get("registration").is_none(),
+                "operation {name:?} cannot declare a registration; author an event workflow in the environment"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Every check of `push-package`, before anything is pushed: the policy
 /// contract is satisfied, the migrations plan, and every component admits.
 fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
@@ -744,11 +765,11 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         root.display()
     );
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
-    let manifest = PackageManifest::from_slice(
-        &std::fs::read(&manifest_path)
-            .with_context(|| format!("read {}", manifest_path.display()))?,
-    )
-    .with_context(|| format!("parse {}", manifest_path.display()))?;
+    let manifest_bytes = std::fs::read(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    refuse_workflow_declarations(&manifest_bytes)?;
+    let manifest = PackageManifest::from_slice(&manifest_bytes)
+        .with_context(|| format!("parse {}", manifest_path.display()))?;
     let contract = &manifest.required_platform_policy_contract;
     ensure!(
         contract.state == PolicyContractState::Satisfied,
@@ -1215,6 +1236,20 @@ fn write_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn publication_refuses_retired_declarations_before_manifest_reading_drops_them() {
+        for document in [
+            serde_json::json!({"workflows": {}}),
+            serde_json::json!({"custom_operations": {"changed": {"registration": null}}}),
+        ] {
+            assert!(
+                super::refuse_workflow_declarations(&serde_json::to_vec(&document).unwrap())
+                    .is_err()
+            );
+        }
+        super::refuse_workflow_declarations(br#"{"custom_operations":{}}"#).unwrap();
+    }
+
     use super::*;
 
     fn write(root: &Path, relative: &str, bytes: &[u8]) {
@@ -1400,7 +1435,7 @@ mod tests {
         let second = pack_package(&root).unwrap();
         assert_eq!(first.digest, second.digest);
         assert_eq!(first.digest, sha256_digest(&first.manifest));
-        assert_eq!(first.tag(), "wamn_receiving-2.2.7");
+        assert_eq!(first.tag(), "wamn_receiving-2.2.8");
 
         let layout = first
             .layers
@@ -1469,7 +1504,7 @@ mod tests {
             manifest["annotations"],
             serde_json::json!({
                 "wamn.package.id": "wamn_receiving",
-                "wamn.package.version": "2.2.7",
+                "wamn.package.version": "2.2.8",
             })
         );
         remove(&root);

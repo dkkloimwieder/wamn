@@ -90,7 +90,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
     let source = source_stream_config(&triple, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&triple, 1);
     let roots = super::super::released_journey_packages()
-        .map(|package| super::super::journey_package_root(package))
+        .map(super::super::journey_package_root)
         .collect::<Vec<_>>();
     let consumers = super::declared_consumers(roots.iter().map(PathBuf::as_path))?;
     let broker = event_broker::prepare(

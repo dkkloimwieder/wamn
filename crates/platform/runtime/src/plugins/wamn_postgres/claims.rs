@@ -482,10 +482,6 @@ impl CandidateConnectionBinding {
 pub struct CandidateBindingWorld(Arc<[CandidateConnectionBinding]>);
 
 impl CandidateBindingWorld {
-    pub(crate) fn to_json(&self) -> anyhow::Result<String> {
-        Ok(serde_json::to_string(&*self.0)?)
-    }
-
     /// Decode the exact persisted JSON boundary and reject partial, duplicate,
     /// or non-canonical rows before any component executes.
     pub fn from_json(value: serde_json::Value) -> anyhow::Result<Self> {
@@ -559,15 +555,15 @@ pub struct ConnectionEffectSnapshot {
 /// A route passes no wiring (`$5`, `$6` and `$7` are NULL). Its entry is
 /// permitted when the origin component exports the origin operation, and the
 /// mounted release proves the route. No run, plan, frame, or effect row
-/// participates. The selected wiring version is immutable and stays valid for the lifetime of the delivery even
-/// if the environment's hot pointer flips concurrently. The mounted release is
+/// participates. The selected workflow version stays valid for the delivery
+/// even if the environment selects another version. The mounted release is
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
 ///
 /// The origin and executing component facts are the descriptors of the
 /// components of release `$3`, the one owner of component facts (R2). The
-/// wiring's graph is the one release `$3` carries, never a `catalog.wirings`
-/// row. The query returns the graph; the reader derives its hash (format 9).
+/// workflow graph comes from its pinned `catalog.workflows` row. The reader
+/// derives its hash, and the connection owner compares it with the run.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH release_manifest AS MATERIALIZED ( \
     SELECT release.tenant_id, \
@@ -593,21 +589,13 @@ WITH release_manifest AS MATERIALIZED ( \
      CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest -> 'components') \
            AS member(value) \
 ), member AS MATERIALIZED ( \
-    SELECT member.tenant_id, member.package_id, member.package_version \
-      FROM release_member AS member \
-     WHERE member.package_id = $12 \
+    SELECT tenant_id, $12::text AS package_id FROM release_manifest \
+     WHERE $5::text IS NOT NULL OR EXISTS (SELECT 1 FROM release_member WHERE package_id = $12) \
 ), selected_wiring AS MATERIALIZED ( \
-    SELECT wiring.value -> 'graph' AS graph_json, \
-           member.tenant_id, member.package_id, member.package_version \
-      FROM member \
-     CROSS JOIN release_manifest \
-     CROSS JOIN LATERAL jsonb_array_elements( \
-           COALESCE(release_manifest.manifest #> '{workflow,wirings}', '[]'::jsonb) \
-         ) AS wiring(value) \
-     WHERE $5::text IS NOT NULL \
-       AND wiring.value ->> 'package-id' = member.package_id \
-       AND wiring.value -> 'graph' ->> 'wiring-id' = $5 \
-       AND (wiring.value -> 'graph' ->> 'version')::integer = $6 \
+    SELECT workflow.graph_json \
+      FROM catalog.workflows AS workflow \
+     WHERE workflow.tenant_id = $1 AND workflow.environment = $4 \
+       AND workflow.application = $12 AND workflow.workflow_id = $5 AND workflow.version = $6 \
 ) \
 SELECT wiring.graph_json::text, component.component, component.interface_version, \
        $18::text, \

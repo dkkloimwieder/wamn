@@ -1,4 +1,4 @@
-//! The components, palette components and wirings of a release, derived from
+//! The components and palette components of a release, derived from
 //! the package manifests and the `build.json` of each package, whose
 //! `outputs.components` names the bytes `wamn build` compiled.
 //!
@@ -6,19 +6,13 @@
 //! (owner ruling of 2026-10-02 on `wamn-m511.5`). No second file lists the
 //! components of a release.
 
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use serde_json::Value;
-use wamn_catalog::WiringDocument;
 use wamn_schema_generator::PackageManifest;
-
-/// The wiring documents of a package, relative to its root.
-pub const PACKAGE_WIRINGS: &str = "publication/wirings";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompositionErrorKind {
@@ -92,16 +86,6 @@ pub struct PackageInput {
     pub manifest: PackageManifest,
 }
 
-#[derive(Clone, Debug)]
-pub struct WiringInput {
-    /// The wiring document file.
-    pub path: PathBuf,
-    pub package_id: Box<str>,
-    pub package_version: Box<str>,
-    pub document: Value,
-    pub wiring: WiringDocument,
-}
-
 pub fn select_component_artifacts(
     packages: &[PackageInput],
 ) -> Result<Vec<SelectedComponentArtifact>, CompositionError> {
@@ -127,41 +111,29 @@ pub fn select_component_artifacts(
     Ok(selected)
 }
 
-/// The palette components that the wirings of each package name: each node
-/// component that is not a component of the package.
+/// The palette components selected by the package build.
 pub fn select_palette_artifacts(
     packages: &[PackageInput],
 ) -> Result<Vec<SelectedPaletteArtifact>, CompositionError> {
-    let mut named = BTreeSet::<(usize, String)>::new();
-    let wirings = load_wirings(packages)?;
-    for input in &wirings {
-        let index = packages
-            .iter()
-            .position(|package| {
-                *package.manifest.package.id == *input.package_id
-                    && *package.manifest.package.version == *input.package_version
-            })
-            .expect("every wiring belongs to one of the packages");
-        for node in input.wiring.nodes.values() {
-            if !packages[index]
-                .manifest
-                .components
-                .contains_key(&node.component)
-            {
-                named.insert((index, node.component.clone()));
+    let mut selected = Vec::new();
+    for package in packages {
+        let receipt = wamn_schema_generator::receipt::read(&wamn_schema_generator::output_root(
+            &package.root,
+        ))
+        .map_err(|source| CompositionError::owner("read the package build", source))?;
+        for entry in receipt.outputs.components {
+            if package.manifest.components.contains_key(&entry.name) {
+                continue;
             }
+            let (declaration, _) =
+                crate::package_artifact::platform_template(&package.root, &entry.name).map_err(
+                    |source| CompositionError::owner("find palette declaration", source),
+                )?;
+            selected.push(SelectedPaletteArtifact {
+                artifact: built_component(package, &entry.name)?,
+                declaration,
+            });
         }
-    }
-    let mut selected = Vec::with_capacity(named.len());
-    for (index, component) in named {
-        let package = &packages[index];
-        let (declaration, _) =
-            crate::package_artifact::platform_template(&package.root, &component)
-                .map_err(|source| CompositionError::owner("find palette declaration", source))?;
-        selected.push(SelectedPaletteArtifact {
-            artifact: built_component(package, &component)?,
-            declaration,
-        });
     }
     Ok(selected)
 }
@@ -214,93 +186,4 @@ fn built_component(
         path,
         digest: digest.into_boxed_str(),
     })
-}
-
-/// The wiring documents of every package. A package whose operations are all
-/// routes has no wiring directory.
-pub fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, CompositionError> {
-    let mut inputs = Vec::new();
-    for package in packages {
-        let directory = package.root.join(PACKAGE_WIRINGS);
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(source) => {
-                return Err(CompositionError::owner(
-                    "read package wiring directory",
-                    anyhow!(source).context(format!("read {}", directory.display())),
-                ));
-            }
-        };
-        let mut paths = entries
-            .map(|entry| {
-                entry.map(|entry| entry.path()).map_err(|source| {
-                    CompositionError::owner("read package wiring entry", source.into())
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        paths.sort();
-        for path in paths {
-            if path.extension().is_none_or(|extension| extension != "json") {
-                continue;
-            }
-            let document = wamn_schema_generator::operation_reference::read_authored_document(
-                &path,
-                wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
-            )
-            .map_err(|source| {
-                CompositionError::owner(
-                    "read package wiring",
-                    anyhow!(source).context(format!("read {}", path.display())),
-                )
-            })?;
-            let wiring = WiringDocument::parse(&document).map_err(|source| {
-                CompositionError::owner("validate package wiring", source.into())
-            })?;
-            inputs.push(WiringInput {
-                path: path.clone(),
-                package_id: package.manifest.package.id.clone().into_boxed_str(),
-                package_version: package.manifest.package.version.clone().into_boxed_str(),
-                document,
-                wiring,
-            });
-        }
-    }
-    Ok(inputs)
-}
-
-/// The store alias of a palette component, from `params.store_alias` of the
-/// wiring nodes of its package that name it. Two nodes that give two aliases
-/// refuse.
-pub fn wiring_store_alias(
-    wirings: &[WiringInput],
-    artifact: &SelectedComponentArtifact,
-) -> Result<Option<String>, CompositionError> {
-    let mut found: Option<String> = None;
-    for input in wirings.iter().filter(|input| {
-        input.package_id == artifact.package_id && input.package_version == artifact.package_version
-    }) {
-        for (node, value) in &input.wiring.nodes {
-            if *value.component != *artifact.component {
-                continue;
-            }
-            let Some(wired) = value.params.get("store_alias").and_then(Value::as_str) else {
-                continue;
-            };
-            match &found {
-                Some(alias) if alias != wired => {
-                    return Err(CompositionError::invalid(
-                        "read store alias",
-                        format!(
-                            "node {node:?} of wiring {:?} gives {}::{} the store alias {wired:?}, \
-                             and another node gives {alias:?}",
-                            input.wiring.wiring_id, artifact.package_id, artifact.component
-                        ),
-                    ));
-                }
-                _ => found = Some(wired.to_owned()),
-            }
-        }
-    }
-    Ok(found)
 }

@@ -9,9 +9,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ring::rand::SecureRandom as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use wamn_control_provision::events::{
-    advisory_stream_config, registration_consumers, source_stream_config,
-};
+use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 
 use crate::delivery::environment::EnvironmentFile;
 use crate::environment::document::EnvironmentDocument;
@@ -180,8 +178,7 @@ fn render(
     let tenant = format!("{}--{}--{}", document.org, document.project, document.env);
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
-    let mut consumers = registration_consumers(&scope, &tenant, manifests);
-    consumers.extend(wamn_control_provision::events::entity_consumers(
+    let consumers = wamn_control_provision::events::entity_consumers(
         &scope,
         manifests.iter().filter(|manifest| {
             document
@@ -189,7 +186,7 @@ fn render(
                 .values()
                 .any(|application| application.packages.contains(&manifest.package.id))
         }),
-    ));
+    );
     let subject = source.subjects[0].clone();
     let mut provisioning = Vec::new();
     let mut runtime = vec![subject.clone()];

@@ -16,7 +16,7 @@ use super::{
     BareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RUN_PLANE_FILES, RUN_STATE_SQL,
     RowPolicyObservation, RowSecurityObservation, RunPlaneAction, RunPlaneActionKind,
     RunPlaneObservation, RunPlanePlan, SCENARIO_AUTHOR_ROLE, ensure_scenario_author_role_sql,
-    rewrite_schema, strip_retired_registration_keys_sql,
+    rewrite_schema,
 };
 
 use super::declarations::{
@@ -1267,15 +1267,6 @@ $retire_run_projection_authority$;",
                 "DROP FUNCTION IF EXISTS {}.{OUTBOX_TRIGGER_NAME}()",
                 schema.quoted(),
             ),
-        });
-    }
-
-    // 5. Registration payload cleanup follows structural convergence.
-    if obs.stale_registration_key_rows > 0 {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::StripRetiredRegistrationKeys,
-            target: format!("{} registrations", obs.stale_registration_key_rows),
-            sql: strip_retired_registration_keys_sql().to_string(),
         });
     }
 

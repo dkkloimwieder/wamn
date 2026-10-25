@@ -257,17 +257,26 @@ async fn require_local_facts(
             .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
     )?;
     let (_, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    let facts = wamn_runtime::local_application::read_local_release(&root.join("local-artifacts"))?;
+    ensure!(
+        facts.manifest_digest == digest,
+        "dev release facts differ from the host release"
+    );
+    ensure!(
+        !facts.applications.is_empty(),
+        "dev host declares no local application"
+    );
     let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_type='publish'", &[&identity().tenant.as_str()]).await?.get(0);
     let (target, task) = connect(target_url).await?;
     let wirings: i64 = target
         .query_one(
-            "SELECT count(*) FROM catalog.wirings WHERE tenant_id=$1",
+            "SELECT count(*) FROM catalog.workflows WHERE tenant_id=$1",
             &[&identity().tenant.as_str()],
         )
         .await?
         .get(0);
     // The local run plane needs the release row its runs pin, and nothing
-    // else: the component and wiring facts remain local files.
+    // else: dev authors no workflow on its own.
     let releases = target
         .query(
             "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE tenant_id=$1",

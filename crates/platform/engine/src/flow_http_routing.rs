@@ -952,7 +952,7 @@ fn route_definition(
             &attachment.component,
             &attachment.operation,
         ),
-        ServedAttachment::Authored(AttachmentRef::Wiring(_)) | ServedAttachment::Host(_) => None,
+        ServedAttachment::Host(_) => None,
     };
     Some(RouteDefinition {
         read_limits: operation.filter(|route| route.type_.is_read()).map(|_| {
@@ -1243,7 +1243,6 @@ fn route_type(
 ) -> Option<OperationType> {
     let attachment = match attachment {
         ServedAttachment::Authored(AttachmentRef::Route(attachment)) => attachment,
-        ServedAttachment::Authored(AttachmentRef::Wiring(_)) => return None,
         ServedAttachment::Host(attachment) => return Some(attachment.route.type_),
     };
     manifest
@@ -1524,7 +1523,7 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingAttachment,
-        ServingComponent, ServingComponentOperation, ServingRelease, ServingRoute, ServingWiring,
+        ServingComponent, ServingComponentOperation, ServingRelease, ServingRoute,
     };
 
     use super::*;
@@ -1556,20 +1555,13 @@ mod tests {
         }])
     }
 
-    fn wirings() -> BTreeSet<ServingWiring> {
-        BTreeSet::from([ServingWiring::new(
-            "cat",
-            wamn_catalog::fixture_graph("orders", 1),
-        )])
-    }
-
     fn attachment(kind: AttachmentType, definition: Value) -> ServingAttachment {
         ServingAttachment {
             type_: kind,
             package_id: "cat".into(),
-            target: wamn_catalog::AttachmentTarget::Wiring {
-                wiring_id: "orders".into(),
-                wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Route {
+                component: "http-request".into(),
+                operation: "request".into(),
             },
             definition_hash: DefinitionHash::parse(DEFINITION_HASH)
                 .expect("fixture definition hash is canonical"),
@@ -1596,7 +1588,19 @@ mod tests {
     }
 
     fn release_manifest(attachments: BTreeMap<String, ServingAttachment>) -> ServingManifest {
-        release_manifest_with_routes(BTreeSet::new(), attachments)
+        release_manifest_with_routes(
+            BTreeSet::from([ServingRoute {
+                package_id: "cat".into(),
+                component: "http-request".into(),
+                operation: "request".into(),
+                type_: OperationType::Command,
+                reads: BTreeSet::new(),
+                revision: None,
+                idempotency: None,
+                canonicalization: None,
+            }]),
+            attachments,
+        )
     }
 
     fn release_manifest_with_routes(
@@ -1609,9 +1613,7 @@ mod tests {
             },
             components(),
             routes,
-            wirings(),
             attachments,
-            BTreeMap::new(),
         )
         .expect("fixture manifest is valid")
     }
@@ -1837,8 +1839,8 @@ mod tests {
             assert_eq!(definition.cache_control, expected, "{kind:?} {policy}");
         }
 
-        let wiring = route_definitions(&one_http_route(), "POST");
-        assert_eq!(wiring[0].cache_control, None, "a wiring can write");
+        let write = route_definitions(&one_http_route(), "POST");
+        assert_eq!(write[0].cache_control, None, "a command can write");
     }
 
     #[test]
@@ -1942,8 +1944,8 @@ mod tests {
     }
 
     #[test]
-    fn host_routes_and_wirings_carry_no_entry_operation_rules() {
-        let mut manifest = one_http_route();
+    fn host_routes_carry_no_entry_operation_rules() {
+        let mut manifest = release_manifest(BTreeMap::new());
         manifest
             .host_routes
             .insert(wamn_catalog::HostRouteSet::Application);

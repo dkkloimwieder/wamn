@@ -32,22 +32,20 @@ use tokio::process::Command;
 use tokio_postgres::Client;
 use wamn_catalog::{AdmittedComponent, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::author_wiring;
 use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::dev::watch::GitSource;
 use wamn_control::git_source::GitSourceState;
-use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
+use wamn_control::publish_release::{self, PublishReleaseRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_gate_harness::journey::{JourneyDocument, MaterializerPhase};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use environment::{
-    JourneyReleaseTarget, admit_journey_components, author_journey_wirings, gate_journey_wirings,
-    install_journey_project, journey_package_root, journey_publication_root, overlay_package_root,
-    overlay_route_path, package_root, reconcile_journey_data_access, render_component_declarations,
-    repository_root, required_journey, required_journey_path,
-    verify_journey_components_are_effectful, verify_journey_operation_grants,
-    verify_zero_case_gate_reports,
+    JourneyReleaseTarget, admit_journey_components, gate_journey_wirings, install_journey_project,
+    journey_package_root, overlay_package_root, overlay_route_path, package_root,
+    reconcile_journey_data_access, render_component_declarations, repository_root,
+    required_journey, required_journey_path, verify_journey_components_are_effectful,
+    verify_journey_operation_grants, verify_zero_case_gate_reports,
 };
 use routes::copy_package;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
@@ -346,14 +344,10 @@ const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
         id: OVERLAY_PACKAGE_ID,
         component: OVERLAY_COMPONENT,
         operations: &OVERLAY_OPERATIONS,
-        // The receipt-insert registration names this event handler wiring.
+        // The environment authors this receipt-insert event workflow.
         wirings: &["quality_create_inspection"],
     },
 ];
-
-/// The one process setting the cluster journey hands this crate: the path to
-/// its input document. Everything else crosses as fields of that document.
-const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
 
 /// Fixed nameable port for `[RECEIVING-ROUTE-JOURNEY]`'s spawned Gate.
 const ROUTE_JOURNEY_GATE_BIND: &str = "127.0.0.1:18089";

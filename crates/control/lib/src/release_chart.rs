@@ -199,7 +199,7 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 }
 
 /// The roles a release implies (R4, epic decision D6): http iff the manifest
-/// has a route or workflow http attachment, materializer in every environment.
+/// has an HTTP route attachment, materializer in every environment.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
     let tenant = wamn_control_provision::project_env_tenant(org, project, env);
@@ -849,36 +849,20 @@ mod tests {
     }
 
     #[test]
-    fn a_workflow_http_attachment_renders_the_http_role() {
-        let manifest: ServingManifest = serde_json::from_value(serde_json::json!({
+    fn a_retired_workflow_http_attachment_does_not_render_the_http_role() {
+        let value = serde_json::json!({
             "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            "release": {"packages": []},
-            "components": [],
-            "routes": [],
-            "attachments": {},
-            "workflow": {
-                "wirings": [],
-                "attachments": {
-                    "orders-http": {
-                        "type": "http",
-                        "package-id": "wamn_wms",
-                        "wiring-id": "orders",
-                        "wiring-version": 1,
-                        "definition-hash": DIGEST,
-                        "definition": {"route": {"method": "POST", "path": "/orders"}},
-                        "auth-policy": {"modes": ["none"]}
-                    }
-                }
-            }
-        }))
-        .expect("manifest");
-        let mut input = input();
-        input.roles = roles(&manifest, &input.org, &input.project, &input.env);
-        assert_eq!(input.roles.len(), 2);
-        assert_eq!(input.roles[1].name, RoleName::Materializer);
-        assert_eq!(input.roles[0].name, RoleName::Http);
-        let values = values(&input).expect("values render");
-        assert_eq!(values["roles"][0]["name"].as_str(), Some("http"));
+            "release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},
+            "components":[],"routes":[],"attachments":{},
+            "workflow":{"attachments":{"orders-http":{"type":"http","wiring-id":"orders"}}}
+        });
+        let (manifest, _) = ServingManifest::from_canonical_bytes(
+            &wamn_execution_contract::canonical_json_bytes(&value),
+        )
+        .unwrap();
+        let roles = roles(&manifest, "acme", "orders", "dev");
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].name, RoleName::Materializer);
     }
 
     #[test]
@@ -886,7 +870,6 @@ mod tests {
         let manifest: ServingManifest = serde_json::from_value(serde_json::json!({
             "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
             "release": {"packages": []}, "components": [], "routes": [], "attachments": {},
-            "workflow": {"wirings": [], "attachments": {}}
         }))
         .unwrap();
         let roles = roles(&manifest, "acme", "orders", "dev");

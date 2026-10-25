@@ -245,7 +245,7 @@ impl LoadedRelease {
             components: std::collections::BTreeSet::default(),
             routes: std::collections::BTreeSet::default(),
             attachments: std::collections::BTreeMap::default(),
-            workflow: wamn_catalog::WorkflowSection::default(),
+
             host_routes: [wamn_catalog::HostRouteSet::Control].into(),
         };
         Self {
@@ -340,7 +340,7 @@ mod tests {
 
     use wamn_catalog::{
         PackageCoordinate, ServingComponent, ServingComponentOperation, ServingRelease,
-        ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
 
     use super::*;
@@ -369,11 +369,6 @@ mod tests {
                 descriptor: wamn_catalog::ComponentDescriptor::named("transform", "0.1", COMPONENT),
             }]),
             BTreeSet::new(),
-            BTreeSet::from([ServingWiring::new(
-                "cat",
-                wamn_catalog::fixture_graph("orders", 2),
-            )]),
-            BTreeMap::new(),
             BTreeMap::new(),
         )
         .expect("fixture manifest is valid")
@@ -461,11 +456,6 @@ mod tests {
             loaded_release.manifest().components,
             expected.components,
             "the loaded release retains the exact component closure"
-        );
-        assert_eq!(
-            loaded_release.manifest().workflow,
-            expected.workflow,
-            "the loaded release retains the exact workflow section"
         );
     }
 

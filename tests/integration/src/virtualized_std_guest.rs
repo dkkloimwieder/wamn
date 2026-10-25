@@ -646,7 +646,6 @@ mod tests {
         .context("build the released virtualized probe route")?;
 
         let delivery = route
-            .driver
             .execute(RouterDriverRequest {
                 tenant_id: TENANT.to_owned(),
                 package_id: PACKAGE.to_owned(),
@@ -672,7 +671,6 @@ mod tests {
         );
 
         let connection = route
-            .driver
             .execute(RouterDriverRequest {
                 tenant_id: TENANT.to_owned(),
                 package_id: PACKAGE.to_owned(),
@@ -704,13 +702,8 @@ mod tests {
 
         let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()));
         let bridge = Arc::new(
-            RouterDeliveryBridge::new(
-                route.driver.operations(),
-                Some(Arc::clone(&route.driver) as Arc<dyn wamn_execution_host::WiringDelivery>),
-                jetstream,
-                PROJECT,
-            )
-            .context("bind the production delivery bridge")?,
+            RouterDeliveryBridge::new(route.driver.operations(), jetstream, PROJECT)
+                .context("bind the production delivery bridge")?,
         );
         let routing = Arc::new(
             FlowHttpRouting::from_env(Some(Arc::clone(&route.release)))

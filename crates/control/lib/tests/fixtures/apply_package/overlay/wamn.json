@@ -197,13 +197,6 @@
             }
           ]
         }
-      },
-      "registration": {
-        "source_package": "wamn_inventory",
-        "entity": "rack",
-        "ops": [
-          "insert"
-        ]
       }
     }
   },

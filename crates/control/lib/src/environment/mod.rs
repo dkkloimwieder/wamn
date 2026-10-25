@@ -137,24 +137,7 @@ impl Platform {
                 client_key: std::env::var_os("WAMN_IDENTITY_CLIENT_KEY").map(PathBuf::from),
                 server_ca: std::env::var_os("WAMN_IDENTITY_SERVER_CA").map(PathBuf::from),
             },
-            events: match std::env::var("WAMN_EVENT_NATS_URL") {
-                Err(_) => None,
-                Ok(nats_url) => Some(EventBroker {
-                    nats_url,
-                    nats_username: variable("WAMN_EVENT_NATS_USERNAME")?,
-                    nats_password_file: PathBuf::from(variable("WAMN_EVENT_NATS_PASSWORD_FILE")?),
-                    stream_replicas: std::env::var("WAMN_EVENT_STREAM_REPLICAS")
-                        .ok()
-                        .map(|count| count.parse().context("WAMN_EVENT_STREAM_REPLICAS"))
-                        .transpose()?
-                        .unwrap_or(1),
-                    dup_window_secs: std::env::var("WAMN_EVENT_DUP_WINDOW_SECS")
-                        .ok()
-                        .map(|seconds| seconds.parse().context("WAMN_EVENT_DUP_WINDOW_SECS"))
-                        .transpose()?
-                        .unwrap_or(120),
-                }),
-            },
+            events: event_broker_from_env()?,
             auth_nats: Some(wamn_platform_identity::auth_changes::AuthNats::from_env()?),
             target: release_chart::Target {
                 kubeconfig,
@@ -297,4 +280,30 @@ pub(crate) async fn apply_locked(
         .context("step 9, contract")?;
     analysis.plan.extend(contracted);
     Ok(analysis)
+}
+
+/// Read event broker inputs for both deployed and local workflow verbs.
+pub fn event_broker_from_env() -> anyhow::Result<Option<EventBroker>> {
+    Ok(match std::env::var("WAMN_EVENT_NATS_URL") {
+        Err(_) => None,
+        Ok(nats_url) => Some(EventBroker {
+            nats_url,
+            nats_username: std::env::var("WAMN_EVENT_NATS_USERNAME")
+                .context("set WAMN_EVENT_NATS_USERNAME")?,
+            nats_password_file: PathBuf::from(
+                std::env::var("WAMN_EVENT_NATS_PASSWORD_FILE")
+                    .context("set WAMN_EVENT_NATS_PASSWORD_FILE")?,
+            ),
+            stream_replicas: std::env::var("WAMN_EVENT_STREAM_REPLICAS")
+                .ok()
+                .map(|count| count.parse().context("WAMN_EVENT_STREAM_REPLICAS"))
+                .transpose()?
+                .unwrap_or(1),
+            dup_window_secs: std::env::var("WAMN_EVENT_DUP_WINDOW_SECS")
+                .ok()
+                .map(|seconds| seconds.parse().context("WAMN_EVENT_DUP_WINDOW_SECS"))
+                .transpose()?
+                .unwrap_or(120),
+        }),
+    })
 }

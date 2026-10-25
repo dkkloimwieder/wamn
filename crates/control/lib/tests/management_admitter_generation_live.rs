@@ -273,15 +273,6 @@ async fn family_state(admin: &Client, roles: &[&str]) -> Vec<(String, Vec<String
 /// constants the ACL verifier expects, so the fixture cannot drift away from the
 /// grant set and quietly widen what "exact" means.
 fn run_plane_fixture() -> String {
-    let mut wiring_columns: BTreeSet<&str> = BTreeSet::from(["created_at"]);
-    wiring_columns.extend(sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS);
-    let column_ddl = |columns: &BTreeSet<&str>| {
-        columns
-            .iter()
-            .map(|column| format!("\"{column}\" text"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
     let mut ddl = format!(
         "CREATE SCHEMA catalog; CREATE SCHEMA {RUN_SCHEMA}; CREATE SCHEMA unrelated; \
          CREATE TABLE {RUN_SCHEMA}.environment_policies (id bigint); \
@@ -291,17 +282,7 @@ fn run_plane_fixture() -> String {
          CREATE TABLE unrelated.probe (id bigint);",
     );
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        if relation == "wirings" {
-            write!(
-                ddl,
-                " CREATE TABLE catalog.\"{relation}\" ({columns});",
-                columns = column_ddl(&wiring_columns),
-            )
-            .expect("writing to a String cannot fail");
-        } else {
-            write!(ddl, " CREATE TABLE catalog.\"{relation}\" (id bigint);")
-                .expect("writing to a String cannot fail");
-        }
+        write!(ddl, " CREATE TABLE catalog.\"{relation}\" (id bigint);").unwrap();
     }
     ddl
 }
@@ -314,9 +295,6 @@ fn expected_stable_acl() -> BTreeSet<String> {
     ]);
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         expected.insert(format!("relation:catalog:{relation}:SELECT"));
-    }
-    for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
-        expected.insert(format!("column:catalog:wirings.{column}:INSERT"));
     }
     expected
 }

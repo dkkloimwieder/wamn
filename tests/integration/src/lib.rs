@@ -22,8 +22,6 @@ pub mod operator_recovery;
 pub mod rc;
 pub mod readerbench;
 #[cfg(test)]
-mod reconcile_live;
-#[cfg(test)]
 mod route_authentication_live;
 #[cfg(test)]
 mod route_interface_live;

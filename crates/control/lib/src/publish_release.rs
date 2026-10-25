@@ -3,13 +3,13 @@
 //! A release is its manifest digest (docs/plan/platform-deploy.md R1). The
 //! publisher composes package artifacts (§8.1): it pulls the artifact under
 //! the tag of each exact package pair from the registry only, and refuses a
-//! package with no artifact before it writes anything (R11 (2)). It resolves every wiring and component from the admitted
+//! package with no artifact before it writes anything (R11 (2)). It resolves every component from the admitted
 //! descriptors of those artifacts, and each release component carries its
 //! descriptor. It pushes the canonical manifest bytes to OCI and writes no
 //! Postgres row: `apply` step 2 writes `catalog.releases` where it installs
 //! (R1 (3), R2, §10.2).
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
@@ -18,8 +18,7 @@ use wamn_catalog::{
     AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageScope,
     ManifestDigest, OperationType, PackageCoordinate, RouteCanonicalization,
     SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
-    ServingRegistration, ServingRelation, ServingRelease, ServingRoute, ServingWiring,
-    WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
+    ServingRelation, ServingRelease, ServingRoute,
 };
 use wamn_engine::release_manifest::ReleaseScope;
 use wamn_schema_control::{
@@ -40,7 +39,6 @@ use attachments::{
 };
 use components::{
     project_serving_component, resolve_component_dependency_closure, resolve_route_component,
-    resolve_wiring_components, resolved_wiring_entry_operation, validate_anonymous_wiring_closure,
 };
 pub use package_sources::package_route;
 use package_sources::read_package_manifests;
@@ -54,11 +52,6 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, false)";
 const SELECT_APPLIED_PACKAGE_DIGEST_SQL: &str = "\
 SELECT artifact_digest FROM catalog.packages \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3";
-const SELECT_WIRING_SQL: &str = "\
-SELECT wiring_hash, graph_json::text \
-  FROM catalog.wirings \
- WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-   AND wiring_id = $4 AND version = $5";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE tenant_id = $1 AND manifest_digest = $2";
@@ -71,53 +64,6 @@ fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
     )
 }
 
-/// One exact package-owned wiring included in an effective release.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ReleaseWiringTarget {
-    pub package_id: String,
-    pub package_version: String,
-    pub wiring_id: String,
-    pub wiring_version: u32,
-}
-
-impl std::str::FromStr for ReleaseWiringTarget {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let (package, wiring) = value.split_once("::").ok_or_else(|| {
-            "expected PACKAGE_ID@PACKAGE_VERSION::WIRING_ID=WIRING_VERSION".to_owned()
-        })?;
-        let (package_id, package_version) = package
-            .rsplit_once('@')
-            .ok_or_else(|| "wiring target requires an exact package version".to_owned())?;
-        let (wiring_id, wiring_version) = wiring
-            .split_once('=')
-            .ok_or_else(|| "wiring target requires WIRING_ID=WIRING_VERSION".to_owned())?;
-        let package = PackageCoordinate::new(package_id, package_version)
-            .map_err(|error| error.to_string())?;
-        ensure_token(wiring_id, "wiring id")?;
-        let wiring_version = wiring_version
-            .parse::<u32>()
-            .map_err(|_| "wiring version must be a positive integer".to_owned())?;
-        if wiring_version == 0 {
-            return Err("wiring version must be greater than zero".to_owned());
-        }
-        Ok(Self {
-            package_id: package.package_id().to_owned(),
-            package_version: package.package_version().to_owned(),
-            wiring_id: wiring_id.to_owned(),
-            wiring_version,
-        })
-    }
-}
-
-fn ensure_token(value: &str, name: &str) -> Result<(), String> {
-    if value.is_empty() || value.chars().any(char::is_whitespace) {
-        return Err(format!("{name} must be non-empty and free of whitespace"));
-    }
-    Ok(())
-}
-
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
 pub struct PublishReleaseManifest<'a> {
@@ -125,7 +71,6 @@ pub struct PublishReleaseManifest<'a> {
     pub environment: &'a str,
     pub verified_publisher_principal: &'a str,
     pub packages: &'a BTreeSet<PackageCoordinate>,
-    pub wirings: &'a BTreeSet<ReleaseWiringTarget>,
     pub attachments: &'a BTreeMap<String, ServingAttachment>,
     /// Whether provisioning marked this target's environment disposable.
     ///
@@ -182,12 +127,10 @@ pub enum PublishManifestErrorType {
     Storage,
     Release,
     PackageManifest,
-    Wiring,
     Component,
     OperationDependency,
     UnauthenticatedRegisteredOperation,
     UnauthenticatedWrite,
-    Registration,
     ClosureConflict,
     Document,
     DuplicateAttachmentId,
@@ -202,12 +145,10 @@ impl PublishManifestErrorType {
             Self::Storage => "storage",
             Self::Release => "release",
             Self::PackageManifest => "package-manifest",
-            Self::Wiring => "wiring",
             Self::Component => "component",
             Self::OperationDependency => "operation-dependency",
             Self::UnauthenticatedRegisteredOperation => "unauthenticated-registered-operation",
             Self::UnauthenticatedWrite => "unauthenticated-write",
-            Self::Registration => "registration",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
             Self::DuplicateAttachmentId => "duplicate-attachment-id",
@@ -321,8 +262,6 @@ pub struct PublishReleaseRequest {
     pub run_schema: String,
     /// Exact package membership.
     pub packages: Vec<PackageCoordinate>,
-    /// Exact package-owned wirings, read from `catalog.wirings`.
-    pub wirings: Vec<ReleaseWiringTarget>,
 }
 
 /// Parse one exact `PACKAGE_ID@PACKAGE_VERSION` package coordinate.
@@ -366,7 +305,6 @@ pub async fn publish_local(
     args: PublishReleaseRequest,
     package_roots: &[PathBuf],
     admissions: &[crate::component_admission::ComponentAdmission],
-    documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
     PublishedRelease,
     wamn_runtime::local_application::LocalApplicationFacts,
@@ -384,7 +322,7 @@ pub async fn publish_local(
     let (client, connection) = tokio_postgres::connect(&args.database_url, NoTls).await?;
     let driver = tokio::spawn(connection);
     client.query_one(CLAIM_TENANT_SQL, &[&args.tenant]).await?;
-    let assembled = assemble_local_release(&args, package_roots, admissions, documents)?;
+    let assembled = assemble_local_release(&args, package_roots, admissions)?;
     let run_schema = args.verified_run_schema()?;
     let policy = crate::verification_policy::read_authoritative_environment_policy(
         &args.control_database_url,
@@ -607,25 +545,22 @@ pub fn assemble_local_release(
     args: &PublishReleaseRequest,
     package_roots: &[PathBuf],
     admissions: &[crate::component_admission::ComponentAdmission],
-    documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<AssembledLocalRelease> {
-    use wamn_runtime::local_application::{LocalApplicationFacts, LocalWiringFacts};
+    use wamn_runtime::local_application::LocalApplicationFacts;
     let (attachment_paths, manifest_paths) = package_files(package_roots);
     let authored = read_package_attachments(&attachment_paths, &manifest_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(&manifest_paths)?;
     let attachments = resolve_route_methods(&authored, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
-    let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
-        packages.len() == args.packages.len() && targets.len() == args.wirings.len(),
-        "local candidate repeats a package or wiring"
+        packages.len() == args.packages.len(),
+        "local candidate repeats a package"
     );
     let request = PublishReleaseManifest {
         tenant_id: &args.tenant,
         environment: &args.environment,
         verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
-        wirings: &targets,
         attachments: &attachments,
         environment_is_disposable: true,
     };
@@ -654,54 +589,7 @@ pub fn assemble_local_release(
             admission.statement_instances().clone(),
         )?;
     }
-    let mut components = BTreeSet::new();
-    let mut wirings = BTreeSet::new();
-    let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
-    let mut one_node = Vec::new();
-    let mut local_wirings = Vec::new();
-    ensure!(
-        documents.len() == targets.len(),
-        "local wiring closure is incomplete"
-    );
-    for (scope, document) in documents {
-        let target = ReleaseWiringTarget {
-            package_id: scope.package_id.clone(),
-            package_version: scope.package_version.clone(),
-            wiring_id: document.wiring_id.clone(),
-            wiring_version: document.version,
-        };
-        ensure!(
-            scope.tenant_id == args.tenant && targets.contains(&target),
-            "local wiring is outside release membership"
-        );
-        let entry_operation = project_wiring_document(
-            &request,
-            &target,
-            &scope,
-            &document,
-            &release_components,
-            &package_manifests,
-            &mut components,
-            &mut wirings,
-            &mut one_node,
-        )?;
-        let node_components = resolve_wiring_components(
-            &document,
-            &scope,
-            &release_components.facts,
-            package_manifests.get(&scope.package_id),
-            DependencyDigestRule::for_environment(true),
-        )?;
-        local_wirings.push(LocalWiringFacts {
-            scope,
-            document,
-            node_components,
-        });
-        entry_targets
-            .entry(entry_operation)
-            .or_default()
-            .push(target);
-    }
+    let mut components = project_components(&release_components)?;
     let routes = project_routes(
         &request,
         &route_contracts,
@@ -709,9 +597,7 @@ pub fn assemble_local_release(
         &package_manifests,
         &mut components,
     )?;
-    let registrations = derive_serving_registrations(&package_manifests, &entry_targets)?;
-    refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
-    let (route_attachments, wiring_attachments) = ServingAttachment::split(attachments.clone());
+    let route_attachments = ServingAttachment::routes(attachments.clone());
     let manifest = ServingManifest {
         composed_entry: None,
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -721,11 +607,6 @@ pub fn assemble_local_release(
         components: pin_runtime_schemas(components, &package_manifests)?,
         routes,
         attachments: route_attachments,
-        workflow: WorkflowSection {
-            wirings,
-            attachments: wiring_attachments,
-            registrations,
-        },
         // Every application release serves the fixed application
         // administration routes (docs/plan/platform-ui.md §4.6).
         host_routes: BTreeSet::from([wamn_catalog::HostRouteSet::Application]),
@@ -755,7 +636,6 @@ pub fn assemble_local_release(
     let facts = LocalApplicationFacts {
         manifest_digest: digest.clone(),
         components,
-        wirings: local_wirings,
         requirements,
         bindings: Vec::new(),
     };
@@ -856,11 +736,6 @@ async fn publish_candidate(
                 .all(|package| package_manifests.contains_key(package.package_id())),
         "publish-release requires one exact package manifest for every release package"
     );
-    let wirings = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
-    ensure!(
-        wirings.len() == args.wirings.len(),
-        "effective release repeats a wiring target"
-    );
     let environment_is_disposable =
         read_projected_environment_disposable(&args.control_database_url, &args.tenant)
             .await
@@ -870,7 +745,6 @@ async fn publish_candidate(
         environment: &args.environment,
         verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
-        wirings: &wirings,
         attachments: &attachments,
         environment_is_disposable,
     };
@@ -1151,48 +1025,7 @@ async fn publish_release_from_sources(
     )
     .await?;
 
-    let mut components = BTreeSet::new();
-    let mut wirings = BTreeSet::new();
-    let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
-    let mut one_node = Vec::new();
-    for target in request.wirings {
-        let package = PackageCoordinate::new(&target.package_id, &target.package_version)
-            .expect("ReleaseWiringTarget parsing admitted this coordinate");
-        if !request.packages.contains(&package) {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::Wiring,
-                format!(
-                    "wiring {}@{}::{}/{} is outside the effective release membership",
-                    target.package_id,
-                    target.package_version,
-                    target.wiring_id,
-                    target.wiring_version
-                ),
-            ));
-        }
-        let scope = ComponentPackageScope {
-            tenant_id: request.tenant_id.to_owned(),
-            package_id: target.package_id.clone(),
-            package_version: target.package_version.clone(),
-        };
-        let entry_operation = resolve_wiring(
-            client,
-            request,
-            target,
-            &scope,
-            component_facts,
-            package_manifests,
-            &mut components,
-            &mut wirings,
-            &mut one_node,
-        )
-        .await?;
-        entry_targets
-            .entry(entry_operation)
-            .or_default()
-            .push(target.clone());
-    }
-
+    let mut components = project_components(component_facts)?;
     let routes = project_routes(
         request,
         route_contracts,
@@ -1200,10 +1033,7 @@ async fn publish_release_from_sources(
         package_manifests,
         &mut components,
     )?;
-    let registrations = derive_serving_registrations(package_manifests, &entry_targets)?;
-    refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
-    let (route_attachments, wiring_attachments) =
-        ServingAttachment::split(request.attachments.clone());
+    let route_attachments = ServingAttachment::routes(request.attachments.clone());
 
     let projected = ServingManifest {
         composed_entry: None,
@@ -1214,11 +1044,6 @@ async fn publish_release_from_sources(
         components: pin_runtime_schemas(components, package_manifests)?,
         routes,
         attachments: route_attachments,
-        workflow: WorkflowSection {
-            wirings,
-            attachments: wiring_attachments,
-            registrations,
-        },
         // Every application release serves the fixed application
         // administration routes (docs/plan/platform-ui.md §4.6).
         host_routes: BTreeSet::from([wamn_catalog::HostRouteSet::Application]),
@@ -1228,7 +1053,7 @@ async fn publish_release_from_sources(
         ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
-                "the release does not project a deliverable format-7 manifest",
+                "the release does not project a deliverable format-11 manifest",
                 error,
             )
         })?;
@@ -1261,16 +1086,6 @@ fn validate_request(request: &PublishReleaseManifest<'_>) -> Result<(), PublishM
         return Err(PublishManifestError::new(
             PublishManifestErrorType::Release,
             "an effective release cannot contain two versions of one package",
-        ));
-    }
-    let routed = request
-        .attachments
-        .values()
-        .any(|attachment| matches!(attachment.target, AttachmentTarget::Route { .. }));
-    if request.wirings.is_empty() && !routed {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Wiring,
-            "a release with no route and no wiring has no executable closure",
         ));
     }
     validate_attachment_definition_hashes(request.attachments)?;
@@ -1641,6 +1456,22 @@ impl ReleaseComponents {
 
 /// The admitted components of the opened package artifacts, each from its
 /// descriptor layer, in the scope of `tenant`.
+fn project_components(
+    components: &ReleaseComponents,
+) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
+    components
+        .facts
+        .values()
+        .flatten()
+        .map(|fact| {
+            components.with_statement_instances(project_serving_component(
+                fact,
+                components.connections(fact)?,
+            )?)
+        })
+        .collect()
+}
+
 fn descriptor_components(
     tenant: &str,
     packages: &[PackageCoordinate],
@@ -1696,300 +1527,6 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (attachments, manifests)
 }
 
-/// Refuse a registration whose source package is absent from the release or
-/// does not own its entity. `subject` names the handler or workflow.
-fn check_registration_source(
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    subject: &str,
-    declaration: &wamn_schema_generator::EventRegistrationDeclaration,
-) -> Result<(), PublishManifestError> {
-    let source_manifest = package_manifests
-        .get(&declaration.source_package)
-        .ok_or_else(|| {
-            PublishManifestError::new(
-                PublishManifestErrorType::Registration,
-                format!(
-                    "{subject} source package {:?} is absent while resolving entity {:?}",
-                    declaration.source_package, declaration.entity
-                ),
-            )
-        })?;
-    if !source_manifest.models.contains_key(&declaration.entity) {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Registration,
-            format!(
-                "{subject} source package {:?} does not own entity {:?}",
-                declaration.source_package, declaration.entity
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn serving_ops(
-    declaration: &wamn_schema_generator::EventRegistrationDeclaration,
-) -> BTreeSet<String> {
-    declaration
-        .ops
-        .iter()
-        .map(|op| op.as_str().to_owned())
-        .collect()
-}
-
-/// The release registrations: one for each event handler, whose wiring enters
-/// at the handler and which the driver walks when its event arrives, and one
-/// for each declared workflow, whose wiring can enter at any node and whose
-/// event the host admits as a queued run.
-fn derive_serving_registrations(
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    entry_targets: &BTreeMap<String, Vec<ReleaseWiringTarget>>,
-) -> Result<BTreeMap<String, ServingRegistration>, PublishManifestError> {
-    let mut registrations = BTreeMap::new();
-    for manifest in package_manifests.values() {
-        for (operation_key, operation) in &manifest.custom_operations {
-            let Some(declaration) = operation.registration() else {
-                continue;
-            };
-            check_registration_source(
-                package_manifests,
-                &format!("event handler {operation_key:?}"),
-                declaration,
-            )?;
-            let operation_id = wamn_schema_generator::canonical_operation_identity(
-                &manifest.package,
-                operation_key,
-            )
-            .map_err(|error| {
-                PublishManifestError::with_source(
-                    PublishManifestErrorType::Registration,
-                    format!("derive exact handler operation {operation_key:?}"),
-                    error,
-                )
-            })?;
-            let targets = entry_targets
-                .get(&operation_id)
-                .into_iter()
-                .flatten()
-                .filter(|target| {
-                    target.package_id == manifest.package.id
-                        && target.package_version == manifest.package.version
-                })
-                .collect::<Vec<_>>();
-            if targets.len() != 1 {
-                return Err(PublishManifestError::new(
-                    PublishManifestErrorType::Registration,
-                    format!(
-                        "event handler {operation_id:?} resolves to {} selected owner wiring(s); expected exactly one",
-                        targets.len()
-                    ),
-                ));
-            }
-            let target = targets[0];
-            let registration_id = format!("{}::{operation_key}", manifest.package.id);
-            registrations.insert(
-                registration_id,
-                ServingRegistration {
-                    package_id: manifest.package.id.clone(),
-                    source_package_id: declaration.source_package.clone(),
-                    wiring_id: target.wiring_id.clone(),
-                    wiring_version: target.wiring_version,
-                    entity: declaration.entity.clone(),
-                    ops: serving_ops(declaration),
-                    input: wamn_catalog::ServingRegistrationInput::Event,
-                    delivery: wamn_catalog::RegistrationDelivery::Queue,
-                },
-            );
-        }
-        for (workflow_id, workflow) in &manifest.workflows {
-            let Some(declaration) = &workflow.registration else {
-                continue;
-            };
-            check_registration_source(
-                package_manifests,
-                &format!("workflow {workflow_id:?}"),
-                declaration,
-            )?;
-            // A workflow can enter at any node, so it names its wiring.
-            let targets = entry_targets
-                .values()
-                .flatten()
-                .filter(|target| {
-                    target.package_id == manifest.package.id
-                        && target.package_version == manifest.package.version
-                        && target.wiring_id == workflow.wiring
-                })
-                .collect::<Vec<_>>();
-            if targets.len() != 1 {
-                return Err(PublishManifestError::new(
-                    PublishManifestErrorType::Registration,
-                    format!(
-                        "workflow {workflow_id:?} names wiring {:?}, which resolves to {} selected wiring(s); expected exactly one",
-                        workflow.wiring,
-                        targets.len()
-                    ),
-                ));
-            }
-            let target = targets[0];
-            registrations.insert(
-                format!("{}::{workflow_id}", manifest.package.id),
-                ServingRegistration {
-                    package_id: manifest.package.id.clone(),
-                    source_package_id: declaration.source_package.clone(),
-                    wiring_id: target.wiring_id.clone(),
-                    wiring_version: target.wiring_version,
-                    entity: declaration.entity.clone(),
-                    ops: serving_ops(declaration),
-                    input: wamn_catalog::ServingRegistrationInput::Event,
-                    delivery: wamn_catalog::RegistrationDelivery::Queue,
-                },
-            );
-        }
-    }
-    Ok(registrations)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn resolve_wiring(
-    client: &Client,
-    request: &PublishReleaseManifest<'_>,
-    target: &ReleaseWiringTarget,
-    scope: &ComponentPackageScope,
-    component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    components: &mut BTreeSet<ServingComponent>,
-    wirings: &mut BTreeSet<ServingWiring>,
-    one_node: &mut Vec<ReleaseWiringTarget>,
-) -> Result<String, PublishManifestError> {
-    let version = i32::try_from(target.wiring_version).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::Wiring,
-            "wiring version exceeds PostgreSQL integer",
-            error,
-        )
-    })?;
-    let Some(row) = client
-        .query_opt(
-            SELECT_WIRING_SQL,
-            &[
-                &request.tenant_id,
-                &target.package_id,
-                &target.package_version,
-                &target.wiring_id,
-                &version,
-            ],
-        )
-        .await
-        .map_err(|error| storage("read a release wiring", error))?
-    else {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Wiring,
-            format!(
-                "package {}@{} has no wiring {} version {}",
-                target.package_id, target.package_version, target.wiring_id, target.wiring_version
-            ),
-        ));
-    };
-    let stored_hash: String = row.get(0);
-    let stored_document: String = row.get(1);
-    let document_value = serde_json::from_str(&stored_document).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::Wiring,
-            format!("wiring {:?} stores unreadable graph JSON", target.wiring_id),
-            error,
-        )
-    })?;
-    let document = WiringDocument::parse(&document_value).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::Wiring,
-            format!("wiring {:?} stores an invalid document", target.wiring_id),
-            error,
-        )
-    })?;
-    if document.wiring_id != target.wiring_id || document.version != target.wiring_version {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Wiring,
-            "wiring row identity differs from its stored document",
-        ));
-    }
-    let derived_hash = document.wiring_hash();
-    if stored_hash != derived_hash.as_str() {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Wiring,
-            "wiring row hash differs from its canonical document hash",
-        ));
-    }
-    project_wiring_document(
-        request,
-        target,
-        scope,
-        &document,
-        component_facts,
-        package_manifests,
-        components,
-        wirings,
-        one_node,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "existing release projection inputs are independent facts"
-)]
-fn project_wiring_document(
-    request: &PublishReleaseManifest<'_>,
-    target: &ReleaseWiringTarget,
-    scope: &ComponentPackageScope,
-    document: &WiringDocument,
-    component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    components: &mut BTreeSet<ServingComponent>,
-    wirings: &mut BTreeSet<ServingWiring>,
-    one_node: &mut Vec<ReleaseWiringTarget>,
-) -> Result<String, PublishManifestError> {
-    if document.edges.is_empty() {
-        one_node.push(target.clone());
-    }
-    let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
-    let resolved = resolve_wiring_components(
-        document,
-        scope,
-        &component_facts.facts,
-        package_manifests.get(&target.package_id),
-        rule,
-    )?;
-    validate_resolved_wiring_compatibility(document, &resolved).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::Component,
-            format!(
-                "wiring {:?} version {} is incompatible with its resolved component facts",
-                target.wiring_id, target.wiring_version
-            ),
-            error,
-        )
-    })?;
-    resolve_component_dependency_closure(
-        &resolved,
-        &component_facts.facts,
-        package_manifests,
-        rule,
-    )?;
-    validate_anonymous_wiring_closure(request.attachments, target, document, &resolved)?;
-    let entry_operation = resolved_wiring_entry_operation(document, &resolved)?;
-    wirings.insert(ServingWiring::new(
-        target.package_id.clone(),
-        document.clone(),
-    ));
-    for fact in resolved.values() {
-        components.insert(
-            component_facts.with_statement_instances(project_serving_component(
-                fact,
-                component_facts.connections(fact)?,
-            )?)?,
-        );
-    }
-    Ok(entry_operation)
-}
-
 /// Project operation contracts for released components and route attachments.
 ///
 /// The kind comes from the generated contract of the operation, or from the
@@ -2007,10 +1544,7 @@ fn project_routes(
         let AttachmentTarget::Route {
             component,
             operation,
-        } = &attachment.target
-        else {
-            continue;
-        };
+        } = &attachment.target;
         let package = request
             .packages
             .iter()
@@ -2095,36 +1629,7 @@ fn project_routes(
     Ok(routes)
 }
 
-/// Refuse a wiring with no edges unless a registration names it.
-///
-/// A declared workflow or event handler can keep its one-node wiring.
-fn refuse_unregistered_one_node_wirings(
-    one_node: &[ReleaseWiringTarget],
-    registrations: &BTreeMap<String, ServingRegistration>,
-) -> Result<(), PublishManifestError> {
-    for target in one_node {
-        let registered = registrations.values().any(|registration| {
-            registration.package_id == target.package_id
-                && registration.wiring_id == target.wiring_id
-                && registration.wiring_version == target.wiring_version
-        });
-        if !registered {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::Wiring,
-                format!(
-                    "wiring {}@{}::{}/{} has no edges; a graph with no edges is a route, so attach its operation as a route",
-                    target.package_id,
-                    target.package_version,
-                    target.wiring_id,
-                    target.wiring_version
-                ),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Read the canonical bytes of one installed release by its digest.
+/// Read the canonical bytes of an installed release.
 pub async fn read_release(
     transaction: &Transaction<'_>,
     tenant_id: &str,
@@ -2162,10 +1667,25 @@ mod tests {
         .expect("the canonicalizer emits a valid definition hash");
     }
 
+    fn fixture_route_contracts(
+        attachments: &BTreeMap<String, ServingAttachment>,
+    ) -> RouteContracts {
+        attachments
+            .values()
+            .map(|attachment| {
+                let AttachmentTarget::Route { operation, .. } = &attachment.target;
+                (
+                    (attachment.package_id.clone(), operation.clone()),
+                    OperationType::Command.into(),
+                )
+            })
+            .collect()
+    }
+
     fn package_http_attachment(
         attachment_id: &str,
         package_id: &str,
-        wiring_id: &str,
+        component: &str,
         operation: &str,
         path: &str,
     ) -> ServingAttachment {
@@ -2178,9 +1698,9 @@ mod tests {
         ServingAttachment {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: package_id.to_owned(),
-            target: wamn_catalog::AttachmentTarget::Wiring {
-                wiring_id: wiring_id.to_owned(),
-                wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Route {
+                component: component.to_owned(),
+                operation: operation.to_owned(),
             },
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
@@ -2202,7 +1722,6 @@ mod tests {
         let mut manifests = BTreeMap::new();
         let mut components = ReleaseComponents::default();
         let mut packages = BTreeSet::new();
-        let mut wirings = BTreeSet::new();
         let mut digests = BTreeMap::new();
         for (package, schema, digest_byte) in [
             ("consumer", "consumer", 'a'),
@@ -2231,27 +1750,12 @@ mod tests {
                 });
             }
             component.operations.insert(operation.clone(), export);
-            // Two nodes: a graph with no edges is a route, and a schedule no
-            // longer names a wiring (docs/plan/workflows.md R9).
-            let graph = WiringDocument::parse(&serde_json::json!({
-                "format-version":"0.1", "wiring-id":"tick", "version":1, "entry":"run",
-                "nodes":{"run":{"component":"application", "interface-version":"0.1.0", "operation":operation},
-                    "again":{"component":"application", "interface-version":"0.1.0", "operation":operation}},
-                "edges":[{"from":"run", "to":"again"}], "cases":[]
-            })).unwrap();
             client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('tenant-a',$1,'1.0.0',$2)", &[&package, &component.component_digest]).await.unwrap();
-            client.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ('tenant-a',$1,'1.0.0','tick',1,$2::text::jsonb,$3)", &[&package, &serde_json::to_string(&graph).unwrap(), &graph.wiring_hash().as_str()]).await.unwrap();
             digests.insert(package.to_owned(), component.component_digest.clone());
             components
                 .insert(component, Vec::new(), BTreeMap::new())
                 .unwrap();
             packages.insert(PackageCoordinate::new(package, "1.0.0").unwrap());
-            wirings.insert(ReleaseWiringTarget {
-                package_id: package.to_owned(),
-                package_version: "1.0.0".to_owned(),
-                wiring_id: "tick".to_owned(),
-                wiring_version: 1,
-            });
             manifests.insert(package.to_owned(), manifest);
         }
         let published = publish_release_with_package_manifests(
@@ -2261,7 +1765,6 @@ mod tests {
                 environment: "dev",
                 verified_publisher_principal: "publisher",
                 packages: &packages,
-                wirings: &wirings,
                 attachments: &BTreeMap::new(),
                 environment_is_disposable: false,
             },
@@ -2360,7 +1863,7 @@ mod tests {
                 .count(),
             1
         );
-        let resolved = resolve_route_methods(&authored, &RouteContracts::new())
+        let resolved = resolve_route_methods(&authored, &fixture_route_contracts(&authored))
             .expect("merged routes resolve");
         assert!(
             resolved
@@ -2435,7 +1938,7 @@ mod tests {
             ),
         ])
         .expect("distinct attachment identities merge before route validation");
-        let error = resolve_route_methods(&authored, &RouteContracts::new())
+        let error = resolve_route_methods(&authored, &fixture_route_contracts(&authored))
             .expect_err("canonical route collisions remain refused after package merging");
 
         assert_eq!(error.error_type(), PublishManifestErrorType::Document);
@@ -2453,9 +1956,9 @@ mod tests {
         let attachment = ServingAttachment {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: "source_fixture".to_owned(),
-            target: wamn_catalog::AttachmentTarget::Wiring {
-                wiring_id: "widget_get".to_owned(),
-                wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Route {
+                component: "widget".to_owned(),
+                operation: "source-fixture:widget/get@1.0.0".to_owned(),
             },
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
@@ -2488,9 +1991,9 @@ mod tests {
         let attachment = ServingAttachment {
             type_: wamn_catalog::AttachmentType::Http,
             package_id: "source_fixture".to_owned(),
-            target: wamn_catalog::AttachmentTarget::Wiring {
-                wiring_id: "widget_get".to_owned(),
-                wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Route {
+                component: "widget".to_owned(),
+                operation: "source-fixture:widget/get@1.0.0".to_owned(),
             },
             definition_hash: wamn_catalog::DefinitionHash::parse(authored_hash.clone())
                 .expect("the canonicalizer emits a valid definition hash"),
@@ -2500,7 +2003,7 @@ mod tests {
         };
         let authored = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
 
-        let resolved = resolve_route_methods(&authored, &RouteContracts::new())
+        let resolved = resolve_route_methods(&authored, &fixture_route_contracts(&authored))
             .expect("a routed release needs no route host");
         assert!(
             resolved["fixture-http"].definition["route"]
@@ -2527,8 +2030,9 @@ mod tests {
                 .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
-        let package_host = resolve_route_methods(&package_authored, &RouteContracts::new())
-            .expect_err("package content cannot author a hostname");
+        let package_host =
+            resolve_route_methods(&package_authored, &fixture_route_contracts(&authored))
+                .expect_err("package content cannot author a hostname");
         assert_eq!(
             package_host.error_type(),
             PublishManifestErrorType::Document
@@ -2540,7 +2044,7 @@ mod tests {
             .get_mut("fixture-http")
             .expect("the attachment exists")
             .type_ = wamn_catalog::AttachmentType::Internal;
-        let package_host = resolve_route_methods(&non_routed, &RouteContracts::new())
+        let package_host = resolve_route_methods(&non_routed, &fixture_route_contracts(&authored))
             .expect_err("every attachment kind refuses an authored route hostname");
         assert_eq!(
             package_host.error_type(),
@@ -2557,7 +2061,7 @@ mod tests {
                 .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
-        let extra = resolve_route_methods(&extra_route_field, &RouteContracts::new())
+        let extra = resolve_route_methods(&extra_route_field, &fixture_route_contracts(&authored))
             .expect_err("package route schema admits only a path");
         assert_eq!(extra.error_type(), PublishManifestErrorType::Document);
         assert!(extra.detail().contains("exactly a string path field"));
@@ -2573,7 +2077,7 @@ mod tests {
         second.definition["route"]["path"] = serde_json::json!("/widget/{widget_id}");
         refresh_definition_hash(&mut second);
         colliding.insert("fixture-http-alias".to_owned(), second);
-        let collision = resolve_route_methods(&colliding, &RouteContracts::new())
+        let collision = resolve_route_methods(&colliding, &fixture_route_contracts(&colliding))
             .expect_err("one release cannot carry ambiguous route templates");
         assert_eq!(collision.error_type(), PublishManifestErrorType::Document);
         assert!(collision.detail().contains("canonical path and method"));
@@ -2628,6 +2132,7 @@ mod tests {
             ("widget/load", OperationType::Projection),
             ("widget/update", OperationType::Update),
             ("widget/record", OperationType::Command),
+            ("widget/flow", OperationType::Command),
         ]
         .into_iter()
         .map(|(operation, kind)| {
@@ -2653,7 +2158,7 @@ mod tests {
             assert_eq!(resolved[id].definition["route"]["method"], method, "{id}");
         }
 
-        let unknown = resolve_route_methods(&authored, &RouteContracts::new())
+        let unknown = resolve_route_methods(&authored, &BTreeMap::new())
             .expect_err("a route to an operation with no contract kind refuses");
         assert_eq!(
             unknown.error_type(),
@@ -2785,66 +2290,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    fn closure_document(with_registered_edge: bool) -> WiringDocument {
-        let edges = with_registered_edge
-            .then(|| wamn_catalog::WiringEdge {
-                from: "entry".to_owned(),
-                from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
-                to: "registered".to_owned(),
-                to_port: None,
-            })
-            .into_iter()
-            .collect();
-        WiringDocument::new(
-            "stock",
-            1,
-            "entry",
-            BTreeMap::from([
-                (
-                    "entry".to_owned(),
-                    wamn_catalog::WiringNode {
-                        component: "entry-component".to_owned(),
-                        interface_version: "0.1.0".to_owned(),
-                        operation: "run".to_owned(),
-                        operation_dependency: None,
-                        params: BTreeMap::new(),
-                        terminal: None,
-                    },
-                ),
-                (
-                    "registered".to_owned(),
-                    wamn_catalog::WiringNode {
-                        component: "registered-component".to_owned(),
-                        interface_version: "0.1.0".to_owned(),
-                        operation: "base:widget/get@1.0.0".to_owned(),
-                        operation_dependency: None,
-                        params: BTreeMap::new(),
-                        terminal: None,
-                    },
-                ),
-            ]),
-            edges,
-            Vec::new(),
-        )
-        .expect("construct the exact wiring closure")
-    }
-
-    fn closure_attachment(mode: &str) -> ServingAttachment {
-        ServingAttachment {
-            type_: wamn_catalog::AttachmentType::Http,
-            package_id: "base".to_owned(),
-            target: wamn_catalog::AttachmentTarget::Wiring {
-                wiring_id: "stock".to_owned(),
-                wiring_version: 1,
-            },
-            definition_hash: wamn_catalog::DefinitionHash::parse(DIGEST)
-                .expect("fixture definition hash is canonical"),
-            definition: serde_json::json!({"route": {}}),
-            auth_policy: serde_json::json!({"modes": [mode]}),
-            registered_operation: None,
-        }
-    }
-
     fn dependency_manifest(digest: &str) -> wamn_schema_generator::PackageManifest {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
             "../tests/fixtures/component_package/wamn.json"
@@ -2859,11 +2304,6 @@ mod tests {
             }
         });
         serde_json::from_value(document).expect("the dependency fixture manifest parses")
-    }
-
-    fn handler_manifest() -> wamn_schema_generator::PackageManifest {
-        serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
-            .expect("the fixture handler manifest parses")
     }
 
     fn source_manifest() -> wamn_schema_generator::PackageManifest {
@@ -2951,348 +2391,6 @@ mod tests {
             Some("base_schema")
         );
         assert!(application_runtime_schema(&overlay, &BTreeMap::new(), &components).is_err());
-    }
-
-    fn handler_manifest_with_entity(entity: &str) -> wamn_schema_generator::PackageManifest {
-        let mut document = serde_json::to_value(handler_manifest())
-            .expect("the fixture handler manifest serializes");
-        document["custom_operations"]["audit.observe"]["registration"]["entity"] =
-            serde_json::Value::String(entity.to_owned());
-        serde_json::from_value(document).expect("the mutated handler manifest parses")
-    }
-
-    /// Render the fixture overlay declaration.
-    fn fixture_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/observer_package");
-        let document = crate::component_declaration::render_declaration_document(
-            &root.join("component.json.in"),
-            "tenant-a",
-        )
-        .expect("the repository component declaration renders");
-        serde_json::from_value(document)
-            .expect("the repository component declaration is structurally valid")
-    }
-
-    fn resolve_fixture_private_handler_entry() -> String {
-        let declaration = fixture_overlay_declaration();
-        let document_value = wamn_schema_generator::operation_reference::read_authored_document(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/observer_package/wiring.json"),
-            wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
-        )
-        .expect("the fixture handler wiring resolves");
-        let document = WiringDocument::parse(&document_value)
-            .expect("the fixture handler wiring is structurally valid");
-        let operation = document.nodes[&document.entry].operation.clone();
-        let declared = declaration.operations[&operation].clone();
-        assert!(
-            declared.registered_operation.is_none(),
-            "a private event handler must carry no public authorization token"
-        );
-        let admitted = AdmittedComponent {
-            scope: declaration.scope.clone(),
-            component: declaration.component,
-            interface_version: declaration.interface_version,
-            operations: BTreeMap::from([(
-                operation.clone(),
-                AdmittedComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: declared.registered_operation,
-                    host_transaction: false,
-                    input_ports: Vec::new(),
-                    output_ports: Vec::new(),
-                    parameters: Vec::new(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            component_digest: DIGEST.to_owned(),
-            imports: Vec::new(),
-            imports_fingerprint: DIGEST.to_owned(),
-            effects: Vec::new(),
-        };
-        let facts = BTreeMap::from([(
-            (
-                declaration.scope.package_id.clone(),
-                declaration.scope.package_version.clone(),
-            ),
-            vec![admitted],
-        )]);
-        let resolved = resolve_wiring_components(
-            &document,
-            &declaration.scope,
-            &facts,
-            Some(&handler_manifest()),
-            DependencyDigestRule::Declared,
-        )
-        .expect("the repository private handler resolves through its admitted operation fact");
-        validate_resolved_wiring_compatibility(&document, &resolved)
-            .expect("the repository private handler wiring is compatible");
-        resolved_wiring_entry_operation(&document, &resolved)
-            .expect("the private export token remains the serving selector")
-    }
-
-    #[test]
-    fn serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring() {
-        let manifest = handler_manifest();
-        let manifests = BTreeMap::from([
-            ("observer_fixture".to_owned(), manifest),
-            ("source_fixture".to_owned(), source_manifest()),
-        ]);
-        let operation = resolve_fixture_private_handler_entry();
-        assert_eq!(operation, "observer-fixture:audit/observe@3.0.0");
-        let target = ReleaseWiringTarget {
-            package_id: "observer_fixture".to_owned(),
-            package_version: "3.0.0".to_owned(),
-            wiring_id: "audit_observe".to_owned(),
-            wiring_version: 1,
-        };
-        let targets = BTreeMap::from([(operation.clone(), vec![target.clone()])]);
-        let registrations = derive_serving_registrations(&manifests, &targets)
-            .expect("one entry wiring resolves the handler operation");
-        let registration = &registrations["observer_fixture::audit.observe"];
-        assert_eq!(registration.package_id, "observer_fixture");
-        assert_eq!(registration.source_package_id, "source_fixture");
-        assert_eq!(registration.wiring_id, target.wiring_id);
-        assert_eq!(registration.entity, "item");
-        assert_eq!(registration.ops, BTreeSet::from(["insert".to_owned()]));
-
-        for selected in [Vec::new(), vec![target.clone(), target]] {
-            let targets = BTreeMap::from([(operation.clone(), selected)]);
-            let error = derive_serving_registrations(&manifests, &targets)
-                .expect_err("zero or multiple handler entry wirings were accepted");
-            assert_eq!(error.error_type(), PublishManifestErrorType::Registration);
-        }
-
-        let manifests = BTreeMap::from([
-            (
-                "observer_fixture".to_owned(),
-                handler_manifest_with_entity("missing"),
-            ),
-            ("source_fixture".to_owned(), source_manifest()),
-        ]);
-        let error = derive_serving_registrations(&manifests, &targets)
-            .expect_err("a registration source entity absent from its package was accepted");
-        assert_eq!(error.error_type(), PublishManifestErrorType::Registration);
-        for fact in ["audit.observe", "source_fixture", "missing"] {
-            assert!(
-                error.detail().contains(fact),
-                "missing refusal fact {fact:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_workflow_registration_names_its_wiring_whatever_node_it_enters_at() {
-        let mut document =
-            serde_json::to_value(handler_manifest()).expect("the handler manifest serializes");
-        document["workflows"] = serde_json::json!({"item_label": {"wiring": "item_label",
-            "registration": {"source_package": "source_fixture", "entity": "item", "ops": ["insert"]}}});
-        let manifests = BTreeMap::from([
-            (
-                "observer_fixture".to_owned(),
-                serde_json::from_value(document).expect("the workflow manifest parses"),
-            ),
-            ("source_fixture".to_owned(), source_manifest()),
-        ]);
-        let handler = ReleaseWiringTarget {
-            package_id: "observer_fixture".to_owned(),
-            package_version: "3.0.0".to_owned(),
-            wiring_id: "audit_observe".to_owned(),
-            wiring_version: 1,
-        };
-        let label = ReleaseWiringTarget {
-            wiring_id: "item_label".to_owned(),
-            wiring_version: 2,
-            ..handler.clone()
-        };
-        // The label wiring enters at a palette node, not at an event handler.
-        let targets = BTreeMap::from([
-            (
-                "observer-fixture:audit/observe@3.0.0".to_owned(),
-                vec![handler],
-            ),
-            ("wamn:node/handler@0.1.0".to_owned(), vec![label]),
-        ]);
-        let registrations = derive_serving_registrations(&manifests, &targets)
-            .expect("the workflow resolves its named wiring");
-        let registration = &registrations["observer_fixture::item_label"];
-        assert_eq!(registration.wiring_id, "item_label");
-        assert_eq!(registration.wiring_version, 2);
-        assert_eq!(registration.source_package_id, "source_fixture");
-        assert_eq!(registration.entity, "item");
-        assert_eq!(registration.ops, BTreeSet::from(["insert".to_owned()]));
-        assert!(registrations.contains_key("observer_fixture::audit.observe"));
-
-        let unselected = BTreeMap::from([(
-            "observer-fixture:audit/observe@3.0.0".to_owned(),
-            vec![ReleaseWiringTarget {
-                package_id: "observer_fixture".to_owned(),
-                package_version: "3.0.0".to_owned(),
-                wiring_id: "audit_observe".to_owned(),
-                wiring_version: 1,
-            }],
-        )]);
-        let error = derive_serving_registrations(&manifests, &unselected)
-            .expect_err("a workflow whose wiring is not selected was accepted");
-        assert_eq!(error.error_type(), PublishManifestErrorType::Registration);
-        assert!(error.detail().contains("item_label"));
-    }
-
-    fn dependency_document() -> WiringDocument {
-        WiringDocument::new(
-            "stock",
-            1,
-            "registered",
-            BTreeMap::from([(
-                "registered".to_owned(),
-                wamn_catalog::WiringNode {
-                    component: "registered-component".to_owned(),
-                    interface_version: "0.1.0".to_owned(),
-                    operation: "base:stock/record-widget@1.0.0".to_owned(),
-                    operation_dependency: Some(wamn_catalog::WiringOperationDependency {
-                        alias: "base".to_owned(),
-                        operation: "stock.record_widget".to_owned(),
-                    }),
-                    params: BTreeMap::new(),
-                    terminal: Some(wamn_catalog::WiringTerminal::Respond),
-                },
-            )]),
-            Vec::new(),
-            Vec::new(),
-        )
-        .expect("construct dependency wiring")
-    }
-
-    #[test]
-    fn operation_dependency_resolves_the_exact_release_tuple_without_relabeling() {
-        let owner = ComponentPackageScope {
-            tenant_id: "tenant-a".to_owned(),
-            package_id: "source_fixture".to_owned(),
-            package_version: "1.0.0".to_owned(),
-        };
-        let mut base = closure_component(
-            "registered-component",
-            Some("base:stock/record-widget@1.0.0"),
-        );
-        base.scope.package_id = "base".to_owned();
-        let mut local_same_name = closure_component(
-            "registered-component",
-            Some("source-fixture:widget/update@1.0.0"),
-        );
-        local_same_name.component_digest = format!("sha256:{}", "c".repeat(64));
-        let facts = BTreeMap::from([
-            (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
-            (
-                ("source_fixture".to_owned(), "1.0.0".to_owned()),
-                vec![local_same_name],
-            ),
-        ]);
-
-        let resolved = resolve_wiring_components(
-            &dependency_document(),
-            &owner,
-            &facts,
-            Some(&dependency_manifest(&base.component_digest)),
-            DependencyDigestRule::Declared,
-        )
-        .expect("the alias resolves its exact package, version, digest, and operation");
-
-        assert_eq!(resolved["registered"], base);
-        assert_eq!(resolved["registered"].scope.package_id, "base");
-    }
-
-    #[test]
-    fn operation_dependency_refuses_digest_and_release_membership_drift() {
-        let owner = ComponentPackageScope {
-            tenant_id: "tenant-a".to_owned(),
-            package_id: "source_fixture".to_owned(),
-            package_version: "1.0.0".to_owned(),
-        };
-        let mut base = closure_component(
-            "registered-component",
-            Some("base:stock/record-widget@1.0.0"),
-        );
-        base.scope.package_id = "base".to_owned();
-        let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base])]);
-
-        let digest_error = resolve_wiring_components(
-            &dependency_document(),
-            &owner,
-            &facts,
-            Some(&dependency_manifest(&format!("sha256:{}", "d".repeat(64)))),
-            DependencyDigestRule::Declared,
-        )
-        .expect_err("digest drift refuses the dependency");
-        assert_eq!(
-            digest_error.error_type(),
-            PublishManifestErrorType::OperationDependency
-        );
-
-        let membership_error = resolve_wiring_components(
-            &dependency_document(),
-            &owner,
-            &BTreeMap::new(),
-            Some(&dependency_manifest(DIGEST)),
-            DependencyDigestRule::Declared,
-        )
-        .expect_err("a dependency outside the release refuses publication");
-        assert_eq!(
-            membership_error.error_type(),
-            PublishManifestErrorType::OperationDependency
-        );
-        assert!(
-            membership_error
-                .detail()
-                .contains("absent from the effective release")
-        );
-    }
-
-    /// The other half of wamn-10yt.48, at the stage the Virtualize fix moved
-    /// the wall to. An author edits a base package, the built digest moves, and
-    /// the overlay's authored pin still names the old bytes. A durable release
-    /// refuses that, above. A disposable target built both halves from this
-    /// same tree, so it resolves the dependency by coordinate and operation.
-    /// Release membership is NOT relaxed: a dependency outside the release
-    /// still refuses, because that is a different fact.
-    #[test]
-    fn a_disposable_target_resolves_a_moved_base_digest_and_still_demands_membership() {
-        let owner = ComponentPackageScope {
-            tenant_id: "tenant-a".to_owned(),
-            package_id: "source_fixture".to_owned(),
-            package_version: "1.0.0".to_owned(),
-        };
-        let mut base = closure_component(
-            "registered-component",
-            Some("base:stock/record-widget@1.0.0"),
-        );
-        base.scope.package_id = "base".to_owned();
-        let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()])]);
-        let stale_pin = format!("sha256:{}", "d".repeat(64));
-        assert_ne!(stale_pin, base.component_digest);
-
-        let resolved = resolve_wiring_components(
-            &dependency_document(),
-            &owner,
-            &facts,
-            Some(&dependency_manifest(&stale_pin)),
-            DependencyDigestRule::Built,
-        )
-        .expect("a disposable target resolves the base it just built");
-        assert_eq!(resolved["registered"], base);
-
-        let membership_error = resolve_wiring_components(
-            &dependency_document(),
-            &owner,
-            &BTreeMap::new(),
-            Some(&dependency_manifest(&stale_pin)),
-            DependencyDigestRule::Built,
-        )
-        .expect_err("a dependency outside the release refuses on either rule");
-        assert_eq!(
-            membership_error.error_type(),
-            PublishManifestErrorType::OperationDependency
-        );
     }
 
     /// The rule is selected by the projected environment marker and by nothing
@@ -3480,191 +2578,6 @@ mod tests {
         assert_eq!(
             serving.operations[operation].statement(&path),
             admitted.operations[operation].statement(&path)
-        );
-    }
-
-    #[test]
-    fn release_publish_refuses_an_anonymous_path_to_a_registered_operation() {
-        let target = ReleaseWiringTarget {
-            package_id: "base".to_owned(),
-            package_version: "1.0.0".to_owned(),
-            wiring_id: "stock".to_owned(),
-            wiring_version: 1,
-        };
-        let facts = BTreeMap::from([
-            (
-                "entry".to_owned(),
-                closure_component("entry-component", None),
-            ),
-            (
-                "registered".to_owned(),
-                closure_component("registered-component", Some("base:widget/get@1.0.0")),
-            ),
-        ]);
-        let anonymous = BTreeMap::from([(
-            "fixture-http".to_owned(),
-            closure_attachment(wamn_catalog::NO_AUTHENTICATION_MODE),
-        )]);
-        let error =
-            validate_anonymous_wiring_closure(&anonymous, &target, &closure_document(true), &facts)
-                .expect_err("anonymous reachability must fail at release publish");
-        assert_eq!(
-            error.error_type(),
-            PublishManifestErrorType::UnauthenticatedRegisteredOperation
-        );
-        assert_eq!(
-            error.detail(),
-            "attachment \"fixture-http\" reaches registered operation \
-             \"base:widget/get@1.0.0\" at node \"registered\"; set \
-             auth-policy modes = [\"pat\"]"
-        );
-        let mut signed = anonymous.clone();
-        signed.get_mut("fixture-http").unwrap().auth_policy = serde_json::json!({
-            "modes": ["signature"], "header": "X-Signature", "credential": "webhook"
-        });
-        let error =
-            validate_anonymous_wiring_closure(&signed, &target, &closure_document(true), &facts)
-                .expect_err("signature authentication grants no caller permissions");
-        assert_eq!(
-            error.error_type(),
-            PublishManifestErrorType::UnauthenticatedRegisteredOperation
-        );
-
-        let mut transacted_facts = facts.clone();
-        transacted_facts
-            .get_mut("entry")
-            .unwrap()
-            .operations
-            .get_mut("run")
-            .unwrap()
-            .host_transaction = true;
-        let error = validate_anonymous_wiring_closure(
-            &anonymous,
-            &target,
-            &closure_document(false),
-            &transacted_facts,
-        )
-        .expect_err("an anonymous path to a host transaction must fail at release publish");
-        assert_eq!(
-            error.error_type(),
-            PublishManifestErrorType::UnauthenticatedWrite
-        );
-        assert!(error.detail().contains("begins a host transaction"));
-
-        assert!(
-            validate_anonymous_wiring_closure(
-                &anonymous,
-                &target,
-                &closure_document(false),
-                &facts,
-            )
-            .is_ok(),
-            "a disconnected registered component is not a reachable path"
-        );
-        for modes in [
-            serde_json::json!(["pat"]),
-            serde_json::json!(["session"]),
-            serde_json::json!(["pat", "session"]),
-        ] {
-            let mut attachment = closure_attachment(wamn_catalog::PAT_AUTHENTICATION_MODE);
-            attachment.auth_policy = serde_json::json!({"modes": modes});
-            let protected = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
-            assert!(
-                validate_anonymous_wiring_closure(
-                    &protected,
-                    &target,
-                    &closure_document(true),
-                    &facts,
-                )
-                .is_ok(),
-                "authenticated modes satisfy the anonymous-closure guard"
-            );
-        }
-    }
-
-    /// Spec test 14: an anonymous attachment cannot reach a statement that
-    /// writes or locks, and it still reaches a statement that only reads.
-    #[test]
-    fn release_publish_refuses_an_anonymous_closure_that_can_write() {
-        let target = ReleaseWiringTarget {
-            package_id: "base".to_owned(),
-            package_version: "1.0.0".to_owned(),
-            wiring_id: "stock".to_owned(),
-            wiring_version: 1,
-        };
-        let anonymous = BTreeMap::from([(
-            "fixture-http".to_owned(),
-            closure_attachment(wamn_catalog::NO_AUTHENTICATION_MODE),
-        )]);
-        let closure = |transactional: bool| {
-            let sql = if transactional {
-                "UPDATE widget SET note = $1"
-            } else {
-                "SELECT note FROM widget"
-            };
-            let mut entry = closure_component("entry-component", None);
-            entry
-                .operations
-                .get_mut("run")
-                .expect("fixture has the run operation")
-                .statements
-                .insert(
-                    "sql/note.sql".to_owned(),
-                    wamn_catalog::ComponentSqlStatement {
-                        name: "note".to_owned(),
-                        path: "sql/note.sql".to_owned(),
-                        sql: sql.to_owned(),
-                        binds: Vec::new(),
-                        columns: Vec::new(),
-                        transactional,
-                    },
-                );
-            BTreeMap::from([("entry".to_owned(), entry)])
-        };
-
-        let error = validate_anonymous_wiring_closure(
-            &anonymous,
-            &target,
-            &closure_document(false),
-            &closure(true),
-        )
-        .expect_err("an anonymous closure that can write must fail at release publish");
-        assert_eq!(error.error_type().as_str(), "unauthenticated-write");
-        assert_eq!(
-            error.detail(),
-            "attachment \"fixture-http\" reaches transactional statement \"note\" at \
-             node \"entry\"; set auth-policy modes = [\"pat\"]"
-        );
-
-        assert!(
-            validate_anonymous_wiring_closure(
-                &anonymous,
-                &target,
-                &closure_document(false),
-                &closure(false),
-            )
-            .is_ok(),
-            "an anonymous closure that only reads is admitted"
-        );
-    }
-
-    #[test]
-    fn package_and_wiring_coordinates_are_exact() {
-        let package = parse_package("source_fixture@1.0.0").unwrap();
-        assert_eq!(package.package_id(), "source_fixture");
-        assert_eq!(package.package_version(), "1.0.0");
-
-        let wiring = "source_fixture@1.0.0::stock=2"
-            .parse::<ReleaseWiringTarget>()
-            .unwrap();
-        assert_eq!(wiring.package_id, "source_fixture");
-        assert_eq!(wiring.package_version, "1.0.0");
-        assert_eq!(wiring.wiring_id, "stock");
-        assert_eq!(wiring.wiring_version, 2);
-        assert!(
-            "source_fixture::stock=2"
-                .parse::<ReleaseWiringTarget>()
-                .is_err()
         );
     }
 
@@ -4101,7 +3014,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"orders"}]}}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(

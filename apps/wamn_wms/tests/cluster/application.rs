@@ -19,7 +19,6 @@ pub(super) use crate::business_fixture::{PACKAGING_ID, runtime_phase};
 
 /// The artifacts and endpoint one application publication is published from.
 pub(super) struct PublicationInputs<'a> {
-    pub(super) scenario_worker: &'a Path,
     pub(super) label_render: &'a Path,
     pub(super) minio_endpoint: &'a str,
 }
@@ -72,7 +71,6 @@ pub(super) async fn publish(
         route,
         credentials,
         &crate::environment::PublicationArtifacts {
-            scenario_worker: publication.scenario_worker,
             label_render_wasm: publication.label_render,
             minio_endpoint: publication.minio_endpoint,
         },

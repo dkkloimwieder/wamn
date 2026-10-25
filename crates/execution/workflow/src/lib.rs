@@ -1,19 +1,17 @@
-//! The wiring layer: everything that walks or delivers a wiring.
+//! The workflow queue and its graph executor.
 //!
 //! A wiring is a graph of operation nodes with edges. This crate holds:
 //!
 //! - [`RouterDriver`]: it walks a wiring and runs each node through
 //!   `invoke_operation` on the process's one operation host,
-//! - the wiring arm of the delivery bridge, as the driver's
-//!   [`WiringDelivery`](wamn_execution_host::WiringDelivery) implementation,
 //! - [`QueueService`]: the queued run executor,
-//! - [`Workflows`]: the workflow contract (start, park, release, list), and
+//! - [`Workflows`]: the workflow contract (park, release, list), and
 //!   [`PostgresWorkflows`], its implementation over the run plane,
 //! - [`lower_resolved_wiring`]: it lowers a resolved catalog wiring into the
 //!   graph that the router walks.
 //!
-//! A client reads the release snapshot that publish writes, through
-//! `wamn-control`, and binds [`PostgresWorkflows`] to it.
+//! Manual starts use the host route. Every run pins its release and resolves
+//! its graph from an environment workflow row.
 //!
 //! `docs/architecture/overview.md` places this crate among the runtime owners.
 //! The walk is the crate `wamn-router`, at
@@ -31,9 +29,7 @@ mod contract;
 mod queue;
 mod router_action;
 mod router_driver;
-mod router_response;
 pub mod schedule;
-mod wiring_delivery;
 mod wiring_lowering;
 
 /// [`RouterDelivery::outcome`] is a [`wamn_router::Outcome`], so this crate
@@ -42,16 +38,11 @@ mod wiring_lowering;
 /// given.
 pub use wamn_router::Verdict;
 
-pub use contract::{
-    PostgresWorkflows, StartRequest, Trigger, WorkflowError, WorkflowErrorType, WorkflowRun,
-    Workflows,
-};
+pub use contract::{PostgresWorkflows, WorkflowError, WorkflowErrorType, WorkflowRun, Workflows};
 pub use queue::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig};
 pub use router_driver::{
-    CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
-    CandidateWiringTarget, DEFAULT_WIRING_CACHE_CAPACITY, DeadlineAdjustments, RouterDelivery,
-    RouterDriver, RouterDriverConfig, RouterDriverRequest, RouterDriverSnapshot,
-    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity, WorkflowIdentity, WorkflowRunRequest,
+    DeadlineAdjustments, RouterDelivery, RouterDriver, RouterDriverRequest, WorkflowIdentity,
+    WorkflowRunRequest,
 };
 pub use wiring_lowering::{
     GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringError, WiringLoweringErrorType,

@@ -1430,8 +1430,6 @@ mod tests {
             },
             BTreeSet::new(),
             BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeMap::new(),
             BTreeMap::new(),
         )
         .expect("the fixture release is valid")

@@ -321,11 +321,7 @@ async fn ensure_streams(
         return Ok(());
     };
     let triple = document.triple();
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
-    let mut consumers =
-        wamn_control_provision::events::registration_consumers(&triple, &tenant, manifests);
-    consumers.extend(wamn_control_provision::events::entity_consumers(
+    let consumers = wamn_control_provision::events::entity_consumers(
         &triple,
         manifests.iter().filter(|manifest| {
             document
@@ -333,7 +329,7 @@ async fn ensure_streams(
                 .values()
                 .any(|application| application.packages.contains(&manifest.package.id))
         }),
-    ));
+    );
     let broker = async_nats::jetstream::new(
         crate::event_streams::connection_options(
             &events.nats_username,
@@ -374,13 +370,18 @@ async fn enable_cdc(
         "the environment captures application models and has no event broker; \
          set WAMN_EVENT_NATS_URL, WAMN_EVENT_NATS_USERNAME and WAMN_EVENT_NATS_PASSWORD_FILE",
     )?;
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
-    let consumers =
-        wamn_control_provision::events::registration_consumers(&triple, &tenant, manifests)
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<Result<Vec<_>, _>>()?;
+    let consumers = wamn_control_provision::events::entity_consumers(
+        &triple,
+        manifests.iter().filter(|manifest| {
+            document
+                .applications
+                .values()
+                .any(|application| application.packages.contains(&manifest.package.id))
+        }),
+    )
+    .iter()
+    .map(serde_json::to_string)
+    .collect::<Result<Vec<_>, _>>()?;
     let namespace = platform.target.namespace.as_str();
     // A schema-set change must preserve the credential held by the running reader.
     let secret_name = wamn_control_provision::project_env_cdc_secret_name(

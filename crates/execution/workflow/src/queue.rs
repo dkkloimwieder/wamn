@@ -19,14 +19,8 @@ use wamn_runtime::plugins::wamn_postgres::{
     WorkflowResolutionErrorType,
 };
 
-use crate::router_action::{
-    ProductionRouterAction, production_router_action, production_router_result_action,
-};
-use crate::{
-    CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
-    CandidateWiringTarget, RouterDriver, RouterDriverRequest, Verdict, WorkflowIdentity,
-    WorkflowRunRequest,
-};
+use crate::router_action::{ProductionRouterAction, production_router_action};
+use crate::{RouterDriver, RouterDriverRequest, Verdict, WorkflowIdentity, WorkflowRunRequest};
 
 /// The claim scope the queue binds; an event admission runs under it too.
 pub(crate) const QUEUE_CLAIM_SCOPE: &str = "wamn-executor-queue";
@@ -40,13 +34,6 @@ struct QueueScope {
     project: String,
     package_ids: Vec<String>,
     environment: String,
-}
-
-enum QueueDriverRequest {
-    Released(RouterDriverRequest),
-    Candidate(CandidateCaseRequest),
-    /// A run of an environment workflow, resolved from its run row.
-    Workflow(WorkflowRunRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -388,35 +375,25 @@ async fn drain_one(
             wiring_version,
             router_caller_attached,
             durable_caller_attached,
-            candidate,
-            service_principal_id,
+            candidate: _,
+            service_principal_id: _,
             workflow,
         } => {
             let wiring_version = u32::try_from(wiring_version)
                 .context("claimed wiring version is not a positive u32")?;
             let queue_span =
                 queue_delivery_span(scope, &package_id, &run_id, &wiring_id, wiring_version);
-            let result_only = candidate.is_some();
-            // An automation or schedule run executes with every role of its
-            // service; a workflow run with its one role.
-            let caller = match (&service_principal_id, &workflow) {
-                (Some(principal), _) => Some(
-                    postgres
-                        .queued_run_caller(&scope.project, &scope.tenant_id, principal, None)
-                        .await?,
-                ),
-                (None, Some(workflow)) => Some(
-                    postgres
-                        .queued_run_caller(
-                            &scope.project,
-                            &scope.tenant_id,
-                            &workflow.execution_principal_id,
-                            Some(&workflow.execution_role),
-                        )
-                        .await?,
-                ),
-                (None, None) => None,
-            };
+            let workflow = *workflow.context("claimed run has no environment workflow")?;
+            let caller = Some(
+                postgres
+                    .queued_run_caller(
+                        &scope.project,
+                        &scope.tenant_id,
+                        &workflow.execution_principal_id,
+                        Some(&workflow.execution_role),
+                    )
+                    .await?,
+            );
             let run = RouterDriverRequest {
                 tenant_id: scope.tenant_id.clone(),
                 package_id: package_id.clone(),
@@ -430,36 +407,15 @@ async fn drain_one(
                 traceparent: None,
                 tracestate: None,
             };
-            let request = match (candidate, workflow) {
-                (None, Some(workflow)) => {
-                    let workflow = *workflow;
-                    QueueDriverRequest::Workflow(WorkflowRunRequest {
-                        run,
-                        wiring_hash: workflow.wiring_hash,
-                        node_digests: workflow.node_digests,
-                        causation: workflow.causation,
-                        identity: WorkflowIdentity {
-                            principal_id: workflow.execution_principal_id,
-                            role: workflow.execution_role,
-                        },
-                    })
-                }
-                (Some(candidate), _) => QueueDriverRequest::Candidate(CandidateCaseRequest {
-                    target: CandidateWiringTarget {
-                        tenant_id: scope.tenant_id.clone(),
-                        package_id: package_id.clone(),
-                        environment: scope.environment.clone(),
-                        wiring_id,
-                        wiring_version,
-                        wiring_hash: candidate.wiring_hash,
-                    },
-                    binding_world: Arc::new(candidate.binding_world),
-                    delivery_id: run_id.clone(),
-                    payload,
-                    traceparent: None,
-                    tracestate: None,
-                }),
-                (None, None) => QueueDriverRequest::Released(run),
+            let request = WorkflowRunRequest {
+                run,
+                wiring_hash: workflow.wiring_hash,
+                node_digests: workflow.node_digests,
+                causation: workflow.causation,
+                identity: WorkflowIdentity {
+                    principal_id: workflow.execution_principal_id,
+                    role: workflow.execution_role,
+                },
             };
             // Boxed: driving one claim is a large future the queue loop holds.
             Box::pin(
@@ -473,7 +429,6 @@ async fn drain_one(
                     lease_ttl_ms,
                     liveness,
                     durable_caller_attached,
-                    result_only,
                     request,
                 )
                 .instrument(queue_span),
@@ -498,44 +453,11 @@ async fn drive_claim(
     lease_ttl_ms: i64,
     liveness: &Liveness,
     durable_caller_attached: bool,
-    result_only: bool,
-    request: QueueDriverRequest,
+    request: WorkflowRunRequest,
 ) -> anyhow::Result<()> {
-    let causation = match &request {
-        QueueDriverRequest::Workflow(request) => request.causation.clone(),
-        _ => None,
-    };
-    let workflow_run = matches!(request, QueueDriverRequest::Workflow(_));
-    let candidate_coordinate = match &request {
-        QueueDriverRequest::Released(_) | QueueDriverRequest::Workflow(_) => None,
-        QueueDriverRequest::Candidate(request) => Some((
-            request.target.wiring_id.clone(),
-            request.target.wiring_version,
-        )),
-    };
-    // Both arms, unlike `candidate_coordinate`, which is deliberately `None` for
-    // a released run because it gates a candidate-only refusal. A derived
-    // publication names its wiring position on either path, and `request` is
-    // consumed by the driver below, so the coordinates are taken here.
-    let (wiring_id, wiring_version) = match &request {
-        QueueDriverRequest::Released(request) => {
-            (request.wiring_id.clone(), request.wiring_version)
-        }
-        QueueDriverRequest::Workflow(request) => {
-            (request.run.wiring_id.clone(), request.run.wiring_version)
-        }
-        QueueDriverRequest::Candidate(request) => (
-            request.target.wiring_id.clone(),
-            request.target.wiring_version,
-        ),
-    };
-    let execute = async {
-        match request {
-            QueueDriverRequest::Released(request) => driver.execute(request).await,
-            QueueDriverRequest::Candidate(request) => driver.execute_candidate(request).await,
-            QueueDriverRequest::Workflow(request) => driver.execute_workflow(request).await,
-        }
-    };
+    let causation = request.causation.clone();
+    let (wiring_id, wiring_version) = (request.run.wiring_id.clone(), request.run.wiring_version);
+    let execute = driver.execute_workflow(request);
     tokio::pin!(execute);
     let renew_every = Duration::from_millis(
         u64::try_from(lease_ttl_ms)
@@ -590,7 +512,7 @@ async fn drive_claim(
     let delivery = match delivery {
         Ok(delivery) => delivery,
         Err(error) => {
-            if workflow_run && let Some((result, fail_type)) = workflow_refusal(&error, run_id) {
+            if let Some((result, fail_type)) = workflow_refusal(&error, run_id) {
                 tracing::warn!(run_id, error = %error, "workflow run refused");
                 commit_completion(
                     postgres,
@@ -603,49 +525,11 @@ async fn drive_claim(
                 .await?;
                 return Ok(());
             }
-            let Some(refusal) = error.downcast_ref::<CandidateExecutionRefusal>() else {
-                return Err(error);
-            };
-            let Some((wiring_id, wiring_version)) = candidate_coordinate else {
-                return Err(error);
-            };
-            let fail_type = match refusal.refusal_type() {
-                CandidateExecutionRefusalKind::Identity => FailType::ForeignRevision,
-                CandidateExecutionRefusalKind::Definition => FailType::IncompatibleContract,
-                CandidateExecutionRefusalKind::Binding => FailType::UnboundRequirement,
-                CandidateExecutionRefusalKind::Artifact => FailType::HashInvalidBytes,
-            };
-            let result = serde_json::json!({
-                "error": {
-                    "code": refusal.refusal(),
-                    "run-id": run_id,
-                    "wiring-id": wiring_id,
-                    "wiring-version": wiring_version,
-                }
-            });
-            tracing::warn!(
-                run_id,
-                refusal = refusal.refusal(),
-                "candidate queue execution refused deterministic preflight"
-            );
-            commit_completion(
-                postgres,
-                run_id,
-                lease_generation,
-                &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
-                    result, fail_type, None,
-                ),
-            )
-            .await?;
-            return Ok(());
+            return Err(error);
         }
     };
 
-    let action = if result_only {
-        production_router_result_action(&delivery.outcome)?
-    } else {
-        production_router_action(&delivery.outcome, durable_caller_attached)?
-    };
+    let action = production_router_action(&delivery.outcome, durable_caller_attached)?;
     match action {
         ProductionRouterAction::Complete(completion) => {
             commit_completion(postgres, run_id, lease_generation, &completion).await?;

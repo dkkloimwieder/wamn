@@ -4,17 +4,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{AdmittedComponent, ComponentDeclaration, OperationType, PackageCoordinate};
+use wamn_catalog::{ComponentDeclaration, OperationType, PackageCoordinate};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
     PublishManifestErrorType, PublishReleaseManifest, PublishedRelease, ReleaseComponents,
-    ReleaseWiringTarget, publish_release_with_package_manifests, read_package_attachments,
-    read_package_manifests, resolve_route_methods, sha256,
+    publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
+    resolve_route_methods, sha256,
 };
 use crate::apply_package::{self, ApplyPackageRequest};
-use crate::author_wiring::{self, AuthorWiringRequest};
 
 const TENANT: &str = "effective-release-poc";
 const ENVIRONMENT: &str = "dev";
@@ -244,69 +243,6 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
     (digests, release_components)
 }
 
-/// Author one base-package wiring of the fixture get operation, with no edges,
-/// gated by the base package's admitted `components`.
-async fn author_one_node_wiring(
-    project: &mut Client,
-    control: &Client,
-    components: &[AdmittedComponent],
-) -> ReleaseWiringTarget {
-    let document = wamn_catalog::WiringDocument::parse(&serde_json::json!({
-        "format-version": "0.1",
-        "wiring-id": "widget_get",
-        "version": 1,
-        "entry": "operation",
-        "nodes": {
-            "operation": {
-                "component": "fixture",
-                "interface-version": "0.1.0",
-                "operation": format!("platform-fixture:widget/get@{}", package_version()),
-                "terminal": "respond"
-            }
-        }
-    }))
-    .expect("the one-node wiring parses");
-    // This seeds only the already-checked steady-state verdict under the
-    // document's derived identity. The production journey owns the first
-    // transition that writes a gate report.
-    control
-        .execute(
-            "INSERT INTO wamn_run.gate_reports \
-             (tenant_id, wiring_hash, passed, summary) \
-             VALUES ($1, $2, true, '{\"cases\":0}'::jsonb)",
-            &[&TENANT, &document.wiring_hash().as_str()],
-        )
-        .await
-        .expect("record the exact wiring's already-owned green verdict");
-    let transaction = project
-        .transaction()
-        .await
-        .expect("begin wiring authorship");
-    author_wiring::author_wiring(
-        control,
-        &transaction,
-        &AuthorWiringRequest {
-            tenant_id: TENANT,
-            package_id: wamn_fixture_package::PACKAGE_ID,
-            package_version: package_version(),
-            document: &document,
-            components,
-        },
-    )
-    .await
-    .expect("author the one-node wiring");
-    transaction
-        .commit()
-        .await
-        .expect("commit wiring authorship");
-    ReleaseWiringTarget {
-        package_id: wamn_fixture_package::PACKAGE_ID.to_owned(),
-        package_version: package_version().to_owned(),
-        wiring_id: document.wiring_id,
-        wiring_version: document.version,
-    }
-}
-
 async fn publish(
     project: &Client,
     request: &PublishReleaseManifest<'_>,
@@ -334,13 +270,12 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     let project_url = project_database.url().to_owned();
     let control_url = control_database.url().to_owned();
 
-    let (mut project, project_task) = connect(&project_url).await;
+    let (project, project_task) = connect(&project_url).await;
     let (control, control_task) = connect(&control_url).await;
     provision_project(&project).await;
     provision_control(&control).await;
     apply_packages(&project_url, &inputs).await;
     let (admitted_digests, components) = admit_components(&inputs);
-    let wirings = BTreeSet::new();
 
     let manifest_paths = inputs
         .iter()
@@ -383,7 +318,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         environment: ENVIRONMENT,
         verified_publisher_principal: PUBLISHER,
         packages: &packages,
-        wirings: &wirings,
         attachments: &attachments,
         environment_is_disposable: false,
     };
@@ -413,7 +347,12 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     assert_eq!(first.manifest.components.len(), 2);
     // Every attachment names a route. Released operation contracts can also
     // have route records without attachments, which open no HTTP endpoint.
-    assert!(first.manifest.workflow.wirings.is_empty());
+    assert!(
+        serde_json::to_value(&first.manifest)
+            .unwrap()
+            .get("workflow")
+            .is_none()
+    );
     let attached_routes = first
         .manifest
         .attachments
@@ -485,10 +424,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
             admitted_digests[component.package_id.as_str()]
         );
     }
-    // The fixture declares no event handler. The unit test
-    // serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring
-    // states the registration a handler derives.
-
     // Composition writes no release row; apply's stage writes it (R1 (3)).
     let release_rows: i64 = project
         .query_one(
@@ -525,30 +460,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         package_version()
     )));
     assert!(refusal.detail().contains("apply the verified artifact"));
-
-    // A graph with no edges is a route, so publish refuses a one-node wiring
-    // that no registration names.
-    let base_components = &components.facts[&(
-        wamn_fixture_package::PACKAGE_ID.to_owned(),
-        package_version().to_owned(),
-    )];
-    let one_node =
-        BTreeSet::from([author_one_node_wiring(&mut project, &control, base_components).await]);
-    let refusal = publish_release_with_package_manifests(
-        &project,
-        &PublishReleaseManifest {
-            wirings: &one_node,
-            ..request
-        },
-        &components,
-        &manifests,
-        &manifest_hashes,
-        &kinds,
-    )
-    .await
-    .expect_err("a one-node wiring must refuse");
-    assert_eq!(refusal.error_type(), PublishManifestErrorType::Wiring);
-    assert!(refusal.detail().contains("has no edges"), "{refusal}");
 
     project
         .batch_execute(

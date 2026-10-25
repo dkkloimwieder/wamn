@@ -29,17 +29,15 @@ pub use package_migrations::{
     plan_package_migrations, plan_package_registration,
 };
 pub use replica_identity::{
-    ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, UnreadableRegistrations,
-    UnreadableRegistrationsKind, alter_replica_identity_sql, entities_requiring_full,
+    ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,
     reconcile_replica_identity, select_replica_identity_sql,
 };
 pub use run_plane::{
     BareSchemaName, InvalidBareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME,
     RowPolicyObservation, RowSecurityObservation, RunPlaneAction, RunPlaneActionKind,
     RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql,
-    count_retired_authored_ordering_rows_sql, count_stale_registration_keys_sql,
-    ensure_scenario_author_role_sql, plan_run_plane, rewrite_schema,
-    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    count_retired_authored_ordering_rows_sql, ensure_scenario_author_role_sql, plan_run_plane,
+    rewrite_schema, select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
@@ -49,9 +47,5 @@ pub use run_plane::{
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
     select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
     select_schema_checks_sql, select_schema_columns_sql, select_schema_foreign_keys_sql,
-    select_schema_indexes_sql, select_schema_triggers_sql, strip_retired_registration_keys_sql,
+    select_schema_indexes_sql, select_schema_triggers_sql,
 };
-
-// Re-exported so a driver can name the registration type the reconciler folds
-// without a direct dependency on wamn-event-reg.
-pub use wamn_event_reg::EventRegistration;

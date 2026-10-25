@@ -19,19 +19,16 @@ use crate::component_declaration::{
     authored_base_digests, declared_platform_packages, render_declaration_document,
     render_palette_declaration,
 };
-use crate::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
+use crate::publish_release::{self, PublishReleaseRequest};
 use crate::reconcile_package_data_access;
 use crate::release_composition::{
     CompositionError, CompositionErrorKind, PackageInput, SelectedComponentArtifact,
-    SelectedPaletteArtifact, WiringInput, load_wirings, select_component_artifacts,
-    select_palette_artifacts,
+    SelectedPaletteArtifact, select_component_artifacts, select_palette_artifacts,
 };
 use anyhow::Context as _;
 use serde::Deserialize;
-use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::NoTls;
-use wamn_authoring_model::GateResult;
 use wamn_catalog::PackageCoordinate;
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_generator::PackageManifest;
@@ -40,10 +37,7 @@ use wamn_schema_introspection::ir::CatalogIr;
 use super::activation::{self, DevActivation, DevActivationRequest};
 use super::config::{DevConfig, ResolvedDevPackages, VerifiedBaseComponentDigest};
 use super::observations::DevObservationReaders;
-use super::read::{
-    DevGateOutcome, DevGateVerdict, DevReadHandle, DevReadPublisher, DevRuntimeEndpoint,
-    dev_read_channel,
-};
+use super::read::{DevReadHandle, DevReadPublisher, DevRuntimeEndpoint, dev_read_channel};
 use super::target_database;
 use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
@@ -212,7 +206,6 @@ pub struct ProductionDevStageRunner {
     palette_artifacts: Vec<SelectedPaletteArtifact>,
     verified_base_digests: Vec<VerifiedBaseComponentDigest>,
     admissions: Vec<ComponentAdmission>,
-    gated_wirings: Vec<WiringInput>,
     target_instance: Option<String>,
     target_lease: Option<target_database::TargetLease>,
     release: Option<ReleaseCarrier>,
@@ -260,7 +253,6 @@ impl fmt::Debug for ProductionDevStageRunner {
                 &self.base_digests_moved_off_pin().collect::<Vec<_>>(),
             )
             .field("admission_count", &self.admissions.len())
-            .field("gated_wiring_count", &self.gated_wirings.len())
             .field("release", &self.release)
             .field("activation", &self.activation)
             .field(
@@ -293,7 +285,6 @@ impl ProductionDevStageRunner {
             palette_artifacts: Vec::new(),
             verified_base_digests: Vec::new(),
             admissions: Vec::new(),
-            gated_wirings: Vec::new(),
             target_instance: None,
             target_lease: None,
             release: None,
@@ -647,7 +638,6 @@ impl ProductionDevStageRunner {
         // Each palette component a wiring names, admitted into the scope of
         // its package with the packages its own declaration states, as the
         // cluster path pushes it (wamn-hw3n).
-        let wirings = load_wirings(&self.package_inputs()?)?;
         for palette in self.palette_artifacts.clone() {
             let artifact = palette.artifact;
             let package = self.package_input(&artifact.package_id)?;
@@ -658,7 +648,11 @@ impl ProductionDevStageRunner {
             };
             let store_alias = selected_store_alias(&self.config, &artifact)
                 .map_err(|source| ProductionDevStageError::owner("read store alias", source))?;
-            require_wiring_store_alias(&wirings, &artifact, store_alias.as_deref())?;
+            let components =
+                crate::package_artifact::wiring_components(&package.root).map_err(|source| {
+                    ProductionDevStageError::owner("read connection aliases", source)
+                })?;
+            require_wiring_store_alias(&components, &artifact, store_alias.as_deref())?;
             let document =
                 render_palette_declaration(&palette.declaration, &scope, store_alias.as_deref())
                     .map_err(declaration_stage_error)?;
@@ -687,78 +681,15 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
-    async fn gate(&mut self) -> Result<(), ProductionDevStageError> {
+    fn gate(&mut self) -> impl Future<Output = Result<(), ProductionDevStageError>> {
         self.clear_after(DevStage::Gate);
-        let mut read_outcomes = Vec::new();
         if self.admissions.len() != self.artifacts.len() + self.palette_artifacts.len() {
-            return Err(ProductionDevStageError::invalid(
-                "gate package wirings",
+            return std::future::ready(Err(ProductionDevStageError::invalid(
+                "gate package admissions",
                 "every package and palette component must carry one exact admission before Gate",
-            ));
+            )));
         }
-        for input in load_wirings(&self.package_inputs()?)? {
-            let command_id = authoring_command_id(
-                "gate",
-                &input.package_id,
-                &input.package_version,
-                &input.document,
-                self.target_instance.as_deref(),
-            );
-            self.reauthenticate_publisher().await?;
-            let scope = wamn_catalog::ComponentPackageScope {
-                tenant_id: self.config.activation_identity().tenant.clone(),
-                package_id: input.package_id.to_string(),
-                package_version: input.package_version.to_string(),
-            };
-            let facts = self
-                .admissions
-                .iter()
-                .filter(|admission| admission.facts().scope == scope)
-                .map(|admission| admission.facts().clone())
-                .collect::<Vec<_>>();
-            let outcome = wamn_authoring_model::gate::judge_gate_document(
-                &input.wiring,
-                &scope,
-                &facts,
-            )
-            .map(|()| GateResult {
-                report_id: format!("local:{command_id}"),
-                validated_draft: wamn_authoring_model::ValidatedDraftRef {
-                    validated_draft_id: format!("local:{}", input.wiring.wiring_hash().as_str()),
-                },
-            });
-            match outcome {
-                Ok(result) => {
-                    read_outcomes.push(DevGateOutcome {
-                        package_id: input.package_id.to_string(),
-                        package_version: input.package_version.to_string(),
-                        wiring_id: input.wiring.wiring_id.clone(),
-                        wiring_version: input.wiring.version,
-                        verdict: DevGateVerdict::Accepted(result),
-                    });
-                    self.read_publisher.set_gate_outcomes(read_outcomes.clone());
-                    self.gated_wirings.push(input);
-                }
-                Err(refusal) => {
-                    read_outcomes.push(DevGateOutcome {
-                        package_id: input.package_id.to_string(),
-                        package_version: input.package_version.to_string(),
-                        wiring_id: input.wiring.wiring_id.clone(),
-                        wiring_version: input.wiring.version,
-                        verdict: DevGateVerdict::Refused(refusal.clone()),
-                    });
-                    self.read_publisher.set_gate_outcomes(read_outcomes);
-                    return Err(ProductionDevStageError::invalid(
-                        "submit production Gate",
-                        format!(
-                            "{}@{}::{} was refused: {refusal:?}",
-                            input.package_id, input.package_version, input.wiring.wiring_id
-                        ),
-                    ));
-                }
-            }
-        }
-        Ok(())
+        std::future::ready(Ok(()))
     }
 
     async fn acl(&mut self) -> Result<(), ProductionDevStageError> {
@@ -856,16 +787,6 @@ impl ProductionDevStageRunner {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let wirings = self
-            .gated_wirings
-            .iter()
-            .map(|gated| ReleaseWiringTarget {
-                package_id: gated.package_id.to_string(),
-                package_version: gated.package_version.to_string(),
-                wiring_id: gated.wiring.wiring_id.clone(),
-                wiring_version: gated.wiring.version,
-            })
-            .collect();
         let package_roots = packages
             .iter()
             .map(|package| package.root.clone())
@@ -880,25 +801,10 @@ impl ProductionDevStageRunner {
             verified_publisher_principal: principal,
             run_schema: RUN_SCHEMA.to_owned(),
             packages: package_coordinates,
-            wirings,
         };
         let local = self.config.local_artifacts();
-        let documents = self
-            .gated_wirings
-            .iter()
-            .map(|gated| {
-                (
-                    wamn_catalog::ComponentPackageScope {
-                        tenant_id: identity.tenant.clone(),
-                        package_id: gated.package_id.to_string(),
-                        package_version: gated.package_version.to_string(),
-                    },
-                    gated.wiring.clone(),
-                )
-            })
-            .collect();
         let (mut published, mut local_facts) =
-            publish_release::publish_local(request, &package_roots, &self.admissions, documents)
+            publish_release::publish_local(request, &package_roots, &self.admissions)
                 .await
                 .map_err(|source| {
                     ProductionDevStageError::owner("assemble local application", source)
@@ -1027,6 +933,22 @@ impl ProductionDevStageRunner {
         )
         .map_err(|source| {
             ProductionDevStageError::owner("stage local admissions", source.into())
+        })?;
+        let serving = wamn_runtime::local_application::LocalRelease {
+            manifest_digest: published.digest.clone(),
+            applications: self.environment.applications.clone(),
+        };
+        let bytes = serde_json::to_vec(&serving).map_err(|source| {
+            ProductionDevStageError::owner("encode local release facts", source.into())
+        })?;
+        fs::write(
+            local
+                .directory
+                .join(wamn_runtime::local_application::LOCAL_RELEASE_FILE),
+            bytes,
+        )
+        .map_err(|source| {
+            ProductionDevStageError::owner("stage local release facts", source.into())
         })?;
         let carrier = ReleaseCarrier {
             artifact_base: format!("local:{}", local.directory.display()),
@@ -1235,7 +1157,6 @@ impl ProductionDevStageRunner {
                 self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
-                self.gated_wirings.clear();
                 self.release = None;
             }
             DevStage::Generate | DevStage::Build | DevStage::Virtualize => {
@@ -1243,19 +1164,13 @@ impl ProductionDevStageRunner {
                 self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
-                self.gated_wirings.clear();
                 self.release = None;
             }
             DevStage::Admit => {
                 self.admissions.clear();
-                self.gated_wirings.clear();
                 self.release = None;
             }
-            DevStage::Gate => {
-                self.gated_wirings.clear();
-                self.release = None;
-            }
-            DevStage::Acl | DevStage::Release => {
+            DevStage::Gate | DevStage::Acl | DevStage::Release => {
                 self.release = None;
             }
             DevStage::Activate => {}
@@ -1569,40 +1484,24 @@ fn selected_store_alias(
 /// wiring node of the same package gives the component (wamn-qj68). The wiring
 /// node is the authored source; the binding selection only repeats it.
 fn require_wiring_store_alias(
-    wirings: &[WiringInput],
+    components: &std::collections::BTreeMap<String, BTreeSet<String>>,
     artifact: &SelectedComponentArtifact,
     store_alias: Option<&str>,
 ) -> Result<(), ProductionDevStageError> {
     let Some(store_alias) = store_alias else {
         return Ok(());
     };
-    let nodes = wirings
-        .iter()
-        .filter(|input| {
-            input.package_id == artifact.package_id
-                && input.package_version == artifact.package_version
-        })
-        .flat_map(|input| {
-            input
-                .wiring
-                .nodes
-                .iter()
-                .map(move |(node, value)| (input, node, value))
-        });
-    for (input, node, value) in nodes {
-        if *value.component != *artifact.component {
-            continue;
-        }
-        let Some(wired) = value.params.get("store_alias").and_then(Value::as_str) else {
-            continue;
-        };
+    for wired in components
+        .get(artifact.component.as_ref())
+        .into_iter()
+        .flatten()
+    {
         if wired != store_alias {
             return Err(ProductionDevStageError::invalid(
                 "check store alias",
                 format!(
-                    "the binding selections give {}::{} store alias {store_alias:?}, but node \
-                     {node:?} of wiring {:?} gives params.store_alias {wired:?}",
-                    artifact.package_id, artifact.component, input.wiring.wiring_id
+                    "the binding selections give {}::{} store alias {store_alias:?}, but the build input gives {wired:?}",
+                    artifact.package_id, artifact.component,
                 ),
             ));
         }
@@ -1772,7 +1671,6 @@ async fn reconcile_local_replica_identity(
             let package_id = package.coordinate.package_id();
             let plan = crate::reconcile_replica_identity::reconcile(
                 &client,
-                package_id,
                 &package.models,
                 apply,
             )
@@ -1844,40 +1742,6 @@ pub(crate) async fn claim_environment_instance(
     connection_task.abort();
     claimed
         .map_err(|source| ProductionDevStageError::owner("claim the environment instance", source))
-}
-
-/// `target_instance` names WHICH CREATION of the target database this command
-/// runs against, and it is what makes a replay honest here (wamn-10yt.51).
-///
-/// An authoring claim is recorded in the control database, which no dev run
-/// recreates, while its effect lands in the project database, which every run
-/// drops and clones afresh. Without the instance, the second run replays, gets
-/// the first run's result back, and writes nothing into a database that was
-/// just emptied. The idempotency law is untouched: a recreated database is a
-/// different target, so the same document against it is a different command.
-/// A durable target passes None, because nothing recreates it.
-fn authoring_command_id(
-    command: &str,
-    package_id: &str,
-    package_version: &str,
-    document: &Value,
-    target_instance: Option<&str>,
-) -> String {
-    let mut identity = serde_json::json!({
-        "command": command,
-        "package-id": package_id,
-        "package-version": package_version,
-        "document": document,
-    });
-    if let Some(target_instance) = target_instance {
-        identity["target-instance"] = Value::String(target_instance.to_owned());
-    }
-    format!(
-        "wamn-dev-{command}-{}",
-        wamn_execution_contract::canonical_json_sha256(&identity)
-            .strip_prefix("sha256:")
-            .expect("the canonical hash has its fixed prefix")
-    )
 }
 
 /// Translate a failure to read authored base digests into its stage failure.
@@ -1977,7 +1841,6 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_catalog::WiringDocument;
     use wamn_schema_introspection::ir::{
         Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
         ExclusionElement, ExclusionKey, Table,
@@ -2024,55 +1887,6 @@ mod tests {
                 .to_string(),
             "dev-stage-owner-failed while introspect package: one line",
             "a cause with no context keeps the line it always printed"
-        );
-    }
-
-    /// The claim says which creation of the target database it ran against.
-    ///
-    /// Measured live on 2026-09-08: without this, a second run replayed all
-    /// fourteen publish commands, wrote nothing, and Release refused with
-    /// "has no wiring widget_get version 1" against a database the run
-    /// had just recreated. The control database held one audit row per command
-    /// for two runs. A third run with NO edit failed identically, so the wall
-    /// was the recreate and not the edit.
-    #[test]
-    fn a_recreated_target_is_a_different_command_and_a_durable_one_is_unchanged() {
-        let document = serde_json::json!({"wiring": "widget_get", "version": 1});
-
-        let durable = authoring_command_id("gate", "platform_fixture", "1.0.0", &document, None);
-        let first_instance = authoring_command_id(
-            "gate",
-            "platform_fixture",
-            "1.0.0",
-            &document,
-            Some("16394"),
-        );
-        let same_instance = authoring_command_id(
-            "gate",
-            "platform_fixture",
-            "1.0.0",
-            &document,
-            Some("16394"),
-        );
-        let next_instance = authoring_command_id(
-            "gate",
-            "platform_fixture",
-            "1.0.0",
-            &document,
-            Some("16512"),
-        );
-
-        assert_eq!(
-            first_instance, same_instance,
-            "one creation of the target replays as one command"
-        );
-        assert_ne!(
-            first_instance, next_instance,
-            "a recreated database is a different target"
-        );
-        assert_ne!(
-            durable, first_instance,
-            "a durable target carries no instance, so its claims never move"
         );
     }
 
@@ -2427,26 +2241,10 @@ mod tests {
     /// (wamn-qj68).
     #[test]
     fn a_binding_store_alias_that_differs_from_the_wiring_node_is_refused() {
-        let document = serde_json::json!({
-            "format-version": "0.1",
-            "wiring-id": "inventory_move_and_label",
-            "version": 2,
-            "entry": "store",
-            "nodes": {"store": {
-                "component": "blob-put",
-                "interface-version": "0.1.0",
-                "operation": "wamn:node/async-handler@0.1.0",
-                "params": {"store_alias": "labels"}
-            }},
-            "edges": []
-        });
-        let wirings = [WiringInput {
-            path: PathBuf::from("wiring.json"),
-            package_id: "wamn_wms".into(),
-            package_version: "0.1.0".into(),
-            wiring: WiringDocument::parse(&document).expect("fixture wiring"),
-            document,
-        }];
+        let components = std::collections::BTreeMap::from([(
+            "blob-put".to_owned(),
+            BTreeSet::from(["labels".to_owned()]),
+        )]);
         let artifact = SelectedComponentArtifact {
             package_id: "wamn_wms".into(),
             package_version: "0.1.0".into(),
@@ -2455,9 +2253,9 @@ mod tests {
             digest: "sha256:fixture".into(),
         };
 
-        require_wiring_store_alias(&wirings, &artifact, Some("labels"))
+        require_wiring_store_alias(&components, &artifact, Some("labels"))
             .expect("the wiring alias is accepted");
-        let refusal = require_wiring_store_alias(&wirings, &artifact, Some("archive"))
+        let refusal = require_wiring_store_alias(&components, &artifact, Some("archive"))
             .expect_err("another alias is refused")
             .to_string();
         assert!(

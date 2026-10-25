@@ -15,15 +15,8 @@ fn consumer_publication_requires_admitted_operations() {
         packages: vec![
             wamn_catalog::PackageCoordinate::new("rest_consumer_fixture", "0.1.0").unwrap(),
         ],
-        wirings: Vec::new(),
     };
     assert!(
-        wamn_control::publish_release::assemble_local_release(
-            &request,
-            &[package],
-            &[],
-            Vec::new()
-        )
-        .is_err()
+        wamn_control::publish_release::assemble_local_release(&request, &[package], &[]).is_err()
     );
 }

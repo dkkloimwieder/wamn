@@ -9,9 +9,7 @@
 //! the descriptors of the release the run pins. Nodes come from that release
 //! only in this epic.
 //!
-//! A workflow run resolves on every claim. The router's wiring cache is keyed
-//! by a released wiring of a package, and a workflow is not one, so it is not
-//! used here.
+//! A workflow run resolves its pinned version on every claim.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -478,8 +476,6 @@ mod tests {
             },
             BTreeSet::from([ServingComponent::project(&fact, Vec::new()).unwrap()]),
             BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeMap::new(),
             BTreeMap::new(),
         )
         .expect("the fixture manifest is valid")

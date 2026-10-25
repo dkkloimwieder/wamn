@@ -16,7 +16,7 @@
 //! It needs three throwaway resources, all named by the caller: a superuser
 //! PostgreSQL database (the `catalog` schema is DROPped and reinstalled), an
 //! insecure OCI registry, and an upstream HTTP origin. Nothing here is stubbed —
-//! the wiring resolves through `RELEASE_WIRING_SQL`, the component bytes come
+//! the workflow resolves from its catalog row, the component bytes come
 //! back through the production OCI puller, and the effect leaves the process
 //! over a real socket.
 
@@ -54,7 +54,7 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_schema_control::connections::ComponentConnectionRequirement;
-use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use wamn_workflow::RouterDriver;
 
 /// The one tenant every seeded row and every claim is scoped to.
 pub const TENANT: &str = "tenant-a";
@@ -120,10 +120,29 @@ pub struct TrustedHttpRoute {
     pub release: Arc<LoadedRelease>,
     /// The digest OCI serves the guest under and every seeded row keys on.
     pub component_digest: String,
-    /// The wiring document's own canonical hash — `catalog.wirings.wiring_hash`
-    /// and the activation pointer's `confirmed_definition_hash`, which must agree;
-    /// the release manifest carries the graph and its reader derives the hash.
+    /// The immutable graph hash stored on the workflow row and frozen on each run.
     pub wiring_hash: String,
+}
+
+impl TrustedHttpRoute {
+    /// Execute the request shape that the queue supplies for an environment workflow.
+    pub async fn execute(
+        &self,
+        run: wamn_workflow::RouterDriverRequest,
+    ) -> anyhow::Result<wamn_workflow::RouterDelivery> {
+        self.driver
+            .execute_workflow(wamn_workflow::WorkflowRunRequest {
+                run,
+                wiring_hash: self.wiring_hash.clone(),
+                node_digests: BTreeMap::from([(NODE_ID.to_owned(), self.component_digest.clone())]),
+                identity: wamn_workflow::WorkflowIdentity {
+                    principal_id: wamn_project_state::workflow_user_id().to_string(),
+                    role: "admin".to_owned(),
+                },
+                causation: None,
+            })
+            .await
+    }
 }
 
 /// Seed the closure and build the production driver over it.
@@ -218,34 +237,28 @@ async fn build_with_credentials(
     )
     .context("build the component puller registry client")?;
 
-    let driver = Arc::new(RouterDriver::new(
-        Arc::new(
-            OperationHost::new(
-                engine,
-                postgres,
-                Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
-                Arc::new(credentials),
-                Arc::new(
-                    WamnLogging::new(&WamnLoggingConfig::default())
-                        .context("build wamn:logging")?,
-                ), // The upstream is a loopback origin the test owns; the cluster
-                // ceiling is Kubernetes' job, not this fixture's.
-                Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
-                Arc::clone(&release),
-                Arc::new(source),
-                OperationScope {
-                    project: PROJECT.to_owned(),
-                    schema: None,
-                    owner_prefix: "trusted-http-route".to_owned(),
-                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-                },
-            )
-            .context("build the router driver")?,
-        ),
-        RouterDriverConfig {
-            cache_capacity: WiringCacheCapacity::default(),
-        },
-    ));
+    let driver = Arc::new(RouterDriver::new(Arc::new(
+        OperationHost::new(
+            engine,
+            postgres,
+            Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
+            Arc::new(credentials),
+            Arc::new(
+                WamnLogging::new(&WamnLoggingConfig::default()).context("build wamn:logging")?,
+            ), // The upstream is a loopback origin the test owns; the cluster
+            // ceiling is Kubernetes' job, not this fixture's.
+            Arc::from(vec!["*".parse().context("parse the allowed-host policy")?]),
+            Arc::clone(&release),
+            Arc::new(source),
+            OperationScope {
+                project: PROJECT.to_owned(),
+                schema: None,
+                owner_prefix: "trusted-http-route".to_owned(),
+                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+            },
+        )
+        .context("build the router driver")?,
+    )));
 
     Ok(TrustedHttpRoute {
         driver,
@@ -312,19 +325,10 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
 /// closure makes — `manifest.components` in `invoke_node`, `manifest.wirings` in
 /// `validate_wiring_closure` and again in `authorize_release_closure` — read
 /// this document.
-fn release_manifest(component: &AdmittedComponent, document: &WiringDocument) -> serde_json::Value {
-    let attachment_definition = serde_json::json!({
-        "id": ATTACHMENT_ID,
-        "kind": "http",
-        "source-id": "public",
-        "route": {
-            "host": ROUTE_AUTHORITY,
-            "path": ROUTE_PATH,
-            "method": "POST"
-        }
-    });
-    let attachment_definition_hash =
-        wamn_execution_contract::canonical_json_sha256(&attachment_definition);
+fn release_manifest(
+    component: &AdmittedComponent,
+    _document: &WiringDocument,
+) -> serde_json::Value {
     let operations: BTreeMap<_, _> = component
         .operations
         .iter()
@@ -361,20 +365,7 @@ fn release_manifest(component: &AdmittedComponent, document: &WiringDocument) ->
         }],
         "routes": [],
         "attachments": {},
-        "workflow": {
-            "wirings": [wamn_catalog::ServingWiring::new(PACKAGE, document.clone())],
-            "attachments": {
-                (ATTACHMENT_ID): {
-                    "type": "http",
-                    "package-id": PACKAGE,
-                    "wiring-id": WIRING_ID,
-                    "wiring-version": WIRING_VERSION,
-                    "definition-hash": attachment_definition_hash,
-                    "definition": attachment_definition,
-                    "auth-policy": {"modes": ["none"]}
-                }
-            },
-        },
+
     })
 }
 
@@ -499,6 +490,8 @@ async fn seed_with_client(
         )?)
         .await?;
 
+    client.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
+        &[&TENANT, &wamn_project_state::workflow_user_id().to_string()]).await?;
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     // The whole portable record component admission mints, not just its
@@ -564,17 +557,18 @@ async fn seed_with_client(
         .context("record the release")?;
     client
         .execute(
-            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
-                    version, graph_json, wiring_hash) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
+            "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, \
+                    version, graph_json, wiring_hash, trigger, execution_type, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)",
             &[
                 &TENANT,
+                &ENVIRONMENT,
                 &PACKAGE,
-                &PACKAGE_VERSION,
                 &WIRING_ID,
                 &wiring_version,
                 &graph_json,
                 &wiring_hash,
+                &wamn_project_state::workflow_user_id().to_string(),
             ],
         )
         .await
@@ -754,16 +748,17 @@ async fn seed_additional_wirings(
         let wiring_hash = document.wiring_hash().as_str().to_owned();
         client
             .execute(
-                "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
-             version, graph_json, wiring_hash) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
+                "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, \
+             version, graph_json, wiring_hash, trigger, execution_type, created_by) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)",
                 &[
                     &TENANT,
+                    &ENVIRONMENT,
                     &PACKAGE,
-                    &PACKAGE_VERSION,
                     &document.wiring_id,
                     &version,
                     &serde_json::to_string(document)?,
                     &wiring_hash,
+                    &wamn_project_state::workflow_user_id().to_string(),
                 ],
             )
             .await
@@ -785,7 +780,6 @@ fn generation_url(admin_url: &str, role: &str) -> anyhow::Result<String> {
 mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
-    use std::sync::Arc;
     use std::time::Duration;
 
     use anyhow::Context as _;
@@ -796,18 +790,13 @@ mod tests {
     use tokio::task::{JoinHandle, JoinSet};
     use tokio_postgres::{Client, NoTls};
 
-    use wamn_workflow::{
-        CandidateCaseRequest, CandidateWiringTarget, RouterDelivery, RouterDriverRequest,
-    };
+    use wamn_workflow::{RouterDelivery, RouterDriverRequest};
 
     use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 
-    use wamn_runtime::plugins::wamn_postgres::{CANDIDATE_WIRING_SQL, CandidateBindingWorld};
-
     use super::{
         CREDENTIAL_HANDLE, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE, PROJECT, RouteOptions,
-        TENANT, TrustedHttpRoute, WIRING_ID, WIRING_VERSION, build_with_credentials,
-        credential_secret,
+        TENANT, WIRING_ID, WIRING_VERSION, build_with_credentials, credential_secret,
     };
 
     const ROTATED_HANDLE: &str = "upstream-v2";
@@ -941,64 +930,6 @@ mod tests {
             traceparent: None,
             tracestate: None,
         }
-    }
-
-    fn candidate(
-        route: &TrustedHttpRoute,
-        binding_world: &Arc<CandidateBindingWorld>,
-        id: u64,
-    ) -> CandidateCaseRequest {
-        let request = request(id);
-        CandidateCaseRequest {
-            target: CandidateWiringTarget {
-                tenant_id: request.tenant_id,
-                package_id: request.package_id,
-                environment: request.environment,
-                wiring_id: request.wiring_id,
-                wiring_version: request.wiring_version,
-                wiring_hash: route.wiring_hash.clone(),
-            },
-            binding_world: Arc::clone(binding_world),
-            delivery_id: request.delivery_id,
-            payload: request.payload,
-            traceparent: None,
-            tracestate: None,
-        }
-    }
-
-    async fn binding_world(
-        client: &Client,
-        route: &TrustedHttpRoute,
-    ) -> anyhow::Result<Arc<CandidateBindingWorld>> {
-        // Capture the same complete DB projection candidate admission reads,
-        // not a hand-authored approximation of the frozen authority facts.
-        let wiring_version = i32::try_from(WIRING_VERSION)?;
-        let manifest_digest: String = client
-            .query_one(
-                "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-                &[&TENANT],
-            )
-            .await?
-            .get(0);
-        let row = client
-            .query_one(
-                CANDIDATE_WIRING_SQL,
-                &[
-                    &TENANT,
-                    &PACKAGE,
-                    &ENVIRONMENT,
-                    &WIRING_ID,
-                    &wiring_version,
-                    &manifest_digest,
-                    &route.wiring_hash,
-                    &None::<String>,
-                ],
-            )
-            .await?;
-        let json: String = row.try_get(9)?;
-        Ok(Arc::new(CandidateBindingWorld::from_json(
-            serde_json::from_str(&json)?,
-        )?))
     }
 
     async fn assert_observed_request(
@@ -1143,14 +1074,14 @@ mod tests {
         // The peer identity comes from accept(), not a transport cache counter.
         let first = assert_observed_request(
             &mut origin,
-            route.driver.execute(request(1)).await?,
+            route.execute(request(1)).await?,
             1,
             "Bearer fixture-token",
         )
         .await?;
         let second = assert_observed_request(
             &mut origin,
-            route.driver.execute(request(2)).await?,
+            route.execute(request(2)).await?,
             2,
             "Bearer fixture-token",
         )
@@ -1161,7 +1092,7 @@ mod tests {
         );
 
         set_instance_status(&admin, "disabled").await?;
-        let denied = route.driver.execute(request(3)).await?;
+        let denied = route.execute(request(3)).await?;
         let failure = denied
             .outcome
             .failure
@@ -1181,51 +1112,10 @@ mod tests {
         );
         set_instance_status(&admin, "enabled").await?;
 
-        let frozen = binding_world(&admin, &route).await?;
-        let candidate_first = assert_observed_request(
-            &mut origin,
-            route
-                .driver
-                .execute_candidate(candidate(&route, &frozen, 4))
-                .await?,
-            4,
-            "Bearer fixture-token",
-        )
-        .await?;
-        let candidate_second = assert_observed_request(
-            &mut origin,
-            route
-                .driver
-                .execute_candidate(candidate(&route, &frozen, 5))
-                .await?,
-            5,
-            "Bearer fixture-token",
-        )
-        .await?;
-        assert_eq!(
-            candidate_first, candidate_second,
-            "fresh candidate stores did not reuse transport"
-        );
-
         rotate(&admin, 2, CREDENTIAL_HANDLE).await?;
-        let pinned_after_switch = assert_observed_request(
-            &mut origin,
-            route
-                .driver
-                .execute_candidate(candidate(&route, &frozen, 6))
-                .await?,
-            6,
-            "Bearer fixture-token",
-        )
-        .await?;
-        assert_eq!(
-            pinned_after_switch, candidate_first,
-            "an admitted candidate must retain its generation after activation"
-        );
-
         let generation_two = assert_observed_request(
             &mut origin,
-            route.driver.execute(request(7)).await?,
+            route.execute(request(7)).await?,
             7,
             "Bearer fixture-token",
         )
@@ -1234,40 +1124,10 @@ mod tests {
             generation_two, first,
             "new generation reused the old generation socket"
         );
-        assert_ne!(
-            generation_two, candidate_first,
-            "new generation reused a candidate's old socket"
-        );
-        let frozen = binding_world(&admin, &route).await?;
-        let current = assert_observed_request(
-            &mut origin,
-            route
-                .driver
-                .execute_candidate(candidate(&route, &frozen, 8))
-                .await?,
-            8,
-            "Bearer fixture-token",
-        )
-        .await?;
-        let current_again = assert_observed_request(
-            &mut origin,
-            route
-                .driver
-                .execute_candidate(candidate(&route, &frozen, 9))
-                .await?,
-            9,
-            "Bearer fixture-token",
-        )
-        .await?;
-        assert_eq!(
-            current, current_again,
-            "current candidate world did not reuse its generation"
-        );
-
         rotate(&admin, 3, ROTATED_HANDLE).await?;
         let generation_three = assert_observed_request(
             &mut origin,
-            route.driver.execute(request(10)).await?,
+            route.execute(request(10)).await?,
             10,
             ROTATED_AUTHORIZATION,
         )
@@ -1276,13 +1136,9 @@ mod tests {
             generation_three, generation_two,
             "rotated credential reused the previous socket"
         );
-        assert_ne!(
-            generation_three, current,
-            "rotated credential reused the candidate socket"
-        );
         let generation_three_again = assert_observed_request(
             &mut origin,
-            route.driver.execute(request(11)).await?,
+            route.execute(request(11)).await?,
             11,
             ROTATED_AUTHORIZATION,
         )
@@ -1291,29 +1147,9 @@ mod tests {
             generation_three, generation_three_again,
             "rotated generation did not become reusable"
         );
-        // A missing pinned credential cannot fall forward to a usable generation.
-        rotate(&admin, 4, "missing-fixture-credential").await?;
-        let missing = binding_world(&admin, &route).await?;
-        rotate(&admin, 5, ROTATED_HANDLE).await?;
-        let refused = route
-            .driver
-            .execute_candidate(candidate(&route, &missing, 12))
-            .await?;
-        let failure = refused
-            .outcome
-            .failure
-            .context("missing pinned credential was substituted")?;
-        assert_eq!(
-            failure.detail.code.as_deref(),
-            Some("connection-unavailable")
-        );
-        assert!(
-            origin.requests.try_recv().is_err(),
-            "missing credential reached the wire"
-        );
         assert_observed_request(
             &mut origin,
-            route.driver.execute(request(13)).await?,
+            route.execute(request(13)).await?,
             13,
             ROTATED_AUTHORIZATION,
         )

@@ -37,19 +37,10 @@ pub(crate) fn production_router_action(
     )
 }
 
-/// Translate a management candidate response into the run result without
-/// fabricating a synchronous durable caller.
-pub(crate) fn production_router_result_action(
-    outcome: &Outcome,
-) -> Result<ProductionRouterAction, ProductionClaimError> {
-    production_router_action_with_mode(outcome, RouterResultMode::StoredResult)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RouterResultMode {
     Detached,
     DurableCaller,
-    StoredResult,
 }
 
 fn production_router_action_with_mode(
@@ -80,11 +71,6 @@ fn production_router_action_with_mode(
     }
     match outcome.verdict.as_ref() {
         Some(Verdict::Respond { payload, node_id }) => match mode {
-            RouterResultMode::StoredResult => {
-                return Ok(ProductionRouterAction::Complete(
-                    ProductionCompletion::completed(payload.clone(), None),
-                ));
-            }
             RouterResultMode::DurableCaller => {
                 let caller =
                     ProductionCallerOutcome::responded(payload.clone(), 200, node_id.clone());
@@ -100,11 +86,6 @@ fn production_router_action_with_mode(
                 ));
             }
         },
-        Some(Verdict::Emit { event, .. }) if mode == RouterResultMode::StoredResult => {
-            return Ok(ProductionRouterAction::Complete(
-                ProductionCompletion::completed(event.clone(), None),
-            ));
-        }
         Some(Verdict::Emit {
             event,
             dedup_id,
@@ -218,29 +199,6 @@ mod tests {
     use wamn_run_state::RunStatus;
 
     use super::*;
-
-    #[test]
-    fn candidate_respond_is_stored_without_fabricating_a_durable_caller() {
-        let payload = serde_json::json!({"accepted": true});
-        let outcome = Outcome {
-            status: WalkStatus::Completed,
-            result: serde_json::Value::Null,
-            failure: None,
-            hops: 1,
-            verdict: Some(Verdict::Respond {
-                payload: payload.clone(),
-                node_id: "candidate-respond".into(),
-            }),
-        };
-        let ProductionRouterAction::Complete(completion) =
-            production_router_result_action(&outcome).expect("candidate response maps")
-        else {
-            panic!("candidate response must complete the run");
-        };
-        assert_eq!(completion.status(), RunStatus::Completed);
-        assert_eq!(completion.result(), &payload);
-        assert!(completion.caller().is_none());
-    }
 
     #[test]
     fn durable_respond_carries_the_host_terminal_node_through_completion() {
@@ -387,31 +345,6 @@ mod tests {
                 "later {status:?} must not suppress the first emit verdict"
             );
         }
-    }
-
-    #[test]
-    fn candidate_emit_is_a_stored_observable_not_a_boundary_effect() {
-        let event = serde_json::json!({"order": 42, "dedup-id": "d1"});
-        let outcome = Outcome {
-            status: WalkStatus::Completed,
-            result: serde_json::Value::Null,
-            failure: None,
-            hops: 1,
-            verdict: Some(Verdict::Emit {
-                event: event.clone(),
-                dedup_id: "d1".into(),
-                entity: "orders".into(),
-                operation: wamn_event_wire::Op::Insert,
-                node_id: "entry".into(),
-            }),
-        };
-        let ProductionRouterAction::Complete(completion) =
-            production_router_result_action(&outcome).expect("candidate observable maps")
-        else {
-            panic!("candidate emit must not request production publication");
-        };
-        assert_eq!(completion.result(), &event);
-        assert!(completion.caller().is_none());
     }
 
     #[test]

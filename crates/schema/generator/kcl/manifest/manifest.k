@@ -145,12 +145,6 @@ schema Canonicalization:
     excluded_fields: [str] = ["request_id", "value.idempotency_key"]
     line_order?: LineOrder
 
-schema Registration:
-    source_package: str
-    entity: str
-    ops: [EventOp]
-    condition?: str
-
 schema List:
     model?: str
     key_field: str | [str]
@@ -174,7 +168,6 @@ schema CustomOperation[name: str]:
     automatic_retry?: bool
     idempotent_by?: "claim" | "stateless" | State
     canonicalization?: Canonicalization
-    registration?: Registration
     label?: str
     description?: str
     lists?: List
@@ -368,10 +361,6 @@ schema Routes:
     path_prefix?: str
     id_prefix?: str
 
-schema Workflow:
-    wiring: str
-    registration?: Registration
-
 schema Package:
     """The whole manifest. A package's wamn.k is one Package instance."""
     package: PackageIdentity
@@ -388,7 +377,6 @@ schema Package:
     connections: [str]
     components: {str:Component}
     routes?: Routes
-    workflows?: {str:Workflow}
 
     check:
         # A model checks nothing here: an operation assigned with = replaces

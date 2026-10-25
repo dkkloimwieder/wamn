@@ -21,5 +21,3 @@ pub mod provider;
 mod releases;
 pub mod steps;
 mod web;
-pub mod wired_release;
-pub mod wiring_job;

@@ -1465,7 +1465,6 @@ fn legacy_partition_plane_plans_one_leading_cutover() {
         .insert("evt_shadow".into(), BTreeSet::from(["id".into()]));
     obs.outbox_trigger_tables = vec!["widgets".into()];
     obs.outbox_function_present = true;
-    obs.stale_registration_key_rows = 2;
 
     let plan = plan_run_plane(&schema("demo"), &obs);
     let sqls: Vec<&str> = plan.actions.iter().map(|a| a.sql.as_str()).collect();
@@ -1561,7 +1560,6 @@ fn legacy_partition_plane_plans_one_leading_cutover() {
         .position(|k| *k == RunPlaneActionKind::DropLegacyFunction)
         .unwrap();
     assert!(trig < func);
-    assert!(sqls.contains(&strip_retired_registration_keys_sql()));
 }
 
 #[test]
@@ -3179,15 +3177,4 @@ fn observation_sql_is_pinned() {
             .contains("reject_immutable_operator_run_action_change")
     );
     assert!(select_run_plane_helper_functions_sql().contains("guard_effect_disposition_append"));
-    assert_eq!(
-        strip_retired_registration_keys_sql(),
-        "UPDATE catalog.event_registrations \
-             SET registration = registration - 'state' - 'partition-key' \
-             WHERE registration ?| ARRAY['state', 'partition-key']"
-    );
-    assert_eq!(
-        count_stale_registration_keys_sql(),
-        "SELECT count(*) FROM catalog.event_registrations \
-             WHERE registration ?| ARRAY['state', 'partition-key']"
-    );
 }

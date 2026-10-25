@@ -6,9 +6,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
-use wamn_catalog::{
-    AttachmentTarget, ServingAttachment, ServingManifest, ServingRoute, WiringDocument,
-};
+use wamn_catalog::{AttachmentTarget, ServingAttachment, ServingManifest, ServingRoute};
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::publish_release::package_route;
@@ -36,7 +34,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 use wamn_runtime::plugins::{WamnCredentials, WamnLogging};
-use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use wamn_workflow::RouterDriver;
 use wash_runtime::wasmtime::component::Component;
 
 use super::{
@@ -50,9 +48,6 @@ const VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 pub struct LocalPackage<'a> {
     pub root: &'a Path,
     pub component: &'a str,
-    /// The wirings this package serves. A package whose attachments all
-    /// target routes serves none.
-    pub wirings: &'a [WiringDocument],
 }
 
 pub(super) async fn assemble(
@@ -210,7 +205,6 @@ pub(super) async fn assemble(
     let mut admitted = Vec::new();
     let mut admissions = Vec::new();
     let mut statement_instances = BTreeMap::new();
-    let mut wirings = Vec::new();
     let mut roots = BTreeMap::new();
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
@@ -256,17 +250,6 @@ pub(super) async fn assemble(
             std::fs::read(component_path)?,
         )?;
         component_digests.insert(package.component.to_owned(), facts.component_digest.clone());
-        for document in package.wirings {
-            insert_wiring(
-                &project,
-                input.tenant,
-                &applied.package_id,
-                &applied.package_version,
-                document,
-            )
-            .await?;
-            wirings.push((applied.package_id.clone(), document.clone()));
-        }
         roots.insert(applied.package_id.clone(), package.root);
         admitted.push((applied.package_id, facts));
         admissions.push(admission);
@@ -295,13 +278,10 @@ pub(super) async fn assemble(
 
     let attachments = selected_attachments(&input, &roots)?;
     let routes = attachment_routes(&attachments, &roots)?;
-    let manifest = serving_manifest(
-        &admitted,
-        &statement_instances,
-        &wirings,
-        &routes,
-        &attachments,
-    )?;
+    let mut manifest = serving_manifest(&admitted, &statement_instances, &routes, &attachments)?;
+    manifest
+        .host_routes
+        .insert(wamn_catalog::HostRouteSet::Application);
     let canonical_bytes = manifest.canonical_bytes();
     let (_, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
     let mut published = wamn_control::publish_release::PublishedRelease {
@@ -367,33 +347,25 @@ pub(super) async fn assemble(
         Some(input.tenant),
         Arc::clone(&postgres),
     );
-    let driver = Arc::new(RouterDriver::new(
-        Arc::new(OperationHost::new(
-            Arc::clone(&engine),
-            Arc::clone(&postgres),
-            Arc::new(HttpTransport::new()?),
-            Arc::new(WamnCredentials::empty()),
-            Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
-            Arc::from([]),
-            Arc::clone(&release),
-            Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
-            OperationScope {
-                project: input.project.to_owned(),
-                schema: Some(input.schema.to_owned()),
-                owner_prefix: "local-application".into(),
-                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-            },
-        )?),
-        RouterDriverConfig {
-            cache_capacity: WiringCacheCapacity::default(),
+    let driver = Arc::new(RouterDriver::new(Arc::new(OperationHost::new(
+        Arc::clone(&engine),
+        Arc::clone(&postgres),
+        Arc::new(HttpTransport::new()?),
+        Arc::new(WamnCredentials::empty()),
+        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
+        Arc::from([]),
+        Arc::clone(&release),
+        Arc::new(LocalComponentSource::new(input.scratch.to_owned())),
+        OperationScope {
+            project: input.project.to_owned(),
+            schema: Some(input.schema.to_owned()),
+            owner_prefix: "local-application".into(),
+            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
         },
-    ));
-    let readiness = RouterReadinessProbe::new(
-        driver.operations(),
-        Some(Arc::clone(&driver) as Arc<dyn wamn_execution_host::WiringDelivery>),
-    )
-    .refresh()
-    .await;
+    )?)));
+    let readiness = RouterReadinessProbe::new(driver.operations())
+        .refresh()
+        .await;
     anyhow::ensure!(
         readiness.status == RouterReadinessStatus::Ready,
         "local application release is not ready: {readiness:?}"
@@ -412,10 +384,19 @@ pub(super) async fn assemble(
     };
     let bridge = Arc::new(RouterDeliveryBridge::new(
         driver.operations(),
-        Some(driver as Arc<dyn wamn_execution_host::WiringDelivery>),
         jetstream,
         input.project,
     )?);
+    let bridge = Arc::new(wamn_execution_host::HostRouteDelivery::new(
+        Arc::clone(&release),
+        wamn_execution_host::HostRouteHandlers::Application {
+            postgres: Arc::clone(&postgres),
+            project: input.project.into(),
+            identity: None,
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        },
+        Some(bridge),
+    ));
     let system_database = system_database_name(input.system_database_url)?;
     let identity_role = system_reader_generation_role(
         SystemReader::Identity,
@@ -537,22 +518,9 @@ fn system_database_name(url: &str) -> anyhow::Result<String> {
         .to_owned())
 }
 
-async fn insert_wiring(
-    client: &tokio_postgres::Client,
-    tenant: &str,
-    package: &str,
-    version: &str,
-    document: &WiringDocument,
-) -> anyhow::Result<()> {
-    let graph_hash = document.wiring_hash();
-    client.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ($1,$2,$3,$4,$5,$6::text::jsonb,$7)",&[&tenant,&package,&version,&document.wiring_id,&i32::try_from(document.version)?,&serde_json::to_string(document)?,&graph_hash.as_str()]).await?;
-    Ok(())
-}
-
 fn serving_manifest(
     components: &[(String, wamn_catalog::AdmittedComponent)],
     statement_instances: &BTreeMap<String, BTreeMap<String, String>>,
-    wirings: &[(String, WiringDocument)],
     routes: &BTreeSet<ServingRoute>,
     attachments: &BTreeMap<String, ServingAttachment>,
 ) -> anyhow::Result<ServingManifest> {
@@ -581,13 +549,9 @@ fn serving_manifest(
             Ok(serde_json::to_value(served)?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let wirings = wirings
-        .iter()
-        .map(|(id, w)| wamn_catalog::ServingWiring::new(id.as_str(), w.clone()))
-        .collect::<Vec<_>>();
-    let (attachments, workflow_attachments) = ServingAttachment::split(attachments.clone());
+    let attachments = ServingAttachment::routes(attachments.clone());
     Ok(serde_json::from_value(
-        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"packages":packages},"components":components,"routes":routes,"attachments":attachments,"workflow":{"wirings":wirings,"attachments":workflow_attachments}}),
+        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"packages":packages},"components":components,"routes":routes,"attachments":attachments}),
     )?)
 }
 
@@ -597,20 +561,9 @@ fn selected_attachments(
     input: &LocalApplicationConfig<'_>,
     roots: &BTreeMap<String, &Path>,
 ) -> anyhow::Result<BTreeMap<String, ServingAttachment>> {
-    let selected = input
-        .packages
-        .iter()
-        .flat_map(|package| {
-            package
-                .wirings
-                .iter()
-                .map(|wiring| wiring.wiring_id.as_str())
-        })
-        .collect::<BTreeSet<_>>();
     let mut result = BTreeMap::new();
     for (id, attachment) in input.attachments {
         let served = match &attachment.target {
-            AttachmentTarget::Wiring { wiring_id, .. } => selected.contains(wiring_id.as_str()),
             AttachmentTarget::Route { .. } => roots.contains_key(&attachment.package_id),
         };
         if served {
@@ -624,7 +577,6 @@ fn selected_attachments(
                 } => package_route(roots, &attachment.package_id, component, operation)?
                     .type_
                     .http_method(),
-                AttachmentTarget::Wiring { .. } => "POST",
             };
             attachment.definition["route"]["method"] = Value::String(method.into());
             attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
@@ -647,10 +599,7 @@ fn attachment_routes(
         let AttachmentTarget::Route {
             component,
             operation,
-        } = &attachment.target
-        else {
-            continue;
-        };
+        } = &attachment.target;
         routes.insert(package_route(
             roots,
             &attachment.package_id,

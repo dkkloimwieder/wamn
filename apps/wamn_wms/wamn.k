@@ -8,7 +8,7 @@ _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"
 _command_errors = ["concurrency_conflict", "idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
-    package = {id = "wamn_wms", version = "2.1.4", predecessor_version = "2.1.3"}
+    package = {id = "wamn_wms", version = "2.1.5", predecessor_version = "2.1.4"}
     client_package = {name = "@wamn/wms-client"}
     required_platform_policy_contract = {id = "wms_data_access", state = "satisfied"}
     models = {
@@ -449,15 +449,4 @@ manifest.Package {
     }
     connections = ["postgres"]
     components = {wms = {connections = ["postgres"]}}
-    workflows = {
-        movement_label = {
-            wiring = "inventory_move_and_label"
-            registration = {
-                source_package = "wamn_wms"
-                entity = "packaging"
-                ops = ["update"]
-                condition = "old.location_id != new.location_id"
-            }
-        }
-    }
 }

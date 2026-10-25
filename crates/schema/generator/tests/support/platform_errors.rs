@@ -150,11 +150,6 @@ fn custom_visibility_permissions_and_components_remain_closed() {
             GenerateErrorType::InvalidOperation,
         ),
         (
-            "registration",
-            json!({"source_package": "platform_fixture", "entity": "widget", "ops": ["insert"]}),
-            GenerateErrorType::InvalidOperation,
-        ),
-        (
             "visibility",
             json!("private"),
             GenerateErrorType::InvalidOperation,

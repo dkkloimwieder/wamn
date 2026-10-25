@@ -11,7 +11,7 @@
 //! No external database, bucket or DNS is required. The test keeps its input,
 //! kubeconfig and progress under /var/tmp and removes its cluster and registries.
 //! A TLS artifact registry serves Receiving, WMS, and their unqualified releases.
-//! WMS publishes through the native gate sidecar with an in-memory PAT.
+//! WMS publishes through the same release Job as Receiving.
 //! WMS stays unqualified and must refuse. The host qualifies Receiving, then
 //! the test applies only Receiving through HTTPS checks in 4.21 and requires an unchanged rerun.
 //! HTTPS Jobs pull the existing pinned curl image from the public registry.
@@ -347,20 +347,17 @@ cluster.Cluster {{
             line.strip_prefix(&wms_prefix)
                 .and_then(|line| line.strip_suffix('"'))
         })
-        .context("wired publication printed no release line")?
+        .context("publication printed no release line")?
         .to_owned();
     ensure!(
         EnvironmentDocument::compile(&wms_input)?.release == DeclaredRelease::None,
         "platform apply changed the WMS environment file"
     );
-    let gate_log = std::fs::read_to_string(work.join("jobs/platform-release-test--wms--dev.log"))?;
+    let publication_log =
+        std::fs::read_to_string(work.join("jobs/platform-release-test--wms--dev.log"))?;
     ensure!(
-        gate_log.contains(&wms_digest),
-        "gate Job log contains no WMS release digest"
-    );
-    ensure!(
-        gate_log.contains("control authoring credential accepted"),
-        "gate Job log contains no sidecar startup"
+        publication_log.contains(&wms_digest),
+        "release Job log contains no WMS release digest"
     );
     let completed: Value = kubectl::get(
         &kubeconfig,
@@ -370,10 +367,10 @@ cluster.Cluster {{
         "wamn-install-platform-release-test--wms--dev",
     )
     .await?
-    .context("wired publication has no completion record")?;
+    .context("publication has no completion record")?;
     ensure!(
         completed["data"]["output"].as_str().map(str::trim) == Some(wms_digest.as_str()),
-        "wired publication retained output other than its digest"
+        "publication retained output other than its digest"
     );
     for suffix in ["identity-reader", "control-author", "management-admitter"] {
         let secret: Option<Value> = kubectl::get(
@@ -384,7 +381,10 @@ cluster.Cluster {{
             &format!("platform-release-test--wms--dev-{suffix}"),
         )
         .await?;
-        ensure!(secret.is_none(), "gate Job retained its {suffix} Secret");
+        ensure!(
+            secret.is_none(),
+            "publication created a retired gate {suffix} Secret"
+        );
     }
     wms_environment.release = DeclaredRelease::Digest(wms_digest.clone());
     std::fs::write(&wms_input, wms_environment.to_kcl())?;
@@ -446,11 +446,12 @@ cluster.Cluster {{
         second
             .iter()
             .any(|line| line == &format!("{wms_prefix}{wms_digest}\"")),
-        "unchanged wired publication did not return the same release line"
+        "unchanged publication did not return the same release line"
     );
     ensure!(
-        std::fs::read_to_string(work.join("jobs/platform-release-test--wms--dev.log"))? == gate_log,
-        "unchanged wired publication ran its gate Job again"
+        std::fs::read_to_string(work.join("jobs/platform-release-test--wms--dev.log"))?
+            == publication_log,
+        "unchanged publication ran its release Job again"
     );
     for ((name, first), (_, second)) in secrets
         .iter()

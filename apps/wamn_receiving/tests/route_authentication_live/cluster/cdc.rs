@@ -86,6 +86,19 @@ pub(super) async fn configure(
     project_task.abort();
     admin_task.abort();
     configured?;
+    super::super::environment::author_materializer_workflow(
+        inputs,
+        route,
+        &wamn_control::environment::EventBroker {
+            nats_url: nats_url.to_owned(),
+            nats_username: provisioning.username.clone(),
+            nats_password_file: provisioning.password_file.clone(),
+            stream_replicas: source.num_replicas,
+            dup_window_secs: source.duplicate_window.as_secs(),
+        },
+    )
+    .await?;
+
     let mut generation = generation_args(
         &scope(),
         WorkloadRoleFamily::RegistryReader,

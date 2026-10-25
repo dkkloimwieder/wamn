@@ -457,14 +457,6 @@ pub(super) fn verify_management_admitter_grants(
             "SELECT".to_string(),
         ));
     }
-    for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
-        expected.insert((
-            "column".to_string(),
-            "catalog".to_string(),
-            format!("wirings.{column}"),
-            "INSERT".to_string(),
-        ));
-    }
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact management-admission grant set"

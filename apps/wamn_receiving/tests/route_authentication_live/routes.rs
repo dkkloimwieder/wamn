@@ -221,7 +221,6 @@ pub(super) async fn publish_receiving_release(
     )
     .await?;
     verify_zero_case_gate_reports(admin.as_ref(), &gate_reports).await?;
-    author_journey_wirings(inputs, &route.database_url, &system_url).await?;
     reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
     let target = JourneyReleaseTarget {
         project_url: &route.database_url,

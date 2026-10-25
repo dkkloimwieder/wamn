@@ -88,6 +88,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
             },
             entry: InvocationEntry::Wiring(WiringPosition {
                 package_id: "org_workflow".to_owned(),
+                wiring_hash: format!("sha256:{}", "a".repeat(64)),
                 wiring_id: "record-batch".to_owned(),
                 wiring_version: 1,
                 node_id: "base-command".to_owned(),

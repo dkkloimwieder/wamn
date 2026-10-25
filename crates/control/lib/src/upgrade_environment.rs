@@ -733,7 +733,7 @@ impl Run {
     /// Stage 7: packages, components, gated wirings and the release. Stage 9's
     /// `env apply` writes the release row and binds its connections.
     async fn packages(&self, record: &RunRecord) -> Outcome {
-        use crate::release_composition::{PackageInput, load_wirings, select_component_artifacts};
+        use crate::release_composition::{PackageInput, select_component_artifacts};
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
@@ -762,7 +762,6 @@ impl Run {
         }
         // The release composition of the dev loop, over each package's build.
         let artifacts = select_component_artifacts(&packages)?;
-        let wirings = load_wirings(&packages)?;
 
         let registry = Registry::login(&environment.registry, &self.work).await?;
         let (applied, opened) = self
@@ -839,56 +838,6 @@ impl Run {
             "management-author PAT prefix".to_owned(),
             gate.pat_prefix.clone(),
         );
-        let mut targets = Vec::new();
-        if !wirings.is_empty() {
-            let service = GateService::start(
-                self,
-                &gate.control_author_url,
-                &gate.management_admitter_url,
-                &databases,
-                &package_registry,
-            )
-            .await?;
-            for input in &wirings {
-                let package = packages
-                    .iter()
-                    .find(|package| package.manifest.package.id == *input.package_id)
-                    .context("a wiring has no package")?;
-                let file = input.path.clone();
-                ensure!(
-                    file.starts_with(&package.root),
-                    "a wiring lies outside its package"
-                );
-                let report = service
-                    .gate(
-                        &gate,
-                        input,
-                        &self.arguments.project,
-                        &self.arguments.environment,
-                    )
-                    .await?;
-                outputs.insert(format!("gate {}", input.wiring.wiring_id), report);
-                crate::author_wiring::author_wiring_document(
-                    crate::author_wiring::AuthorWiringDocumentRequest {
-                        database_url: project_url.clone(),
-                        control_database_url: system_url.clone(),
-                        registry: package_registry.clone(),
-                        tenant: tenant.clone(),
-                        package_id: input.package_id.to_string(),
-                        package_version: input.package_version.to_string(),
-                        wiring_document: file,
-                    },
-                )
-                .await?;
-                targets.push(crate::publish_release::ReleaseWiringTarget {
-                    package_id: input.package_id.to_string(),
-                    package_version: input.package_version.to_string(),
-                    wiring_id: input.wiring.wiring_id.clone(),
-                    wiring_version: input.wiring.version,
-                });
-            }
-        }
-
         let digest = crate::publish_release::publish_release(
             crate::publish_release::PublishReleaseRequest {
                 database_url: project_url.clone(),
@@ -910,7 +859,6 @@ impl Run {
                         )
                     })
                     .collect::<Result<_, _>>()?,
-                wirings: targets,
             },
             &package_registry,
             &format!("{}/releases", environment.registry),
@@ -1243,9 +1191,6 @@ impl Run {
 struct GateCredentials {
     control_author: wamn_control_provision::CredentialGeneration,
     management_admitter: wamn_control_provision::CredentialGeneration,
-    control_author_url: String,
-    management_admitter_url: String,
-    pat_token: String,
     pat_prefix: String,
 }
 
@@ -1330,16 +1275,13 @@ impl GateCredentials {
             generations.push((generation, databases.local(&url)?));
         }
         let [
-            (control_author, control_author_url),
-            (management_admitter, management_admitter_url),
+            (control_author, _control_author_url),
+            (management_admitter, _management_admitter_url),
         ] = <[_; 2]>::try_from(generations).map_err(|_| anyhow::anyhow!("two generations"))?;
-        let (pat_token, pat_prefix) = mint_pat(run, kubectl, databases, record).await?;
+        let (_pat_token, pat_prefix) = mint_pat(run, kubectl, databases, record).await?;
         Ok(Self {
             control_author,
             management_admitter,
-            control_author_url,
-            management_admitter_url,
-            pat_token,
             pat_prefix,
         })
     }
@@ -1611,8 +1553,6 @@ fn mint_pat_job(
 /// The gate service on this machine, from the stage 2 build. It ends with
 /// this value.
 struct GateService {
-    port: u16,
-    http: reqwest::Client,
     _child: Child,
 }
 
@@ -1677,11 +1617,7 @@ impl GateService {
             .context("start the gate service")?;
         for _ in 0..60 {
             if fs::read_to_string(&log)?.contains("listening") {
-                return Ok(Self {
-                    port,
-                    http: reqwest::Client::new(),
-                    _child: child,
-                });
+                return Ok(Self { _child: child });
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -1689,60 +1625,6 @@ impl GateService {
             "the gate service did not listen within 60 s; its log is {}",
             log.display()
         )
-    }
-
-    /// Gates one wiring and returns its report id.
-    async fn gate(
-        &self,
-        gate: &GateCredentials,
-        input: &crate::release_composition::WiringInput,
-        project: &str,
-        environment: &str,
-    ) -> anyhow::Result<String> {
-        use wamn_authoring_model::{
-            AuthoringCommand, AuthoringDocument, AuthoringRequest, AuthoringRequestEnvelope,
-            AuthoringScope, Gate, SCHEMA_VERSION,
-        };
-        let request = AuthoringDocument::Request(Box::new(AuthoringRequestEnvelope::Command(
-            AuthoringRequest {
-                schema_version: SCHEMA_VERSION.to_owned(),
-                command_id: format!(
-                    "gate-{}-{}-{}",
-                    input.package_id, input.package_version, input.wiring.wiring_id
-                ),
-                command: AuthoringCommand::Gate(Gate {
-                    scope: AuthoringScope {
-                        project_id: project.to_owned(),
-                        environment: environment.to_owned(),
-                    },
-                    package_id: input.package_id.to_string(),
-                    package_version: input.package_version.to_string(),
-                    document: input.document.clone(),
-                }),
-            },
-        )));
-        let reply: Value = self
-            .http
-            .post(format!("http://127.0.0.1:{}/authoring", self.port))
-            .bearer_auth(&gate.pat_token)
-            .json(&request)
-            .send()
-            .await
-            .context("post the gate request")?
-            .json()
-            .await
-            .context("read the gate reply")?;
-        let outcome = &reply["body"]["outcome"];
-        ensure!(
-            outcome["status"] == "completed",
-            "the gate of {} answered {}",
-            input.wiring.wiring_id,
-            redact(&outcome.to_string())
-        );
-        outcome["value"]["result"]["report-id"]
-            .as_str()
-            .map(str::to_owned)
-            .with_context(|| format!("the gate of {} gave no report-id", input.wiring.wiring_id))
     }
 }
 
@@ -2022,12 +1904,12 @@ impl Kubectl {
 /// `gcloud auth print-access-token`. The Docker configuration lives in a
 /// private directory of the work directory and is removed with this value.
 struct Registry {
+    http: reqwest::Client,
     host: String,
     /// The `<project>/<repository>` path below the host.
     path: String,
     token: String,
     config: PathBuf,
-    http: reqwest::Client,
 }
 
 impl Registry {

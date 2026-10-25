@@ -78,13 +78,6 @@
             }
           ]
         }
-      },
-      "registration": {
-        "source_package": "source_fixture",
-        "entity": "item",
-        "ops": [
-          "insert"
-        ]
       }
     }
   },

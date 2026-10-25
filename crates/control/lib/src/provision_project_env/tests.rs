@@ -749,14 +749,6 @@ fn management_grants_are_exact_and_required_in_the_target_database() {
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         exact.push(role_acl("relation", "catalog", relation, "SELECT"));
     }
-    for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
-        exact.push(role_acl(
-            "column",
-            "catalog",
-            &format!("wirings.{column}"),
-            "INSERT",
-        ));
-    }
     verify_management_admitter_grants(MANAGEMENT_ADMITTER_ROLE, "project_db", "project_db", &exact)
         .unwrap();
 

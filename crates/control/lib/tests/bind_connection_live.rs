@@ -22,10 +22,9 @@ use std::sync::Arc;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ConnectionTypeDescriptor,
-    DefinitionHash, RequirementType, WiringDocument, WiringNode, WiringTerminal,
+    RequirementType, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::author_wiring::{AuthorWiringRequest, author_wiring};
 use wamn_control::bind_connection::{self, BindConnectionRequest};
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -59,9 +58,7 @@ const RELEASE_BYTES: &str = concat!(
     r#""release":{"packages":[{"package-id":"bind_connection_fixture","package-version":"1.0.0"},"#,
     r#"{"package-id":"nested_origin","package-version":"1.0.0"},"#,
     r#"{"package-id":"nested_wiring","package-version":"1.0.0"}]},"#,
-    r#""workflow":{"wirings":["#,
-    r#"{"graph":{"entry":"store","format-version":"0.1","nodes":{"store":{"component":"blob-put","interface-version":"0.1.0","operation":"wamn:node/handler@0.1.0","terminal":"respond"}},"version":1,"wiring-id":"store_label"},"package-id":"bind_connection_fixture"},"#,
-    r#"{"graph":{"entry":"store","format-version":"0.1","nodes":{"store":{"component":"nested-origin","interface-version":"0.1.0","operation":"origin-call","terminal":"respond"}},"version":1,"wiring-id":"store_label"},"package-id":"nested_wiring"}]}}"#
+    r#""attachments":{}}"#
 );
 /// A release that serves none of the bound components.
 const OTHER_RELEASE_BYTES: &str = r#"{"components":[]}"#;
@@ -247,54 +244,39 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         )
         .await
         .expect("publish the fixture release");
+    for (application, document) in [
+        (PACKAGE, wiring()),
+        (
+            "nested_wiring",
+            WiringDocument::new(
+                "store_label",
+                1,
+                "store",
+                BTreeMap::from([(
+                    "store".to_owned(),
+                    WiringNode {
+                        component: "nested-origin".to_owned(),
+                        interface_version: "0.1.0".to_owned(),
+                        operation: "origin-call".to_owned(),
+                        operation_dependency: None,
+                        params: BTreeMap::new(),
+                        terminal: Some(WiringTerminal::Respond),
+                    },
+                )]),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap(),
+        ),
+    ] {
+        project.execute("INSERT INTO catalog.workflows
+            (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, created_by)
+            VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', $7::text::uuid)",
+            &[&TENANT, &ENVIRONMENT, &application, &document.wiring_id, &serde_json::to_string(&document).unwrap(),
+              &document.wiring_hash().as_str(), &wamn_project_state::workflow_user_id().to_string()]
+        ).await.expect("seed the workflow connection lookup");
+    }
     vec![blob_put, http_sidecar]
-}
-
-async fn provision_control(control: &Client) {
-    control
-        .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
-        .await
-        .expect("scope the control seed session");
-}
-
-async fn record_green_report(control: &Client, wiring_hash: &DefinitionHash) {
-    control
-        .execute(
-            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
-             VALUES ($1, $2, true, '{}'::jsonb)",
-            &[&TENANT, &wiring_hash.as_str()],
-        )
-        .await
-        .expect("record a green gate report at the wiring's own hash");
-}
-
-async fn author(
-    control: &Client,
-    project: &mut Client,
-    document: &WiringDocument,
-    components: &[AdmittedComponent],
-) {
-    let transaction = project
-        .transaction()
-        .await
-        .expect("open the wiring authorship transaction");
-    author_wiring(
-        control,
-        &transaction,
-        &AuthorWiringRequest {
-            tenant_id: TENANT,
-            package_id: PACKAGE,
-            package_version: PACKAGE_VERSION,
-            document,
-            components,
-        },
-    )
-    .await
-    .expect("author the fixture wiring under its green report");
-    transaction
-        .commit()
-        .await
-        .expect("commit the wiring authorship");
 }
 
 fn definition_file(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
@@ -489,16 +471,9 @@ async fn assert_nested_effect_snapshot(
 async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     let _lock = wamn_test_postgres::lock();
     let project_database = wamn_project_state::test_database::tenant_platform();
-    let control_database = wamn_control_provision::test_database::system();
     let project_url = project_database.url().to_owned();
-    let control_url = control_database.url().to_owned();
-    let (mut project, project_task) = connect(&project_url).await;
-    let (control, control_task) = connect(&control_url).await;
-    let components = provision_project(&project, &project_url).await;
-    provision_control(&control).await;
-    let document = wiring();
-    record_green_report(&control, &document.wiring_hash()).await;
-    author(&control, &mut project, &document, &components).await;
+    let (project, project_task) = connect(&project_url).await;
+    provision_project(&project, &project_url).await;
     // No tempfile dev-dependency in this crate: a pid-named scratch directory,
     // removed at the end.
     let scratch_dir =
@@ -864,8 +839,6 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_nested_effect_snapshot(&project, &postgres, lookup).await;
 
     drop(project);
-    drop(control);
     project_task.abort();
-    control_task.abort();
     let _ = std::fs::remove_dir_all(&scratch_dir);
 }

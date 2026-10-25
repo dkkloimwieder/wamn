@@ -47,8 +47,6 @@ pub enum WorkflowCommand {
     Release(RunArgs),
     /// Print the newest runs of the environment, one JSON object per line.
     Runs(ListArgs),
-    /// Print each declared workflow of the selected release, one JSON object per line.
-    Declared(DeclaredArgs),
 }
 
 /// The tenant and environment every workflow verb acts in.
@@ -77,6 +75,9 @@ pub enum ExecutionType {
 
 #[derive(Debug, Args)]
 pub struct AuthorArgs {
+    /// Read the local host's release facts from this dev root instead of Helm.
+    #[arg(long)]
+    pub dev_root: Option<PathBuf>,
     #[command(flatten)]
     pub scope: WorkflowScope,
     /// The coordinate, `org/project/env`, whose serving release gates the graph.
@@ -134,6 +135,9 @@ pub struct VersionArgs {
 
 #[derive(Debug, Args)]
 pub struct EnableArgs {
+    /// Read the local host's release facts from this dev root instead of Helm.
+    #[arg(long)]
+    pub dev_root: Option<PathBuf>,
     #[command(flatten)]
     pub version: VersionArgs,
     /// The `platform."user"` id of the enabling principal.
@@ -191,16 +195,6 @@ pub struct ListArgs {
     pub limit: u32,
 }
 
-#[derive(Debug, Args)]
-pub struct DeclaredArgs {
-    #[command(flatten)]
-    pub scope: WorkflowScope,
-    /// Select an installed release by its manifest digest.
-    #[arg(long)]
-    pub release_digest: String,
-}
-
-/// Connect with project-admin authority and bind the contract to the scope.
 async fn workflows(scope: &WorkflowScope) -> anyhow::Result<PostgresWorkflows> {
     let (client, connection) = tokio_postgres::connect(&scope.admin_database_url, NoTls)
         .await
@@ -221,6 +215,22 @@ async fn project(scope: &WorkflowScope) -> anyhow::Result<tokio_postgres::Client
         .context("connect to the project database")?;
     tokio::spawn(connection);
     Ok(client)
+}
+
+async fn serving_facts(
+    triple: &wamn_control_registry::Triple,
+    dev_root: Option<&std::path::Path>,
+) -> anyhow::Result<(String, wamn_catalog::EnvironmentApplications)> {
+    if let Some(root) = dev_root {
+        let release =
+            wamn_runtime::local_application::read_local_release(&root.join("local-artifacts"))?;
+        return Ok((release.manifest_digest.to_string(), release.applications));
+    }
+    let platform = Platform::from_env()?;
+    let digest = wamn_control::environment::show::serving_release(&platform, triple).await?;
+    let applications =
+        wamn_control::environment::show::serving_applications(&platform, triple).await?;
+    Ok((digest, applications))
 }
 
 /// Run one workflow verb and print its result.
@@ -253,13 +263,9 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                     .as_deref()
                     .map_or(WorkflowTrigger::Manual, WorkflowTrigger::Schedule)
             };
-            let document = wamn_control::author_wiring::read_wiring_document(&args.document)?;
-            let platform = Platform::from_env()?;
+            let document = wamn_control::author_workflow::read_wiring_document(&args.document)?;
             let triple = parse_coordinate(&args.coordinate)?;
-            let digest =
-                wamn_control::environment::show::serving_release(&platform, &triple).await?;
-            let declared =
-                wamn_control::environment::show::serving_applications(&platform, &triple).await?;
+            let (digest, declared) = serving_facts(&triple, args.dev_root.as_deref()).await?;
             let hash = wamn_control::author_workflow::author_workflow_in_databases(
                 &args.scope.admin_database_url,
                 &args.control_database_url,
@@ -279,22 +285,28 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             println!("{hash}");
         }
         WorkflowCommand::Enable(args) => {
-            let platform = Platform::from_env()?;
+            let (system_database_url, events) = if args.dev_root.is_some() {
+                (
+                    std::env::var("WAMN_CONTROL_DATABASE_URL")
+                        .context("set WAMN_CONTROL_DATABASE_URL")?,
+                    wamn_control::environment::event_broker_from_env()?,
+                )
+            } else {
+                let platform = Platform::from_env()?;
+                (platform.system_database_url, platform.events)
+            };
             let triple = parse_coordinate(&args.version.coordinate)?;
-            let digest =
-                wamn_control::environment::show::serving_release(&platform, &triple).await?;
-            let declared =
-                wamn_control::environment::show::serving_applications(&platform, &triple).await?;
+            let (digest, declared) = serving_facts(&triple, args.dev_root.as_deref()).await?;
             let mut client = project(&args.version.scope).await?;
             wamn_control::workflow_lifecycle::enable_workflow(
-                &platform.system_database_url,
+                &system_database_url,
                 &triple,
                 &mut client,
                 &args.version.workflow(),
                 &args.principal_id,
                 &digest,
                 &declared,
-                platform.events.as_ref(),
+                events.as_ref(),
             )
             .await?;
             println!(
@@ -354,40 +366,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             }
             transaction.commit().await?;
         }
-        WorkflowCommand::Declared(args) => {
-            let (mut client, connection) =
-                tokio_postgres::connect(&args.scope.admin_database_url, NoTls)
-                    .await
-                    .context("connect to the project database")?;
-            tokio::spawn(connection);
-            let tx = client.transaction().await?;
-            let bytes = wamn_control::publish_release::read_release(
-                &tx,
-                &args.scope.tenant,
-                &args.release_digest,
-            )
-            .await?
-            .context("the selected release is not installed")?;
-            let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-            tx.commit().await?;
-            for (id, registration) in &manifest.workflow.registrations {
-                if registration.delivery == wamn_catalog::RegistrationDelivery::Queue {
-                    let (_, workflow_id) = id
-                        .split_once("::")
-                        .context("workflow registration has no package")?;
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "package-id": registration.package_id,
-                            "workflow-id": workflow_id,
-                            "wiring-id": registration.wiring_id,
-                            "wiring-version": registration.wiring_version,
-                            "registration": registration,
-                        })
-                    );
-                }
-            }
-        }
+
         WorkflowCommand::Start(args) => {
             println!("{}", start(&args).await?);
         }
@@ -543,6 +522,38 @@ mod tests {
             ]))
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn dev_root_supplies_the_host_release_without_helm() {
+        let directory =
+            std::env::temp_dir().join(format!("wamn-workflow-dev-root-{}", std::process::id()));
+        let artifacts = directory.join("local-artifacts");
+        std::fs::create_dir_all(&artifacts).unwrap();
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let applications = std::collections::BTreeMap::from([(
+            "overlay".to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: ["base".to_owned(), "overlay".to_owned()].into(),
+            },
+        )]);
+        std::fs::write(
+            artifacts.join(wamn_runtime::local_application::LOCAL_RELEASE_FILE),
+            serde_json::to_vec(&wamn_runtime::local_application::LocalRelease {
+                manifest_digest: wamn_catalog::ManifestDigest::parse(&digest).unwrap(),
+                applications: applications.clone(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let facts = serving_facts(
+            &wamn_control_registry::Triple::new("org", "project", "dev"),
+            Some(&directory),
+        )
+        .await
+        .unwrap();
+        assert_eq!(facts, (digest, applications));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

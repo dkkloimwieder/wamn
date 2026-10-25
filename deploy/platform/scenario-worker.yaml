@@ -67,8 +67,7 @@
 #                        PROJECT database. It is a separate plane from the
 #                        authoring connection above, not a fallback for it and
 #                        not reachable from it — authoring writes the control
-#                        table, admission appends project `catalog.wirings`
-#                        rows, and a transaction cannot span two databases.
+#                        table, and the gate reads project posture.
 #                        It is refused before any I/O on exactly the same
 #                        predicates
 #                        (crates/control/provision parse_management_admission_url),

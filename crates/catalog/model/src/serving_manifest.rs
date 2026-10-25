@@ -7,10 +7,8 @@
 //! §7.2, contract A) and its released operations. The descriptor is the one
 //! owner of the component name, interface version and digest. An
 //! application's components compose at build into one component. A route
-//! calls one component export. The workflow section holds the wiring definitions, the attachments
-//! that start a wiring, and the registrations. A wiring is a graph the router
-//! walks. It contains no flow or
-//! execution-plan identity. Producers must source every member from current
+//! calls one component export. Workflows belong to the environment.
+//! Producers source every release member from current
 //! catalog records; this model intentionally provides no legacy-plan
 //! conversion. Attachment authentication uses a closed modes list, without a
 //! scalar-mode fallback.
@@ -34,8 +32,7 @@ use crate::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
     CatalogIdentityError, ComponentConnection, ComponentDescriptor, ComponentSqlStatement,
     DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest, PackageCoordinate,
-    WiringDocument, package::validate_canonical_operation_for_package, validate_digest,
-    validate_text,
+    package::validate_canonical_operation_for_package, validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -366,55 +363,6 @@ fn own_statements(
     Ok(statements)
 }
 
-/// One immutable wiring definition in the release closure: its package and
-/// its canonical graph. The runtime walks this graph
-/// (docs/plan/platform-deploy.md §5). The graph is the one carrier of the
-/// wiring's id, version and hash; [`ServingWiring::identity`] derives them
-/// (format 9, R2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ServingWiring {
-    pub package_id: String,
-    pub graph: WiringDocument,
-}
-
-impl ServingWiring {
-    /// The wiring of `package_id` whose graph is `graph`.
-    pub fn new(package_id: impl Into<String>, graph: WiringDocument) -> Self {
-        Self {
-            package_id: package_id.into(),
-            graph,
-        }
-    }
-
-    /// The wiring id, version and graph hash, derived from the graph.
-    pub fn identity(&self) -> (&str, u32, DefinitionHash) {
-        (
-            &self.graph.wiring_id,
-            self.graph.version,
-            self.graph.wiring_hash(),
-        )
-    }
-
-    fn key(&self) -> (&str, &str, u32, DefinitionHash) {
-        let (wiring_id, wiring_version, graph_hash) = self.identity();
-        (&self.package_id, wiring_id, wiring_version, graph_hash)
-    }
-}
-
-/// The graph hash decides the graph, so the order is the order of the key.
-impl Ord for ServingWiring {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.key().cmp(&other.key())
-    }
-}
-
-impl PartialOrd for ServingWiring {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 /// The contract kind of one application operation.
 ///
 /// The values are the `kind` literals of the generated contract
@@ -633,20 +581,14 @@ pub enum AttachmentTarget {
         component: String,
         operation: String,
     },
-    /// One exact wiring identity and version, walked by the router.
-    Wiring {
-        wiring_id: String,
-        wiring_version: u32,
-    },
 }
 
-/// One authored attachment targeting a route or an exact wiring version.
+/// One authored attachment targeting a route.
 ///
-/// Publish reads this type from `publication/attachments.json` and splits it
-/// into a [`RouteAttachment`] or a [`WiringAttachment`] of the manifest.
+/// Publish reads this type from `publication/attachments.json` and converts it
+/// into a [`RouteAttachment`] of the manifest.
 ///
-/// On the wire the target is flat: `component` and `operation`, or
-/// `wiring-id` and `wiring-version`, never both.
+/// On the wire the target is flat: `component` and `operation`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "AttachmentWire", into = "AttachmentWire")]
 pub struct ServingAttachment {
@@ -672,10 +614,6 @@ struct AttachmentWire {
     component: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     operation: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    wiring_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    wiring_version: Option<u32>,
     definition_hash: DefinitionHash,
     definition: Value,
     auth_policy: Value,
@@ -687,27 +625,9 @@ impl TryFrom<AttachmentWire> for ServingAttachment {
     type Error = String;
 
     fn try_from(wire: AttachmentWire) -> Result<Self, Self::Error> {
-        let target = match (
-            wire.component,
-            wire.operation,
-            wire.wiring_id,
-            wire.wiring_version,
-        ) {
-            (Some(component), Some(operation), None, None) => AttachmentTarget::Route {
-                component,
-                operation,
-            },
-            (None, None, Some(wiring_id), Some(wiring_version)) => AttachmentTarget::Wiring {
-                wiring_id,
-                wiring_version,
-            },
-            _ => {
-                return Err(
-                    "an attachment names exactly one target: component and operation, \
-                     or wiring-id and wiring-version"
-                        .to_owned(),
-                );
-            }
+        let target = AttachmentTarget::Route {
+            component: wire.component.ok_or("attachment component is required")?,
+            operation: wire.operation.ok_or("attachment operation is required")?,
         };
         Ok(Self {
             type_: wire.type_,
@@ -723,23 +643,15 @@ impl TryFrom<AttachmentWire> for ServingAttachment {
 
 impl From<ServingAttachment> for AttachmentWire {
     fn from(attachment: ServingAttachment) -> Self {
-        let (component, operation, wiring_id, wiring_version) = match attachment.target {
-            AttachmentTarget::Route {
-                component,
-                operation,
-            } => (Some(component), Some(operation), None, None),
-            AttachmentTarget::Wiring {
-                wiring_id,
-                wiring_version,
-            } => (None, None, Some(wiring_id), Some(wiring_version)),
-        };
+        let AttachmentTarget::Route {
+            component,
+            operation,
+        } = attachment.target;
         Self {
             type_: attachment.type_,
             package_id: attachment.package_id,
-            component,
-            operation,
-            wiring_id,
-            wiring_version,
+            component: Some(component),
+            operation: Some(operation),
             definition_hash: attachment.definition_hash,
             definition: attachment.definition,
             auth_policy: attachment.auth_policy,
@@ -749,56 +661,30 @@ impl From<ServingAttachment> for AttachmentWire {
 }
 
 impl ServingAttachment {
-    /// Split authored attachments into route attachments and workflow attachments.
-    pub fn split(
-        authored: BTreeMap<String, Self>,
-    ) -> (
-        BTreeMap<String, RouteAttachment>,
-        BTreeMap<String, WiringAttachment>,
-    ) {
-        let mut routes = BTreeMap::new();
-        let mut wirings = BTreeMap::new();
-        for (id, attachment) in authored {
-            match attachment.target {
-                AttachmentTarget::Route {
+    /// Project authored route attachments into the manifest.
+    pub fn routes(authored: BTreeMap<String, Self>) -> BTreeMap<String, RouteAttachment> {
+        authored
+            .into_iter()
+            .map(|(id, attachment)| {
+                let AttachmentTarget::Route {
                     component,
                     operation,
-                } => {
-                    routes.insert(
-                        id,
-                        RouteAttachment {
-                            type_: attachment.type_,
-                            package_id: attachment.package_id,
-                            component,
-                            operation,
-                            definition_hash: attachment.definition_hash,
-                            definition: attachment.definition,
-                            auth_policy: attachment.auth_policy,
-                            registered_operation: attachment.registered_operation,
-                        },
-                    );
-                }
-                AttachmentTarget::Wiring {
-                    wiring_id,
-                    wiring_version,
-                } => {
-                    wirings.insert(
-                        id,
-                        WiringAttachment {
-                            type_: attachment.type_,
-                            package_id: attachment.package_id,
-                            wiring_id,
-                            wiring_version,
-                            definition_hash: attachment.definition_hash,
-                            definition: attachment.definition,
-                            auth_policy: attachment.auth_policy,
-                            registered_operation: attachment.registered_operation,
-                        },
-                    );
-                }
-            }
-        }
-        (routes, wirings)
+                } = attachment.target;
+                (
+                    id,
+                    RouteAttachment {
+                        type_: attachment.type_,
+                        package_id: attachment.package_id,
+                        component,
+                        operation,
+                        definition_hash: attachment.definition_hash,
+                        definition: attachment.definition,
+                        auth_policy: attachment.auth_policy,
+                        registered_operation: attachment.registered_operation,
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -819,28 +705,10 @@ impl From<RouteAttachment> for ServingAttachment {
     }
 }
 
-impl From<WiringAttachment> for ServingAttachment {
-    fn from(attachment: WiringAttachment) -> Self {
-        Self {
-            type_: attachment.type_,
-            package_id: attachment.package_id,
-            target: AttachmentTarget::Wiring {
-                wiring_id: attachment.wiring_id,
-                wiring_version: attachment.wiring_version,
-            },
-            definition_hash: attachment.definition_hash,
-            definition: attachment.definition,
-            auth_policy: attachment.auth_policy,
-            registered_operation: attachment.registered_operation,
-        }
-    }
-}
-
 impl From<AttachmentRef<'_>> for ServingAttachment {
     fn from(attachment: AttachmentRef<'_>) -> Self {
         match attachment {
             AttachmentRef::Route(attachment) => attachment.clone().into(),
-            AttachmentRef::Wiring(attachment) => attachment.clone().into(),
         }
     }
 }
@@ -862,78 +730,49 @@ pub struct RouteAttachment {
     pub registered_operation: Option<String>,
 }
 
-/// One release attachment that starts an exact wiring version.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct WiringAttachment {
-    #[serde(rename = "type")]
-    pub type_: AttachmentType,
-    pub package_id: String,
-    pub wiring_id: String,
-    pub wiring_version: u32,
-    pub definition_hash: DefinitionHash,
-    pub definition: Value,
-    pub auth_policy: Value,
-    /// Exact operation authority selected by this attachment. Attachments that
-    /// do not invoke a package operation carry no token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
-}
-
-/// One release attachment, borrowed from the route attachments or from the
-/// workflow section.
+/// One borrowed route attachment.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AttachmentRef<'a> {
     Route(&'a RouteAttachment),
-    Wiring(&'a WiringAttachment),
 }
 
 impl<'a> AttachmentRef<'a> {
     pub fn attachment_type(self) -> AttachmentType {
         match self {
             Self::Route(attachment) => attachment.type_,
-            Self::Wiring(attachment) => attachment.type_,
         }
     }
 
     pub fn package_id(self) -> &'a str {
         match self {
             Self::Route(attachment) => &attachment.package_id,
-            Self::Wiring(attachment) => &attachment.package_id,
         }
     }
 
     pub fn definition(self) -> &'a Value {
         match self {
             Self::Route(attachment) => &attachment.definition,
-            Self::Wiring(attachment) => &attachment.definition,
         }
     }
 
     pub fn auth_policy(self) -> &'a Value {
         match self {
             Self::Route(attachment) => &attachment.auth_policy,
-            Self::Wiring(attachment) => &attachment.auth_policy,
         }
     }
 
     pub fn registered_operation(self) -> Option<&'a str> {
         match self {
             Self::Route(attachment) => attachment.registered_operation.as_deref(),
-            Self::Wiring(attachment) => attachment.registered_operation.as_deref(),
         }
     }
 
-    /// The route or the wiring that this attachment starts.
+    /// The route that this attachment calls.
     pub fn target(self) -> AttachmentTarget {
         match self {
             Self::Route(attachment) => AttachmentTarget::Route {
                 component: attachment.component.clone(),
                 operation: attachment.operation.clone(),
-            },
-            Self::Wiring(attachment) => AttachmentTarget::Wiring {
-                wiring_id: attachment.wiring_id.clone(),
-                wiring_version: attachment.wiring_version,
             },
         }
     }
@@ -975,71 +814,6 @@ impl<'a> ServedAttachment<'a> {
             Self::Host(attachment) => attachment.registered_operation(),
         }
     }
-}
-
-/// The workflow facts of one release: what `wamn-workflow` walks and delivers.
-///
-/// A release with no wiring has an empty section, and the manifest omits it.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct WorkflowSection {
-    pub wirings: BTreeSet<ServingWiring>,
-    /// The attachments that start a wiring.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub attachments: BTreeMap<String, WiringAttachment>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub registrations: BTreeMap<String, ServingRegistration>,
-}
-
-impl WorkflowSection {
-    /// Whether this release has no workflow fact.
-    pub fn is_empty(&self) -> bool {
-        self.wirings.is_empty() && self.attachments.is_empty() && self.registrations.is_empty()
-    }
-}
-
-/// The delivery grain frozen for one release registration.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ServingRegistrationInput {
-    #[default]
-    Event,
-    Batch,
-}
-
-/// What the driver does with a delivery for one registration.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RegistrationDelivery {
-    /// Start a workflow run through the queue: a declared workflow
-    /// (docs/plan/workflow-feature.md 4.2).
-    #[default]
-    Queue,
-}
-
-/// Serde `skip_serializing_if` predicate for a field whose default carries no
-/// information on the wire.
-fn is_default<T: Default + PartialEq>(value: &T) -> bool {
-    *value == T::default()
-}
-
-/// One event registration targeting an exact wiring identity and version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ServingRegistration {
-    /// Package that owns the target wiring and registration definition.
-    pub package_id: String,
-    /// Package whose committed change emits the event this registration reads.
-    pub source_package_id: String,
-    pub wiring_id: String,
-    pub wiring_version: u32,
-    pub entity: String,
-    pub ops: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub input: ServingRegistrationInput,
-    /// The retained manifest delivery marker. Event starts use workflow rows.
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub delivery: RegistrationDelivery,
 }
 
 /// Parse a workflow's five-field UTC cron expression.
@@ -1093,8 +867,6 @@ pub struct ServingManifest {
     pub routes: BTreeSet<ServingRoute>,
     /// The attachments that call a route.
     pub attachments: BTreeMap<String, RouteAttachment>,
-    #[serde(default, skip_serializing_if = "WorkflowSection::is_empty")]
-    pub workflow: WorkflowSection,
     /// The fixed host route sets this release serves
     /// (docs/plan/platform-ui.md §4.2). The platform builds their routes, so
     /// the manifest names only the sets.
@@ -1114,11 +886,9 @@ impl ServingManifest {
         release: ServingRelease,
         components: BTreeSet<ServingComponent>,
         routes: BTreeSet<ServingRoute>,
-        wirings: BTreeSet<ServingWiring>,
         attachments: BTreeMap<String, ServingAttachment>,
-        registrations: BTreeMap<String, ServingRegistration>,
     ) -> Result<Self, CatalogIdentityError> {
-        let (attachments, workflow_attachments) = ServingAttachment::split(attachments);
+        let attachments = ServingAttachment::routes(attachments);
         let manifest = Self {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release,
@@ -1126,11 +896,6 @@ impl ServingManifest {
             composed_entry: None,
             routes,
             attachments,
-            workflow: WorkflowSection {
-                wirings,
-                attachments: workflow_attachments,
-                registrations,
-            },
             host_routes: BTreeSet::new(),
         };
         manifest.validate()?;
@@ -1138,12 +903,9 @@ impl ServingManifest {
         Ok(manifest)
     }
 
-    /// One attachment by id, from the route attachments or the workflow section.
+    /// One route attachment by id.
     pub fn attachment(&self, id: &str) -> Option<AttachmentRef<'_>> {
-        self.attachments
-            .get(id)
-            .map(AttachmentRef::Route)
-            .or_else(|| self.workflow.attachments.get(id).map(AttachmentRef::Wiring))
+        self.attachments.get(id).map(AttachmentRef::Route)
     }
 
     /// The members of the composed entry, in member order. Empty without an
@@ -1202,19 +964,11 @@ impl ServingManifest {
         })
     }
 
-    /// Every attachment of the release: the route attachments, then the
-    /// workflow section's. An id occurs once across both.
+    /// Every route attachment of the release, in id order.
     pub fn every_attachment(&self) -> impl Iterator<Item = (&str, AttachmentRef<'_>)> {
-        let routes = self
-            .attachments
+        self.attachments
             .iter()
-            .map(|(id, attachment)| (id.as_str(), AttachmentRef::Route(attachment)));
-        let wirings = self
-            .workflow
-            .attachments
-            .iter()
-            .map(|(id, attachment)| (id.as_str(), AttachmentRef::Wiring(attachment)));
-        routes.chain(wirings)
+            .map(|(id, attachment)| (id.as_str(), AttachmentRef::Route(attachment)))
     }
 
     /// One host route of a set this release serves, by attachment id.
@@ -1272,14 +1026,12 @@ impl ServingManifest {
             }
         })?;
         validate_format_version(&document)?;
-        // A release published before the schedules left the manifest
-        // (docs/plan/workflows.md epic 2) may carry `workflow.schedules`. It
-        // is read with the field ignored; its bytes and digest stay the ones
-        // stored.
+        // Retired workflow fields are accepted and dropped on read.
         let mut current = document.clone();
-        if let Some(workflow) = current.get_mut("workflow").and_then(Value::as_object_mut) {
-            workflow.remove("schedules");
-        }
+        current
+            .as_object_mut()
+            .expect("validated manifest object")
+            .remove("workflow");
         let manifest = serde_json::from_value::<Self>(current.clone()).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
                 message: format!("serving manifest JSON is invalid: {error}"),
@@ -1500,71 +1252,6 @@ impl ServingManifest {
             )?;
         }
 
-        let mut targets = BTreeSet::new();
-        for wiring in &self.workflow.wirings {
-            validate_package_member(&package_versions, &wiring.package_id)?;
-            wiring.graph.validate()?;
-            let (wiring_id, wiring_version, _) = wiring.identity();
-            if !targets.insert((wiring.package_id.as_str(), wiring_id, wiring_version)) {
-                return invalid("a wiring identity-version pair occurs more than once");
-            }
-        }
-
-        for (attachment_id, attachment) in &self.workflow.attachments {
-            validate_text(attachment_id, "attachment-id")?;
-            if self.attachments.contains_key(attachment_id) {
-                return invalid(format!(
-                    "attachment {attachment_id:?} occurs both as a route attachment and in the workflow section"
-                ));
-            }
-            validate_package_member(&package_versions, &attachment.package_id)?;
-            validate_wiring_target(
-                &targets,
-                &attachment.package_id,
-                &attachment.wiring_id,
-                attachment.wiring_version,
-            )?;
-            validate_attachment(
-                &package_versions,
-                attachment_id,
-                &attachment.package_id,
-                &attachment.definition,
-                &attachment.auth_policy,
-                attachment.registered_operation.as_deref(),
-            )?;
-        }
-
-        for (registration_id, registration) in &self.workflow.registrations {
-            validate_package_member(&package_versions, &registration.package_id)?;
-            validate_package_member(&package_versions, &registration.source_package_id)?;
-            let (owner_package_id, local_registration_id) = registration_id
-                .split_once("::")
-                .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
-                    message: format!(
-                        "registration key {registration_id:?} must be <package-id>::<registration-id>"
-                    ),
-                })?;
-            validate_text(local_registration_id, "registration-id")?;
-            if owner_package_id != registration.package_id || local_registration_id.contains("::") {
-                return invalid(format!(
-                    "registration key {registration_id:?} does not name owner package {:?}",
-                    registration.package_id
-                ));
-            }
-            validate_wiring_target(
-                &targets,
-                &registration.package_id,
-                &registration.wiring_id,
-                registration.wiring_version,
-            )?;
-            validate_text(&registration.entity, "entity")?;
-            if registration.ops.is_empty() {
-                return invalid("a registration matching no op is inert");
-            }
-            for op in &registration.ops {
-                validate_text(op, "op")?;
-            }
-        }
         Ok(())
     }
 }
@@ -1638,28 +1325,6 @@ fn validate_attachment(
         return invalid("attachment configuration carries retired flow or plan identity");
     }
     validate_registered_operation(package_versions, package_id, registered_operation)
-}
-
-fn validate_wiring_target(
-    targets: &BTreeSet<(&str, &str, u32)>,
-    package_id: &str,
-    wiring_id: &str,
-    wiring_version: u32,
-) -> Result<(), CatalogIdentityError> {
-    validate_text(wiring_id, "wiring-id")?;
-    if wiring_version == 0 {
-        return Err(CatalogIdentityError::ZeroVersion {
-            field: "wiring-version",
-        });
-    }
-    if !targets.contains(&(package_id, wiring_id, wiring_version)) {
-        return Err(CatalogIdentityError::UnresolvableManifestWiring {
-            package_id: package_id.to_string(),
-            wiring_id: wiring_id.to_string(),
-            wiring_version,
-        });
-    }
-    Ok(())
 }
 
 fn validate_package_member(
@@ -1746,7 +1411,6 @@ fn within_delivery_limit(bytes: usize) -> Result<(), CatalogIdentityError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixture_graph;
 
     const COMPONENT_A: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1806,13 +1470,6 @@ mod tests {
         ])
     }
 
-    fn wirings() -> BTreeSet<ServingWiring> {
-        BTreeSet::from([
-            ServingWiring::new("overlay", fixture_graph("shipping", 2)),
-            ServingWiring::new("base", fixture_graph("orders", 3)),
-        ])
-    }
-
     fn routes() -> BTreeSet<ServingRoute> {
         BTreeSet::from([ServingRoute {
             package_id: "base".into(),
@@ -1840,9 +1497,9 @@ mod tests {
         ServingAttachment {
             type_: AttachmentType::Http,
             package_id: "base".into(),
-            target: AttachmentTarget::Wiring {
-                wiring_id: "orders".into(),
-                wiring_version: 3,
+            target: AttachmentTarget::Route {
+                component: "http-request".into(),
+                operation: "base:widget/get@1.0.0".into(),
             },
             definition_hash: definition_hash(DEFINITION),
             definition: serde_json::json!({
@@ -1855,30 +1512,15 @@ mod tests {
         }
     }
 
-    fn registration() -> ServingRegistration {
-        ServingRegistration {
-            package_id: "overlay".into(),
-            source_package_id: "base".into(),
-            wiring_id: "shipping".into(),
-            wiring_version: 2,
-            entity: "orders".into(),
-            ops: BTreeSet::from(["insert".to_string()]),
-            input: ServingRegistrationInput::Event,
-            delivery: RegistrationDelivery::Queue,
-        }
-    }
-
     fn manifest() -> ServingManifest {
         ServingManifest::new(
             release(),
             components(),
             routes(),
-            wirings(),
             BTreeMap::from([
                 ("orders".to_string(), attachment()),
                 ("widget-get".to_string(), route_attachment()),
             ]),
-            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("fixture manifest is valid")
     }
@@ -2145,12 +1787,10 @@ mod tests {
             release(),
             components().into_iter().rev().collect(),
             routes().into_iter().rev().collect(),
-            wirings().into_iter().rev().collect(),
             BTreeMap::from([
                 ("widget-get".to_string(), route_attachment()),
                 ("orders".to_string(), attachment()),
             ]),
-            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("reordered fixture is valid");
 
@@ -2330,9 +1970,7 @@ mod tests {
             release(),
             missing_own,
             routes(),
-            wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
-            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect_err("permissions without the export's own operation were accepted");
         assert!(
@@ -2358,40 +1996,10 @@ mod tests {
             release(),
             outside,
             routes(),
-            wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
-            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect_err("a permission outside the release was accepted");
         assert!(error.to_string().contains("belongs to no package"));
-    }
-
-    /// A wiring is its package and its graph. The graph carries the id,
-    /// version and hash, so a wiring that restates them is refused.
-    #[test]
-    fn a_wiring_is_its_package_and_graph() {
-        let manifest = manifest();
-        let wiring = manifest.workflow.wirings.first().expect("a fixture wiring");
-        let (wiring_id, wiring_version, graph_hash) = wiring.identity();
-        assert_eq!(wiring_id, wiring.graph.wiring_id);
-        assert_eq!(wiring_version, wiring.graph.version);
-        assert_eq!(graph_hash, wiring.graph.wiring_hash());
-
-        for (field, value) in [
-            ("wiring-id", serde_json::json!(wiring_id)),
-            ("wiring-version", serde_json::json!(wiring_version)),
-            ("graph-hash", serde_json::json!(graph_hash.as_str())),
-        ] {
-            let mut document: Value = serde_json::from_slice(&manifest.canonical_bytes()).unwrap();
-            document["workflow"]["wirings"][0][field] = value;
-            assert!(
-                ServingManifest::from_canonical_bytes(
-                    &wamn_execution_contract::canonical_json_bytes(&document)
-                )
-                .is_err(),
-                "a wiring that restates {field} was admitted"
-            );
-        }
     }
 
     #[test]
@@ -2468,9 +2076,7 @@ mod tests {
             release(),
             components.clone(),
             routes(),
-            wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
-            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("an exact operation-scoped statement enters the serving manifest");
         let admitted = manifest
@@ -2512,9 +2118,7 @@ mod tests {
             release(),
             broken,
             routes(),
-            wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
-            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect_err("a statement may not move off its key");
         assert!(error.to_string().contains("invalid statement facts"));
@@ -2552,15 +2156,13 @@ mod tests {
             release(),
             components(),
             routes(),
-            wirings(),
             BTreeMap::from([("orders".to_string(), malformed)]),
-            BTreeMap::new(),
         )
         .expect_err("an attachment cannot smuggle a local-only operation token");
         assert!(
             error
                 .to_string()
-                .contains("<package-id>:<module>/<action>@<package-version>")
+                .contains("differs from its route operation")
         );
     }
 
@@ -2573,12 +2175,14 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                wirings(),
                 BTreeMap::from([("orders".to_string(), mismatched)]),
-                BTreeMap::new(),
             )
             .expect_err("attachment operation must match its selected package coordinate");
-            assert!(error.to_string().contains("does not belong"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("differs from its route operation")
+            );
         }
 
         let mut mismatched_components = components();
@@ -2592,15 +2196,9 @@ mod tests {
             .expect("fixture component has an operation");
         component_operation.registered_operation = Some("overlay:widget/get@3.0.0".into());
         mismatched_components.insert(component);
-        let error = ServingManifest::new(
-            release(),
-            mismatched_components,
-            routes(),
-            wirings(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-        )
-        .expect_err("component operation must match its selected package coordinate");
+        let error =
+            ServingManifest::new(release(), mismatched_components, routes(), BTreeMap::new())
+                .expect_err("component operation must match its selected package coordinate");
         assert!(error.to_string().contains("does not belong"));
     }
 
@@ -2645,9 +2243,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                wirings(),
                 BTreeMap::from([("orders".into(), signed)]),
-                BTreeMap::new(),
             )
         };
         assert_eq!(
@@ -2695,9 +2291,7 @@ mod tests {
                     release(),
                     components(),
                     routes(),
-                    wirings(),
                     BTreeMap::from([("orders".to_string(), malformed)]),
-                    BTreeMap::new(),
                 ),
                 Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
                     attachment_id: "orders".into(),
@@ -2716,9 +2310,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                wirings(),
                 BTreeMap::from([("orders".to_string(), authenticated)]),
-                BTreeMap::new(),
             )
             .expect("authenticated modes admit a registered operation");
         }
@@ -2730,9 +2322,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                wirings(),
                 BTreeMap::from([("orders".to_string(), anonymous)]),
-                BTreeMap::new(),
             ),
             Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
                 attachment_id: "orders".into(),
@@ -2746,15 +2336,8 @@ mod tests {
         duplicate
             .packages
             .insert(PackageCoordinate::new("base", "2.0.0").unwrap());
-        let error = ServingManifest::new(
-            duplicate,
-            components(),
-            routes(),
-            wirings(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-        )
-        .expect_err("two versions of one package must refuse");
+        let error = ServingManifest::new(duplicate, components(), routes(), BTreeMap::new())
+            .expect_err("two versions of one package must refuse");
         assert_eq!(
             error,
             CatalogIdentityError::DuplicateMember {
@@ -2762,130 +2345,6 @@ mod tests {
                 id: "base".into(),
             }
         );
-    }
-
-    #[test]
-    fn attachment_and_registration_targets_are_exact() {
-        let mut wrong_version = attachment();
-        wrong_version.target = AttachmentTarget::Wiring {
-            wiring_id: "orders".into(),
-            wiring_version: 2,
-        };
-        assert_eq!(
-            ServingManifest::new(
-                release(),
-                components(),
-                routes(),
-                wirings(),
-                BTreeMap::from([("orders".to_string(), wrong_version)]),
-                BTreeMap::new(),
-            ),
-            Err(CatalogIdentityError::UnresolvableManifestWiring {
-                package_id: "base".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 2,
-            })
-        );
-
-        let mut missing = registration();
-        missing.wiring_id = "ghost".into();
-        assert_eq!(
-            ServingManifest::new(
-                release(),
-                components(),
-                routes(),
-                wirings(),
-                BTreeMap::new(),
-                BTreeMap::from([("overlay::orders-changed".to_string(), missing)]),
-            ),
-            Err(CatalogIdentityError::UnresolvableManifestWiring {
-                package_id: "overlay".into(),
-                wiring_id: "ghost".into(),
-                wiring_version: 2,
-            })
-        );
-
-        let mut wrong_package = attachment();
-        wrong_package.package_id = "overlay".into();
-        assert_eq!(
-            ServingManifest::new(
-                release(),
-                components(),
-                routes(),
-                wirings(),
-                BTreeMap::from([("orders".to_string(), wrong_package)]),
-                BTreeMap::new(),
-            ),
-            Err(CatalogIdentityError::UnresolvableManifestWiring {
-                package_id: "overlay".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 3,
-            })
-        );
-    }
-
-    #[test]
-    fn registration_identity_keeps_owner_and_emitter_distinct() {
-        let mut registrations = BTreeMap::from([
-            (
-                "base::widget-created".to_owned(),
-                ServingRegistration {
-                    package_id: "base".into(),
-                    source_package_id: "base".into(),
-                    wiring_id: "orders".into(),
-                    wiring_version: 3,
-                    entity: "widget".into(),
-                    ops: BTreeSet::from(["insert".into()]),
-                    input: ServingRegistrationInput::Event,
-                    delivery: RegistrationDelivery::Queue,
-                },
-            ),
-            ("overlay::widget-created".to_owned(), registration()),
-        ]);
-        ServingManifest::new(
-            release(),
-            components(),
-            routes(),
-            wirings(),
-            BTreeMap::new(),
-            registrations.clone(),
-        )
-        .expect("the same local registration id remains distinct by owner package");
-
-        let overlay = registrations
-            .get_mut("overlay::widget-created")
-            .expect("fixture carries the overlay registration");
-        overlay.source_package_id = "missing".into();
-        let error = ServingManifest::new(
-            release(),
-            components(),
-            routes(),
-            wirings(),
-            BTreeMap::new(),
-            registrations,
-        )
-        .expect_err("the emitter must be an exact member of the release");
-        assert!(
-            error
-                .to_string()
-                .contains("absent from the effective release")
-        );
-    }
-
-    #[test]
-    fn registration_map_key_is_owner_qualified() {
-        for key in ["orders-changed", "base::orders-changed", "overlay::bad::id"] {
-            let error = ServingManifest::new(
-                release(),
-                components(),
-                routes(),
-                wirings(),
-                BTreeMap::new(),
-                BTreeMap::from([(key.to_owned(), registration())]),
-            )
-            .expect_err("a registration key must carry its exact owner coordinate");
-            assert!(error.to_string().contains("registration key"));
-        }
     }
 
     #[test]
@@ -2918,19 +2377,22 @@ mod tests {
             route_attachment()
         );
 
-        let wiring = serde_json::to_value(attachment()).expect("attachment serializes");
         let mut both = route.clone();
-        both["wiring-id"] = wiring["wiring-id"].clone();
-        both["wiring-version"] = wiring["wiring-version"].clone();
+        both["wiring-id"] = serde_json::json!("retired");
+        both["wiring-version"] = serde_json::json!(1);
         let mut neither = route.clone();
         neither.as_object_mut().unwrap().remove("component");
         neither.as_object_mut().unwrap().remove("operation");
         let mut half = route;
         half.as_object_mut().unwrap().remove("operation");
-        for document in [both, neither, half] {
+        for (document, reason) in [
+            (both, "unknown field"),
+            (neither, "component is required"),
+            (half, "operation is required"),
+        ] {
             let error = serde_json::from_value::<ServingAttachment>(document)
-                .expect_err("an attachment must name exactly one target");
-            assert!(error.to_string().contains("exactly one target"), "{error}");
+                .expect_err("an attachment requires a route target");
+            assert!(error.to_string().contains(reason), "{error}");
         }
     }
 
@@ -2947,9 +2409,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                wirings(),
                 BTreeMap::from([("widget-get".to_string(), absent)]),
-                BTreeMap::new(),
             ),
             Err(CatalogIdentityError::UnresolvableManifestRoute {
                 package_id: "base".into(),
@@ -2966,9 +2426,7 @@ mod tests {
                 release(),
                 components(),
                 routes(),
-                wirings(),
                 BTreeMap::from([("widget-get".to_string(), other_package)]),
-                BTreeMap::new(),
             ),
             Err(CatalogIdentityError::UnresolvableManifestRoute { .. })
         ));
@@ -2979,9 +2437,7 @@ mod tests {
             release(),
             components(),
             routes(),
-            wirings(),
             BTreeMap::from([("widget-get".to_string(), mismatched)]),
-            BTreeMap::new(),
         )
         .expect_err("a route attachment cannot grant another operation");
         assert!(
@@ -3017,54 +2473,26 @@ mod tests {
             (BTreeSet::from([handler]), "an event handler is not a route"),
             (duplicate, "occurs more than once"),
         ] {
-            let error = ServingManifest::new(
-                release(),
-                components(),
-                routes,
-                wirings(),
-                BTreeMap::new(),
-                BTreeMap::new(),
-            )
-            .expect_err("an inexact route must refuse");
+            let error = ServingManifest::new(release(), components(), routes, BTreeMap::new())
+                .expect_err("an inexact route must refuse");
             assert!(error.to_string().contains(refusal), "{error}");
         }
     }
 
     #[test]
-    fn an_attachment_id_names_one_attachment_across_the_manifest() {
-        let mut manifest = manifest();
-        let duplicate = manifest.workflow.attachments["orders"].clone();
-        manifest
-            .workflow
-            .attachments
-            .insert("widget-get".into(), duplicate);
-        let error = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
-            .expect_err("one attachment id cannot name a route and a wiring");
-        assert!(error.to_string().contains("occurs both"), "{error}");
-    }
-
-    #[test]
-    fn a_release_with_no_wiring_omits_the_workflow_section() {
-        let manifest = ServingManifest::new(
-            release(),
-            components(),
-            routes(),
-            BTreeSet::new(),
-            BTreeMap::from([("widget-get".to_string(), route_attachment())]),
-            BTreeMap::new(),
-        )
-        .expect("a route-only release is valid");
-        let document = serde_json::to_value(&manifest).expect("manifest serializes");
-        assert!(document.get("workflow").is_none());
-
-        let mut empty = document;
-        empty["workflow"] = serde_json::json!({"wirings": []});
-        assert_eq!(
-            ServingManifest::from_canonical_bytes(&wamn_execution_contract::canonical_json_bytes(
-                &empty
-            )),
-            Err(CatalogIdentityError::NonCanonicalJson)
-        );
+    fn retired_workflow_fields_are_ignored_and_never_written() {
+        let manifest = manifest();
+        let mut value = manifest.as_value();
+        value["workflow"] = serde_json::json!({
+            "wirings": [{"retired": true}],
+            "attachments": {"old": {}},
+            "registrations": {"old": {}}
+        });
+        let bytes = wamn_execution_contract::canonical_json_bytes(&value);
+        let (read, _) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
+        assert_eq!(read, manifest);
+        assert_eq!(read.digest(), manifest.digest());
+        assert!(read.as_value().get("workflow").is_none());
     }
 
     #[test]

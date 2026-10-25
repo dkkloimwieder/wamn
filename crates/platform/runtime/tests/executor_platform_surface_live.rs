@@ -34,13 +34,12 @@ use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_postgres::{
-    AclExpectation, AclTarget, AmbientCredentialState, CANDIDATE_WIRING_SQL, ClassCredentials,
-    CredentialConnectionKind, CredentialProbeErrorType, CredentialProbePredicate,
-    ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, ProductionClaimErrorType,
-    ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
-    ProductionLeaseRenewal, ProductionReapResult, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,
-    ReleaseIdentity, WamnPostgres, WamnPostgresConfig, credential_exactness_probe,
-    explicit_credential_source,
+    AclExpectation, AclTarget, AmbientCredentialState, ClassCredentials, CredentialConnectionKind,
+    CredentialProbeErrorType, CredentialProbePredicate, ExpectedCredentialIdentity,
+    MembershipExpectation, MembershipMode, ProductionClaimErrorType, ProductionClaimResult,
+    ProductionCompletion, ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
+    RELEASE_COMPONENTS_SQL, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
+    credential_exactness_probe, explicit_credential_source,
 };
 
 /// The generation login every leg runs as.
@@ -64,14 +63,6 @@ const WIRING_VERSION: i32 = 1;
 
 fn digest(fill: &str) -> String {
     format!("sha256:{}", fill.repeat(64))
-}
-
-fn graph(wiring_id: &str) -> String {
-    format!(
-        "{{\"format-version\":\"0.1\",\"wiring-id\":\"{wiring_id}\",\"version\":1,\
-          \"entry\":\"node\",\"nodes\":{{\"node\":{{\"component\":\"entity\",\
-          \"interface-version\":\"0.1\",\"operation\":\"create\"}}}}}}"
-    )
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -249,8 +240,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     let component_digest = digest("a");
     let imports_fingerprint = digest("b");
-    let wiring_hash = digest("c");
-    let dead_wiring_hash = digest("d");
     let artifact_digest = digest("f");
     let requirement_hash = digest("1");
     let definition_hash = digest("2");
@@ -259,19 +248,13 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // the wiring membership and the component closure, each component with
     // its descriptor.
     let manifest_body = format!(
-        r#"{{"components":[{{"descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}},"workflow":{{"wirings":[{{"graph":{live_graph},"package-id":"{PACKAGE_ID}"}}]}}}}"#,
-        live_graph = graph(WIRING_ID),
+        r#"{{"components":[{{"descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}}}}"#,
     );
     admin
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
                (tenant_id,package_id,package_version,artifact_digest) \
              VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
-             INSERT INTO catalog.wirings \
-               (tenant_id,package_id,package_version,wiring_id,version, \
-                graph_json,wiring_hash) VALUES \
-               ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{WIRING_ID}',{WIRING_VERSION}, \
-                '{live_graph}','{wiring_hash}'); \
              INSERT INTO catalog.releases \
                (tenant_id,manifest_digest,canonical_bytes) \
              SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
@@ -308,7 +291,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              SELECT '{TENANT}','run-1','f',1,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
                     '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}' FROM catalog.releases; \
              INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('{TENANT}','run-1');",
-            live_graph = graph(WIRING_ID),
         ))
         .await
         .context("seed the plan-supply fixture")?;
@@ -326,153 +308,17 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .await?
         .get(0);
     let release = generation
-        .query(
-            RELEASE_WIRING_SQL,
-            &[
-                &TENANT,
-                &PACKAGE_ID,
-                &WIRING_ID,
-                &WIRING_VERSION,
-                &manifest_digest,
-            ],
-        )
-        .await
-        .context("the release-wiring snapshot must execute under the credential")?;
-    assert_eq!(
-        release.len(),
-        1,
-        "the frozen release version resolved to no row under the executor credential"
-    );
-    assert_eq!(release[0].get::<_, String>(0), PACKAGE_VERSION);
-    assert_eq!(
-        serde_json::from_str::<Value>(&release[0].get::<_, String>(1))?,
-        serde_json::from_str::<Value>(&graph(WIRING_ID))?,
-        "the wiring graph is the one the release bytes carry"
-    );
-    let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(2))?;
-    assert_eq!(
-        release_components.as_array().map(Vec::len),
-        Some(1),
-        "release membership produced no component closure"
-    );
-    assert_eq!(
-        release_components[0],
-        serde_json::json!({
-            "scope": {
-                "tenant-id": TENANT, "package-id": PACKAGE_ID,
-                "package-version": PACKAGE_VERSION,
-            },
-            "component": "entity", "interface-version": "0.1",
-            "operations": {
-                "create": {"input-ports": [], "output-ports": [], "parameters": []},
-            },
-            "component-digest": component_digest, "imports": [],
-            "imports-fingerprint": imports_fingerprint, "effects": [],
-        }),
-        "the release descriptor produced the wrong released fact"
-    );
-
-    // A route reads the same release component list with no wiring.
-    let route_components = generation
         .query_one(RELEASE_COMPONENTS_SQL, &[&TENANT, &manifest_digest])
-        .await
-        .context("the release-components snapshot must execute under the credential")?;
-    assert_eq!(
-        route_components.get::<_, String>(0),
-        release[0].get::<_, String>(2),
-        "a route must load the same release component list as a wiring"
-    );
-    assert_eq!(
-        route_components.get::<_, i32>(1),
-        release[0].get::<_, i32>(3)
-    );
-
-    // The release path's own legitimate zero: the same coordinates under a
-    // manifest digest this release never sealed.
-    let foreign_release = generation
-        .query(
-            RELEASE_WIRING_SQL,
-            &[
-                &TENANT,
-                &PACKAGE_ID,
-                &WIRING_ID,
-                &WIRING_VERSION,
-                &digest("e"),
-            ],
-        )
         .await?;
+    let components: Value = serde_json::from_str(&release.get::<_, String>(0))?;
+    assert_eq!(components.as_array().map(Vec::len), Some(1));
+    assert_eq!(components[0]["component-digest"], component_digest);
     assert!(
-        foreign_release.is_empty(),
-        "a foreign manifest digest resolved a serving wiring"
+        generation
+            .query(RELEASE_COMPONENTS_SQL, &[&TENANT, &digest("e")])
+            .await?
+            .is_empty()
     );
-
-    let candidate = generation
-        .query(
-            CANDIDATE_WIRING_SQL,
-            &[
-                &TENANT,
-                &PACKAGE_ID,
-                &ENVIRONMENT,
-                &WIRING_ID,
-                &WIRING_VERSION,
-                &manifest_digest,
-                &wiring_hash,
-                &None::<String>,
-            ],
-        )
-        .await
-        .context("the candidate-wiring snapshot must execute under the credential")?;
-    assert_eq!(
-        candidate.len(),
-        1,
-        "the frozen candidate resolved to no row under the executor credential"
-    );
-    assert_eq!(
-        (candidate[0].get::<_, i64>(5), candidate[0].get::<_, i64>(6)),
-        (1, 0),
-        "the candidate node summary is wrong"
-    );
-    assert_eq!(
-        (candidate[0].get::<_, i64>(7), candidate[0].get::<_, i64>(8)),
-        (1, 1),
-        "the requirement did not resolve to one usable binding"
-    );
-    let binding_world: Value = serde_json::from_str(&candidate[0].get::<_, String>(9))?;
-    assert_eq!(
-        binding_world,
-        serde_json::json!([{
-            "component-digest": component_digest, "store-alias": "a-store",
-            "requirement-hash": requirement_hash, "instance-id": "instance-a",
-            "instance-revision": 2, "requirement-type": "http",
-            "contract": "wamn:http/0.1", "validation-hash": validation_hash,
-            "generation": 1, "definition-hash": definition_hash,
-            "credential-set-handle": "credential-a-1",
-        }]),
-        "the binding world the four connection relations produce is wrong"
-    );
-
-    // The candidate path's own legitimate zero: the exact coordinates under a
-    // content hash that names a different document.
-    let foreign_candidate = generation
-        .query(
-            CANDIDATE_WIRING_SQL,
-            &[
-                &TENANT,
-                &PACKAGE_ID,
-                &ENVIRONMENT,
-                &WIRING_ID,
-                &WIRING_VERSION,
-                &manifest_digest,
-                &dead_wiring_hash,
-                &None::<String>,
-            ],
-        )
-        .await?;
-    assert!(
-        foreign_candidate.is_empty(),
-        "a candidate resolved under another document's content hash"
-    );
-
     // *** `has_table_privilege` IS BLIND TO RLS. *** The ACL says this
     // principal may SELECT `wamn_run.run_queue`; `run_queue_tenant` carries no
     // `TO` clause and keys on `app.tenant`, so the SAME connection reads one
@@ -531,10 +377,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         expected_identity(
             &database,
             member_of_own_role(),
-            vec![
-                AclExpectation::new(AclTarget::Table("catalog.wirings".into()), "SELECT", true),
-                AclExpectation::new(AclTarget::Table("wamn_run.runs".into()), "INSERT", false),
-            ],
+            vec![AclExpectation::new(
+                AclTarget::Table("wamn_run.runs".into()),
+                "INSERT",
+                false,
+            )],
         ),
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;

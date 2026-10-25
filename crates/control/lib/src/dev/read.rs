@@ -330,8 +330,8 @@ pub(crate) use publisher::{DevReadPublisher, dev_read_channel};
 
 mod publisher {
     use super::{
-        DEV_OBSERVATION_LIMIT, DevGateOutcome, DevReadHandle, DevReleaseSnapshot,
-        DevRuntimeEndpoint, DevSnapshot, DevStageState, DevTraceObservation,
+        DEV_OBSERVATION_LIMIT, DevReadHandle, DevReleaseSnapshot, DevRuntimeEndpoint, DevSnapshot,
+        DevStageState, DevTraceObservation,
     };
     use crate::dev::{DevStage, DevStageFailure};
     use crate::release_carrier::ReleaseCarrier;
@@ -407,7 +407,8 @@ mod publisher {
         }
 
         /// Replace Gate outcomes with the latest suffix's exact results.
-        pub fn set_gate_outcomes(&self, outcomes: Vec<DevGateOutcome>) {
+        #[cfg(test)]
+        pub fn set_gate_outcomes(&self, outcomes: Vec<super::DevGateOutcome>) {
             self.update(|snapshot| snapshot.gate_outcomes = outcomes);
         }
 
@@ -698,9 +699,9 @@ mod tests {
         let attachment = ServingAttachment {
             type_: AttachmentType::Http,
             package_id: "platform_fixture".to_owned(),
-            target: wamn_catalog::AttachmentTarget::Wiring {
-                wiring_id: "widget/get".to_owned(),
-                wiring_version: 1,
+            target: wamn_catalog::AttachmentTarget::Route {
+                component: "fixture".to_owned(),
+                operation: "widget/get".to_owned(),
             },
             definition_hash: DefinitionHash::parse(DIGEST).expect("valid digest"),
             definition: json!({
@@ -717,24 +718,19 @@ mod tests {
             },
             components: BTreeSet::from([component]),
             routes: BTreeSet::new(),
-            attachments: BTreeMap::new(),
-            workflow: wamn_catalog::WorkflowSection {
-                attachments: ServingAttachment::split(BTreeMap::from([
-                    ("widget/get".to_owned(), attachment.clone()),
-                    (
-                        "widget/studio".to_owned(),
-                        ServingAttachment {
-                            type_: AttachmentType::Studio,
-                            definition: json!({
-                                "route": {"method": "POST", "path": "/studio"}
-                            }),
-                            ..attachment
-                        },
-                    ),
-                ]))
-                .1,
-                ..wamn_catalog::WorkflowSection::default()
-            },
+            attachments: ServingAttachment::routes(BTreeMap::from([
+                ("widget/get".to_owned(), attachment.clone()),
+                (
+                    "widget/studio".to_owned(),
+                    ServingAttachment {
+                        type_: AttachmentType::Studio,
+                        definition: json!({
+                            "route": {"method": "POST", "path": "/studio"}
+                        }),
+                        ..attachment
+                    },
+                ),
+            ])),
             host_routes: BTreeSet::new(),
         }
     }

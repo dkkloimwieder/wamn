@@ -10,8 +10,7 @@ use serde_json::{Value, json};
 
 use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
 use wamn_catalog::{
-    AttachmentType, ComponentDescriptor, ComponentPackageScope, DefinitionHash, ServingComponent,
-    ServingManifest, ServingWiring, WiringAttachment, WiringDocument, WorkflowSection,
+    ComponentDescriptor, ComponentPackageScope, ServingComponent, ServingManifest, WiringDocument,
 };
 
 pub const SERVICE: &str = "http-fixture";
@@ -24,7 +23,6 @@ pub const OUTBOUND_SECRET: &str = "fixture-outbound-key";
 pub const SCHEDULE: &str = "http-minute";
 pub const OAUTH2_HANDLE: &str = "oauth2-upstream";
 pub const OAUTH1_HANDLE: &str = "oauth1-upstream";
-pub const BODY: &str = "{ \"id\" : 1 }";
 
 pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
     let consumer_key = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_KEY")?;
@@ -334,100 +332,12 @@ pub fn release(
         .cloned()
         .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
         .collect();
-    let wiring = wiring()?;
-    let signed_wiring = signed_wiring()?;
-    let scheduled_wiring = scheduled_wiring()?;
-    let paged_wiring = paged_wiring()?;
-    let oauth_wirings = oauth_wirings()?;
-    for graph in [&wiring, &signed_wiring, &scheduled_wiring, &paged_wiring]
-        .into_iter()
-        .chain(&oauth_wirings)
-    {
-        wamn_control::author_wiring::gate_wiring_document(graph, &scope, &facts)?;
-    }
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
     for (descriptor, fact) in components.into_iter().zip(&facts) {
         manifest
             .components
             .insert(ServingComponent::project(fact, descriptor.connections)?);
     }
-    let mut attachments = std::collections::BTreeMap::new();
-    for (id, path, wiring_id, auth_policy) in [
-        (
-            "http-send",
-            "/http/send",
-            "http-send",
-            json!({"modes": ["none"]}),
-        ),
-        (
-            "http-signed",
-            "/http/signed",
-            "http-send",
-            json!({
-                "modes": ["signature"], "header": "x-hub-signature-256", "credential": INBOUND_HANDLE
-            }),
-        ),
-        (
-            "http-pages",
-            "/http/pages",
-            "http-pages",
-            json!({"modes": ["none"]}),
-        ),
-        (
-            "http-oauth2",
-            "/http/oauth2",
-            "http-oauth2",
-            json!({"modes":["none"]}),
-        ),
-        (
-            "http-oauth1",
-            "/http/oauth1",
-            "http-oauth1",
-            json!({"modes":["none"]}),
-        ),
-        (
-            "http-signed-send",
-            "/http/signed-send",
-            "http-signed-send",
-            json!({"modes": ["none"]}),
-        ),
-    ] {
-        let definition = json!({
-            "id": id, "type": "http", "route": {"method": "POST", "path": path},
-            "run-deadline-ms": 30000
-        });
-        attachments.insert(
-            id.to_owned(),
-            WiringAttachment {
-                type_: AttachmentType::Http,
-                package_id: PACKAGE.to_owned(),
-                wiring_id: wiring_id.to_owned(),
-                wiring_version: 1,
-                definition_hash: DefinitionHash::parse(
-                    wamn_execution_contract::canonical_json_sha256(&definition),
-                )?,
-                definition,
-                auth_policy,
-                registered_operation: None,
-            },
-        );
-    }
-    manifest.workflow = WorkflowSection {
-        wirings: [
-            ServingWiring::new(PACKAGE, wiring),
-            ServingWiring::new(PACKAGE, signed_wiring),
-            ServingWiring::new(PACKAGE, scheduled_wiring),
-            ServingWiring::new(PACKAGE, paged_wiring),
-        ]
-        .into(),
-        attachments,
-        ..WorkflowSection::default()
-    };
-    manifest.workflow.wirings.extend(
-        oauth_wirings
-            .into_iter()
-            .map(|graph| ServingWiring::new(PACKAGE, graph)),
-    );
     let bytes = manifest.canonical_bytes();
     ServingManifest::from_canonical_bytes(&bytes)?;
     Ok(bytes)
@@ -503,14 +413,6 @@ fn route_requests(log: &str) -> anyhow::Result<Vec<Value>> {
         .collect())
 }
 
-pub fn inbound_signature(body: &[u8]) -> String {
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, INBOUND_SECRET.as_bytes());
-    format!(
-        "sha256={}",
-        hex::encode(ring::hmac::sign(&key, body).as_ref())
-    )
-}
-
 pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, digest: &str) -> bool {
     ["instances", "generations", "bindings"].iter().all(|name| {
         rows[name]
@@ -567,79 +469,27 @@ pub async fn assert_triggers(
     run: &mut Run,
     database: &tokio_postgres::Client,
     environment: &super::integration::WorkflowEnvironment<'_>,
-    release_name: &str,
-    route_host: &str,
-    unsigned_status: u16,
-    unsigned_body: &str,
 ) -> anyhow::Result<()> {
-    let base = format!("http://{release_name}-http.{NAMESPACE}.svc.cluster.local");
-    let before = route_requests(&request_log(run).await?)?;
-    ensure!(
-        before.len() == 1,
-        "the unsigned route must send exactly one request"
-    );
-    // The wrong signature signs equivalent JSON with different raw bytes.
-    for (label, signature) in [
-        ("wrong", Some(inbound_signature(br#"{"id":1}"#))),
-        ("missing", None),
-    ] {
-        let header = signature
-            .map(|value| format!("--header 'x-hub-signature-256: {value}'"))
-            .unwrap_or_default();
-        let (status, body) = super::route_probe_request(
-            run,
-            &format!("{base}/http/signed"),
-            route_host,
-            &format!(
-                "--request POST --header 'Content-Type: application/json' {header} --data '{BODY}'"
-            ),
+    for document in [wiring()?, signed_wiring()?, paged_wiring()?]
+        .into_iter()
+        .chain(oauth_wirings()?)
+    {
+        super::integration::enable_trigger(
+            environment,
+            PACKAGE,
+            &document,
+            &document.wiring_id,
+            &[],
+            wamn_control::author_workflow::WorkflowTrigger::Manual,
+            None,
         )
         .await?;
-        let after = route_requests(&request_log(run).await?)?;
-        let passed = status == 401 && body.is_empty() && after == before;
-        run.pass(
-            &format!("{label} inbound signature refuses without a fixture request"),
-            "POST /http/signed; GET /recorded",
-            json!({"status": status, "body": body, "before": before, "after": after}),
-            passed,
-        );
-        ensure!(passed, "{label} inbound signature did not refuse cleanly");
     }
-    let signature = inbound_signature(BODY.as_bytes());
-    let (status, body) = super::route_probe_request(
-        run,
-        &format!("{base}/http/signed"),
-        route_host,
-        &format!(
-            "--request POST --header 'Content-Type: application/json' \
-            --header 'x-hub-signature-256: {signature}' --data '{BODY}'"
-        ),
-    )
-    .await?;
-    let after = route_requests(&request_log(run).await?)?;
-    let assertion = after
-        .last()
-        .context("the signed route sent no request")
-        .and_then(|record| assert_observed_request(status, &body, &serde_json::to_string(record)?));
-    let passed = status == unsigned_status
-        && serde_json::from_str::<Value>(&body)? == serde_json::from_str::<Value>(unsigned_body)?
-        && after.starts_with(&before)
-        && after.len() == before.len() + 1
-        && assertion.is_ok();
-    run.pass(
-        "right inbound signature delivers inline like none and sends once",
-        "POST /http/signed; GET /recorded",
-        json!({"status": status, "body": body, "requests": after,
-            "error": assertion.as_ref().err().map(ToString::to_string)}),
-        passed,
-    );
-    ensure!(
-        passed,
-        "signed inbound delivery differs from the unsigned route"
-    );
-
-    let (status, body) =
-        super::route_probe_post(run, &format!("{base}/http/signed-send"), route_host).await?;
+    let (unsigned_status, unsigned_body) =
+        run_manual(database, environment, "http-send", "unsigned").await?;
+    let observed = request_log(run).await?;
+    assert_observed_request(unsigned_status, &unsigned_body, &observed)?;
+    let (status, body) = run_manual(database, environment, "http-signed-send", "signed").await?;
     let observed = request_log(run).await?;
     let records = request_records(&observed)?;
     let signed: Vec<_> = records
@@ -651,7 +501,7 @@ pub async fn assert_triggers(
         })
         .collect();
     let passed = status == 200
-        && serde_json::from_str::<Value>(&body)? == serde_json::from_str::<Value>(unsigned_body)?
+        && serde_json::from_str::<Value>(&body)? == serde_json::from_str::<Value>(&unsigned_body)?
         && signed.len() == 1
         && signed[0]["signature_verified"] == true
         && signed[0]["body"] == json!(br#"{"id":1}"#.as_slice());
@@ -666,8 +516,8 @@ pub async fn assert_triggers(
         "the fixture did not verify one signed outbound request"
     );
 
-    assert_oauth(run, &base, route_host).await?;
-    assert_paged(run, &base, route_host).await?;
+    assert_oauth(run, database, environment).await?;
+    assert_paged(run, database, environment).await?;
 
     // The release declares no schedule. The scheduled wiring runs as an
     // environment workflow. Its nodes call no operation that needs a grant,
@@ -689,6 +539,42 @@ pub async fn assert_triggers(
         result.is_ok());
     result?;
     Ok(())
+}
+
+async fn run_manual(
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
+    workflow: &str,
+    key: &str,
+) -> anyhow::Result<(u16, String)> {
+    let id =
+        super::integration::start_workflow(environment, PACKAGE, workflow, &json!({"id":1}), key)
+            .await?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    loop {
+        let row = database
+            .query_one(
+                "SELECT status, result_json FROM wamn_run.runs WHERE tenant_id=$1 AND run_id=$2",
+                &[&environment.tenant, &id],
+            )
+            .await?;
+        let status: String = row.get(0);
+        if status == "completed" {
+            return Ok((200, row.get::<_, Value>(1).to_string()));
+        }
+        ensure!(
+            !matches!(
+                status.as_str(),
+                "failed" | "infrastructure-failure" | "effect-uncertain"
+            ),
+            "workflow {workflow} failed: {status}"
+        );
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "workflow {workflow} did not complete"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// The runs of the schedule workflow at its first two due moments from
@@ -753,10 +639,22 @@ async fn scheduled_runs(
     }
 }
 
-async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Result<()> {
-    for route in ["oauth2", "oauth2", "oauth1", "oauth1"] {
-        let (status, body) =
-            super::route_probe_post(run, &format!("{base}/http/{route}"), route_host).await?;
+async fn assert_oauth(
+    run: &mut Run,
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
+) -> anyhow::Result<()> {
+    for (index, route) in ["oauth2", "oauth2", "oauth1", "oauth1"]
+        .into_iter()
+        .enumerate()
+    {
+        let (status, body) = run_manual(
+            database,
+            environment,
+            &format!("http-{route}"),
+            &format!("{route}-{index}"),
+        )
+        .await?;
         ensure!(
             status == 200 && serde_json::from_str::<Value>(&body)?["status"] == 200,
             "{route} refused: {status}: {body}"
@@ -803,9 +701,12 @@ async fn assert_oauth(run: &mut Run, base: &str, route_host: &str) -> anyhow::Re
     Ok(())
 }
 
-async fn assert_paged(run: &mut Run, base: &str, route_host: &str) -> anyhow::Result<()> {
-    let (status, body) =
-        super::route_probe_post(run, &format!("{base}/http/pages"), route_host).await?;
+async fn assert_paged(
+    run: &mut Run,
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
+) -> anyhow::Result<()> {
+    let (status, body) = run_manual(database, environment, "http-pages", "pages").await?;
     let items: Value = serde_json::from_str(&body)?;
     let pages: Vec<_> = request_records(&request_log(run).await?)?
         .into_iter()

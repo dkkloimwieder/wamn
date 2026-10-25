@@ -977,15 +977,6 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     .await
     .expect("build the v1-era queue + outbox era");
     seed_run_admission_facts(su, "t1", "cat", "dev", "durable").await;
-    su.execute(
-        "INSERT INTO catalog.event_registrations \
-           (tenant_id, package_id, registration_id, entity_id, registration) \
-         VALUES ('t1', 'cat', 'r1', 'e', \
-                 $1::text::jsonb)",
-        &[&r#"{"registration-id":"r1","package-id":"cat","source-package-id":"cat","partition-key":"serial","retained":"yes","state":"shadow"}"#],
-    )
-    .await
-    .expect("seed a retired-key registration");
     // A pre-existing queue row: the ADD COLUMN defaults must land on it.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
@@ -1225,26 +1216,6 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         "floor table left alone"
     );
 
-    // Both retired keys are stripped; every retained document key survives.
-    let registration: String = su
-        .query_one(
-            "SELECT registration::text FROM catalog.event_registrations \
-              WHERE tenant_id = 't1' AND package_id = 'cat' AND registration_id = 'r1'",
-            &[],
-        )
-        .await
-        .expect("read registration")
-        .get(0);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&registration).expect("parse registration"),
-        serde_json::json!({
-            "registration-id": "r1",
-            "package-id": "cat",
-            "source-package-id": "cat",
-            "retained": "yes"
-        })
-    );
-
     // Idempotence: a second reconcile plans nothing.
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
@@ -1409,8 +1380,8 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     }
     assert!(indexdef(su, "runs_root").await.is_none());
     assert!(
-        table_exists(su, "catalog", "event_registrations").await,
-        "catalog schema provisioned"
+        !table_exists(su, "catalog", "event_registrations").await,
+        "the retired registration relation is absent"
     );
     // The project-authoring relations left `catalog-schema.sql` with
     // wamn-0h0g.9.11.3 (805701ec); `deploy/sql/control-portable-store.sql` owns

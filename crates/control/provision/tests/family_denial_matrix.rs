@@ -92,7 +92,7 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 32] = [
+const MATRIX_RELATIONS: [&str; 30] = [
     "platform.environment",
     "platform.permission",
     "platform.user_role",
@@ -108,11 +108,9 @@ const MATRIX_RELATIONS: [&str; 32] = [
     "catalog.connection_generations",
     "catalog.connection_instances",
     "catalog.connection_requirements",
-    "catalog.event_registrations",
     "catalog.packages",
     "catalog.releases",
     "catalog.wiring_tombstones",
-    "catalog.wirings",
     "catalog.workflows",
     "retention_fixture.entry",
     "retention_fixture.entry_history",
@@ -181,11 +179,9 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
-            "catalog.event_registrations|SELECT|table",
             "catalog.packages|SELECT|table",
             "catalog.releases|SELECT|table",
             "catalog.wiring_tombstones|SELECT|table",
-            "catalog.wirings|SELECT|table",
             "catalog.workflows|SELECT|table",
             "platform.\"user\"|SELECT|table",
             "platform.connection|SELECT|table",
@@ -217,10 +213,7 @@ const MATRIX: [FamilyReach; 10] = [
     },
     FamilyReach {
         family: WorkloadRoleFamily::ManagementAdmitter,
-        relations: &[
-            "catalog.wirings|INSERT|column",
-            "catalog.wirings|SELECT|table",
-        ],
+        relations: &[],
         routines: &["wamn_authority.tenant_key(text)"],
     },
     FamilyReach {
@@ -231,7 +224,6 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
             "catalog.releases|SELECT|table",
-            "catalog.wirings|SELECT|table",
             "catalog.workflows|SELECT|table",
             "platform.\"user\"|SELECT|column",
             "wamn_run.effect_attempts|SELECT|table",
@@ -276,10 +268,7 @@ const MATRIX: [FamilyReach; 10] = [
     },
     FamilyReach {
         family: WorkloadRoleFamily::EventMaterializer,
-        relations: &[
-            "catalog.event_registrations|SELECT|table",
-            "catalog.packages|SELECT|table",
-        ],
+        relations: &["catalog.packages|SELECT|table"],
         routines: &[],
     },
     // Only the history table of the P30D relation. The unlimited relation's
@@ -1321,7 +1310,6 @@ fn the_tenant_scoped_platform_member_reads_nothing_outside_its_grants() {
         "wamn_run.effect_attempt_outcomes",
         "wamn_run.environment_policies",
         "wamn_run.run_queue",
-        "catalog.wirings",
     ] {
         assert_eq!(
             sqlstate(

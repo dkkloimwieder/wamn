@@ -63,7 +63,6 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
         packages: &[LocalPackage {
             root: &app,
             component: "wms",
-            wirings: &[],
         }],
         attachments: &attachments,
     })

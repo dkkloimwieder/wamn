@@ -9,10 +9,8 @@ use wash_runtime::host::probes::Liveness;
 
 use wamn_runtime::plugins::wamn_postgres::EventBatchAdmission;
 
-use super::{
-    Node, QueueScope, RouterDriver, SERVICE, TENANT, WamnJetstream, WamnPostgres, drain_one,
-};
-use crate::{PostgresWorkflows, StartRequest, Trigger, WorkflowErrorType, Workflows as _};
+use super::{Node, QueueScope, RouterDriver, TENANT, WamnJetstream, WamnPostgres, drain_one};
+use crate::{WorkflowErrorType, Workflows as _};
 
 /// The node's declaration template, as publish renders it.
 const DECLARATION: &str =
@@ -50,30 +48,18 @@ pub(super) struct Execution<'a> {
 
 pub(super) async fn run(
     admin: &tokio_postgres::Client,
-    workflows: &PostgresWorkflows,
+    workflows: &super::WorkflowsFixture,
     execution: Execution<'_>,
 ) -> anyhow::Result<()> {
     let row = json!({"event": "insert", "new": {
         "id": "m-1", "idempotency_key": "k-1", "kind": "move", "packaging_id": "p-1",
         "from_location_id": "l-0", "to_location_id": "l-2", "quantity": "4"}});
-    let manifest_digest: String = admin
-        .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-            &[&TENANT],
-        )
-        .await?
-        .get(0);
     let run = workflows
-        .start(&StartRequest {
-            manifest_digest: manifest_digest.clone(),
+        .start(&super::StartInput {
             package_id: "automation".to_owned(),
-            wiring_id: "echo".to_owned(),
-            wiring_version: 1,
+            wiring_id: "echo-manual".to_owned(),
             idempotency_key: "jsonata".to_owned(),
             input: row,
-            trigger: Trigger::Automation {
-                service_principal_id: SERVICE.to_owned(),
-            },
         })
         .await?;
     assert!(
@@ -108,7 +94,7 @@ pub(super) async fn run(
 /// as the workflow user, and the contract lists, parks and releases it.
 async fn event_run(
     admin: &tokio_postgres::Client,
-    workflows: &PostgresWorkflows,
+    workflows: &super::WorkflowsFixture,
     execution: &Execution<'_>,
 ) -> anyhow::Result<()> {
     let envelope = json!({"op": "insert", "new": {

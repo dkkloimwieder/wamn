@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{ServingManifest, ServingWiring};
+use wamn_catalog::ServingManifest;
 use wamn_control::environment::stage::{materialize_application_principals, write_release};
 use wamn_engine::router_delivery::authorize_registered_operation;
 use wamn_platform_identity::auth_changes::AuthChanges;
@@ -65,7 +65,6 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             {"package-id": "integration", "package-version": "1.0.0"}
         ]},
         "components": [], "routes": [], "attachments": {},
-        "workflow": {"wirings": [ServingWiring::new("integration", wamn_catalog::fixture_graph("pull", 1))]}
     }))?;
     let mut descriptor = wamn_catalog::ComponentDescriptor::named(
         "consumer",

@@ -128,7 +128,6 @@ async fn start(
         packages: &[LocalPackage {
             root: &app,
             component: "fixture",
-            wirings: &[],
         }],
         attachments: &attachments,
     })

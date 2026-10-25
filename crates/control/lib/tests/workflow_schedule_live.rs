@@ -49,9 +49,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     WamnPostgresConfig,
 };
 use wamn_schema_control::BareSchemaName;
-use wamn_workflow::{
-    QueueService, QueueServiceConfig, RouterDriver, RouterDriverConfig, WiringCacheCapacity,
-};
+use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
 #[path = "workflow_schedule_live/event_batch.rs"]
 mod event_batch;
@@ -551,30 +549,25 @@ impl Fixture {
 
     /// Bind the real queue service to the release and drain its runs.
     async fn drain(&self) {
-        let driver = Arc::new(RouterDriver::new(
-            Arc::new(
-                OperationHost::new(
-                    Arc::clone(&self.engine),
-                    Arc::clone(&self.postgres),
-                    Arc::new(HttpTransport::new().unwrap()),
-                    Arc::new(WamnCredentials::empty()),
-                    Arc::clone(&self.logging),
-                    Arc::from([]),
-                    Arc::clone(&self.release),
-                    Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
-                    OperationScope {
-                        project: PROJECT.to_owned(),
-                        schema: Some("application_data".to_owned()),
-                        owner_prefix: "schedule-live".to_owned(),
-                        warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-                    },
-                )
-                .unwrap(),
-            ),
-            RouterDriverConfig {
-                cache_capacity: WiringCacheCapacity::default(),
-            },
-        ));
+        let driver = Arc::new(RouterDriver::new(Arc::new(
+            OperationHost::new(
+                Arc::clone(&self.engine),
+                Arc::clone(&self.postgres),
+                Arc::new(HttpTransport::new().unwrap()),
+                Arc::new(WamnCredentials::empty()),
+                Arc::clone(&self.logging),
+                Arc::from([]),
+                Arc::clone(&self.release),
+                Arc::new(LocalComponentSource::new(self.scratch.path().to_owned())),
+                OperationScope {
+                    project: PROJECT.to_owned(),
+                    schema: Some("application_data".to_owned()),
+                    owner_prefix: "schedule-live".to_owned(),
+                    warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+                },
+            )
+            .unwrap(),
+        )));
         let service = QueueService::bind(
             driver,
             Arc::clone(&self.postgres),

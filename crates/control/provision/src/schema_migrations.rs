@@ -406,6 +406,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0035_workflow_events.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0035_workflow_events.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0036_retire_released_workflows.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0036_retire_released_workflows.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

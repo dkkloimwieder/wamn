@@ -739,7 +739,7 @@ impl Fixture {
             components: BTreeSet::from([served]),
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
-            workflow: wamn_catalog::WorkflowSection::default(),
+
             host_routes: BTreeSet::new(),
         };
         let release = Arc::new(
@@ -911,6 +911,7 @@ impl Fixture {
                         entry: wamn_runtime::plugins::connection_http::InvocationEntry::Wiring(
                             wamn_runtime::plugins::connection_http::WiringPosition {
                                 package_id: "workflow".into(),
+                                wiring_hash: format!("sha256:{}", "a".repeat(64)),
                                 wiring_id: "trusted-wiring".into(),
                                 wiring_version: 1,
                                 node_id: "trusted-node".into(),
@@ -1561,7 +1562,7 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         components: BTreeSet::from([served]),
         routes: BTreeSet::new(),
         attachments: BTreeMap::new(),
-        workflow: wamn_catalog::WorkflowSection::default(),
+
         host_routes: BTreeSet::new(),
     };
     let release = Arc::new(

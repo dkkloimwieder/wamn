@@ -77,10 +77,7 @@ mod wiring_resolution;
 mod workflow_resolution;
 pub mod write_log;
 
-pub use wiring_resolution::{
-    CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,
-    ResolvedActiveWiring,
-};
+pub use wiring_resolution::{RELEASE_COMPONENTS_SQL, ResolvedActiveWiring};
 pub use workflow_resolution::{
     EnabledWorkflow, WorkflowResolutionError, WorkflowResolutionErrorType, WorkflowRunKey,
     resolve_workflow_in_release,

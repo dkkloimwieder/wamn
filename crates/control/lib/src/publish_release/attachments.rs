@@ -354,9 +354,7 @@ fn route_method(
     attachment: &ServingAttachment,
     route_contracts: &RouteContracts,
 ) -> Result<&'static str, PublishManifestError> {
-    let AttachmentTarget::Route { operation, .. } = &attachment.target else {
-        return Ok("POST");
-    };
+    let AttachmentTarget::Route { operation, .. } = &attachment.target;
     route_contracts
         .get(&(attachment.package_id.clone(), operation.clone()))
         .map(|contract| contract.kind.http_method())

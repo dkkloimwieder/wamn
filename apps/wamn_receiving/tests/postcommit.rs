@@ -13,11 +13,10 @@ use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryType, Envelope, Op};
 use wamn_gate_harness::journey::PostcommitPhase;
 
 use super::{
-    BASE_PACKAGE_ID, JourneyDocument, OVERLAY_PACKAGE_ID, connect, identity, materializer_durable,
-    materializer_stream, overlay_route_path, secret_value,
+    BASE_PACKAGE_ID, JourneyDocument, connect, identity, materializer_durable, materializer_stream,
+    overlay_route_path, secret_value,
 };
 
-pub(super) const WIRING: &str = "quality_create_inspection";
 const PROGRESS_BOUND: Duration = Duration::from_secs(90);
 
 async fn kube(phase: &PostcommitPhase, arguments: &[&str]) -> anyhow::Result<Value> {
@@ -315,8 +314,8 @@ async fn assert_replay_and_progress(
     );
     evidence["wiring"] = graph.clone();
     let registration: Value = project.query_one(
-        "SELECT registration FROM catalog.event_registrations WHERE tenant_id=$1 AND package_id=$2 AND registration_id='quality.create_inspection'",
-        &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID],
+        "SELECT to_jsonb(w) FROM catalog.workflows w WHERE tenant_id=$1 AND application='receiving' AND source_package=$2 AND workflow_id='quality_create_inspection' AND enabled",
+        &[&identity().tenant.as_str(), &BASE_PACKAGE_ID],
     ).await?.get(0);
     evidence["registration"] = registration;
     let original = source(&mut events, &materializer.receipt_id).await?;
@@ -538,8 +537,8 @@ async fn assert_replay_and_progress(
     restoration?;
     result?;
     let registration_after: Value = project.query_one(
-        "SELECT registration FROM catalog.event_registrations WHERE tenant_id=$1 AND package_id=$2 AND registration_id='quality.create_inspection'",
-        &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID],
+        "SELECT to_jsonb(w) FROM catalog.workflows w WHERE tenant_id=$1 AND application='receiving' AND source_package=$2 AND workflow_id='quality_create_inspection' AND enabled",
+        &[&identity().tenant.as_str(), &BASE_PACKAGE_ID],
     ).await?.get(0);
     ensure!(
         registration_after == evidence["registration"],
@@ -551,7 +550,7 @@ async fn assert_replay_and_progress(
 /// `create_inspection` is the sealed id of the Acme handler's operation in the
 /// candidate's Acme package, and `graph` is the graph of its
 /// `quality_create_inspection` wiring in the candidate's release manifest:
-/// an installed candidate has no authored `catalog.wirings` row.
+/// the environment authors that graph as a workflow row.
 pub(super) async fn assert_postcommit(
     document: &JourneyDocument,
     create_inspection: &str,

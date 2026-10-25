@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use wamn_engine::flow_http_routing::{FLOW_HTTP_ROUTING_ID, FlowHttpRouting};
 use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouteDelivery, RouterDelivery};
-use wamn_execution_host::RouterDeliveryBridge;
+use wamn_execution_host::HostRouteDelivery;
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
@@ -38,7 +38,7 @@ pub struct LocalApplicationRuntime {
     pub flow_http: Component,
     pub plugins: Vec<Arc<dyn HostPlugin + Send + Sync>>,
     pub routing: Arc<FlowHttpRouting>,
-    pub bridge: Arc<RouterDeliveryBridge>,
+    pub bridge: Arc<HostRouteDelivery>,
     pub queue: LocalQueue,
 }
 
@@ -171,6 +171,33 @@ impl LocalApplication {
             queue,
             task,
         })
+    }
+
+    /// Start through the authenticated host route served by this fixture.
+    pub async fn start_workflow(
+        &self,
+        application: &str,
+        workflow: &str,
+        input: &serde_json::Value,
+        key: &str,
+    ) -> anyhow::Result<String> {
+        let response = reqwest::Client::new()
+            .post(format!("{}/wamn_control/workflow/start", self.endpoint))
+            .header("Host", &self.route_host)
+            .bearer_auth(&self.bearer)
+            .json(&serde_json::json!([{"request_id": key, "value": {
+                "application": application, "workflow_id": workflow,
+                "input_json": input, "idempotency_key": key,
+            }}]))
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<serde_json::Value>()
+            .await?;
+        response[0]["value"]["run_id"]
+            .as_str()
+            .map(str::to_owned)
+            .with_context(|| format!("workflow.start refused: {response}"))
     }
 
     pub async fn shutdown(mut self) -> anyhow::Result<()> {

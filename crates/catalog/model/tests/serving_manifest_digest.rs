@@ -6,8 +6,7 @@ use serde_json::{Value, json};
 use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentTarget, AttachmentType, CatalogIdentityError,
     ComponentDescriptor, DefinitionHash, OperationType, PackageCoordinate, ServingAttachment,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring, fixture_graph,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease, ServingRoute,
     parse_attachment_auth_policy,
 };
 
@@ -73,13 +72,6 @@ fn components() -> BTreeSet<ServingComponent> {
     ])
 }
 
-fn wirings() -> BTreeSet<ServingWiring> {
-    BTreeSet::from([
-        ServingWiring::new("platform_fixture", fixture_graph("shipping", 2)),
-        ServingWiring::new("platform_fixture_overlay", fixture_graph("orders", 1)),
-    ])
-}
-
 fn routes() -> BTreeSet<ServingRoute> {
     BTreeSet::from([ServingRoute {
         package_id: "platform_fixture_overlay".into(),
@@ -98,58 +90,23 @@ fn manifest() -> ServingManifest {
         release(),
         components(),
         routes(),
-        wirings(),
-        BTreeMap::from([
-            (
-                "widget-get-http".into(),
-                ServingAttachment {
-                    type_: AttachmentType::Http,
-                    package_id: "platform_fixture_overlay".into(),
-                    target: AttachmentTarget::Route {
-                        component: "http-request".into(),
-                        operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
-                    },
-                    definition_hash: definition_hash(DEFINITION),
-                    definition: json!({
-                        "id": "widget-get-http",
-                        "type": "http",
-                        "run-deadline-ms": 30000
-                    }),
-                    auth_policy: json!({"modes": ["pat"]}),
-                    registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
-                },
-            ),
-            (
-                "orders-http".into(),
-                ServingAttachment {
-                    type_: AttachmentType::Http,
-                    package_id: "platform_fixture_overlay".into(),
-                    target: AttachmentTarget::Wiring {
-                        wiring_id: "orders".into(),
-                        wiring_version: 1,
-                    },
-                    definition_hash: definition_hash(DEFINITION),
-                    definition: json!({
-                        "id": "orders-http",
-                        "type": "http",
-                        "run-deadline-ms": 30000
-                    }),
-                    auth_policy: json!({"modes": ["pat"]}),
-                    registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
-                },
-            ),
-        ]),
         BTreeMap::from([(
-            "platform_fixture::orders-changed".into(),
-            ServingRegistration {
-                package_id: "platform_fixture".into(),
-                source_package_id: "platform_fixture".into(),
-                wiring_id: "shipping".into(),
-                wiring_version: 2,
-                entity: "orders".into(),
-                ops: BTreeSet::from(["insert".into(), "update".into()]),
-                input: ServingRegistrationInput::Batch,
-                delivery: wamn_catalog::RegistrationDelivery::Queue,
+            "widget-get-http".into(),
+            ServingAttachment {
+                type_: AttachmentType::Http,
+                package_id: "platform_fixture_overlay".into(),
+                target: AttachmentTarget::Route {
+                    component: "http-request".into(),
+                    operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
+                },
+                definition_hash: definition_hash(DEFINITION),
+                definition: json!({
+                    "id": "widget-get-http",
+                    "type": "http",
+                    "run-deadline-ms": 30000
+                }),
+                auth_policy: json!({"modes": ["pat"]}),
+                registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
             },
         )]),
     )
@@ -248,11 +205,7 @@ fn authentication_modes_are_shared_and_bound_into_canonical_bytes() {
         assert_eq!(parsed.allows_session(), allows_session);
 
         let mut candidate = manifest();
-        let attachment = candidate
-            .workflow
-            .attachments
-            .get_mut("orders-http")
-            .unwrap();
+        let attachment = candidate.attachments.get_mut("widget-get-http").unwrap();
         attachment.auth_policy = policy.clone();
         if parsed.has_no_caller() {
             attachment.registered_operation = None;
@@ -260,10 +213,7 @@ fn authentication_modes_are_shared_and_bound_into_canonical_bytes() {
         let bytes = candidate.canonical_bytes();
         let (admitted, digest) = ServingManifest::from_canonical_bytes(&bytes)
             .expect("canonical policy survives the release reader");
-        assert_eq!(
-            admitted.workflow.attachments["orders-http"].auth_policy,
-            policy
-        );
+        assert_eq!(admitted.attachments["widget-get-http"].auth_policy, policy);
         assert_eq!(admitted.canonical_bytes(), bytes);
         if parsed != AttachmentAuthPolicy::None {
             assert!(authenticated_digests.insert(digest.as_str().to_owned()));
@@ -300,15 +250,14 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
         assert_eq!(parse_attachment_auth_policy(&policy), None);
         let mut candidate = manifest();
         candidate
-            .workflow
             .attachments
-            .get_mut("orders-http")
+            .get_mut("widget-get-http")
             .unwrap()
             .auth_policy = policy;
         assert_eq!(
             ServingManifest::from_canonical_bytes(&candidate.canonical_bytes()),
             Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
-                attachment_id: "orders-http".into(),
+                attachment_id: "widget-get-http".into(),
             })
         );
     }
@@ -374,8 +323,6 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
             },
         ]),
         BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
         BTreeMap::new(),
     )
     .expect("one provider and one consumer form a valid manifest")
@@ -421,8 +368,7 @@ fn every_manifest_hash_validates_during_deserialization() {
     assert!(component_error.to_string().contains("artifact-hash"));
 
     let mut attachment_document = serde_json::to_value(manifest()).expect("manifest serializes");
-    attachment_document["workflow"]["attachments"]["orders-http"]["definition-hash"] =
-        json!(invalid);
+    attachment_document["attachments"]["widget-get-http"]["definition-hash"] = json!(invalid);
     let attachment_error = serde_json::from_value::<ServingManifest>(attachment_document)
         .expect_err("an invalid attachment definition hash must be refused while decoding");
     assert!(attachment_error.to_string().contains("definition-hash"));
@@ -435,20 +381,12 @@ fn all_six_collections_have_canonical_order() {
         release(),
         components().into_iter().rev().collect(),
         routes().into_iter().rev().collect(),
-        wirings().into_iter().rev().collect(),
         baseline
             .every_attachment()
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
             .map(|(id, item)| (id.to_owned(), ServingAttachment::from(item)))
-            .collect(),
-        baseline
-            .workflow
-            .registrations
-            .iter()
-            .rev()
-            .map(|(id, item)| (id.clone(), item.clone()))
             .collect(),
     )
     .expect("permuted facts remain valid");
@@ -467,13 +405,8 @@ fn every_manifest_field_is_pinned() {
             "components",
             "format-version",
             "release",
-            "routes",
-            "workflow"
+            "routes"
         ]
-    );
-    assert_eq!(
-        sorted_keys(&document["workflow"]),
-        ["attachments", "registrations", "wirings"]
     );
     assert_eq!(
         sorted_keys(&document["routes"][0]),
@@ -496,36 +429,6 @@ fn every_manifest_field_is_pinned() {
         sorted_keys(&document["components"][0]),
         ["descriptor", "operations", "package-id"]
     );
-    assert_eq!(
-        sorted_keys(&document["workflow"]["wirings"][0]),
-        ["graph", "package-id"]
-    );
-    assert_eq!(
-        sorted_keys(&document["workflow"]["attachments"]["orders-http"]),
-        [
-            "auth-policy",
-            "definition",
-            "definition-hash",
-            "package-id",
-            "registered-operation",
-            "type",
-            "wiring-id",
-            "wiring-version"
-        ]
-    );
-    assert_eq!(
-        sorted_keys(&document["workflow"]["registrations"]["platform_fixture::orders-changed"]),
-        [
-            "entity",
-            "input",
-            "ops",
-            "package-id",
-            "source-package-id",
-            "wiring-id",
-            "wiring-version"
-        ]
-    );
-
     let text = String::from_utf8(manifest().canonical_bytes()).expect("manifest is UTF-8");
     for retired in [
         "flow-id",
@@ -544,26 +447,20 @@ fn every_manifest_field_is_pinned() {
 }
 
 #[test]
-fn each_exact_target_reaches_the_digest() {
+fn released_workflow_changes_do_not_reach_the_digest() {
     let baseline = manifest();
-    let mut retargeted = manifest();
-    let registration = retargeted
-        .workflow
-        .registrations
-        .get_mut("platform_fixture::orders-changed")
-        .expect("fixture registration");
-    registration.wiring_id = "orders".into();
-    registration.wiring_version = 1;
-
-    assert_ne!(baseline.canonical_bytes(), retargeted.canonical_bytes());
-    assert_ne!(baseline.digest(), retargeted.digest());
-
-    let mut regrained = manifest();
-    regrained
-        .workflow
-        .registrations
-        .get_mut("platform_fixture::orders-changed")
-        .expect("fixture registration")
-        .input = ServingRegistrationInput::Event;
-    assert_ne!(baseline.digest(), regrained.digest());
+    for workflow in [
+        json!(null),
+        json!({"wirings": [{"graph": "old"}]}),
+        json!({"registrations": {"old": {}}}),
+    ] {
+        let mut value = serde_json::to_value(&baseline).unwrap();
+        value["workflow"] = workflow;
+        let (read, _) = ServingManifest::from_canonical_bytes(
+            &wamn_execution_contract::canonical_json_bytes(&value),
+        )
+        .unwrap();
+        assert_eq!(read.digest(), baseline.digest());
+        assert_eq!(read.canonical_bytes(), baseline.canonical_bytes());
+    }
 }

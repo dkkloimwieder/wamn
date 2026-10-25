@@ -2,8 +2,7 @@
 //! readiness.
 //!
 //! A route calls its one operation through `wamn_engine::invoke_operation`.
-//! A wiring target goes to the wiring layer through [`WiringDelivery`]. That
-//! layer is `wamn-workflow`, which sits above this crate. This crate links
+//! The workflow queue uses this host to call its nodes. This crate links
 //! neither `wamn-workflow` nor `wamn-router`.
 
 mod application_route;
@@ -27,6 +26,4 @@ pub use readiness::{
     RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_kind,
     synchronous_route_count,
 };
-pub use router_delivery::{
-    DeadlineAdjustment, RouterDeliveryBridge, WiringCall, WiringDelivery, WiringPreload,
-};
+pub use router_delivery::{DeadlineAdjustment, RouterDeliveryBridge};

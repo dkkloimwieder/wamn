@@ -10,7 +10,6 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
 
 use super::{NODE_TYPES, OPERATION, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver, WamnJetstream};
-use crate::{PostgresWorkflows, StartRequest, Workflows as _};
 
 pub(super) fn component_bytes() -> Vec<u8> {
     wat::parse_str(format!(r#"(component
@@ -58,8 +57,8 @@ pub(super) struct Execution<'a> {
 
 pub(super) async fn run(
     admin: &mut tokio_postgres::Client,
-    workflows: &PostgresWorkflows,
-    request: &StartRequest,
+    workflows: &super::WorkflowsFixture,
+    request: &super::StartInput,
     execution: Execution<'_>,
 ) -> anyhow::Result<()> {
     let run = workflows.start(request).await?;

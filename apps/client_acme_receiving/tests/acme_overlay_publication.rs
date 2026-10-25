@@ -195,7 +195,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
 }
 
 #[test]
-fn receipt_insert_registration_selects_one_private_owner_wiring() {
+fn the_private_receipt_handler_has_no_package_registration() {
     let manifest = read_json(&wamn_schema_generator::package_manifest_path(
         &package_root(),
     ));
@@ -203,14 +203,8 @@ fn receipt_insert_registration_selects_one_private_owner_wiring() {
     assert_eq!(handler["type"], "event_handler");
     assert_eq!(handler["visibility"], "private");
     assert!(handler["permission"].is_null());
-    assert_eq!(
-        handler["registration"],
-        serde_json::json!({
-            "source_package": "wamn_receiving",
-            "entity": "receipt",
-            "ops": ["insert"]
-        })
-    );
+    assert!(handler.get("registration").is_none());
+    assert!(manifest.get("workflows").is_none());
     let mut owner_entries = Vec::new();
     let directory = publication_root().join("wirings");
     for entry in std::fs::read_dir(&directory)
@@ -230,6 +224,6 @@ fn receipt_insert_registration_selects_one_private_owner_wiring() {
     assert_eq!(
         owner_entries,
         vec![("quality_create_inspection".to_owned(), 1)],
-        "release registration derivation requires one exact owner entry wiring"
+        "the fixture reads the one authored handler graph"
     );
 }

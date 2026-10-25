@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
 
 use super::integration::WorkflowEnvironment;
 use super::{Run, http_connection};
@@ -84,9 +83,7 @@ pub async fn assertions(
     run: &Run,
     project: &tokio_postgres::Client,
     workflows: &WorkflowEnvironment<'_>,
-    principal: &str,
 ) -> anyhow::Result<Value> {
-    let (project_url, tenant, digest) = (workflows.project_url, workflows.tenant, workflows.digest);
     let pulls = wait(project, "netsuite_pull", 1).await?;
     // One pull is enough. The admin disables the schedule, so no later pull
     // adds requests to the log.
@@ -98,7 +95,7 @@ pub async fn assertions(
             && pull["invoked_by"] == "schedule"
             && pull["execution_principal_id"] == wamn_project_state::workflow_user_id().to_string()
             && pull["execution_role"] == super::integration::PULL_ROLE
-            && pull["manifest_digest"] == digest
+            && pull["manifest_digest"] == workflows.digest
             && pull["idempotency_key"] == format!("schedule:netsuite/netsuite_pull:{due}"),
         "wrong pull identity: {pull}"
     );
@@ -189,25 +186,29 @@ pub async fn assertions(
     );
     assert_put(&first[0])?;
 
-    // Replay the exact delivered input through the released wiring. A new run
-    // key forces a second HTTP call rather than merely returning the first run.
-    let (client, connection) = tokio_postgres::connect(project_url, tokio_postgres::NoTls).await?;
-    let task = tokio::spawn(connection);
-    let workflows = PostgresWorkflows::new(client, "wamn_run", tenant, "integration");
-    let replay = workflows
-        .start(&StartRequest {
-            manifest_digest: digest.into(),
-            package_id: "netsuite".into(),
-            wiring_id: "netsuite_push".into(),
-            wiring_version: 1,
-            idempotency_key: "netsuite-fixture-redelivery".into(),
-            input: pushes[0]["input_json"].clone(),
-            trigger: Trigger::Automation {
-                service_principal_id: principal.into(),
-            },
-        })
-        .await?;
-    wait(project, "netsuite_push", 2).await?;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../apps/netsuite/publication/wirings/netsuite_push.json");
+    let mut document = wamn_control::author_workflow::read_wiring_document(&path)?;
+    "netsuite_push_replay".clone_into(&mut document.wiring_id);
+    super::integration::enable_trigger(
+        workflows,
+        "netsuite",
+        &document,
+        "connector-replay",
+        &[],
+        wamn_control::author_workflow::WorkflowTrigger::Manual,
+        None,
+    )
+    .await?;
+    let replay = super::integration::start_workflow(
+        workflows,
+        "netsuite",
+        &document.wiring_id,
+        &pushes[0]["input_json"],
+        "netsuite-fixture-redelivery",
+    )
+    .await?;
+    wait(project, &document.wiring_id, 1).await?;
     let records = requests(run).await?;
     let records: Vec<_> = records
         .into_iter()
@@ -237,7 +238,6 @@ pub async fn assertions(
         )) && pulls.iter().any(|r| r["status"] == "completed"),
         "a pull did not complete: {pulls:?}"
     );
-    task.abort();
     Ok(
         json!({"requests":records,"consumer":items,"received":received,"last_synced_at":checkpoint,"pull":pull,"replay":replay}),
     )

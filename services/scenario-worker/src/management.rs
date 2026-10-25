@@ -37,8 +37,8 @@ use wamn_authoring_model::{
     AuthoringQueryRequest, AuthoringQueryResponse, AuthoringQuerySuccess, AuthoringRequest,
     AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope, AuthoringSuccess,
     CommandRefusal, CommitProvenance, ContractDecodeErrorType, GateRefusal, GateResult,
-    GetReportRefusal, PublishRefusal, PublishedWiringIdentity, QueryRefusal, ReportProjection,
-    SCHEMA_VERSION, ValidatedDraftRef, decode_document,
+    GetReportRefusal, PublishRefusal, QueryRefusal, ReportProjection, SCHEMA_VERSION,
+    ValidatedDraftRef, decode_document,
 };
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalType, ProjectRole, authenticate_pat, project_roles,
@@ -77,12 +77,6 @@ const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_au
 const INSERT_GATE_REPORT_SQL: &str = "INSERT INTO wamn_run.gate_reports \
     (tenant_id, wiring_hash, passed, summary) VALUES ($1, $2, $3, $4) \
     ON CONFLICT (tenant_id, wiring_hash) DO NOTHING";
-
-/// Read the immutable gate verdict that guards one publication.
-///
-/// Params: `$1` tenant, `$2` server-derived wiring hash.
-const SELECT_PUBLISH_GATE_REPORT_SQL: &str = "SELECT passed \
-    FROM wamn_run.gate_reports WHERE tenant_id = $1 AND wiring_hash = $2";
 
 /// Serialize one principal-scoped retry identity before reading or executing.
 /// Hash collisions only over-serialize unrelated commands; the exact primary
@@ -467,12 +461,9 @@ pub struct ManagementServeArgs {
     /// generation of `wamn_management_admitter` on THIS environment's PROJECT
     /// database (wamn-0h0g.8.5.3).
     ///
-    /// It is a SECOND, separate connection, never a fallback for the authoring
-    /// one and never reachable from it: admission appends project `catalog.wirings`
-    /// rows, authoring writes the control command table, and a transaction cannot span
-    /// two databases. Flipping the production admission path off the shared
-    /// `wamn_app` role and onto this credential is wamn-0h0g.22.10's traffic
-    /// change; this argument is the plumbing that change needs to already exist.
+    /// The gate uses this connection to read environment posture. Authoring
+    /// writes the control command table through its separate credential.
+    /// The retired Publish command refuses without a project write.
     ///
     /// **Deliberately has no `default_value`** — the shape wamn-0h0g.12.129 and
     /// .12.134 settled for every credential input. A default here would name a
@@ -960,21 +951,15 @@ async fn publish_route(
     Ok(json_bytes(StatusCode::OK, outcome_bytes))
 }
 
-/// Publish one compatibility-validated, green-gated wiring definition.
-///
-/// This is act 1 only: it appends `catalog.wirings` and returns that immutable
-/// definition's server-derived identity. Release-manifest publishing is a separate
-/// act and is never called from this transport.
+/// Refuse the retired released-workflow command and retain its audit outcome.
 async fn publish(
     backend: &mut InternalAuthoringBackend,
-    admission: &mut crate::store::admission::AdmissionSurface,
+    _admission: &mut crate::store::admission::AdmissionSurface,
     author: &AuthorizedAuthor,
     scope: &CommandScope,
     command: &AuthoringRequest,
     input: &wamn_authoring_model::PublishValidatedDraft,
 ) -> anyhow::Result<Vec<u8>> {
-    use crate::store::admission::{AppendPublishResult, PreparePublishResult};
-
     let request_hash = canonical_request_hash(command)?;
     let target_ref: Box<str> = match wamn_catalog::WiringDocument::parse(&input.document) {
         Ok(document) => document.wiring_hash().as_str().to_owned().into(),
@@ -993,24 +978,6 @@ async fn publish(
         target_ref,
         provenance: input.provenance.clone(),
     };
-    // A completed retry is a CONTROL-store fact and must not depend on the
-    // project database still being reachable or the new payload being
-    // executable. The final transaction below takes the same lock again and is
-    // the authority for racing first executions.
-    if let Some(settled) = settle_retry(backend, &audit, &request_hash).await? {
-        return Ok(settled);
-    }
-
-    let preparation = admission
-        .prepare_publish(&input.package_id, &input.package_version, &input.document)
-        .await?;
-
-    // Unlike the effect-free gate, Publish mutates the project database. Hold
-    // this command identity's CONTROL-side lock across the green-report read,
-    // project append, and audit insert: releasing it around the append would let
-    // two different payloads reuse one command id and both write before one
-    // command record won. A crash after the project append still converges because
-    // the immutable append verifies an exact existing row on retry.
     let (_, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
     lock_retry_identity(&transaction, &audit).await?;
     if let Some(existing) = read_retry_outcome(&transaction, &audit).await? {
@@ -1021,48 +988,11 @@ async fn publish(
         transaction.commit().await.context("commit retry read")?;
         return Ok(settled);
     }
-
     let outcome =
-        match preparation {
-            PreparePublishResult::InvalidDocument { detail } => AuthoringOutcome::Refused(
-                CommandRefusal::Publish(PublishRefusal::InvalidDocument { detail }),
-            ),
-            PreparePublishResult::ExecutableDrift => AuthoringOutcome::Refused(
-                CommandRefusal::Publish(PublishRefusal::PublishExecutableDrift),
-            ),
-            PreparePublishResult::Ready(publication) => {
-                let report = transaction
-                    .query_opt(
-                        SELECT_PUBLISH_GATE_REPORT_SQL,
-                        &[&scope.tenant_id.as_ref(), &publication.wiring_hash()],
-                    )
-                    .await
-                    .context("read the publish document's gate report")?
-                    .map(|row| row.get::<_, bool>(0));
-                match report {
-                    None => AuthoringOutcome::Refused(CommandRefusal::Publish(
-                        PublishRefusal::ReportNotFound {
-                            report_id: publication.wiring_hash().to_owned(),
-                        },
-                    )),
-                    Some(false) => AuthoringOutcome::Refused(CommandRefusal::Publish(
-                        PublishRefusal::ReportNotSuccessful,
-                    )),
-                    Some(true) => match admission.append_publish(&publication).await? {
-                        AppendPublishResult::ExecutableDrift => AuthoringOutcome::Refused(
-                            CommandRefusal::Publish(PublishRefusal::PublishExecutableDrift),
-                        ),
-                        AppendPublishResult::Published => AuthoringOutcome::Completed(Box::new(
-                            AuthoringSuccess::Publish(PublishedWiringIdentity {
-                                wiring_id: publication.wiring_id().to_owned(),
-                                version: publication.version(),
-                                artifact_hash: publication.wiring_hash().to_owned(),
-                            }),
-                        )),
-                    },
-                }
-            }
-        };
+        AuthoringOutcome::Refused(CommandRefusal::Publish(PublishRefusal::InvalidDocument {
+            detail: "Released workflows are retired. Author a workflow in the environment."
+                .to_owned(),
+        }));
     let outcome_bytes = command_response_bytes(&command.command_id, outcome)?;
     insert_command_audit(&transaction, &audit, &request_hash, &outcome_bytes).await?;
     transaction

@@ -472,7 +472,7 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
 }
 
 #[test]
-fn event_registration_and_line_profiles_are_closed() {
+fn retired_workflows_are_dropped_and_line_profiles_are_closed() {
     let mut handler = fixture::manifest();
     let operation = handler["custom_operations"]["widget.archive"]
         .as_object_mut()
@@ -494,47 +494,18 @@ fn event_registration_and_line_profiles_are_closed() {
     );
     validate_operation_vocabulary(&parsed(&handler)).expect("valid event registration");
 
-    // A condition selects the events; the apply of the package checks its
-    // JMESPath and the reconciler reads it for the old image.
-    let mut conditioned = handler.clone();
-    conditioned["custom_operations"]["widget.archive"]["registration"] = json!({
-        "source_package": "platform_fixture", "entity": "widget", "ops": ["update"],
-        "condition": "old.code != new.code"
-    });
-    let conditioned = parsed(&conditioned);
-    validate_operation_vocabulary(&conditioned).expect("a registration with a condition");
-    assert_eq!(
-        conditioned.custom_operations["widget.archive"]
-            .registration()
-            .and_then(|registration| registration.condition.as_deref()),
-        Some("old.code != new.code")
+    let mut retired = handler.clone();
+    retired["workflows"] = json!({"old": {"anything": true}});
+    retired["custom_operations"]["widget.archive"]["registration"] = json!({"old": "ignored"});
+    let read = parsed(&retired);
+    validate_operation_vocabulary(&read).expect("event operations need no registration");
+    let written = serde_json::to_value(&read).unwrap();
+    assert!(written.get("workflows").is_none());
+    assert!(
+        written["custom_operations"]["widget.archive"]
+            .get("registration")
+            .is_none()
     );
-
-    for registration in [
-        Value::Null,
-        json!({
-            "source_package": "platform_fixture", "entity": "widget", "ops": []
-        }),
-        json!({
-            "source_package": "platform_fixture", "entity": "widget", "ops": ["insert", "insert"]
-        }),
-    ] {
-        let mut invalid = handler.clone();
-        if registration.is_null() {
-            invalid["custom_operations"]["widget.archive"]
-                .as_object_mut()
-                .unwrap()
-                .remove("registration");
-        } else {
-            invalid["custom_operations"]["widget.archive"]["registration"] = registration;
-        }
-        assert_eq!(
-            validate_operation_vocabulary(&parsed(&invalid))
-                .expect_err("invalid event registration was accepted")
-                .error_type(),
-            GenerateErrorType::InvalidOperation
-        );
-    }
 
     let mut lineless = fixture::manifest();
     lineless["custom_operations"]["widget.archive"]["canonicalization"] =

@@ -582,7 +582,7 @@ mod tests {
     use wamn_catalog::{
         ComponentConnection, ComponentConnectionType, ComponentDescriptor,
         ConnectionTypeDescriptor, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponent, ServingManifest, ServingRelease, WorkflowSection,
+        ServingComponent, ServingManifest, ServingRelease,
     };
 
     use super::{apply_order, release_requirements, schema_request};
@@ -701,11 +701,6 @@ mod tests {
             ]),
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
-            workflow: WorkflowSection {
-                wirings: BTreeSet::new(),
-                attachments: BTreeMap::new(),
-                registrations: BTreeMap::new(),
-            },
             host_routes: BTreeSet::new(),
         };
         let written = release_requirements(&manifest)

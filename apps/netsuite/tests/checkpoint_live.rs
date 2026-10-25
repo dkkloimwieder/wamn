@@ -198,6 +198,7 @@ pub async fn invoke(
                             &write.operation,
                             InvocationEntry::Wiring(WiringPosition {
                                 package_id: "netsuite".into(),
+                                wiring_hash: wiring.wiring_hash().to_string(),
                                 wiring_id: wiring.wiring_id.clone(),
                                 wiring_version: wiring.version,
                                 node_id: "write".into(),

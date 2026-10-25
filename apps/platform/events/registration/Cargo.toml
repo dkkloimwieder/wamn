@@ -1,6 +1,6 @@
 [package]
 name = "wamn-event-reg"
-description = "wamn event registration model: a wiring subscription's entity, operations, condition, and event-or-batch input grain. Stored as jsonb in catalog.event_registrations."
+description = "Event trigger predicates shared by workflow authoring and the materializer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

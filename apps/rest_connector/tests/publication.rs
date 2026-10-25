@@ -5,9 +5,7 @@ mod support;
 use serde_json::json;
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
-use wamn_control::publish_release::{
-    PublishReleaseRequest, ReleaseWiringTarget, assemble_local_release,
-};
+use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
 #[tokio::test]
@@ -81,18 +79,17 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .into_iter()
         .map(|name| PackageCoordinate::new(name, "0.1.0").unwrap())
         .collect(),
-        wirings: documents
-            .iter()
-            .map(|(_, document)| ReleaseWiringTarget {
-                package_id: scope.package_id.clone(),
-                package_version: scope.package_version.clone(),
-                wiring_id: document.wiring_id.clone(),
-                wiring_version: document.version,
-            })
-            .collect(),
     };
-    let assembled = assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
+    let assembled = assemble_local_release(&args, &roots, &admissions).unwrap();
     let release = &assembled.published.manifest;
+    let packages = args
+        .packages
+        .iter()
+        .map(|p| p.package_id().to_owned())
+        .collect();
+    for (_, document) in &documents {
+        wamn_catalog::gate_workflow_document(&scope.tenant_id, &packages, release, document)?;
+    }
     composed_sql_uses_released_schemas(&roots, release, &admissions).await?;
     let mut wrong_port = documents.clone();
     wrong_port[0]
@@ -102,7 +99,15 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .find(|edge| edge.from == "rows")
         .unwrap()
         .from_port = "main".into();
-    assert!(assemble_local_release(&args, &roots, &admissions, wrong_port).is_err());
+    assert!(
+        wamn_catalog::gate_workflow_document(
+            &scope.tenant_id,
+            &packages,
+            release,
+            &wrong_port[0].1
+        )
+        .is_err()
+    );
     let mut wrong_dependency = documents;
     wrong_dependency[0]
         .1
@@ -113,7 +118,15 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .as_mut()
         .unwrap()
         .operation = "item.other".into();
-    assert!(assemble_local_release(&args, &roots, &admissions, wrong_dependency).is_err());
+    assert!(
+        wamn_catalog::gate_workflow_document(
+            &scope.tenant_id,
+            &packages,
+            release,
+            &wrong_dependency[0].1
+        )
+        .is_err()
+    );
     Ok(())
 }
 

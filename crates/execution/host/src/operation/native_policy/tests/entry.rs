@@ -160,7 +160,7 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         ]),
         routes: BTreeSet::new(),
         attachments: BTreeMap::new(),
-        workflow: wamn_catalog::WorkflowSection::default(),
+
         host_routes: BTreeSet::new(),
     };
     let release = Arc::new(
@@ -303,6 +303,7 @@ async fn a_wiring_call_on_the_entry_refuses_every_operation_call() {
                     ROOT,
                     InvocationEntry::Wiring(WiringPosition {
                         package_id: "workflow".into(),
+                        wiring_hash: format!("sha256:{}", "a".repeat(64)),
                         wiring_id: "wiring".into(),
                         wiring_version: 1,
                         node_id: "node".into(),

@@ -137,26 +137,10 @@ const TENANT: &str = "ccdc-tenant";
 const CDC_PW: &str = "wamn_cdc_pw";
 const APP_PW: &str = "ccdc-app-generation";
 const APP_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
-const PACKAGE_ID: &str = measurement_schema::PACKAGE_ID;
 
 // The shipped DDL + retained receiving catalog, compiled in (checked for changes).
 const SYSTEM_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CATALOG_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-/// A delete-only registration on `entity` — exactly what drives the l5i9.31
-/// reconcile to REPLICA IDENTITY FULL for that entity's table (the ri axis
-/// flips through the REAL machinery, not a hand ALTER).
-fn registration_json(reg_id: &str, entity: &str) -> String {
-    serde_json::json!({
-        "schema-version": "0.1",
-        "registration-id": reg_id,
-        "package-id": PACKAGE_ID,
-        "source-package-id": PACKAGE_ID,
-        "entity": entity,
-        "ops": ["delete"],
-        "condition": null,
-    })
-    .to_string()
-}
 
 // ---------------------------------------------------------------------------
 // Small helpers (the CDC / walbench idioms)
@@ -1210,25 +1194,6 @@ async fn ri_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyho
     let app = connect_app(admin_url).await?;
     let n = args.ri_iters;
 
-    // The delete registrations that DRIVE the flip (the real l5i9.31 path:
-    // requires_replica_identity_full over the registration, not a hand ALTER).
-    for (reg_id, entity) in [("r-sup", "suppliers"), ("r-usr", "users")] {
-        db.execute(
-            "INSERT INTO catalog.event_registrations \
-             (tenant_id, package_id, registration_id, entity_id, registration) \
-             VALUES ($1, $2, $3, $4, $5::text::jsonb)",
-            &[
-                &TENANT,
-                &PACKAGE_ID,
-                &reg_id,
-                &entity,
-                &registration_json(reg_id, entity),
-            ],
-        )
-        .await
-        .with_context(|| format!("seed registration {reg_id}"))?;
-    }
-
     check(
         pass,
         "ri: suppliers + users start at REPLICA IDENTITY DEFAULT",
@@ -1392,22 +1357,6 @@ mod tests {
         assert!(parse_rates("").is_err());
         assert!(parse_rates("100,x").is_err());
         assert!(parse_rates("0").is_err());
-    }
-
-    /// The registration fixture parses as the FROZEN wamn-event-reg type and
-    /// demands the old image (delete-subscribed) — the property that makes the
-    /// REAL reconcile flip the ri axis's tables, before the gate needs infra.
-    #[test]
-    fn registrations_parse_frozen_and_drive_the_flip() {
-        for (reg_id, entity) in [("r-sup", "suppliers"), ("r-usr", "users")] {
-            let reg =
-                wamn_event_reg::EventRegistration::from_json(&registration_json(reg_id, entity))
-                    .expect("frozen EventRegistration parses");
-            assert!(
-                reg.requires_replica_identity_full(),
-                "{reg_id} must demand FULL (it drives the reconcile)"
-            );
-        }
     }
 
     #[test]

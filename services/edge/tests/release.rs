@@ -47,8 +47,6 @@ fn manifest() -> ServingManifest {
             descriptor: ComponentDescriptor::named(COMPONENT, "0.1", file_digest(BODY)),
         }]),
         BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
         BTreeMap::new(),
     )
     .expect("the fixture manifest is valid")

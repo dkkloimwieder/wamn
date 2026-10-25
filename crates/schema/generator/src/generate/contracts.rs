@@ -176,9 +176,6 @@ pub(super) fn emit_custom_operation(
         CustomOperationType::Projection | CustomOperationType::EventHandler => {
             source_map.insert("operation".to_owned(), json!(operation_name));
             source_map.insert("type".to_owned(), json!(operation.operation_type()));
-            if let Some(registration) = &operation.registration {
-                source_map.insert("registration".to_owned(), json!(registration));
-            }
         }
     }
     insert_json(
@@ -261,9 +258,6 @@ fn emit_custom_operation_contracts(
     }
     if let Some(automatic_retry) = operation.automatic_retry {
         operation_contract.insert("automatic_retry".to_owned(), json!(automatic_retry));
-    }
-    if let Some(registration) = &operation.registration {
-        operation_contract.insert("registration".to_owned(), json!(registration));
     }
     if let Some(idempotent_by) = &operation.idempotent_by {
         operation_contract.insert("idempotent_by".to_owned(), json!(idempotent_by));

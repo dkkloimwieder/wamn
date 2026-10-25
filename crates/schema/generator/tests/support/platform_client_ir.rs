@@ -64,7 +64,8 @@ impl ReleaseFiles {
                     format!("widget-{index}"),
                     json!({
                         "type": "http", "package-id": "platform_fixture",
-                        "wiring-id": format!("widget-{index}"), "wiring-version": 1,
+                        "component": "fixture",
+                        "operation": wamn_schema_generator::sealed_operation_reference(&operation),
                         "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "definition": {"id": format!("widget-{index}"), "kind": "http",
                             "route": {"path": route.template}},

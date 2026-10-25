@@ -42,6 +42,7 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
         entry: crate::plugins::connection_http::InvocationEntry::Wiring(
             crate::plugins::connection_http::WiringPosition {
                 package_id: "overlay".into(),
+                wiring_hash: format!("sha256:{}", "a".repeat(64)),
                 wiring_id: "widget".into(),
                 wiring_version: 1,
                 node_id: "record".into(),

@@ -65,19 +65,13 @@ fn the_workflow_wiring_is_a_three_node_graph() {
     assert!(wiring.nodes.values().all(|node| node.terminal.is_none()));
 }
 
-/// WMS declares the wiring as a workflow that a packaging location change
-/// starts.
+/// The package supplies operations. The environment authors the label trigger.
 #[test]
-fn a_location_change_starts_the_label_workflow() {
-    let manifest = read_json(&wamn_schema_generator::package_manifest_path(
-        &repository_root().join("apps/wamn_wms"),
-    ));
-    assert_eq!(
-        manifest["workflows"]["movement_label"],
-        serde_json::json!({"wiring": "inventory_move_and_label", "registration":
-            {"source_package": "wamn_wms", "entity": "packaging", "ops": ["update"],
-             "condition": "old.location_id != new.location_id"}})
-    );
+fn the_package_declares_no_workflow() {
+    let bytes =
+        wamn_schema_generator::compile_manifest(&repository_root().join("apps/wamn_wms")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(manifest.get("workflows").is_none());
 }
 
 /// The wiring's PARAMS are what make the composition work, so they are pinned.

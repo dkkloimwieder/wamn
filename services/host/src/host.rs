@@ -42,7 +42,6 @@ use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, release_label};
 use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope, RouterDeliveryBridge,
-    WiringDelivery,
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::operator_subject;
@@ -61,10 +60,7 @@ use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPo
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_session::verifier::SessionVerifier;
-use wamn_workflow::{
-    DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, RouterDriver, RouterDriverConfig,
-    WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
-};
+use wamn_workflow::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, RouterDriver};
 
 #[expect(
     clippy::struct_excessive_bools,
@@ -325,14 +321,6 @@ pub struct HostArgs {
     /// Local flow-http workload bytes for an org control host.
     #[arg(long, requires = "control", conflicts_with = "local_application")]
     pub local_control: Option<PathBuf>,
-
-    /// Maximum resolved wirings retained by the one production router driver.
-    #[arg(
-        long = "wiring-cache-capacity",
-        env = WIRING_CACHE_CAPACITY_ENV,
-        default_value_t = WiringCacheCapacity::default()
-    )]
-    pub wiring_cache_capacity: WiringCacheCapacity,
 
     /// Explicit registry/repository holding digest-addressed node components.
     #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
@@ -1293,14 +1281,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ),
         )?;
     }
-    let router_driver = operations.as_ref().map(|operations| {
-        Arc::new(RouterDriver::new(
-            Arc::clone(operations),
-            RouterDriverConfig {
-                cache_capacity: args.wiring_cache_capacity,
-            },
-        ))
-    });
+    let router_driver = operations
+        .as_ref()
+        .map(|operations| Arc::new(RouterDriver::new(Arc::clone(operations))));
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
@@ -1416,9 +1399,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(operations) = &operations {
         let bridge = RouterDeliveryBridge::new(
             Arc::clone(operations),
-            router_driver
-                .clone()
-                .map(|driver| driver as Arc<dyn WiringDelivery>),
             Arc::clone(&jetstream),
             &args.project,
         )?
@@ -1702,7 +1682,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     // The host heartbeats from here on. The preload compiles after it, so a
     // cold compile cache delays the workload and not the heartbeat.
-    let preloaded = preload_release(operations.as_ref(), router_driver.as_ref()).await;
+    let preloaded = preload_release(operations.as_ref()).await;
     let started = match (preloaded, local_workload) {
         (Err(error), _) => Err(error),
         (Ok(()), None) => Ok(()),
@@ -1836,10 +1816,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 }
 
 /// Pull and compile every component that the release serves.
-async fn preload_release(
-    operations: Option<&Arc<OperationHost>>,
-    router_driver: Option<&Arc<RouterDriver>>,
-) -> anyhow::Result<()> {
+async fn preload_release(operations: Option<&Arc<OperationHost>>) -> anyhow::Result<()> {
     // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
     // every digest this release serves and populates the driver's digest-keyed
     // component cache; without it the FIRST request pays a full pull and compile
@@ -1850,10 +1827,7 @@ async fn preload_release(
     // preloaded anything. The local workload starts after this call, so a host
     // whose workload runs has the entries rather than a promise of them.
     if let Some(operations) = operations {
-        let readiness = wamn_execution_host::RouterReadinessProbe::new(
-            Arc::clone(operations),
-            router_driver.map(|driver| Arc::clone(driver) as Arc<dyn WiringDelivery>),
-        );
+        let readiness = wamn_execution_host::RouterReadinessProbe::new(Arc::clone(operations));
         let snapshot = readiness.refresh().await;
         anyhow::ensure!(
             matches!(
@@ -3209,7 +3183,6 @@ mod tests {
                 idempotency: None,
                 canonicalization: None,
             }]),
-            BTreeSet::new(),
             BTreeMap::from([(
                 "orders".into(),
                 ServingAttachment {
@@ -3230,7 +3203,6 @@ mod tests {
                     registered_operation: None,
                 },
             )]),
-            BTreeMap::new(),
         )
         .expect("anonymous release is valid")
     }

@@ -179,8 +179,6 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
             ),
         }]),
         BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
         BTreeMap::new(),
     )
     .unwrap()

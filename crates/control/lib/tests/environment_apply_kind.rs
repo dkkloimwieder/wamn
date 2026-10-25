@@ -179,14 +179,14 @@ const POLICY: &str = "dev";
 const PACKAGE: &str = "edge_device";
 /// The fixture release A: the fixture package, no http attachment, no
 /// registration, a component no host pulls. `@VERSION@` is the package version.
-const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"edge_device"}]}}"#;
+const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
 /// The second fixture release, B: the same package, another component digest.
-const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"edge_device"}]}}"#;
+const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
 /// The third fixture release, H: the same package with one http attachment,
 /// served with no authentication, so its environments render the http role.
 /// Its one component, `null` here, is the admitted `device` component as
 /// publish projects it; `@OPERATION@` is that component's one operation.
-const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"modes":["none"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"@OPERATION@","package-id":"edge_device","type":"http"}},"components":[null],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[{"component":"device","operation":"@OPERATION@","package-id":"edge_device","type":"get"}],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"edge_device"}]}}"#;
+const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"modes":["none"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"@OPERATION@","package-id":"edge_device","type":"http"}},"components":[null],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[{"component":"device","operation":"@OPERATION@","package-id":"edge_device","type":"get"}]}"#;
 /// The route guest's refusal of a path the release does not serve.
 const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
 /// Capture crash logs during rollout, before Helm can remove the pods.
@@ -1461,32 +1461,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let http_project_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
     let (http_project, http_task) = connect(&http_project_url).await?;
     let http_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
-    // Register the same gated graphs that the fixture release carries.
-    for wiring in [
-        http_connection::wiring()?,
-        http_connection::signed_wiring()?,
-        http_connection::scheduled_wiring()?,
-        http_connection::paged_wiring()?,
-    ]
-    .into_iter()
-    .chain(http_connection::oauth_wirings()?)
-    {
-        http_project
-            .execute(
-                "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
-         version, graph_json, wiring_hash) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
-                &[
-                    &http_tenant,
-                    &PACKAGE,
-                    &version,
-                    &wiring.wiring_id,
-                    &1_i32,
-                    &serde_json::to_string(&wiring)?,
-                    &wiring.wiring_hash().as_str(),
-                ],
-            )
-            .await?;
-    }
     let http_rows = async || -> anyhow::Result<Value> {
         Ok(http_project
             .query_one(
@@ -1529,18 +1503,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             && http_revisions == http_second_revisions
             && http_revisions == http_shown_revisions,
     );
-    let service = format!("http://{http_name}-http.{NAMESPACE}.svc.cluster.local/http/send");
-    let (status, body) = route_probe_post(run, &service, &http.route_host).await?;
-    let observed = http_connection::request_log(run).await?;
-    let assertion = http_connection::assert_observed_request(status, &body, &observed);
-    run.pass(
-        "HTTP guest sends once with its host-held bearer credential and receives 200",
-        "POST /http/send; GET /recorded",
-        json!({"status": status, "body": body, "requests": observed,
-            "error": assertion.as_ref().err().map(ToString::to_string)}),
-        assertion.is_ok(),
-    );
-    assertion?;
     http_connection::assert_triggers(
         run,
         &http_project,
@@ -1553,10 +1515,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             applications: &environment::show::serving_applications(&platform, &http.triple())
                 .await?,
         },
-        &http_name,
-        &http.route_host,
-        status,
-        &body,
     )
     .await?;
     http_task.abort();
@@ -2496,50 +2454,11 @@ fn the_fixture_releases_are_canonical_manifests() {
     );
     assert_eq!(http.routes, h.routes);
     assert_eq!(http.attachments, h.attachments);
-    assert_eq!(
-        http.workflow.wirings,
-        [
-            wamn_catalog::ServingWiring::new(
-                PACKAGE,
-                http_connection::wiring().expect("the HTTP wiring"),
-            ),
-            wamn_catalog::ServingWiring::new(
-                PACKAGE,
-                http_connection::signed_wiring().expect("the signed HTTP wiring"),
-            ),
-            wamn_catalog::ServingWiring::new(
-                PACKAGE,
-                http_connection::scheduled_wiring().expect("the scheduled HTTP wiring"),
-            ),
-            wamn_catalog::ServingWiring::new(
-                PACKAGE,
-                http_connection::paged_wiring().expect("the paged HTTP wiring"),
-            )
-        ]
-        .into_iter()
-        .chain(
-            http_connection::oauth_wirings()
-                .unwrap()
-                .into_iter()
-                .map(|graph| wamn_catalog::ServingWiring::new(PACKAGE, graph))
-        )
-        .collect()
-    );
-    assert_eq!(
-        http.workflow.attachments["http-send"].wiring_id,
-        "http-send"
-    );
-    assert_eq!(http.workflow.attachments.len(), 6);
-    assert_eq!(
-        http.workflow.attachments["http-signed"].auth_policy,
-        json!({
-            "modes": ["signature"], "header": "x-hub-signature-256",
-            "credential": http_connection::INBOUND_HANDLE,
-        })
-    );
-    assert_eq!(
-        http.workflow.attachments["http-signed-send"].wiring_id,
-        "http-signed-send"
+    assert!(
+        serde_json::to_value(&http)
+            .unwrap()
+            .get("workflow")
+            .is_none()
     );
     let scheduled = serde_json::to_value(http_connection::scheduled_wiring().unwrap()).unwrap();
     assert_eq!(scheduled["nodes"].as_object().unwrap().len(), 2);
@@ -2572,19 +2491,6 @@ fn the_fixture_releases_are_canonical_manifests() {
 /// the status and the body.
 async fn route_probe(run: &Run, url: &str, route_host: &str) -> anyhow::Result<(u16, String)> {
     route_probe_request(run, url, route_host, "").await
-}
-
-async fn route_probe_post(run: &Run, url: &str, route_host: &str) -> anyhow::Result<(u16, String)> {
-    route_probe_request(
-        run,
-        url,
-        route_host,
-        &format!(
-            "--request POST --header 'Content-Type: application/json' --data '{}'",
-            http_connection::BODY
-        ),
-    )
-    .await
 }
 
 async fn route_probe_request(

@@ -4,17 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::LazyLock;
-use std::time::Duration;
 use wamn_platform_identity::auth_changes::AuthChanges;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_authoring_model::AuthoringScope;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, RequirementType};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::author_wiring;
 use wamn_control::bind_connection::{self, BindConnectionRequest};
 use wamn_control::component_admission::AdmitComponentRequest;
 use wamn_control::component_declaration::declared_platform_packages;
@@ -31,16 +27,14 @@ use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
     secret_value,
 };
-use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
+use wamn_control::publish_release::{self, PublishReleaseRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control::release_carrier::ReleaseCarrier;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_schema_generator::route_schema;
-use wamn_test_infrastructure::declarations::{
-    GateInput, gate_document, render_component_declaration,
-};
+use wamn_test_infrastructure::declarations::render_component_declaration;
 
 pub(super) const SCHEMA: &str = "wms";
 pub(crate) const CLUSTER: &str = "route-auth-pg18";
@@ -544,7 +538,6 @@ fn label_store_alias(root: &Path) -> anyhow::Result<String> {
 /// Publish WMS and its label components, author its wirings, then bind.
 /// The artifacts and endpoint one release publication is published from.
 pub struct PublicationArtifacts<'a> {
-    pub scenario_worker: &'a Path,
     pub label_render_wasm: &'a Path,
     pub minio_endpoint: &'a str,
 }
@@ -554,13 +547,12 @@ pub struct PublicationArtifacts<'a> {
 pub async fn publish(
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
-    credentials: &JourneyCredentials,
+    _credentials: &JourneyCredentials,
     artifacts: &PublicationArtifacts<'_>,
     platform: &Platform,
     evidence: &Path,
 ) -> anyhow::Result<ReleaseCarrier> {
     let PublicationArtifacts {
-        scenario_worker,
         label_render_wasm,
         minio_endpoint,
     } = *artifacts;
@@ -650,40 +642,7 @@ pub async fn publish(
         serde_json::to_vec_pretty(&json!({"wms":wms_digest,"label-render":label_digest,
             "blob-put":blob_digest,"jsonata":jsonata_digest}))?,
     )?;
-    // The gate, authorship and the release read the component facts from
-    // the verified package artifact that `prepare_project` pushed.
     let registry = package_registry(inputs)?;
-    let mut wirings = fs::read_dir(root.join("publication/wirings"))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    wirings.retain(|path| {
-        path.extension()
-            .is_some_and(|extension| extension == "json")
-    });
-    wirings.sort();
-    author_wirings(
-        route,
-        credentials,
-        scenario_worker,
-        &package,
-        &registry,
-        &inputs.system_pg_url,
-        &wirings,
-        evidence,
-    )
-    .await?;
-    let targets = wirings
-        .iter()
-        .map(|path| {
-            let document = author_wiring::read_wiring_document(path)?;
-            Ok(ReleaseWiringTarget {
-                package_id: package.package_id().to_string(),
-                package_version: package.package_version().to_string(),
-                wiring_id: document.wiring_id,
-                wiring_version: document.version,
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
     let release_digest = publish_release::publish_release(
         PublishReleaseRequest {
             database_url: route.database_url.clone(),
@@ -697,7 +656,6 @@ pub async fn publish(
                 .context("WMS provisioning returned its management principal")?,
             run_schema: "wamn_run".into(),
             packages: vec![package.clone()],
-            wirings: targets,
         },
         &registry,
         &inputs.release_artifact_base,
@@ -773,127 +731,6 @@ pub async fn publish(
     })
 }
 
-#[expect(clippy::too_many_arguments)]
-async fn author_wirings(
-    route: &ProvisionedRoute,
-    credentials: &JourneyCredentials,
-    binary: &Path,
-    package: &PackageCoordinate,
-    registry: &PackageRegistry,
-    system_url: &str,
-    wirings: &[PathBuf],
-    evidence: &Path,
-) -> anyhow::Result<()> {
-    let bind = "127.0.0.1:18080";
-    let listener =
-        std::net::TcpListener::bind(bind).context("reserve the WMS authoring address")?;
-    drop(listener);
-    let log = fs::File::create(evidence.join("authoring-gate.log"))?;
-    let mut child = tokio::process::Command::new(binary)
-        .args(["serve", "--bind", bind, "--insecure-registry"])
-        .env("WAMN_PACKAGE_ARTIFACT_BASE", &registry.artifact_base)
-        .env("WAMN_REGISTRY_AUTH_FILE", &registry.registry_auth_file)
-        .env("WAMN_SYSTEM_URL", &credentials.identity_reader)
-        .env("WAMN_CONTROL_AUTHORING_PG_URL", &credentials.control_author)
-        .env(
-            "WAMN_MANAGEMENT_ADMISSION_PG_URL",
-            &credentials.management_admitter,
-        )
-        .env("WAMN_MANAGEMENT_ORG", identity().org.as_str())
-        .env("WAMN_MANAGEMENT_PROJECT", identity().project.as_str())
-        .env(
-            "WAMN_MANAGEMENT_ENVIRONMENT",
-            identity().environment.as_str(),
-        )
-        .env("WAMN_MANAGEMENT_TENANT", identity().tenant.as_str())
-        .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log)
-        .kill_on_drop(true)
-        .spawn()?;
-    let result = async {
-        let client = reqwest::Client::new();
-        let mut ready = false;
-        for _ in 0..30 {
-            ensure!(
-                child.try_wait()?.is_none(),
-                "the WMS authoring service stopped before readiness"
-            );
-            if client.get(format!("http://{bind}/")).send().await.is_ok() {
-                ready = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-        ensure!(
-            ready && child.try_wait()?.is_none(),
-            "the WMS authoring service did not become ready"
-        );
-        let token = route
-            .management_token
-            .as_ref()
-            .context("WMS provisioning returned a management PAT")?;
-        for path in wirings {
-            let document = author_wiring::read_wiring_document(path)?;
-            let request = gate_document(
-                &GateInput {
-                    command_id: format!("gate-{}-{}", package.package_id(), document.wiring_id),
-                    package: package.clone(),
-                    scope: AuthoringScope {
-                        project_id: identity().project.clone(),
-                        environment: identity().environment.clone(),
-                    },
-                },
-                // The gate judges sealed ids, so the authored references
-                // resolve first.
-                &serde_json::to_string(
-                    &wamn_schema_generator::operation_reference::read_authored_document(
-                        path,
-                        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
-                    )?,
-                )?,
-            )?;
-            let response = client
-                .post(format!("http://{bind}/authoring"))
-                .bearer_auth(token)
-                .json(&request)
-                .send()
-                .await?
-                .error_for_status()?;
-            let output: Value = response.json().await?;
-            fs::write(
-                evidence.join(format!("gate-{}.json", document.wiring_id)),
-                serde_json::to_vec_pretty(&output)?,
-            )?;
-            ensure!(
-                output["body"]["outcome"]["status"] == "completed"
-                    && output["body"]["outcome"]["value"]["result"]["report-id"]
-                        .as_str()
-                        .is_some_and(|value| !value.is_empty()),
-                "the authoring service refused {}",
-                document.wiring_id
-            );
-            author_wiring::author_wiring_in_databases(
-                &route.database_url,
-                system_url,
-                registry,
-                identity().tenant.as_str(),
-                package.package_id(),
-                package.package_version(),
-                &document,
-            )
-            .await?;
-        }
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
-    if child.try_wait()?.is_none() {
-        child.kill().await?;
-    }
-    child.wait().await?;
-    result
-}
-
 /// The manifest of the WMS package of this checkout.
 pub fn package_manifest() -> anyhow::Result<wamn_schema_generator::PackageManifest> {
     package_manifest_at(&package_root())
@@ -922,22 +759,59 @@ pub fn declared_consumers(
     )
 }
 
-async fn seed_event_workflow(project: &tokio_postgres::Client) -> anyhow::Result<()> {
-    let graph = wamn_schema_generator::operation_reference::read_authored_document(
+async fn author_event_workflow(
+    inputs: &JourneyDocument,
+    route: &ProvisionedRoute,
+    events: &wamn_control::environment::EventBroker,
+) -> anyhow::Result<()> {
+    use wamn_control::author_workflow::{
+        AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
+    };
+    let graph = wamn_control::author_workflow::read_wiring_document(
         &package_root().join("publication/wirings/inventory_move_and_label.json"),
-        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
     )?;
-    let graph: wamn_catalog::WiringDocument = serde_json::from_value(graph)?;
-    let principal = wamn_project_state::workflow_user_id().to_string();
-    project.execute(
-        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
-        &[&identity().tenant.as_str(), &principal],
-    ).await?;
-    project.execute(
-        "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, condition, enable_sequence, execution_type, enabled, created_by) VALUES ($1, $2, 'wamn_wms', $3, $4, $5::text::jsonb, $6, 'event', 'wamn_wms', 'packaging', ARRAY['update'], 'old.location_id != new.location_id', 0, 'invoker', true, $7::text::uuid) ON CONFLICT DO NOTHING",
-        &[&identity().tenant.as_str(), &identity().environment, &graph.wiring_id, &i32::try_from(graph.version)?, &serde_json::to_string(&graph)?, &graph.wiring_hash().as_str(), &principal],
-    ).await?;
-    Ok(())
+    let (project, task) = connect(&route.database_url).await?;
+    let digest: String = project
+        .query_one(
+            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
+            &[&identity().tenant.as_str()],
+        )
+        .await?
+        .get(0);
+    task.abort();
+    let declared = BTreeMap::from([(
+        "wamn_wms".into(),
+        wamn_catalog::ApplicationDefinition {
+            packages: BTreeSet::from(["wamn_wms".into()]),
+        },
+    )]);
+    wamn_gate_harness::workflow::author_and_enable(
+        &inputs.system_pg_url,
+        &route.database_url,
+        &wamn_control_registry::Triple::new(
+            &identity().org,
+            &identity().project,
+            identity().environment.as_str(),
+        ),
+        &AuthorWorkflowRequest {
+            tenant_id: &identity().tenant,
+            environment: identity().environment.as_str(),
+            application: "wamn_wms",
+            declared: &declared,
+            document: &graph,
+            trigger: WorkflowTrigger::Event {
+                source_package: "wamn_wms",
+                entity: "packaging",
+                ops: &[wamn_event_wire::Op::Update],
+                condition: Some("old.location_id != new.location_id"),
+            },
+            execution: WorkflowExecution::Invoker,
+            created_by: &wamn_project_state::workflow_user_id().to_string(),
+            manifest_digest: &digest,
+        },
+        Some(events),
+    )
+    .await
 }
 
 /// Enable the same CDC and registry-reader credentials as the WMS script,
@@ -991,11 +865,23 @@ pub async fn configure_cdc(
         emit_secret: Some(secret_path.clone()),
     };
     let (project, task) = connect(&route.database_url).await?;
-    seed_event_workflow(project.as_ref()).await?;
     let result = shared::configure_cdc(args, project.as_ref(), project.as_ref()).await;
     drop(project);
     task.abort();
     result?;
+    author_event_workflow(
+        inputs,
+        route,
+        &wamn_control::environment::EventBroker {
+            nats_url: nats_url.to_owned(),
+            nats_username: provisioning.username.clone(),
+            nats_password_file: provisioning.password_file.clone(),
+            stream_replicas: source.num_replicas,
+            dup_window_secs: source.duplicate_window.as_secs(),
+        },
+    )
+    .await?;
+
     provision_project_env::run_workload_action(&generation_args(
         inputs,
         WorkloadRoleFamily::RegistryReader,

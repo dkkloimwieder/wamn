@@ -163,15 +163,8 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     release
         .packages
         .insert(PackageCoordinate::new(OVERLAY, PREDECESSOR_VERSION).unwrap());
-    base.manifest = ServingManifest::new(
-        release,
-        components,
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-    )
-    .unwrap();
+    base.manifest =
+        ServingManifest::new(release, components, BTreeSet::new(), BTreeMap::new()).unwrap();
     let bytes = base.manifest.canonical_bytes();
     let digest = base.manifest.digest().as_str().to_owned();
     base.source.execute(
@@ -884,15 +877,8 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     release
         .packages
         .insert(PackageCoordinate::new(SECOND, PREDECESSOR_VERSION).unwrap());
-    fixture.base.manifest = ServingManifest::new(
-        release,
-        components,
-        BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-    )
-    .unwrap();
+    fixture.base.manifest =
+        ServingManifest::new(release, components, BTreeSet::new(), BTreeMap::new()).unwrap();
     let bytes = fixture.base.manifest.canonical_bytes();
     let digest = fixture.base.manifest.digest().as_str().to_owned();
     fixture.base.source.execute(

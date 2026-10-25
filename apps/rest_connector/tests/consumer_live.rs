@@ -602,6 +602,7 @@ pub async fn invoke(
                         operation,
                         InvocationEntry::Wiring(WiringPosition {
                             package_id: "rest_connector".into(),
+                            wiring_hash: format!("sha256:{}", "a".repeat(64)),
                             wiring_id: "rest_item".into(),
                             wiring_version: 1,
                             node_id: if finishing { "finish" } else { "record" }.into(),

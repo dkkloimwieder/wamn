@@ -611,7 +611,7 @@ pub(crate) mod tests {
     use wamn_catalog::{
         AttachmentTarget, AttachmentType, DefinitionHash, PAT_AUTHENTICATION_MODE,
         PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
-        ServingManifest, ServingRelease, ServingWiring,
+        ServingManifest, ServingRelease,
     };
     use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
     use wamn_engine::release_manifest::LoadedRelease;
@@ -651,19 +651,24 @@ pub(crate) mod tests {
                     digest('a'),
                 ),
             }]),
-            BTreeSet::new(),
-            BTreeSet::from([ServingWiring::new(
-                "cat",
-                wamn_catalog::fixture_graph("orders", 1),
-            )]),
+            BTreeSet::from([wamn_catalog::ServingRoute {
+                package_id: "cat".into(),
+                component: "http-request".into(),
+                operation: "request".into(),
+                type_: wamn_catalog::OperationType::Command,
+                reads: BTreeSet::new(),
+                revision: None,
+                idempotency: None,
+                canonicalization: None,
+            }]),
             BTreeMap::from([(
                 "orders".to_string(),
                 ServingAttachment {
                     type_: AttachmentType::Http,
                     package_id: "cat".into(),
-                    target: AttachmentTarget::Wiring {
-                        wiring_id: "orders".into(),
-                        wiring_version: 1,
+                    target: AttachmentTarget::Route {
+                        component: "http-request".into(),
+                        operation: "request".into(),
                     },
                     definition_hash: DefinitionHash::parse(digest('c')).unwrap(),
                     definition: json!({
@@ -673,7 +678,6 @@ pub(crate) mod tests {
                     registered_operation: None,
                 },
             )]),
-            BTreeMap::new(),
         )
         .expect("fixture manifest is valid");
         let release = LoadedRelease::load_canonical_bytes(

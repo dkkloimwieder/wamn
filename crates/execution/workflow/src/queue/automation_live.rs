@@ -29,10 +29,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
-use crate::{
-    PostgresWorkflows, RouterDriver, RouterDriverConfig, StartRequest, Trigger,
-    WiringCacheCapacity, WorkflowErrorType, Workflows as _,
-};
+use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType, Workflows as _};
 use wamn_execution_host::{OperationHost, OperationScope};
 use wamn_project_state::PlatformComponent;
 
@@ -236,7 +233,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     admin.batch_execute(&format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
       INSERT INTO platform.role (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
-      INSERT INTO platform.permission (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}');
+      INSERT INTO platform.permission (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}'), ('{TENANT}','automation','wamn-control:workflow/start');
       INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('{TENANT}','test','standard');
       INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
@@ -263,19 +260,23 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         "edges":[],"cases":[]
     }))?;
     let graph_hash = document.wiring_hash();
-    admin.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ($1,'automation','1.0.0','echo',1,$2::text::jsonb,$3)",
-        &[&TENANT,&serde_json::to_string(&document)?,&graph_hash.as_str()]).await?;
     let manifest: ServingManifest = serde_json::from_value(json!({
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"packages":[{"package-id":"automation","package-version":"1.0.0"}]},
         "components":[{"package-id":"automation",
           "descriptor": wamn_catalog::ComponentDescriptor::new(admitted.clone(), Vec::new()),
           "operations":{(node.operation.clone()):node.serving}}],
-        "routes":[],"attachments":{},"workflow":{"wirings":[wamn_catalog::ServingWiring::new("automation", document.clone())]}
+        "routes":[],"attachments":{},"host-routes":["application"]
     }))?;
     let workflow_user = wamn_project_state::workflow_user_id().to_string();
     admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'automation')", &[&TENANT, &workflow_user]).await?;
     admin.execute("INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)", &[&TENANT, &serde_json::to_string(&document)?, &graph_hash.as_str(), &workflow_user]).await?;
+    let mut manual = document.clone();
+    manual.wiring_id = "echo-manual".into();
+    admin.execute(
+        "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)",
+        &[&TENANT, &serde_json::to_string(&manual)?, &manual.wiring_hash().as_str(), &SERVICE],
+    ).await?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -376,27 +377,22 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         &wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default(),
     )?;
     let logging = Arc::new(logging);
-    let driver = Arc::new(RouterDriver::new(
-        Arc::new(OperationHost::new(
-            Arc::clone(&engine),
-            Arc::clone(&postgres),
-            Arc::new(HttpTransport::new()?),
-            Arc::new(WamnCredentials::empty()),
-            Arc::clone(&logging),
-            Arc::from([]),
-            Arc::clone(&release),
-            Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
-            OperationScope {
-                project: "default".to_owned(),
-                schema: Some("application_data".to_owned()),
-                owner_prefix: "automation-live".to_owned(),
-                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-            },
-        )?),
-        RouterDriverConfig {
-            cache_capacity: WiringCacheCapacity::default(),
+    let driver = Arc::new(RouterDriver::new(Arc::new(OperationHost::new(
+        Arc::clone(&engine),
+        Arc::clone(&postgres),
+        Arc::new(HttpTransport::new()?),
+        Arc::new(WamnCredentials::empty()),
+        Arc::clone(&logging),
+        Arc::from([]),
+        Arc::clone(&release),
+        Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
+        OperationScope {
+            project: "default".to_owned(),
+            schema: Some("application_data".to_owned()),
+            owner_prefix: "automation-live".to_owned(),
+            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
         },
-    ));
+    )?)));
     let scope = QueueScope {
         tenant_id: TENANT.to_owned(),
         project: "default".to_owned(),
@@ -407,17 +403,25 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let liveness = Liveness::new(Duration::from_secs(90));
     let (client, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
     tokio::spawn(connection);
-    let workflows = PostgresWorkflows::new(client, schema.as_str(), TENANT, "test");
-    let mut request = StartRequest {
-        manifest_digest: release.release().manifest_digest.as_str().to_owned(),
+    let workflows = WorkflowsFixture {
+        runs: PostgresWorkflows::new(client, schema.as_str(), TENANT, "test"),
+        postgres: Arc::clone(&postgres),
+        host: wamn_execution_host::HostRouteDelivery::new(
+            Arc::clone(&release),
+            wamn_execution_host::HostRouteHandlers::Application {
+                postgres: Arc::clone(&postgres),
+                project: "default".into(),
+                identity: None,
+                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            },
+            None,
+        ),
+    };
+    let mut request = StartInput {
         package_id: "automation".to_owned(),
-        wiring_id: "echo".to_owned(),
-        wiring_version: 1,
+        wiring_id: "echo-manual".to_owned(),
         idempotency_key: "first".to_owned(),
         input: json!({"queued":true}),
-        trigger: Trigger::Automation {
-            service_principal_id: SERVICE.to_owned(),
-        },
     };
     if let Mode::Jsonata(_) = mode {
         return jsonata::run(
@@ -470,10 +474,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     ).await?.get::<_, bool>(0));
     assert_eq!(workflows.start(&request).await?, run);
     request.input = json!({"different":true});
-    assert_eq!(
-        workflows.start(&request).await.unwrap_err().error_type(),
-        WorkflowErrorType::Conflict
-    );
+    assert!(workflows.start(&request).await.is_err());
     request.input = json!({"queued":true});
 
     // A parked run keeps its status, and no claim takes it until a release.
@@ -487,7 +488,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].run_id, run);
     assert_eq!(listed[0].status, wamn_run_state::RunStatus::Dispatched);
-    assert_eq!(listed[0].trigger_source.as_deref(), Some("automation"));
+    assert_eq!(listed[0].trigger_source.as_deref(), Some("manual"));
     assert!(listed[0].queued && listed[0].parked);
     assert!(!drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
     workflows.release(&run).await?;
@@ -547,7 +548,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         workflows.park(&run).await.unwrap_err().error_type(),
         WorkflowErrorType::NotParkable
     );
-    let row = admin.query_one("SELECT status,result_json::text,service_principal_id::text,deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
+    let row = admin.query_one("SELECT status,result_json::text,execution_principal_id::text,deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
     assert_eq!(row.get::<_, String>(0), "completed");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(1))?,
@@ -607,21 +608,26 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
             &[&TENANT],
         )
         .await?;
-    let refusal = drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        refusal.to_string(),
-        format!("permission denied for operation {OPERATION}")
-    );
+    // A permission refusal terminalizes the run and counts as a handled queue item.
+    assert!(drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
     let row = admin
         .query_one(
-            "SELECT status,result_json::text FROM wamn_run.runs WHERE run_id=$1",
+            "SELECT status,result_json::text,execution_principal_id::text,execution_role,fail_type FROM wamn_run.runs WHERE run_id=$1",
             &[&denied],
         )
         .await?;
-    assert_ne!(row.get::<_, String>(0), "completed");
-    assert!(row.get::<_, Option<String>>(1).is_none());
+    assert_eq!(row.get::<_, String>(0), "failed");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(1))?,
+        json!({"error": {
+            "code": "permission_denied",
+            "operation": OPERATION,
+            "run-id": denied,
+        }})
+    );
+    assert_eq!(row.get::<_, String>(2), SERVICE);
+    assert_eq!(row.get::<_, String>(3), "automation");
+    assert_eq!(row.get::<_, String>(4), "terminal");
     admin
         .execute(
             "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
@@ -629,10 +635,84 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         )
         .await?;
     request.idempotency_key = "inactive".to_owned();
-    assert_eq!(
-        workflows.start(&request).await.unwrap_err().error_type(),
-        WorkflowErrorType::Refused
-    );
+    assert!(workflows.start(&request).await.is_err());
     second.revoke();
     Ok(())
+}
+
+struct StartInput {
+    package_id: String,
+    wiring_id: String,
+    idempotency_key: String,
+    input: serde_json::Value,
+}
+
+struct WorkflowsFixture {
+    runs: PostgresWorkflows,
+    postgres: Arc<WamnPostgres>,
+    host: wamn_execution_host::HostRouteDelivery,
+}
+
+impl std::ops::Deref for WorkflowsFixture {
+    type Target = PostgresWorkflows;
+    fn deref(&self) -> &Self::Target {
+        &self.runs
+    }
+}
+
+impl WorkflowsFixture {
+    async fn start(&self, request: &StartInput) -> anyhow::Result<String> {
+        use wamn_engine::router_delivery::{
+            DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source,
+        };
+        let attachment = wamn_catalog::HostRouteSet::Application
+            .attachments()
+            .find(|(_, attachment)| attachment.reference == "wamn-control:workflow/start")
+            .map(|(id, _)| id.to_owned())
+            .unwrap();
+        let held = self
+            .postgres
+            .session_operation_permissions(
+                "default",
+                TENANT,
+                &["automation".into()],
+                &SERVICE.parse()?,
+            )
+            .await?;
+        let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
+            attachment.clone(),
+            SERVICE,
+            CredentialType::Session,
+            held.admin,
+            held.references.iter().cloned().collect(),
+            held.active_role(),
+        );
+        let report = self
+            .host
+            .deliver(
+                DeliveryRequest {
+                    source: Source::Attachment(attachment),
+                    delivery_id: request.idempotency_key.clone(),
+                    payload: json!([{"request_id": request.idempotency_key, "value": {
+                        "application": request.package_id, "workflow_id": request.wiring_id,
+                        "input_json": request.input, "idempotency_key": request.idempotency_key,
+                    }}])
+                    .to_string(),
+                    caller: None,
+                    trace: None,
+                    parent_causation: None,
+                    if_none_match: None,
+                },
+                Some(caller),
+            )
+            .await;
+        let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
+            anyhow::bail!("workflow.start failed: {:?}", report.outcome);
+        };
+        let body: serde_json::Value = serde_json::from_str(&body)?;
+        body[0]["value"]["run_id"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow::anyhow!("workflow.start refused: {body}"))
+    }
 }

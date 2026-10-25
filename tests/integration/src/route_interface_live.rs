@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use base64::Engine as _;
 use serde_json::{Value, json};
-use wamn_catalog::{AttachmentTarget, ServingAttachment, WiringDocument};
+use wamn_catalog::ServingAttachment;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use crate::local_application::{LocalApplication, LocalApplicationConfig, LocalPackage};
@@ -26,10 +26,6 @@ const ROUTE_PREFIX: &str = "/route";
 
 /// An id that names no row.
 const MISSING: &str = "00000000-0000-4000-8000-00000000dead";
-
-/// The fixture operations that get no one-node wiring: only their routes
-/// serve them.
-const ROUTE_ONLY: &[&str] = &["widget_maker_list", "widget_maker_query"];
 
 struct Paths {
     endpoint: String,
@@ -84,7 +80,7 @@ impl Paths {
     /// require the same status and the same answer. A wiring is a POST. A
     /// route to a read is a GET, and every other route is a POST.
     async fn alike(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        let wiring = self.post(path, body).await?;
+        let wiring = self.by_kind(path, body).await?;
         let route = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
         anyhow::ensure!(
             wiring == route,
@@ -172,60 +168,21 @@ fn edit_version(answer: &Value) -> anyhow::Result<i64> {
 
 /// Each fixture route attachment under `/route`, and at its own path an
 /// attachment of a one-node wiring that calls the same export.
-fn attachments(
-    app: &std::path::Path,
-) -> anyhow::Result<(BTreeMap<String, ServingAttachment>, Vec<WiringDocument>)> {
-    let routes: BTreeMap<String, ServingAttachment> =
-        wamn_schema_generator::route_schema::read_package_attachments(app)?;
-    let declaration: Value = serde_json::from_slice(&std::fs::read(
-        app.join("publication/components/fixture.json.in"),
-    )?)?;
-    let interface_version = declaration["interface-version"]
-        .as_str()
-        .context("the fixture declaration names its interface version")?;
+fn attachments(app: &std::path::Path) -> anyhow::Result<BTreeMap<String, ServingAttachment>> {
+    let routes = wamn_schema_generator::route_schema::read_package_attachments(app)?;
     let mut attachments = BTreeMap::new();
-    let mut wirings = Vec::new();
     for (id, attachment) in routes {
-        let AttachmentTarget::Route {
-            component,
-            operation,
-        } = attachment.target.clone()
-        else {
-            anyhow::bail!("fixture attachment {id} is not a route");
-        };
-        let mut route = attachment.clone();
-        let path = route.definition["route"]["path"]
+        let mut alias = attachment.clone();
+        let path = alias.definition["route"]["path"]
             .as_str()
-            .with_context(|| format!("{id} names a path"))?
+            .context("route path")?
             .to_owned();
-        route.definition["route"]["path"] = json!(format!("{ROUTE_PREFIX}{path}"));
-        route.definition["id"] = json!(format!("route-{id}"));
-        attachments.insert(format!("route-{id}"), route);
-
-        let wiring_id = id.trim_end_matches("-http").replace('-', "_");
-        if ROUTE_ONLY.contains(&wiring_id.as_str()) {
-            continue;
-        }
-        wirings.push(WiringDocument::parse(&json!({
-            "format-version": "0.1",
-            "wiring-id": wiring_id,
-            "version": 1,
-            "entry": "operation",
-            "nodes": {"operation": {
-                "component": component,
-                "interface-version": interface_version,
-                "operation": operation,
-                "terminal": "respond",
-            }},
-        }))?);
-        let mut wired = attachment;
-        wired.target = AttachmentTarget::Wiring {
-            wiring_id,
-            wiring_version: 1,
-        };
-        attachments.insert(id, wired);
+        alias.definition["route"]["path"] = json!(format!("{ROUTE_PREFIX}{path}"));
+        alias.definition["id"] = json!(format!("route-{id}"));
+        attachments.insert(format!("route-{id}"), alias);
+        attachments.insert(id, attachment);
     }
-    Ok((attachments, wirings))
+    Ok(attachments)
 }
 
 /// Start the fixture application with every attachment served twice, and
@@ -241,7 +198,7 @@ async fn start(
         .canonicalize()?;
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
-    let (attachments, wirings) = attachments(&app)?;
+    let attachments = attachments(&app)?;
     std::fs::write(
         scratch.path().join("environment.k"),
         include_str!("../fixtures/local-environments/platform.k"),
@@ -262,7 +219,6 @@ async fn start(
         packages: &[LocalPackage {
             root: &app,
             component: "fixture",
-            wirings: &wirings,
         }],
         attachments: &attachments,
     })
@@ -306,7 +262,7 @@ async fn health_head_needs_no_credential() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
-async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow::Result<()> {
+async fn a_route_answers_every_operation_kind_consistently_across_aliases() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",

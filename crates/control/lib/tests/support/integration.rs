@@ -19,14 +19,10 @@ use wamn_control::component_declaration::{
 use wamn_control::dev::environment::connect;
 use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
-use wamn_control::publish_release::{
-    PublishReleaseRequest, ReleaseWiringTarget, assemble_local_release,
-};
+use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_control::release_chart::ImageSet;
 use wamn_control::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
-use wamn_control_provision::events::{
-    advisory_stream_config, registration_consumers, source_stream_config,
-};
+use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_test_infrastructure::event_broker;
 
@@ -89,6 +85,109 @@ async fn connect_owned(
     Ok((client, task))
 }
 
+/// Admit a manual fixture run through the application host route.
+pub async fn start_workflow(
+    environment: &WorkflowEnvironment<'_>,
+    application: &str,
+    workflow_id: &str,
+    input: &Value,
+    key: &str,
+) -> anyhow::Result<String> {
+    use std::sync::Arc;
+    use wamn_engine::router_delivery::{
+        DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source,
+    };
+    use wamn_runtime::plugins::wamn_postgres::{
+        AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
+    };
+
+    let (project, task) = connect_owned(environment.project_url).await?;
+    project.execute(
+        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
+        &[&environment.tenant, &ENABLER],
+    ).await?;
+    let bytes: Vec<u8> = project.query_one(
+        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id=$1 AND manifest_digest=$2",
+        &[&environment.tenant, &environment.digest],
+    ).await?.get(0);
+    task.abort();
+    let release = Arc::new(
+        wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
+            &bytes,
+            "manual fixture workflow",
+            wamn_engine::release_manifest::ReleaseScope::new(
+                environment.tenant,
+                environment.scope.env.as_str(),
+            )
+            .with_applications(environment.applications.clone()),
+        )?,
+    );
+    let postgres = Arc::new(WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(
+            ClassCredentials::default()
+                .with_class(
+                    AuthorityClass::ExecutorPlatform,
+                    environment.project_url.to_owned(),
+                )
+                .with_class(
+                    AuthorityClass::Administration,
+                    environment.project_url.to_owned(),
+                ),
+        ),
+        guest_pool_max_size: 2,
+        platform_pool_max_size: 2,
+        wait_timeout_ms: 5_000,
+        statement_timeout_ms: 10_000,
+        row_limit: 10_000,
+    })?);
+    let held = postgres
+        .session_operation_permissions(
+            "default",
+            environment.tenant,
+            &["admin".to_owned()],
+            &ENABLER.parse()?,
+        )
+        .await?;
+    let attachment = wamn_catalog::HostRouteSet::Application
+        .attachments()
+        .find(|(_, attachment)| attachment.reference == "wamn-control:workflow/start")
+        .map(|(id, _)| id.to_owned())
+        .context("workflow.start attachment")?;
+    let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
+        attachment.clone(),
+        ENABLER,
+        wamn_engine::flow_http_routing::CredentialType::Session,
+        held.admin,
+        held.references.iter().cloned().collect(),
+        held.active_role(),
+    );
+    let host = wamn_execution_host::HostRouteDelivery::new(
+        release,
+        wamn_execution_host::HostRouteHandlers::Application {
+            postgres,
+            project: "default".to_owned(),
+            identity: None,
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        },
+        None,
+    );
+    let report = host.deliver(DeliveryRequest {
+        source: Source::Attachment(attachment), delivery_id: key.to_owned(),
+        payload: json!([{"request_id":key, "value":{
+            "application":application,"workflow_id":workflow_id,"input_json":input,"idempotency_key":key
+        }}]).to_string(),
+        caller: None, trace: None, parent_causation: None, if_none_match: None,
+    }, Some(caller)).await;
+    let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
+        anyhow::bail!("workflow.start failed: {:?}", report.outcome);
+    };
+    let body: Value = serde_json::from_str(&body)?;
+    body[0]["value"]["run_id"]
+        .as_str()
+        .map(str::to_owned)
+        .with_context(|| format!("workflow.start refused: {body}"))
+}
+
 /// The first minute boundary strictly after `after`.
 pub fn next_minute(after: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp(after.timestamp().div_euclid(60) * 60 + 60, 0)
@@ -108,6 +207,27 @@ pub async fn enable_schedule(
     document: &WiringDocument,
     role: &str,
     operations: &[&str],
+) -> anyhow::Result<()> {
+    enable_trigger(
+        environment,
+        application,
+        document,
+        role,
+        operations,
+        WorkflowTrigger::Schedule("* * * * *"),
+        None,
+    )
+    .await
+}
+
+pub async fn enable_trigger(
+    environment: &WorkflowEnvironment<'_>,
+    application: &str,
+    document: &WiringDocument,
+    role: &str,
+    operations: &[&str],
+    trigger: WorkflowTrigger<'_>,
+    events: Option<&environment::EventBroker>,
 ) -> anyhow::Result<()> {
     let tenant = environment.tenant;
     let (mut project, project_task) = connect_owned(environment.project_url).await?;
@@ -176,7 +296,7 @@ pub async fn enable_schedule(
             application,
             declared: environment.applications,
             document,
-            trigger: WorkflowTrigger::Schedule("* * * * *"),
+            trigger,
             execution: WorkflowExecution::Role(role),
             created_by: ENABLER,
             manifest_digest: environment.digest,
@@ -191,7 +311,7 @@ pub async fn enable_schedule(
         ENABLER,
         environment.digest,
         environment.applications,
-        None,
+        events,
     )
     .await?;
     project_task.abort();
@@ -243,10 +363,7 @@ pub async fn exercise(
         })
         .collect::<anyhow::Result<_>>()?;
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-    let mut consumers = registration_consumers(&scope, &tenant, &manifests);
-    consumers.extend(wamn_control_provision::events::entity_consumers(
-        &scope, &manifests,
-    ));
+    let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
     // Each connector run gets its own broker directory, because the broker
     // refuses an existing one.
     let broker_work = run.work.join(connector);
@@ -387,33 +504,9 @@ pub async fn exercise(
     )
     .await?;
 
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    let subject = wamn_platform_identity::application_subject(&tenant, connector)?;
     document.release = DeclaredRelease::Digest(digest.clone());
     super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
     let (project, project_task) = connect(project_url.as_str()).await?;
-    let version = manifests
-        .iter()
-        .find(|m| m.package.id == connector)
-        .context("connector manifest")?
-        .package
-        .version
-        .as_str();
-    // As in the HTTP fixture, persist the admitted graphs carried by the release.
-    for wiring in &manifest.workflow.wirings {
-        let graph = &wiring.graph;
-        project.execute(
-            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash) VALUES ($1,$2,$3,$4,$5,$6::text::jsonb,$7)",
-            &[&tenant, &wiring.package_id, &version, &graph.wiring_id, &i32::try_from(graph.version)?, &serde_json::to_string(graph)?, &graph.wiring_hash().as_str()],
-        ).await?;
-    }
-    let principal: String = system
-        .query_one(
-            "SELECT id::text FROM identity.principals WHERE type='service' AND subject=$1",
-            &[&subject],
-        )
-        .await?
-        .get(0);
     let captured: Vec<String> = system
         .query_one(
             "SELECT schema FROM registry.event_readers WHERE org=$1 AND project=$2 AND env=$3",
@@ -440,17 +533,47 @@ pub async fn exercise(
         digest: &digest,
         applications: &environment::show::serving_applications(&platform, &scope).await?,
     };
-    let pull = manifest
-        .workflow
-        .wirings
-        .iter()
-        .find(|wiring| {
-            wiring.package_id == connector && wiring.graph.wiring_id == pull_wiring(connector)
-        })
-        .context("the release carries the pull's wiring")?
-        .graph
-        .clone();
+    let read = |name: &str| -> anyhow::Result<WiringDocument> {
+        let mut value = wamn_schema_generator::operation_reference::read_authored_document(
+            &repository.join(format!("apps/{connector}/publication/wirings/{name}.json")),
+            wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+        )?;
+        if connector == "netsuite" && name == "netsuite_pull" {
+            value["nodes"]["page"]["params"]["path-and-query"] =
+                json!("/services/rest/query/v1/suiteql?limit=2");
+        }
+        Ok(serde_json::from_value(value)?)
+    };
+    let pull = read(pull_wiring(connector))?;
+    let push = read(if connector == "netsuite" {
+        "netsuite_push"
+    } else {
+        "rest_item_pushed"
+    })?;
+    let events = environment::EventBroker {
+        nats_url: server.clone(),
+        nats_username: broker.provisioning.username.clone(),
+        nats_password_file: broker.provisioning.password_file.clone(),
+        stream_replicas: source.num_replicas,
+        dup_window_secs: source.duplicate_window.as_secs(),
+    };
     let observed = async {
+        enable_trigger(
+            &workflows,
+            connector,
+            &push,
+            "connector-push",
+            &[],
+            WorkflowTrigger::Event {
+                source_package: CONSUMER,
+                entity: "item",
+                ops: &[wamn_event_wire::Op::Insert],
+                condition: None,
+            },
+            Some(&events),
+        )
+        .await?;
+
         enable_schedule(
             &workflows,
             connector,
@@ -460,7 +583,7 @@ pub async fn exercise(
         )
         .await?;
         if connector == "netsuite" {
-            super::netsuite::assertions(run, &project, &workflows, &principal).await
+            super::netsuite::assertions(run, &project, &workflows).await
         } else {
             assertions(run, &project, &tenant, &digest, &mut reader).await
         }
@@ -564,45 +687,6 @@ async fn publish(
             })?);
         }
     }
-    let connector_manifest = manifests
-        .iter()
-        .find(|m| m.package.id == connector)
-        .context("connector package")?;
-    let scope = ComponentPackageScope {
-        tenant_id: tenant.into(),
-        package_id: connector.into(),
-        package_version: connector_manifest.package.version.clone(),
-    };
-    let names: &[&str] = if connector == "netsuite" {
-        &[
-            "netsuite_pull",
-            "netsuite_push",
-            "record_get",
-            "record_create",
-            "record_update",
-            "suiteql_query",
-            "restlet_call",
-        ]
-    } else {
-        &["rest_item", "rest_item_pushed"]
-    };
-    let documents = names
-        .iter()
-        .map(|name| {
-            let mut value = wamn_schema_generator::operation_reference::read_authored_document(
-                &repository.join(format!("apps/{connector}/publication/wirings/{name}.json")),
-                wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
-            )?;
-            if connector == "netsuite" && matches!(*name, "netsuite_pull" | "suiteql_query") {
-                value["nodes"]["page"]["params"]["path-and-query"] =
-                    json!("/services/rest/query/v1/suiteql?limit=2");
-            }
-            Ok((
-                scope.clone(),
-                serde_json::from_value::<WiringDocument>(value)?,
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
     let request = PublishReleaseRequest {
         database_url: String::new(),
         control_database_url: String::new(),
@@ -615,21 +699,10 @@ async fn publish(
             .iter()
             .map(|m| PackageCoordinate::new(&m.package.id, &m.package.version))
             .collect::<Result<_, _>>()?,
-        wirings: documents
-            .iter()
-            .map(|(scope, graph)| ReleaseWiringTarget {
-                package_id: scope.package_id.clone(),
-                package_version: scope.package_version.clone(),
-                wiring_id: graph.wiring_id.clone(),
-                wiring_version: graph.version,
-            })
-            .collect(),
     };
-    Ok(
-        assemble_local_release(&request, roots, &admissions, documents)?
-            .published
-            .canonical_bytes,
-    )
+    Ok(assemble_local_release(&request, roots, &admissions)?
+        .published
+        .canonical_bytes)
 }
 
 pub(super) async fn start_broker(

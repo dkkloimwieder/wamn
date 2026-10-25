@@ -221,22 +221,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                 registered_operation: attachment.registered_operation().map(str::to_owned),
             })
         }
-        SourceRef::Registration(id) => {
-            manifest
-                .workflow
-                .registrations
-                .get(id)
-                .map(|registration| ResolvedTarget {
-                    package_id: registration.package_id.clone(),
-                    target: AttachmentTarget::Wiring {
-                        wiring_id: registration.wiring_id.clone(),
-                        wiring_version: registration.wiring_version,
-                    },
-                    caller_attached: false,
-                    anonymous_caller_permitted: None,
-                    registered_operation: None,
-                })
-        }
+        SourceRef::Registration(_) => None,
     }
 }
 
@@ -515,7 +500,7 @@ mod tests {
     use super::*;
     use crate::flow_http_routing::CredentialType;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":11,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[],"workflow":{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","package-id":"manifest_mint","type":"http","wiring-id":"orders","wiring-version":1}},"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"manifest_mint"},{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":2,"wiring-id":"shipping"},"package-id":"manifest_mint"}]}}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"component":"http-request","definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"http"}},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":11,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[{"component":"http-request","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"command"}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
@@ -538,9 +523,9 @@ mod tests {
             resolve_target(&manifest(), SourceRef::Attachment("orders-http")),
             Some(ResolvedTarget {
                 package_id: "manifest_mint".into(),
-                target: AttachmentTarget::Wiring {
-                    wiring_id: "orders".into(),
-                    wiring_version: 1,
+                target: AttachmentTarget::Route {
+                    component: "http-request".into(),
+                    operation: "wamn:node/handler@0.1.0".into()
                 },
                 caller_attached: true,
                 anonymous_caller_permitted: Some(true),
@@ -550,18 +535,9 @@ mod tests {
         assert_eq!(
             resolve_target(
                 &manifest(),
-                SourceRef::Registration("manifest_mint::orders-changed"),
+                SourceRef::Registration("manifest_mint::orders-changed")
             ),
-            Some(ResolvedTarget {
-                package_id: "manifest_mint".into(),
-                target: AttachmentTarget::Wiring {
-                    wiring_id: "shipping".into(),
-                    wiring_version: 2,
-                },
-                caller_attached: false,
-                anonymous_caller_permitted: None,
-                registered_operation: None,
-            })
+            None
         );
         assert_eq!(
             resolve_target(&manifest(), SourceRef::Attachment("shipping")),
@@ -631,7 +607,6 @@ mod tests {
         ));
         let mut signed_manifest = manifest();
         signed_manifest
-            .workflow
             .attachments
             .get_mut("orders-http")
             .unwrap()
@@ -646,7 +621,6 @@ mod tests {
 
         let mut protected_manifest = manifest();
         protected_manifest
-            .workflow
             .attachments
             .get_mut("orders-http")
             .expect("the fixture names the protected attachment")
@@ -668,22 +642,6 @@ mod tests {
             protected.anonymous_caller_permitted,
             Some("orders-http"),
         ));
-
-        let registration = resolve_target(
-            &protected_manifest,
-            SourceRef::Registration("manifest_mint::orders-changed"),
-        )
-        .expect("the fixture names the callerless registration");
-        assert!(caller_matches_source(
-            SourceRef::Registration("manifest_mint::orders-changed"),
-            registration.anonymous_caller_permitted,
-            None,
-        ));
-        assert!(!caller_matches_source(
-            SourceRef::Registration("manifest_mint::orders-changed"),
-            registration.anonymous_caller_permitted,
-            Some("orders-http"),
-        ));
     }
 
     #[test]
@@ -691,7 +649,6 @@ mod tests {
         let operation = "manifest-mint:order/get@3.0.0";
         let mut registered = manifest();
         registered
-            .workflow
             .attachments
             .get_mut("orders-http")
             .expect("the fixture attachment exists")

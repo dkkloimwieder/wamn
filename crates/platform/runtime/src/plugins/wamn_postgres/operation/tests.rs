@@ -9,7 +9,7 @@ use wamn_catalog::{
     AttachmentTarget, AttachmentType, ComponentDescriptor, ComponentSqlField,
     ComponentSqlStatement, ComponentSqlValueType, DefinitionHash, OperationType, PackageCoordinate,
     ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
-    ServingRelease, ServingRoute, ServingWiring,
+    ServingRelease, ServingRoute,
 };
 use wamn_engine::engine::build_engine;
 use wamn_engine::flow_http_routing::{
@@ -55,8 +55,8 @@ fn release() -> Arc<LoadedRelease> {
         transactional: true,
     };
     let mut manifest = ServingManifest::new(
-        ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0").unwrap()]) },
-        BTreeSet::from([ServingComponent {
+ServingRelease { packages: BTreeSet::from([PackageCoordinate::new("base", "1.0.0").unwrap()]) },
+BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: "base".into(),
             descriptor: ComponentDescriptor::named("entry", "0.1", digest('a')),
@@ -77,23 +77,21 @@ fn release() -> Arc<LoadedRelease> {
                 statements: BTreeMap::from([("update.sql".into(), statement)]),
             })]),
         }]),
-        BTreeSet::from([ServingRoute {
+BTreeSet::from([ServingRoute {
             package_id: "base".into(), component: "entry".into(),
             operation: READ_OPERATION.into(), type_: OperationType::Get,
             reads: BTreeSet::new(), revision: None,
             idempotency: None, canonicalization: None,
         }]),
-        BTreeSet::from([ServingWiring::new("base", wamn_catalog::fixture_graph("entry", 1))]),
-        BTreeMap::from([("entry".into(), ServingAttachment {
+BTreeMap::from([("entry".into(), ServingAttachment {
             type_: AttachmentType::Http, package_id: "base".into(),
-            target: AttachmentTarget::Wiring { wiring_id: "entry".into(), wiring_version: 1 },
+            target: AttachmentTarget::Route { component: "entry".into(), operation: READ_OPERATION.into() },
             definition_hash: DefinitionHash::parse(digest('c')).unwrap(),
             definition: json!({"route": {"host": "entry.localhost", "path": "/entry", "method": "POST"}}),
                 auth_policy: json!({"modes": ["pat"]}),
             registered_operation: None,
         })]),
-        BTreeMap::new(),
-    ).unwrap();
+).unwrap();
     manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
         reference: format!("entries@{}", digest('e')),
         route_digest: digest('f'),

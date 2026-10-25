@@ -131,9 +131,6 @@ pub struct RunPlaneObservation {
     pub catalog_schema_present: bool,
     /// Tables present in the `catalog` schema (empty when the schema is absent).
     pub catalog_tables: BTreeSet<String>,
-    /// Rows in `catalog.event_registrations` still carrying a retired `state`
-    /// or `partition-key` key (0 when the table is absent).
-    pub stale_registration_key_rows: i64,
     /// Whether `catalog.package_definition_owners` has the old column
     /// `definition_kind` (docs/history/kind-to-type.md §4.3.2).
     pub definition_owners_kind_column: bool,

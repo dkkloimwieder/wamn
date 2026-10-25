@@ -18,9 +18,7 @@ use wamn_integration_tests::local_application::{
 };
 use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
 use wamn_test_infrastructure::scratch::ScratchRoot;
-use wamn_workflow::{
-    PostgresWorkflows, QueueService, QueueServiceConfig, StartRequest, Trigger, Workflows as _,
-};
+use wamn_workflow::{QueueService, QueueServiceConfig};
 
 const ORDER: &str = "00000000-0000-0000-0000-000000000304";
 const LINE: &str = "00000000-0000-0000-0000-000000000504";
@@ -84,32 +82,33 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
         packages: &[LocalPackage {
             root: &receiving,
             component: "receiving",
-            wirings: std::slice::from_ref(&wiring),
         }],
     })
     .await?;
     let queue = application.queue.clone();
-    let result = tokio::task::LocalSet::new()
-        .run_until(recover(&queue, project.url()))
-        .await;
+    let result = Box::pin(tokio::task::LocalSet::new().run_until(recover(
+        &application,
+        &queue,
+        project.url(),
+        system.url(),
+        &wiring,
+    )))
+    .await;
     application.shutdown().await?;
     result
 }
 
-async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
+async fn recover(
+    application: &LocalApplication,
+    queue: &LocalQueue,
+    project_url: &str,
+    system_url: &str,
+    wiring: &wamn_catalog::WiringDocument,
+) -> anyhow::Result<()> {
     let identity = super::identity();
     let tenant = identity.tenant.as_str();
     let (client, task) = super::connect(project_url).await?;
     let (lock, lock_task) = super::connect(project_url).await?;
-    let (workflow_client, workflow_connection) =
-        tokio_postgres::connect(project_url, tokio_postgres::NoTls).await?;
-    let workflow_task = tokio::spawn(workflow_connection);
-    let workflows = PostgresWorkflows::new(
-        workflow_client,
-        "wamn_run",
-        tenant,
-        identity.environment.as_str(),
-    );
     let result = async {
         // Provisioning writes the environment's run policy; the local
         // application does not provision.
@@ -142,6 +141,19 @@ async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
             .await
             .context("read the local operator service")?
             .get(0);
+        wamn_gate_harness::workflow::author_and_enable(
+            system_url, project_url,
+            &wamn_control_registry::Triple::new(&identity.org, &identity.project, identity.environment.as_str()),
+            &wamn_control::author_workflow::AuthorWorkflowRequest {
+                tenant_id: tenant, environment: &identity.environment,
+                application: super::BASE_PACKAGE_ID,
+                declared: &queue.release.scope().applications,
+                document: wiring, trigger: wamn_control::author_workflow::WorkflowTrigger::Manual,
+                execution: wamn_control::author_workflow::WorkflowExecution::Invoker,
+                created_by: &principal,
+                manifest_digest: queue.release.release().manifest_digest.as_str(),
+            }, None,
+        ).await?;
         lock.batch_execute("BEGIN").await?;
         lock.query_one(
             "SELECT id FROM receiving.purchase_order WHERE id = $1::text::uuid FOR UPDATE",
@@ -149,22 +161,13 @@ async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
         )
         .await?;
         let blocker: i32 = lock.query_one("SELECT pg_backend_pid()", &[]).await?.get(0);
-        let request = StartRequest {
-            manifest_digest: queue.release.release().manifest_digest.as_str().to_owned(),
-            package_id: super::BASE_PACKAGE_ID.to_owned(),
-            wiring_id: "receiving_record_receipt".to_owned(),
-            wiring_version: 1,
-            trigger: Trigger::Automation {
-                service_principal_id: principal,
-            },
-            idempotency_key: IDEMPOTENCY_KEY.to_owned(),
-            input: json!([{"request_id":"queue-recovery","value":{
+        let input = json!([{"request_id":"queue-recovery","value":{
                 "idempotency_key":IDEMPOTENCY_KEY,"purchase_order_id":ORDER,
                 "receipt_reference":"QUEUE-RECOVERY","occurred_at":"2026-08-31T12:34:00.000000Z",
                 "line":[{"purchase_order_line_id":LINE,"quantity":"9.0000",
-                    "location_id":"00000000-0000-0000-0000-000000000201"}]}}]),
-        };
-        let run = workflows.start(&request).await?;
+                    "location_id":"00000000-0000-0000-0000-000000000201"}]}}]);
+
+        let run = application.start_workflow(super::BASE_PACKAGE_ID, &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await?;
 
         let (stop_first, first) = serve(queue, "queue-recovery-first").await?;
         let (generation, backend) = blocked_attempt(&client, &run, blocker, 0).await?;
@@ -244,7 +247,7 @@ async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
             "the completed run leaves the durable queue"
         );
         ensure!(
-            workflows.start(&request).await? == run,
+            application.start_workflow(super::BASE_PACKAGE_ID, &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await? == run,
             "admission replay returns the completed run"
         );
         println!(
@@ -253,8 +256,6 @@ async fn recover(queue: &LocalQueue, project_url: &str) -> anyhow::Result<()> {
         Ok(())
     }
     .await;
-    drop(workflows);
-    workflow_task.abort();
     drop(lock);
     lock_task.abort();
     drop(client);

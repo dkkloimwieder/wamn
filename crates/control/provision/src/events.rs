@@ -53,61 +53,6 @@ pub fn advisory_stream_config(scope: &Triple, replicas: usize) -> stream::Config
     }
 }
 
-/// The materializer consumers of the event registrations that the package
-/// manifests declare: one per handler and per workflow registration. The
-/// cluster files and the development loop both derive them here.
-pub fn registration_consumers(
-    scope: &Triple,
-    tenant: &str,
-    manifests: &[wamn_schema_generator::PackageManifest],
-) -> Vec<pull::Config> {
-    let sanitize = |value: &str| {
-        value
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>()
-    };
-    let mut consumers = Vec::new();
-    for manifest in manifests {
-        let handlers = manifest
-            .custom_operations
-            .iter()
-            .filter_map(|(name, operation)| Some((name, operation.registration.as_ref()?)));
-        let workflows = manifest
-            .workflows
-            .iter()
-            .filter_map(|(name, workflow)| Some((name, workflow.registration.as_ref()?)));
-        for (name, registration) in handlers.chain(workflows) {
-            let durable = format!(
-                "mat_{}_{}_{}",
-                sanitize(tenant),
-                sanitize(&manifest.package.id),
-                sanitize(name)
-            );
-            let filter = format!(
-                "evt.{}.{}.{}.{}.>",
-                scope.org,
-                scope.project,
-                scope.env.as_str(),
-                wamn_event_wire::subject_token(&registration.entity)
-            );
-            consumers.push(materializer_consumer_config(
-                &durable,
-                &filter,
-                Duration::from_secs(30),
-                5,
-            ));
-        }
-    }
-    consumers
-}
-
 /// One durable consumer per captured package and entity, independent of workflows.
 pub fn entity_consumers<'a>(
     scope: &Triple,
@@ -332,7 +277,6 @@ mod tests {
         assert_ne!(consumers[0].durable_name, consumers[1].durable_name);
         assert_eq!(consumers[0].filter_subject, "evt.acme.orders.dev.b_c.>");
         assert_eq!(consumers[1].filter_subject, "evt.acme.orders.dev.c.>");
-        assert!(registration_consumers(&scope, "tenant", &manifests).is_empty());
     }
 
     #[test]

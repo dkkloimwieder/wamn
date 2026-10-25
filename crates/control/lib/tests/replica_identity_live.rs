@@ -5,9 +5,6 @@ use wamn_control::reconcile_replica_identity::reconcile;
 use wamn_schema_control::ManagedModel;
 use wamn_test_infrastructure::locked_database;
 
-const PACKAGE_ID: &str = "ri_package";
-const OWNER_PACKAGE_ID: &str = "client_overlay";
-
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await
@@ -29,19 +26,6 @@ fn models() -> Vec<ManagedModel> {
         .collect()
 }
 
-fn registration() -> String {
-    serde_json::json!({
-        "schema-version": "0.1",
-        "registration-id": "orders-delete",
-        "package-id": OWNER_PACKAGE_ID,
-        "source-package-id": PACKAGE_ID,
-        "entity": "orders",
-        "ops": ["delete"],
-        "condition": null
-    })
-    .to_string()
-}
-
 async fn identity(client: &Client, table: &str) -> String {
     client
         .query_one(
@@ -59,100 +43,35 @@ async fn identity(client: &Client, table: &str) -> String {
 async fn install(client: &Client) {
     client
         .batch_execute(
-            "DO $roles$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_ri_probe') THEN \
-                 CREATE ROLE wamn_ri_probe NOLOGIN NOSUPERUSER NOBYPASSRLS; \
-               END IF; \
-             END $roles$;",
-        )
-        .await
-        .expect("create the RI probe role");
-    client
-        .batch_execute(
             "CREATE SCHEMA ri_data; \
              CREATE TABLE ri_data.orders (id bigint PRIMARY KEY, tenant_id text NOT NULL); \
-             CREATE TABLE ri_data.lines (id bigint PRIMARY KEY, tenant_id text NOT NULL); \
-             GRANT USAGE ON SCHEMA catalog, ri_data TO wamn_ri_probe; \
-             GRANT SELECT ON catalog.event_registrations TO wamn_ri_probe;",
+             CREATE TABLE ri_data.lines (id bigint PRIMARY KEY, tenant_id text NOT NULL);",
         )
         .await
-        .expect("install RI application tables and probe surface");
+        .expect("install RI application tables");
 }
 
 #[tokio::test]
-async fn package_registration_union_flips_exact_tables_and_unreadable_state_refuses() {
+async fn captured_models_stay_full_without_registration_storage() {
     let url = locked_database::database(wamn_catalog::test_database::tenant);
     let client = connect(&url).await;
     install(&client).await;
     client
-        .execute(
-            "INSERT INTO catalog.event_registrations \
-             (tenant_id, package_id, registration_id, entity_id, registration) \
-             VALUES ('t1', $1, 'orders-delete', 'orders', $2::text::jsonb)",
-            &[&OWNER_PACKAGE_ID, &registration()],
-        )
+        .batch_execute("DROP TABLE IF EXISTS catalog.event_registrations")
         .await
-        .expect("store overlay-owned registration on a base package entity");
-
-    reconcile(&client, PACKAGE_ID, &models(), true)
-        .await
-        .expect("reconcile package registrations");
-    assert_eq!(identity(&client, "orders").await, "f");
-    assert_eq!(identity(&client, "lines").await, "d");
-
-    client
-        .batch_execute("SET ROLE wamn_ri_probe")
-        .await
-        .expect("enter non-bypass probe role");
-    let unreadable = reconcile(&client, PACKAGE_ID, &models(), false)
-        .await
-        .expect_err("forced-RLS silence must refuse as unreadable");
-    client
-        .batch_execute("RESET ROLE; RESET row_security")
-        .await
-        .expect("leave probe role");
-    assert!(format!("{unreadable:#}").contains("replica-identity-registrations-unreadable"));
-    assert_eq!(identity(&client, "orders").await, "f");
-
-    client
-        .execute(
-            "DELETE FROM catalog.event_registrations \
-             WHERE registration ->> 'source-package-id' = $1",
-            &[&PACKAGE_ID],
-        )
-        .await
-        .expect("remove the only FULL demand");
-    reconcile(&client, PACKAGE_ID, &models(), true)
-        .await
-        .expect("genuinely empty registration set reconciles");
-    assert_eq!(identity(&client, "orders").await, "d");
-
+        .expect("remove retired registration storage");
     client
         .batch_execute(&wamn_control_provision::sql::create_publication_sql(
             "captured", "ri_data",
         ))
         .await
         .unwrap();
-    reconcile(&client, PACKAGE_ID, &models(), true)
+    reconcile(&client, &models(), true)
         .await
         .expect("capture requires FULL without registrations");
     assert_eq!(identity(&client, "orders").await, "f");
     assert_eq!(identity(&client, "lines").await, "f");
-    assert!(
-        reconcile(&client, PACKAGE_ID, &models(), true)
-            .await
-            .unwrap()
-            .is_noop()
-    );
-
-    client
-        .batch_execute("DROP TABLE catalog.event_registrations")
-        .await
-        .expect("remove registration owner relation");
-    let absent = reconcile(&client, PACKAGE_ID, &models(), false)
-        .await
-        .expect_err("absent registration storage must refuse");
-    assert!(format!("{absent:#}").contains("replica-identity-registrations-absent"));
+    assert!(reconcile(&client, &models(), true).await.unwrap().is_noop());
 
     client
         .batch_execute(

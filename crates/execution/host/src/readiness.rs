@@ -9,7 +9,6 @@ use tokio::sync::Mutex as AsyncMutex;
 use wamn_catalog::{AttachmentType, ServingManifest};
 
 use crate::operation::OperationHost;
-use crate::router_delivery::WiringDelivery;
 
 /// The synchronous release closure made resident by one readiness evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,24 +22,11 @@ pub(crate) struct PreparedReleaseReadiness {
 /// Native readiness initializes each exact component without invoking its handler.
 async fn prepare_synchronous_release(
     operations: &OperationHost,
-    wirings: Option<&dyn WiringDelivery>,
 ) -> anyhow::Result<PreparedReleaseReadiness> {
     let prepare_started = Instant::now();
     let manifest = operations.release.manifest();
     let routes = synchronous_route_count(manifest);
-    let (synchronous_wirings, mut components) = match wirings {
-        Some(wirings) => {
-            let preload = wirings.preload().await?;
-            (preload.wirings, preload.components)
-        }
-        None => (0, None),
-    };
-    // A route reads the same release component list with no wiring. The
-    // composed entry serves every route instead, and publish admitted and
-    // verified its application, so the host compiles the entry only. A
-    // wiring runs its entry members on the entry too, so preparing the
-    // released application below compiles the entry, under the digest the
-    // HTTP entry start compiles it, and not the members' own components.
+    let mut components = None;
     let entry = manifest
         .composed_entry
         .as_ref()
@@ -84,14 +70,13 @@ async fn prepare_synchronous_release(
     }
     tracing::info!(
         target: "wamn::router",
-        synchronous_wirings,
         synchronous_routes = routes,
         component_digests = digests.len(),
         elapsed_ms = %prepare_started.elapsed().as_millis(),
         "synchronous release preload completed"
     );
     Ok(PreparedReleaseReadiness {
-        synchronous_wirings,
+        synchronous_wirings: 0,
         synchronous_routes: routes,
         component_digests: digests.len(),
     })
@@ -223,8 +208,6 @@ impl ReadinessState {
 /// observation is a process-memory hit with no PostgreSQL or registry call.
 pub struct RouterReadinessProbe {
     operations: Arc<OperationHost>,
-    /// `None` on a host with no wiring layer.
-    wirings: Option<Arc<dyn WiringDelivery>>,
     evaluation: AsyncMutex<()>,
     state: Mutex<ReadinessState>,
 }
@@ -232,10 +215,9 @@ pub struct RouterReadinessProbe {
 impl RouterReadinessProbe {
     /// Gate readiness on the release components, and on the synchronous
     /// wirings of the wiring layer, if any.
-    pub fn new(operations: Arc<OperationHost>, wirings: Option<Arc<dyn WiringDelivery>>) -> Self {
+    pub fn new(operations: Arc<OperationHost>) -> Self {
         Self {
             operations,
-            wirings,
             evaluation: AsyncMutex::new(()),
             state: Mutex::new(ReadinessState::new()),
         }
@@ -264,7 +246,7 @@ impl RouterReadinessProbe {
             generation
         };
 
-        let prepared = prepare_synchronous_release(&self.operations, self.wirings.as_deref()).await;
+        let prepared = prepare_synchronous_release(&self.operations).await;
         let mut state = self.state.lock().expect("router readiness lock poisoned");
         match prepared {
             Ok(prepared) => state.finish(generation, Ok(prepared)),

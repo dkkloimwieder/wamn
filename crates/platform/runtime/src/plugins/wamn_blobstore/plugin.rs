@@ -474,7 +474,7 @@ mod tests {
 
     use wamn_catalog::{
         PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
-        ServingComponentOperation, ServingRelease, ServingWiring,
+        ServingComponentOperation, ServingRelease,
     };
 
     use super::*;
@@ -502,6 +502,7 @@ mod tests {
             entry: crate::plugins::connection_http::InvocationEntry::Wiring(
                 crate::plugins::connection_http::WiringPosition {
                     package_id: "package_a".to_string(),
+                    wiring_hash: fixture_wiring_hash(),
                     wiring_id: "orders".to_string(),
                     wiring_version: 3,
                     node_id: "archive".to_string(),
@@ -558,7 +559,7 @@ mod tests {
             components: BTreeSet::new(),
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
-            workflow: wamn_catalog::WorkflowSection::default(),
+
             host_routes: BTreeSet::new(),
         };
         (
@@ -759,14 +760,6 @@ mod tests {
                 },
             )]),
         }]);
-        let position = invocation
-            .entry
-            .wiring()
-            .expect("the fixture invocation enters through a wiring");
-        manifest.workflow.wirings = BTreeSet::from([ServingWiring::new(
-            position.package_id.clone(),
-            wamn_catalog::fixture_graph(&position.wiring_id, position.wiring_version),
-        )]);
         manifest
     }
 
@@ -877,7 +870,6 @@ mod tests {
         let world = frozen_world();
         let mut snapshot = matching_snapshot(frozen_binding(&world));
         let mut manifest = carrying_manifest(&snapshot);
-        manifest.workflow.wirings.clear();
         snapshot.wiring_hash = None;
         let mut route = released();
         route.entry = crate::plugins::connection_http::InvocationEntry::Route;

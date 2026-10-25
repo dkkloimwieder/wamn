@@ -14,8 +14,8 @@ manifest.Package {
     base_dependencies = {
         base_receiving = {
             package = "wamn_receiving"
-            version = "2.2.7"
-            digest = "sha256:73209603c12db932558a556ec53114b1c480e78895dfe5a137c781897040f51d"
+            version = "2.2.8"
+            digest = "sha256:6041035ae8585dcab0101cfcf527278422bd1810bf0eb8840c5a237b7fee3cb3"
             operations = ["receiving.record_receipt"]
         }
     }
@@ -179,7 +179,6 @@ manifest.Package {
             visibility = "private"
             input: {fields = [{path = "event", type = "text", values = ["insert"]}, {path = "new.id", type = "uuid"}]}
             errors = ["invalid_input", "retry", "timeout", "internal_error"]
-            registration = {source_package = "wamn_receiving", entity = "receipt", ops = ["insert"]}
             statements = {
                 insert_inspection = manifest.Statement("command/create_inspection", "insert_inspection") {
                     fetch = "optional_one"

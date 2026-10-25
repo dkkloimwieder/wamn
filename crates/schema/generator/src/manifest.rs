@@ -47,22 +47,6 @@ pub struct PackageManifest {
     /// The route entries generation writes for the generated operations.
     #[serde(default, skip_serializing_if = "RoutesDeclaration::is_default")]
     pub routes: RoutesDeclaration,
-    /// Wirings that an event starts, off the request path, keyed by workflow
-    /// id (docs/plan/workflow-feature.md 4.2).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub workflows: BTreeMap<String, WorkflowDeclaration>,
-}
-
-/// One wiring of the package that an event starts. The wiring can enter at
-/// any node, and the queue runs it with no caller. A schedule is a row of
-/// `catalog.workflows`, not a package declaration (docs/plan/workflows.md R9).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowDeclaration {
-    /// The wiring id in `publication/wirings`.
-    pub wiring: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration: Option<EventRegistrationDeclaration>,
 }
 
 /// One strict package-local operation backed only by declared static SQL.
@@ -100,8 +84,6 @@ pub struct CustomOperationDeclaration {
     pub idempotent_by: Option<CommandIdempotence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonicalization: Option<CommandCanonicalization>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration: Option<EventRegistrationDeclaration>,
     /// Authored screen text for the operation itself. A component exports the
     /// label, and the page that places the component decides where it goes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,11 +129,6 @@ impl CustomOperationDeclaration {
         self.component.as_deref()
     }
 
-    /// Inline source registration, present only for an event handler.
-    pub const fn registration(&self) -> Option<&EventRegistrationDeclaration> {
-        self.registration.as_ref()
-    }
-
     /// Whether this operation's export works in the host transaction itself:
     /// a command with SQL of its own (`docs/history/host-transaction.md` 4.1).
     pub fn has_host_transaction(&self) -> bool {
@@ -191,20 +168,6 @@ impl CustomOperationDeclaration {
             })
             .map(|field| field.path.as_str())
     }
-}
-
-/// One package-emitted entity observed by an event handler.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EventRegistrationDeclaration {
-    pub source_package: String,
-    pub entity: String,
-    pub ops: Vec<wamn_event_wire::Op>,
-    /// The JMESPath predicate over `{op, old, new}` that selects the events,
-    /// as the platform registration takes it. A predicate that reads `old`
-    /// makes the reconciler run the entity with `REPLICA IDENTITY FULL`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub condition: Option<String>,
 }
 
 /// Transaction boundary admitted for custom commands in the POC.
@@ -639,9 +602,30 @@ impl PackageManifest {
                 .any(CustomOperationDeclaration::claims)
     }
 
-    /// Parse one complete manifest, refusing unknown fields at every level.
+    /// Parse a manifest, dropping retired workflow declarations and refusing other unknown fields.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
-        let manifest: Self = serde_json::from_slice(bytes).map_err(|source| {
+        let decode = |source| {
+            GenerateError::with_source(
+                GenerateErrorType::InvalidManifest,
+                "wamn.json does not match the closed manifest vocabulary",
+                source,
+            )
+        };
+        let mut value: serde_json::Value = serde_json::from_slice(bytes).map_err(decode)?;
+        if let Some(object) = value.as_object_mut() {
+            object.remove("workflows");
+            if let Some(operations) = object
+                .get_mut("custom_operations")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                for operation in operations.values_mut() {
+                    if let Some(operation) = operation.as_object_mut() {
+                        operation.remove("registration");
+                    }
+                }
+            }
+        }
+        let manifest: Self = serde_json::from_value(value).map_err(|source| {
             GenerateError::with_source(
                 GenerateErrorType::InvalidManifest,
                 "wamn.json does not match the closed manifest vocabulary",
@@ -726,7 +710,6 @@ pub fn validate_operation_vocabulary(
     crate::upgrade_stage::validate_package_upgrade_stage(manifest)?;
     validate_base_dependencies(manifest)?;
     validate_internal_relation_vocabulary(manifest)?;
-    validate_workflows(manifest)?;
     validate_routes(&manifest.routes)?;
 
     let mut declared = BTreeSet::new();
@@ -1142,7 +1125,7 @@ fn validate_custom_operation(
         }
     }
 
-    validate_custom_operation_kind(manifest, operation_name, operation)?;
+    validate_custom_operation_kind(operation_name, operation)?;
     validate_custom_operation_input(operation_name, &operation.input)?;
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to
@@ -1163,7 +1146,6 @@ fn validate_custom_operation(
 }
 
 fn validate_custom_operation_kind(
-    manifest: &PackageManifest,
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
@@ -1176,12 +1158,6 @@ fn validate_custom_operation_kind(
                 ));
             }
             refuse_command_only_fields(operation_name, operation)?;
-            if operation.registration.is_some() {
-                return Err(GenerateError::new(
-                    GenerateErrorType::InvalidOperation,
-                    format!("projection {operation_name} must not declare a registration"),
-                ));
-            }
             // A read carries no request identity (docs/architecture/execution.md).
             if operation
                 .input
@@ -1209,12 +1185,10 @@ fn validate_custom_operation_kind(
             }
         }
         CustomOperationType::Command => {
-            if operation.result.is_none() || operation.registration.is_some() {
+            if operation.result.is_none() {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidOperation,
-                    format!(
-                        "command {operation_name} must declare a result and must declare no registration"
-                    ),
+                    format!("command {operation_name} must declare a result"),
                 ));
             }
             validate_command_idempotence(operation_name, operation)?;
@@ -1275,17 +1249,6 @@ fn validate_custom_operation_kind(
                 ));
             }
             refuse_command_only_fields(operation_name, operation)?;
-            let registration = operation.registration.as_ref().ok_or_else(|| {
-                GenerateError::new(
-                    GenerateErrorType::InvalidOperation,
-                    format!("event handler {operation_name} must declare a registration"),
-                )
-            })?;
-            validate_registration(
-                manifest,
-                &format!("event handler {operation_name}"),
-                registration,
-            )?;
         }
     }
     Ok(())
@@ -1447,65 +1410,6 @@ fn refuse_command_only_fields(
         ))
     } else {
         Ok(())
-    }
-}
-
-/// Each workflow names a wiring and its event registration.
-/// Its id has no dot, so it cannot repeat an operation's `module.operation` id.
-fn validate_workflows(manifest: &PackageManifest) -> Result<(), GenerateError> {
-    for (workflow_id, workflow) in &manifest.workflows {
-        validate_identifier(workflow_id, "workflow id")?;
-        validate_identifier(&workflow.wiring, "workflow wiring")?;
-        let Some(registration) = &workflow.registration else {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidOperation,
-                format!(
-                    "workflow-registration-required: workflow {workflow_id} must declare registration"
-                ),
-            ));
-        };
-        validate_registration(manifest, &format!("workflow {workflow_id}"), registration)?;
-    }
-    Ok(())
-}
-
-/// `subject` names the declaring handler or workflow in each refusal.
-fn validate_registration(
-    manifest: &PackageManifest,
-    subject: &str,
-    registration: &EventRegistrationDeclaration,
-) -> Result<(), GenerateError> {
-    validate_identifier(&registration.source_package, "event source package")?;
-    validate_identifier(&registration.entity, "event entity")?;
-    if registration.ops.is_empty() {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!("{subject} registration must declare at least one op"),
-        ));
-    }
-    for (index, op) in registration.ops.iter().enumerate() {
-        if registration.ops[..index].contains(op) {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidOperation,
-                format!("{subject} registration repeats op {:?}", op.as_str()),
-            ));
-        }
-    }
-    let source_is_declared = registration.source_package == manifest.package.id
-        || manifest
-            .base_dependencies
-            .values()
-            .any(|dependency| dependency.package == registration.source_package);
-    if source_is_declared {
-        Ok(())
-    } else {
-        Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!(
-                "{subject} source package {} is not installed by the manifest",
-                registration.source_package
-            ),
-        ))
     }
 }
 

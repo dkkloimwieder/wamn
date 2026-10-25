@@ -98,8 +98,6 @@ fn release() -> ServingManifest {
         },
         BTreeSet::from([ServingComponent::project(&fact, Vec::new()).unwrap()]),
         BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
         BTreeMap::new(),
     )
     .expect("the fixture release is valid")
@@ -684,6 +682,16 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     capture_orders(&fixture).await;
     let graph = workflow("changed", 1, "get", "orders_data");
     fixture.green(&graph).await;
+    let release_bytes = fixture.project.query_one(
+        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
+        &[&TENANT, &fixture.digest],
+    ).await.unwrap().get::<_, Vec<u8>>(0);
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&release_bytes)
+            .unwrap()
+            .get("workflow")
+            .is_none()
+    );
     fixture
         .author_trigger(
             &graph,
@@ -697,6 +705,14 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         )
         .await
         .unwrap();
+    assert_eq!(
+        fixture.project.query_one(
+            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
+            &[&TENANT, &fixture.digest],
+        ).await.unwrap().get::<_, Vec<u8>>(0),
+        release_bytes,
+        "author, enable and disable leave the release digest unchanged",
+    );
     assert_eq!(
         fixture
             .enable("changed", 1, ALICE)
@@ -766,6 +782,14 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     )
     .await
     .unwrap();
+    assert_eq!(
+        fixture.project.query_one(
+            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
+            &[&TENANT, &fixture.digest],
+        ).await.unwrap().get::<_, Vec<u8>>(0),
+        release_bytes,
+        "author, enable and disable leave the release digest unchanged",
+    );
     let sequence = async |project: &Client| -> i64 {
         project
             .query_one(
@@ -792,6 +816,14 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     assert_eq!(
         sequence(&fixture.project).await,
         i64::try_from(second.sequence).unwrap()
+    );
+    assert_eq!(
+        fixture.project.query_one(
+            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
+            &[&TENANT, &fixture.digest],
+        ).await.unwrap().get::<_, Vec<u8>>(0),
+        release_bytes,
+        "author, enable and disable leave the release digest unchanged",
     );
     let third = broker
         .publish(subject, "after".into())

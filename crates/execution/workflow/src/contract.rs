@@ -1,11 +1,10 @@
-//! The workflow contract: start, park, release, and list workflow runs.
+//! Park, release, and list workflow runs.
 //!
 //! [`Workflows`] is the one interface a client uses, for example
-//! `wamn-ctl-ops`, the event trigger, or a test. [`PostgresWorkflows`]
+//! `wamn-ctl` or a test. [`PostgresWorkflows`]
 //! implements it over the run plane of one tenant and environment.
 //!
-//! A start admits a run: one `runs` row and one `run_queue` row, and the queue
-//! then runs the wiring. A park holds a queued run that no replica holds, and a
+//! Manual starts use the host route. A park holds a queued run that no replica holds, and a
 //! release returns it to the queue. Park acts on the queue row only, so a
 //! parked run keeps the status `dispatched`. A park inside a walk belongs to
 //! approvals, which this contract does not cover (docs/plan/workflow-feature.md).
@@ -19,14 +18,9 @@ use wamn_run_state::RunStatus;
 
 pub use postgres::PostgresWorkflows;
 
-/// Start, park, release, and list the workflow runs of one environment.
+/// Park, release, and list the workflow runs of one environment.
 #[async_trait::async_trait]
 pub trait Workflows: Send + Sync {
-    /// Admit one run of a released wiring and return its run id. A repeated
-    /// start with the same idempotency key and the same request returns the
-    /// first run.
-    async fn start(&self, request: &StartRequest) -> Result<String, WorkflowError>;
-
     /// Hold a queued run, so no claim takes it. Parking a parked run changes
     /// nothing.
     async fn park(&self, run_id: &str) -> Result<(), WorkflowError>;
@@ -36,28 +30,6 @@ pub trait Workflows: Send + Sync {
 
     /// The newest runs of the environment, at most `limit`.
     async fn list(&self, limit: u32) -> Result<Vec<WorkflowRun>, WorkflowError>;
-}
-
-/// What starts a run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Trigger {
-    /// An operator or a test acting as a service principal. The run executes
-    /// with that principal's permissions at the time it runs.
-    Automation { service_principal_id: String },
-}
-
-/// One run to admit.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StartRequest {
-    /// The installed release whose wiring the run executes, as its manifest
-    /// digest.
-    pub manifest_digest: String,
-    pub package_id: String,
-    pub wiring_id: String,
-    pub wiring_version: u32,
-    pub idempotency_key: String,
-    pub input: serde_json::Value,
-    pub trigger: Trigger,
 }
 
 /// One run as [`Workflows::list`] reports it.

@@ -136,13 +136,11 @@ pub fn write_package(
             admission.package_id(),
             admission.package_version(),
         )?],
-        wirings: Vec::new(),
     };
     let assembled = assemble_local_release(
         &request,
         &[package.to_owned()],
         std::slice::from_ref(&admission),
-        Vec::new(),
     )?;
     write_bundle(
         &assembled.published.canonical_bytes,
@@ -170,10 +168,6 @@ fn write_bundle(
 ) -> anyhow::Result<String> {
     let (manifest, digest) = ServingManifest::from_canonical_bytes(manifest_bytes)
         .context("the local release manifest is not canonical")?;
-    ensure!(
-        manifest.workflow.is_empty(),
-        "the release carries wirings, and an edge box runs no wiring"
-    );
     wamn_runtime::local_application::validate_local_facts(facts, &manifest, tenant)?;
 
     let mut permissions = BTreeSet::new();

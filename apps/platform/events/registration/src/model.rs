@@ -1,37 +1,7 @@
-//! The event-registration model (EVT-REG, D19 v3 §5).
+//! Predicate input used to evaluate one environment event trigger.
 //!
-//! An [`EventRegistration`] is a **subscribing operation's declaration** — the "a
-//! registration, not code" of §5: WHICH entity's row events it wants
-//! ([`entity`](EventRegistration::entity)), WHICH ops
-//! ([`ops`](EventRegistration::ops)), an optional
-//! [`condition`](EventRegistration::condition) filter. The
-//! **materializer (l5i9.17) is the consumer**: it opens a durable consumer per
-//! registration, evaluates the condition (hot-editable — filtered-out events
-//! stay on the stream, so a condition edit is replayable), and admits matching
-//! runs into the global FIFO. This crate is ONLY the declaration surface; it
-//! does not decode, materialize, or enqueue.
-//!
-//! [`entity`](EventRegistration::entity) is the source package's stable model
-//! key from `wamn.json`, not a relation name. The source manifest is the sole
-//! mapping from that key to a schema/table pair.
-//!
-//! **Impact analysis (11.8, wamn-wvb) covers registrations:** because the entity
-//! is referenced by id, "what breaks if I drop/rename entity X" enumerates the
-//! registrations that reference it (the `entity_id` storage column in
-//! `catalog.event_registrations` is the query handle).
-//!
-//! **Data, not code:** stored as jsonb in `catalog.event_registrations` (this
-//! crate is the source of truth for the semantics; the storage schema denormalizes
-//! `entity_id` as a column for lookup).
-//!
-//! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The declaration shape,
-//! the kebab-case field spellings, AND the expression grammar are frozen: a
-//! [`condition`](EventRegistration::condition) is a JMESPath **predicate** over
-//! the frozen event context `{"op", "old", "new"}` (built by
-//! `wamn_materializer::event_context`) and syntax-validated at write
-//! ([`crate::validate`]). This pre-version-alpha contract is refreshed from
-//! zero; retired fields are refused rather than carried by a compatibility
-//! reader.
+//! The materializer constructs this value from a workflow row. Conditions are
+//! JMESPath predicates over the event context `{"op", "old", "new"}`.
 
 use serde::{Deserialize, Serialize};
 
@@ -55,8 +25,7 @@ pub enum RegistrationInput {
 /// it wants and how they are filtered.
 ///
 /// The `(package_id, registration_id)` pair is the identity (unique within a
-/// tenant); `entity` is denormalized into storage for the materializer's
-/// per-entity sweep and impact analysis.
+/// tenant); the owning workflow row supplies this identity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct EventRegistration {
@@ -96,8 +65,7 @@ impl EventRegistration {
         format!("{}::{}", self.package_id, self.registration_id)
     }
 
-    /// Parse a registration from canonical JSON (import; also the jsonb stored
-    /// per row in `catalog.event_registrations`).
+    /// Parse a predicate input from JSON.
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(s)
     }

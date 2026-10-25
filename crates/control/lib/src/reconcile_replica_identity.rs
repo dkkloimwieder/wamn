@@ -1,4 +1,4 @@
-//! Reconcile per-model PostgreSQL REPLICA IDENTITY from package registrations.
+//! Reconcile per-model PostgreSQL REPLICA IDENTITY from captured schemas.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -6,15 +6,9 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 use wamn_schema_control::{
-    EventRegistration, ManagedModel, ReplicaIdentity, ReplicaIdentityPlan, UnreadableRegistrations,
-    UnreadableRegistrationsKind, plan_package_migrations, reconcile_replica_identity,
-    select_replica_identity_sql,
+    ManagedModel, ReplicaIdentity, ReplicaIdentityPlan, plan_package_migrations,
+    reconcile_replica_identity, select_replica_identity_sql,
 };
-
-const SELECT_REGISTRATIONS_SQL: &str = "\
-SELECT registration::text FROM catalog.event_registrations \
- WHERE registration ->> 'source-package-id' = $1 \
- ORDER BY tenant_id, package_id, registration_id";
 
 /// Inputs of one replica identity reconciliation for a package.
 #[derive(Debug)]
@@ -36,13 +30,12 @@ pub async fn reconcile_package_replica_identity(
     let directory = crate::apply_package::read_package_directory(&request.package)?;
     let package =
         plan_package_migrations(&directory, None).context("derive package model mapping")?;
-    let package_id = package.coordinate.package_id().to_owned();
 
     let (client, connection) = tokio_postgres::connect(&request.admin_database_url, NoTls)
         .await
         .context("connect to project database")?;
     let connection_task = tokio::spawn(connection);
-    let result = reconcile(&client, &package_id, &package.models, !request.dry_run).await;
+    let result = reconcile(&client, &package.models, !request.dry_run).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -57,11 +50,9 @@ pub async fn reconcile_package_replica_identity(
 
 pub async fn reconcile(
     client: &tokio_postgres::Client,
-    package_id: &str,
     models: &[ManagedModel],
     apply: bool,
 ) -> anyhow::Result<ReplicaIdentityPlan> {
-    let registrations = read_registrations(client, package_id).await?;
     let schemas = models
         .iter()
         .map(|model| model.schema.clone())
@@ -70,13 +61,7 @@ pub async fn reconcile(
         .collect::<Vec<_>>();
     let current = read_current_identities(client, &schemas).await?;
     let captured_schemas = client.query("SELECT DISTINCT n.nspname::text FROM pg_publication_namespace p JOIN pg_namespace n ON n.oid = p.pnnspid", &[]).await.context("read captured schemas for replica identity")?.iter().map(|row| row.get(0)).collect::<BTreeSet<String>>();
-    let plan = reconcile_replica_identity(
-        package_id,
-        models,
-        &registrations,
-        &current,
-        &captured_schemas,
-    );
+    let plan = reconcile_replica_identity(models, &current, &captured_schemas);
     if apply {
         for flip in &plan.flips {
             client
@@ -86,46 +71,6 @@ pub async fn reconcile(
         }
     }
     Ok(plan)
-}
-
-async fn read_registrations(
-    client: &tokio_postgres::Client,
-    package_id: &str,
-) -> anyhow::Result<Vec<EventRegistration>> {
-    let table_present: bool = client
-        .query_one(
-            "SELECT to_regclass('catalog.event_registrations') IS NOT NULL",
-            &[],
-        )
-        .await
-        .context("probe catalog.event_registrations")?
-        .get(0);
-    if !table_present {
-        return Err(UnreadableRegistrations {
-            kind: UnreadableRegistrationsKind::Absent,
-            package_id: package_id.to_owned(),
-        }
-        .into());
-    }
-    client
-        .batch_execute("SET row_security = off")
-        .await
-        .context("require a complete cross-tenant registration read")?;
-    let read = client.query(SELECT_REGISTRATIONS_SQL, &[&package_id]).await;
-    let _ = client.batch_execute("RESET row_security").await;
-    let rows = read.map_err(|source| {
-        anyhow::Error::new(source).context(UnreadableRegistrations {
-            kind: UnreadableRegistrationsKind::Unreadable,
-            package_id: package_id.to_owned(),
-        })
-    })?;
-    rows.into_iter()
-        .map(|row| {
-            let document: String = row.get(0);
-            EventRegistration::from_json(&document)
-                .with_context(|| format!("parse stored registration document: {document}"))
-        })
-        .collect()
 }
 
 async fn read_current_identities(

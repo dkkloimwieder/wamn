@@ -123,10 +123,7 @@ impl EdgeDelivery {
         let AttachmentTarget::Route {
             component,
             operation,
-        } = &target.target
-        else {
-            anyhow::bail!("{attachment} targets a wiring, and the edge has no wiring layer");
-        };
+        } = &target.target;
         manifest
             .route(&target.package_id, component, operation)
             .ok_or_else(|| anyhow::anyhow!("{attachment} has no route in the release"))
@@ -148,14 +145,7 @@ impl EdgeDelivery {
         let AttachmentTarget::Route {
             component,
             operation,
-        } = &target.target
-        else {
-            tracing::warn!(
-                source = source.id(),
-                "the edge has no wiring layer; a wiring target fails"
-            );
-            return Err(DeliveryError::ExecutionFailed);
-        };
+        } = &target.target;
         let components = self.release.components();
         let release = self.release.release().release().manifest_digest.to_string();
         let intent = manifest

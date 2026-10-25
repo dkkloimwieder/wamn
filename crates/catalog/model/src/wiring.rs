@@ -5,8 +5,7 @@
 //! from the palette, edges connect declared ports, node parameters bind
 //! declared params, and the in-draft `cases` array rides the document. It is
 //! *data, not code* — versioned, gated against one environment effective
-//! release, and resolved from the loaded release — so its storage is
-//! `catalog.wirings` rather than an OCI artifact.
+//! release, and read from its environment workflow row in `catalog.workflows`.
 //!
 //! # The cases array attaches here (wamn-0h0g.18.4)
 //!
@@ -28,7 +27,7 @@
 //! which node *ends* it leaves `wamn_router::WiringNode::terminal` permanently
 //! `None` and `wamn_router::Wiring::compile`'s entry with no value to take.
 //! [`WiringDocument::entry`] and [`WiringNode::terminal`] are that source, and
-//! they are wiring **data**: this document is what `catalog.wirings.graph_json`
+//! they are wiring **data**: this document is what `catalog.workflows.graph_json`
 //! stores and `wiring_hash` covers, so re-terminalling a graph is a new gated
 //! definition rather than an edit to a live one.
 //!
@@ -38,7 +37,7 @@
 //! canonical JSON, taken through the workspace's single canonicalizer
 //! ([`wamn_execution_contract::canonical_json_sha256`]) exactly as
 //! [`ServingManifest`](crate::ServingManifest) does. It is the value stored in
-//! `catalog.wirings.wiring_hash`.
+//! `catalog.workflows.wiring_hash`.
 //!
 //! Nodes are a `BTreeMap` keyed by node id, so map order cannot reach the
 //! digest and a duplicate id is not a representable state. Edges are a `Vec`
@@ -182,7 +181,7 @@ pub struct WiringResponse {
     pub committed_result: Option<String>,
 }
 
-/// One version of a wiring: the document `catalog.wirings.graph_json` stores.
+/// One version of a wiring: the document `catalog.workflows.graph_json` stores.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WiringDocument {
@@ -191,7 +190,7 @@ pub struct WiringDocument {
     pub format_version: String,
     /// Stable identifier shared across every version of this wiring.
     pub wiring_id: String,
-    /// Monotonic version of this wiring — `catalog.wirings.version`, the row a
+    /// Monotonic version of this wiring — `catalog.workflows.version`, the row a
     /// rollback flips back to.
     pub version: u32,
     /// The node a delivery enters at: where the walk puts the admitted payload
@@ -277,7 +276,7 @@ impl WiringDocument {
         Ok(document)
     }
 
-    /// Parse and validate a stored document — the `catalog.wirings.graph_json`
+    /// Parse and validate a stored document — the `catalog.workflows.graph_json`
     /// reader.
     ///
     /// The column holds a parsed document rather than exact bytes, so identity
@@ -908,7 +907,7 @@ mod tests {
 
         // The terminal and the entry are gated definition content, not runtime
         // configuration: re-terminalling or re-entering a graph is a new
-        // `catalog.wirings` row to gate and flip onto, never an edit to the
+        // `catalog.workflows` row to gate and flip onto, never an edit to the
         // definition an environment already confirmed.
         let mut reterminaled = wiring.clone();
         reterminaled

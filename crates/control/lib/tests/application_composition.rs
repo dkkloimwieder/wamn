@@ -193,8 +193,6 @@ fn publication_records_the_exact_entry_and_members() {
         },
         BTreeSet::from([ServingComponent::project(fact, Vec::new()).unwrap()]),
         BTreeSet::new(),
-        BTreeSet::new(),
-        BTreeMap::new(),
         BTreeMap::new(),
     )
     .unwrap();
@@ -262,8 +260,6 @@ fn publication_composes_only_the_application_that_covers_the_routes() {
             "type": "get",
         }))
         .unwrap()]),
-        BTreeSet::new(),
-        BTreeMap::new(),
         BTreeMap::new(),
     )
     .unwrap();

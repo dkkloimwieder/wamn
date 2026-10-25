@@ -17,9 +17,7 @@ use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::json;
 use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
-use wamn_control_provision::events::{
-    advisory_stream_config, registration_consumers, source_stream_config,
-};
+use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
@@ -279,10 +277,7 @@ async fn main() -> anyhow::Result<()> {
         &RECEIVING_PACKAGES
     };
     let manifests = application_manifests(&repository, packages)?;
-    let mut consumers = registration_consumers(&scope, tenant, &manifests);
-    consumers.extend(wamn_control_provision::events::entity_consumers(
-        &scope, &manifests,
-    ));
+    let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
     let broker = event_broker::prepare(&directory, &scope, tenant, &source, &advisory, &consumers)?;
     private(
         &directory.join("compose.json"),

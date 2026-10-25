@@ -22,7 +22,6 @@ use package_version::{
     current_package_version, predecessor_not_current_error, predecessor_prefix_error,
 };
 use record_history::{create_history_tables, reconcile_record_history_triggers};
-use registrations::{derive_catalog_registrations, reconcile_package_registrations};
 use roles::{assert_host_role, reset_host_role, set_package_owner_role};
 
 mod abandon;
@@ -35,7 +34,6 @@ mod migration_policy;
 mod operation_grants;
 mod package_version;
 mod record_history;
-mod registrations;
 mod roles;
 mod stage;
 mod synchronization;
@@ -425,7 +423,6 @@ async fn apply_prepared(
     let directory = &package.directory;
     let manifest = &package.manifest;
     let migration_policy = &package.migration_policy;
-    let registrations = derive_catalog_registrations(manifest);
     let presented =
         plan_package_migrations(directory, None).context("validate package directory")?;
     let package_id = presented.coordinate.package_id().to_owned();
@@ -708,8 +705,6 @@ async fn apply_prepared(
         reconcile_record_history_triggers(tx, manifest, synchronizations).await?;
     let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
     let admin_role_changed = ensure_admin_role(tx, tenant, &mut drops).await?;
-    let registrations_changed =
-        reconcile_package_registrations(tx, tenant, &package_id, &registrations).await?;
     if let Some(schema) = stage_schema
         && !crate::qualify_upgrade::stage::whole_row_grants(manifest.upgrade_stage.as_ref())
     {
@@ -756,7 +751,6 @@ async fn apply_prepared(
             || history_changed
             || triggers_changed
             || admin_role_changed
-            || registrations_changed
             || comment_changed,
     })
 }
@@ -809,13 +803,6 @@ pub async fn reconcile_local_package_configuration(
     reconcile_entity_maps(tx, &plan, &manifest).await?;
     reconcile_record_history_triggers(tx, &manifest, &policy.synchronizations).await?;
     ensure_admin_role(tx, tenant, drops).await?;
-    reconcile_package_registrations(
-        tx,
-        tenant,
-        plan.coordinate.package_id(),
-        &derive_catalog_registrations(&manifest),
-    )
-    .await?;
     Ok(())
 }
 

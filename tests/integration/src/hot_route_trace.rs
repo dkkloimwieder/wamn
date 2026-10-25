@@ -196,7 +196,6 @@ mod tests {
         .expect("the trusted HTTP route builds");
 
         let delivery = route
-            .driver
             .execute(RouterDriverRequest {
                 tenant_id: TENANT.to_owned(),
                 package_id: PACKAGE.to_owned(),

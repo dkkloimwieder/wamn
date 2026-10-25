@@ -234,7 +234,6 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     );
 
     let expected = vec![
-        "relation|catalog|event_registrations|SELECT".to_owned(),
         "relation|catalog|packages|SELECT".to_owned(),
         "schema|catalog|catalog|USAGE".to_owned(),
     ];
@@ -274,11 +273,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
            ('t1', 'widgets', '1.0.0', \
             'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
            ('t2', 'foreign', '1.0.0', \
-            'sha256:1111111111111111111111111111111111111111111111111111111111111111'); \
-         INSERT INTO catalog.event_registrations \
-           (tenant_id, package_id, registration_id, entity_id, registration) VALUES \
-           ('t1', 'overlay', 'quality.create_inspection', 'widget', '{}'), \
-           ('t2', 'foreign', 'foreign', 'widget', '{}');",
+            'sha256:1111111111111111111111111111111111111111111111111111111111111111');",
     );
     let as_materializer = role_url(&admin, &login, GENERATION_PW);
     assert_eq!(
@@ -293,23 +288,10 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     );
     assert_eq!(
         query(
-            &as_materializer,
-            "SET app.tenant = 't1'; \
-             SELECT string_agg(package_id || '::' || registration_id, ',' ORDER BY package_id) \
-               FROM catalog.event_registrations \
-              WHERE tenant_id = current_setting('app.tenant', true)"
+            &admin,
+            "SELECT to_regclass('catalog.event_registrations') IS NULL"
         ),
-        "overlay::quality.create_inspection"
-    );
-    assert_eq!(
-        sqlstate(
-            &as_materializer,
-            "INSERT INTO catalog.event_registrations \
-               (tenant_id, package_id, registration_id, entity_id, registration) \
-             VALUES ('t1', 'overlay', 'forged', 'widget', '{}');"
-        )
-        .as_deref(),
-        Some("42501")
+        "t"
     );
 }
 
@@ -555,7 +537,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "catalog.packages",
         "catalog.package_migrations",
         "catalog.wiring_tombstones",
-        "catalog.event_registrations",
         "wamn_run.operator_run_actions",
         "wamn_run.effect_attempt_dispatches",
         "wamn_run.effect_attempt_outcomes",

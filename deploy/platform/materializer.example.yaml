@@ -16,7 +16,7 @@
 # (bind_plugins binds only what is declared here).
 #
 # IDENTITY (host-injected, non-spoofable): `wamn.tenant` scopes the fully
-# qualified `catalog.packages` and `catalog.event_registrations` reads;
+# qualified `catalog.packages` read;
 # `wamn.project` selects the per-project pool;
 # `wamn.postgres.authority` selects the closed event-materializer credential
 # class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only

@@ -65,12 +65,11 @@ pub use serving_manifest::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, CanonicalSpelling,
     INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE,
     OperationType, PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
-    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, RegistrationDelivery, RouteAttachment,
+    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, RouteAttachment,
     RouteCanonicalization, RouteLineOrder, SERVING_MANIFEST_FORMAT_VERSION,
     SESSION_AUTHENTICATION_MODE, ServedAttachment, ServingAttachment, ServingComponent,
     ServingComponentOperation, ServingComposedEntry, ServingEntryMember, ServingManifest,
-    ServingRegistration, ServingRegistrationInput, ServingRelation, ServingRelease, ServingRoute,
-    ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment, WorkflowSection,
+    ServingRelation, ServingRelease, ServingRoute, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     parse_attachment_auth_policy, parse_workflow_schedule, release_manifest_configmap_name,
 };
 #[cfg(any(test, feature = "test-util"))]

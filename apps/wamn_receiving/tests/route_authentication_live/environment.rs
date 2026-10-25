@@ -423,36 +423,6 @@ pub(super) async fn verify_zero_case_gate_reports(
     Ok(())
 }
 
-pub(super) async fn author_journey_wirings(
-    inputs: &JourneyDocument,
-    project_url: &str,
-    system_url: &str,
-) -> anyhow::Result<()> {
-    let registry = journey_package_registry(inputs)?;
-    for package in released_journey_packages() {
-        for wiring in package.wirings {
-            let document = author_wiring::read_wiring_document(
-                &journey_publication_root(package)
-                    .join("wirings")
-                    .join(format!("{wiring}.json")),
-            )
-            .with_context(|| format!("author gated wiring {}::{wiring}", package.id))?;
-            author_wiring::author_wiring_in_databases(
-                project_url,
-                system_url,
-                &registry,
-                identity().tenant.as_str(),
-                package.id,
-                package.version(),
-                &document,
-            )
-            .await
-            .with_context(|| format!("author gated wiring {}::{wiring}", package.id))?;
-        }
-    }
-    Ok(())
-}
-
 pub(super) struct JourneyReleaseTarget<'a> {
     pub(super) project_url: &'a str,
     pub(super) system_url: &'a str,
@@ -513,15 +483,6 @@ pub(super) async fn publish_journey_release(
         system_url,
         publisher,
     } = target;
-    let wirings = released_journey_packages()
-        .flat_map(|package| {
-            package.wirings.iter().map(move |wiring| {
-                format!("{}@{}::{wiring}=1", package.id, package.version())
-                    .parse::<ReleaseWiringTarget>()
-                    .map_err(anyhow::Error::msg)
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
     // The release composes the verified package artifacts, which live beside
     // the component artifacts.
     let registry = journey_package_registry(inputs)?;
@@ -537,7 +498,6 @@ pub(super) async fn publish_journey_release(
             packages: released_journey_packages()
                 .map(|package| PackageCoordinate::new(package.id, package.version()))
                 .collect::<Result<Vec<_>, _>>()?,
-            wirings,
         },
         &registry,
         &inputs.release_artifact_base,
@@ -610,20 +570,6 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
 }
 
 pub(super) async fn seed_materializer_trigger_rows(project: &Client) -> anyhow::Result<()> {
-    let graph = wamn_schema_generator::operation_reference::read_authored_document(
-        &overlay_package_root().join("publication/wirings/quality_create_inspection.json"),
-        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
-    )?;
-    let graph: wamn_catalog::WiringDocument = serde_json::from_value(graph)?;
-    let principal = wamn_project_state::workflow_user_id().to_string();
-    project.execute(
-        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
-        &[&identity().tenant.as_str(), &principal],
-    ).await?;
-    project.execute(
-        "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, enabled, created_by) VALUES ($1, $2, 'receiving', $3, $4, $5::text::jsonb, $6, 'event', $7, 'receipt', ARRAY['insert'], 0, 'invoker', true, $8::text::uuid) ON CONFLICT DO NOTHING",
-        &[&identity().tenant.as_str(), &identity().environment, &graph.wiring_id, &i32::try_from(graph.version)?, &serde_json::to_string(&graph)?, &graph.wiring_hash().as_str(), &BASE_PACKAGE_ID, &principal],
-    ).await?;
     seed_materializer_order(
         project,
         "00000000-0000-0000-0000-000000000304",
@@ -670,4 +616,62 @@ pub(super) async fn seed_materializer_order(
         .await
         .context("seed the untouched materializer journey purchase order line")?;
     Ok(())
+}
+
+pub(super) async fn author_materializer_workflow(
+    inputs: &JourneyDocument,
+    route: &wamn_control::provision_project_env::ProvisionedRoute,
+    events: &wamn_control::environment::EventBroker,
+) -> anyhow::Result<()> {
+    use wamn_control::author_workflow::{
+        AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
+    };
+    let graph = wamn_control::author_workflow::read_wiring_document(
+        &overlay_package_root().join("publication/wirings/quality_create_inspection.json"),
+    )?;
+    let (project, task) = connect(&route.database_url).await?;
+    let digest: String = project
+        .query_one(
+            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
+            &[&identity().tenant.as_str()],
+        )
+        .await?
+        .get(0);
+    task.abort();
+    let declared = BTreeMap::from([(
+        "receiving".into(),
+        wamn_catalog::ApplicationDefinition {
+            packages: std::collections::BTreeSet::from([
+                BASE_PACKAGE_ID.into(),
+                "client_acme_receiving".into(),
+            ]),
+        },
+    )]);
+    wamn_gate_harness::workflow::author_and_enable(
+        &inputs.system_pg_url,
+        &route.database_url,
+        &wamn_control_registry::Triple::new(
+            &identity().org,
+            &identity().project,
+            identity().environment.as_str(),
+        ),
+        &AuthorWorkflowRequest {
+            tenant_id: &identity().tenant,
+            environment: identity().environment.as_str(),
+            application: "receiving",
+            declared: &declared,
+            document: &graph,
+            trigger: WorkflowTrigger::Event {
+                source_package: BASE_PACKAGE_ID,
+                entity: "receipt",
+                ops: &[wamn_event_wire::Op::Insert],
+                condition: None,
+            },
+            execution: WorkflowExecution::Invoker,
+            created_by: &wamn_project_state::workflow_user_id().to_string(),
+            manifest_digest: &digest,
+        },
+        Some(events),
+    )
+    .await
 }

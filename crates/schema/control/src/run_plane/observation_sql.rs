@@ -391,11 +391,3 @@ pub fn select_outbox_function_present_sql() -> &'static str {
 pub fn catalog_schema_present_sql() -> &'static str {
     "SELECT EXISTS ( SELECT FROM pg_namespace WHERE nspname = 'catalog' )"
 }
-
-/// Rows in `catalog.event_registrations` carrying a retired declaration key.
-///
-/// The shell runs this only when the table was observed present.
-pub fn count_stale_registration_keys_sql() -> &'static str {
-    "SELECT count(*) FROM catalog.event_registrations \
-     WHERE registration ?| ARRAY['state', 'partition-key']"
-}

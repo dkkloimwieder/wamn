@@ -11,9 +11,7 @@ mod support;
 
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
-use wamn_control::publish_release::{
-    PublishReleaseRequest, ReleaseWiringTarget, assemble_local_release,
-};
+use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
 struct Fixture {
@@ -105,15 +103,6 @@ fn fixture() -> Fixture {
             .into_iter()
             .map(|name| PackageCoordinate::new(name, "0.1.0").unwrap())
             .collect(),
-        wirings: documents
-            .iter()
-            .map(|(_, document)| ReleaseWiringTarget {
-                package_id: scope.package_id.clone(),
-                package_version: scope.package_version.clone(),
-                wiring_id: document.wiring_id.clone(),
-                wiring_version: document.version,
-            })
-            .collect(),
     };
     Fixture {
         args,
@@ -131,19 +120,21 @@ async fn pull_checkpoint_commits_through_the_application_role() -> anyhow::Resul
         admissions,
         documents,
     } = fixture();
-    let assembled = assemble_local_release(&args, &roots, &admissions, documents)?;
+    let assembled = assemble_local_release(&args, &roots, &admissions)?;
+    gate_documents(&args, &assembled.published.manifest, &documents)?;
     checkpoint_live::invoke(&roots, &assembled.published.manifest, &admissions).await
 }
 
 #[test]
-fn invalid_ports_and_dependencies_refuse_publication() {
+fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
     let Fixture {
         args,
         roots,
         admissions,
         documents,
     } = fixture();
-    let assembled = assemble_local_release(&args, &roots, &admissions, documents.clone()).unwrap();
+    let assembled = assemble_local_release(&args, &roots, &admissions).unwrap();
+    gate_documents(&args, &assembled.published.manifest, &documents).unwrap();
     assert_eq!(
         assembled
             .published
@@ -164,7 +155,7 @@ fn invalid_ports_and_dependencies_refuse_publication() {
         .find(|edge| edge.from == "rows")
         .unwrap()
         .from_port = "main".into();
-    assert!(assemble_local_release(&args, &roots, &admissions, wrong_port).is_err());
+    assert!(gate_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
     let mut wrong_dependency = documents;
     wrong_dependency[0]
         .1
@@ -175,5 +166,21 @@ fn invalid_ports_and_dependencies_refuse_publication() {
         .as_mut()
         .unwrap()
         .operation = "item.other".into();
-    assert!(assemble_local_release(&args, &roots, &admissions, wrong_dependency).is_err());
+    assert!(gate_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
+}
+
+fn gate_documents(
+    args: &PublishReleaseRequest,
+    manifest: &wamn_catalog::ServingManifest,
+    documents: &[(ComponentPackageScope, WiringDocument)],
+) -> anyhow::Result<()> {
+    let packages = args
+        .packages
+        .iter()
+        .map(|p| p.package_id().to_owned())
+        .collect();
+    for (_, document) in documents {
+        wamn_catalog::gate_workflow_document(&args.tenant, &packages, manifest, document)?;
+    }
+    Ok(())
 }

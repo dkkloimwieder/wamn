@@ -1,12 +1,11 @@
-//! Guest delivery. A route calls its one operation on the operation host, and
-//! a wiring target goes to the wiring layer through `WiringDelivery`.
+//! Guest delivery. A route calls its one operation on the operation host.
 
 use std::fmt;
 use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
-use wamn_catalog::{AdmittedComponent, AttachmentTarget, OperationType, ServingRoute};
+use wamn_catalog::{AttachmentTarget, OperationType, ServingRoute};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
@@ -15,7 +14,6 @@ use wamn_engine::router_delivery::{
     Source, SourceRef, derived_causation, lower_operation_refusal, resolve_authorized_target,
     settle_route,
 };
-use wamn_event_wire::Causation;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 
 use crate::operation::OperationHost;
@@ -35,54 +33,7 @@ const DELIVERY_ERRORS: &str = "wamn.router.delivery.errors";
 // always-empty second key would double the series for nothing.
 const SOURCE_KIND: &str = "wamn.source.kind";
 const SOURCE_ID: &str = "wamn.source.id";
-const WIRING_ID: &str = "wamn.wiring.id";
-const WIRING_VERSION: &str = "wamn.wiring.version";
 const DELIVERY_ERROR: &str = "wamn.delivery.error";
-
-/// The wiring arm of the bridge. A route never reaches it.
-///
-/// The router driver in `wamn-workflow` implements it. This crate never
-/// depends on that crate.
-#[async_trait::async_trait]
-pub trait WiringDelivery: Send + Sync {
-    /// Resolve and check every wiring that a synchronous attachment targets.
-    async fn preload(&self) -> anyhow::Result<WiringPreload>;
-
-    /// Deliver to one wiring target, and settle it through the bridge.
-    async fn deliver(
-        &self,
-        bridge: &RouterDeliveryBridge,
-        call: WiringCall<'_>,
-    ) -> Result<DeliveryOutcome, DeliveryError>;
-}
-
-/// The synchronous wirings one readiness evaluation resolved.
-#[derive(Debug)]
-pub struct WiringPreload {
-    pub wirings: usize,
-    /// The release components the wirings name, or `None` when no
-    /// synchronous attachment targets a wiring.
-    pub components: Option<Arc<[AdmittedComponent]>>,
-}
-
-/// One delivery that the bridge resolved to a wiring target.
-#[derive(Debug)]
-pub struct WiringCall<'a> {
-    pub source: SourceRef<'a>,
-    pub delivery_id: String,
-    pub package_id: &'a str,
-    pub wiring_id: &'a str,
-    pub wiring_version: u32,
-    pub caller_attached: bool,
-    pub payload: serde_json::Value,
-    pub caller: Option<AuthenticatedCaller>,
-    pub traceparent: Option<String>,
-    pub tracestate: Option<String>,
-    pub causation: Causation,
-    pub attributes: &'a [KeyValue],
-    /// The bridge reports these to the guest beside the outcome.
-    pub deadline_adjustments: &'a mut Vec<DeadlineAdjustment>,
-}
 
 /// A node deadline changed by the host execution limit.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -96,9 +47,6 @@ pub struct DeadlineAdjustment {
 /// The one bridge shared by attachment and registration ingress.
 #[derive(Clone)]
 pub struct RouterDeliveryBridge {
-    /// `None` on a host with no wiring layer. Such a host refuses a wiring
-    /// target.
-    wirings: Option<Arc<dyn WiringDelivery>>,
     /// The route path calls this host directly and never enters the driver.
     operations: Arc<OperationHost>,
     release: Arc<LoadedRelease>,
@@ -108,10 +56,9 @@ pub struct RouterDeliveryBridge {
 
 impl RouterDeliveryBridge {
     /// Bind the bridge to the process's operation host, its loaded manifest,
-    /// and the wiring layer that serves wiring targets, if any.
+    /// and the event transport.
     pub fn new(
         operations: Arc<OperationHost>,
-        wirings: Option<Arc<dyn WiringDelivery>>,
         jetstream: Arc<WamnJetstream>,
         project: &str,
     ) -> anyhow::Result<Self> {
@@ -124,7 +71,6 @@ impl RouterDeliveryBridge {
         )?;
         Ok(Self {
             operations,
-            wirings,
             release,
             jetstream,
             metrics: None,
@@ -161,7 +107,7 @@ impl RouterDeliveryBridge {
         &self,
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
-        deadline_adjustments: &mut Vec<DeadlineAdjustment>,
+        _deadline_adjustments: &mut Vec<DeadlineAdjustment>,
         etag: &mut Option<String>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
         let DeliveryRequest {
@@ -200,74 +146,42 @@ impl RouterDeliveryBridge {
             Some(_) => delivery_attributes(source, &target.target),
             None => Vec::new(),
         };
-        let (wiring_id, wiring_version) = match &target.target {
-            AttachmentTarget::Wiring {
-                wiring_id,
-                wiring_version,
-            } => (wiring_id.clone(), *wiring_version),
-            AttachmentTarget::Route {
-                component,
-                operation,
-            } => {
-                let read = self.release.manifest().routes.iter().find(|route| {
-                    route.package_id == target.package_id
-                        && route.component == *component
-                        && route.operation == *operation
-                        && route.type_.is_read()
-                });
-                let result = self
-                    .run_route(
-                        RouteCall {
-                            attachment_id: source.id(),
-                            package_id: &target.package_id,
-                            component,
-                            operation,
-                            delivery_id: &delivery_id,
-                            payload: &payload,
-                            caller,
-                            traceparent: traceparent.as_deref(),
-                            tracestate: tracestate.as_deref(),
-                            causation,
-                        },
-                        read,
-                        if_none_match.as_deref(),
-                        etag,
-                    )
-                    .await;
-                return match result {
-                    Ok(settled) => {
-                        self.record(&attributes, DeliveryClass::Delivered);
-                        Ok(settled.outcome)
-                    }
-                    Err(error) => self.refuse(&attributes, &error),
-                };
-            }
-        };
-
-        let Some(wirings) = &self.wirings else {
-            let error = anyhow::anyhow!("no wiring layer serves wiring {wiring_id:?}");
-            return self.refuse(&attributes, &error);
-        };
-        wirings
-            .deliver(
-                self,
-                WiringCall {
-                    source,
-                    delivery_id,
+        let AttachmentTarget::Route {
+            component,
+            operation,
+        } = &target.target;
+        let read = self.release.manifest().routes.iter().find(|route| {
+            route.package_id == target.package_id
+                && route.component == *component
+                && route.operation == *operation
+                && route.type_.is_read()
+        });
+        let result = self
+            .run_route(
+                RouteCall {
+                    attachment_id: source.id(),
                     package_id: &target.package_id,
-                    wiring_id: &wiring_id,
-                    wiring_version,
-                    caller_attached: target.caller_attached,
-                    payload,
+                    component,
+                    operation,
+                    delivery_id: &delivery_id,
+                    payload: &payload,
                     caller,
-                    traceparent,
-                    tracestate,
+                    traceparent: traceparent.as_deref(),
+                    tracestate: tracestate.as_deref(),
                     causation,
-                    attributes: &attributes,
-                    deadline_adjustments,
                 },
+                read,
+                if_none_match.as_deref(),
+                etag,
             )
-            .await
+            .await;
+        match result {
+            Ok(settled) => {
+                self.record(&attributes, DeliveryClass::Delivered);
+                Ok(settled.outcome)
+            }
+            Err(error) => self.refuse(&attributes, &error),
+        }
     }
 
     /// Call one route, with the ETag of a read (`docs/architecture/execution.md`).
@@ -406,7 +320,6 @@ impl fmt::Debug for RouterDeliveryBridge {
         formatter
             .debug_struct("RouterDeliveryBridge")
             .field("operations", &self.operations)
-            .field("wiring_layer", &self.wirings.is_some())
             .field("release", &self.release.release())
             .finish_non_exhaustive()
     }
@@ -453,20 +366,11 @@ impl DeliveryMetrics {
 /// and registration. `wamn.wiring.version` is unbounded across releases but
 /// constant within a process, so it churns at the release rate, not the
 /// delivery rate. A route has no wiring, so its source names it alone.
-fn delivery_attributes(source: SourceRef<'_>, target: &AttachmentTarget) -> Vec<KeyValue> {
-    let mut attributes = vec![
+fn delivery_attributes(source: SourceRef<'_>, _target: &AttachmentTarget) -> Vec<KeyValue> {
+    vec![
         KeyValue::new(SOURCE_KIND, source.source_type()),
         KeyValue::new(SOURCE_ID, source.id().to_owned()),
-    ];
-    if let AttachmentTarget::Wiring {
-        wiring_id,
-        wiring_version,
-    } = target
-    {
-        attributes.push(KeyValue::new(WIRING_ID, wiring_id.clone()));
-        attributes.push(KeyValue::new(WIRING_VERSION, i64::from(*wiring_version)));
-    }
-    attributes
+    ]
 }
 
 #[cfg(test)]
@@ -477,7 +381,7 @@ mod tests {
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
     use wamn_catalog::ServingManifest;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":11,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[],"workflow":{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","package-id":"manifest_mint","type":"http","wiring-id":"orders","wiring-version":1}},"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"manifest_mint"},{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":2,"wiring-id":"shipping"},"package-id":"manifest_mint"}]}}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"component":"http-request","definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"http"}},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":11,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[{"component":"http-request","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"command"}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
@@ -556,7 +460,7 @@ mod tests {
     /// manifest does not name, so nothing outside the manifest can become a
     /// label and the series count is fixed for the process.
     #[test]
-    fn a_delivery_is_labelled_by_its_source_type_id_and_wiring_release() {
+    fn a_delivery_is_labelled_by_its_source_type_and_id() {
         let manifest = manifest();
         let attachment =
             resolve_authorized_target(&manifest, SourceRef::Attachment("orders-http"), None)
@@ -566,27 +470,6 @@ mod tests {
             vec![
                 KeyValue::new(SOURCE_KIND, "attachment"),
                 KeyValue::new(SOURCE_ID, "orders-http"),
-                KeyValue::new(WIRING_ID, "orders"),
-                KeyValue::new(WIRING_VERSION, 1_i64),
-            ]
-        );
-
-        let registration = resolve_authorized_target(
-            &manifest,
-            SourceRef::Registration("manifest_mint::orders-changed"),
-            None,
-        )
-        .expect("the fixture names this registration");
-        assert_eq!(
-            delivery_attributes(
-                SourceRef::Registration("manifest_mint::orders-changed"),
-                &registration.target,
-            ),
-            vec![
-                KeyValue::new(SOURCE_KIND, "registration"),
-                KeyValue::new(SOURCE_ID, "manifest_mint::orders-changed"),
-                KeyValue::new(WIRING_ID, "shipping"),
-                KeyValue::new(WIRING_VERSION, 2_i64),
             ]
         );
     }
@@ -598,9 +481,9 @@ mod tests {
         let harness = MetricHarness::install();
         let attributes = delivery_attributes(
             SourceRef::Attachment("orders-http"),
-            &AttachmentTarget::Wiring {
-                wiring_id: "orders".to_owned(),
-                wiring_version: 1,
+            &AttachmentTarget::Route {
+                component: "http-request".to_owned(),
+                operation: "wamn:node/handler@0.1.0".to_owned(),
             },
         );
 
@@ -615,8 +498,6 @@ mod tests {
                 labels(&[
                     ("wamn.source.kind", "attachment"),
                     ("wamn.source.id", "orders-http"),
-                    ("wamn.wiring.id", "orders"),
-                    ("wamn.wiring.version", "1"),
                 ]),
                 1,
             )]
@@ -630,10 +511,10 @@ mod tests {
         let harness = MetricHarness::install();
         let metrics = harness.metrics();
         let attributes = delivery_attributes(
-            SourceRef::Registration("manifest_mint::orders-changed"),
-            &AttachmentTarget::Wiring {
-                wiring_id: "shipping".to_owned(),
-                wiring_version: 2,
+            SourceRef::Attachment("orders-http"),
+            &AttachmentTarget::Route {
+                component: "http-request".to_owned(),
+                operation: "wamn:node/handler@0.1.0".to_owned(),
             },
         );
 
@@ -641,10 +522,8 @@ mod tests {
         metrics.record(&attributes, DeliveryClass::ExecutionFailed);
 
         let base = [
-            ("wamn.source.kind", "registration"),
-            ("wamn.source.id", "manifest_mint::orders-changed"),
-            ("wamn.wiring.id", "shipping"),
-            ("wamn.wiring.version", "2"),
+            ("wamn.source.kind", "attachment"),
+            ("wamn.source.id", "orders-http"),
         ];
         let with_error = |error: &str| {
             let mut pairs = base.to_vec();

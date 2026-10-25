@@ -510,12 +510,10 @@ async fn start_with(
             LocalPackage {
                 root: &receiving,
                 component: "receiving",
-                wirings: &[],
             },
             LocalPackage {
                 root: &acme,
                 component: "client_acme_receiving",
-                wirings: &[],
             },
         ],
     })
@@ -1034,6 +1032,5 @@ async fn histories(
 fn route_operation(attachment: &wamn_catalog::ServingAttachment) -> &str {
     match &attachment.target {
         wamn_catalog::AttachmentTarget::Route { operation, .. } => operation,
-        wamn_catalog::AttachmentTarget::Wiring { .. } => "",
     }
 }

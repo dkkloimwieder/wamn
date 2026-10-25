@@ -59,14 +59,11 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
             "operations": {READ: {"registered-operation": READ, "permissions": [READ]}}}],
         "routes": [{"package-id": "status_test", "component": "purchase", "operation": READ,
             "type": "get"}],
-        "attachments": {ROUTE: attachment},
-        "workflow": {
-            "wirings": [wamn_catalog::ServingWiring::new("status_test", wamn_catalog::fixture_graph("purchase", 1))],
-            "attachments": {"purchase-http": {"type": "http", "package-id": "status_test",
-                "wiring-id": "purchase", "wiring-version": 1,
-                "definition-hash": wamn_execution_contract::canonical_json_sha256(&wiring_route),
-                "definition": wiring_route, "auth-policy": {"modes": ["none"]}}}
-        }
+        "attachments": {ROUTE: attachment, "purchase-http": {"type":"http","package-id":"status_test",
+            "component":"purchase","operation":READ,
+            "definition-hash":wamn_execution_contract::canonical_json_sha256(&wiring_route),
+            "definition":wiring_route,"auth-policy":{"modes":["none"]}}}
+
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),

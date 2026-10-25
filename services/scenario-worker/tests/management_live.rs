@@ -602,21 +602,6 @@ fn admission_url(admin_url: &str) -> String {
     parsed.to_string()
 }
 
-fn sanitized_admission_endpoint(admin_url: &str) -> String {
-    let parsed = url::Url::parse(&admission_url(admin_url)).expect("the admission URL parses");
-    let host = parsed.host_str().expect("the admission URL names a host");
-    let host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    };
-    format!(
-        "postgresql://{host}:{}/{}",
-        parsed.port().unwrap_or(5432),
-        PROJECT_DATABASE
-    )
-}
-
 async fn start_management_surface(
     admin_url: &str,
     artifacts: &ArtifactRegistry,
@@ -806,47 +791,14 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
 /// The first-transition test reads this: an EMPTY `catalog.wirings` must still
 /// reach a green report, which is precisely what the deadlock made impossible.
 async fn stored_wiring_count(project: &Client) -> i64 {
-    project
-        .query_one(
-            "SELECT count(*) FROM catalog.wirings WHERE tenant_id = $1",
-            &[&TENANT],
-        )
-        .await
-        .expect("count the stored wiring rows")
-        .get(0)
-}
-
-async fn stored_wiring(project: &Client) -> Option<(String, u32, String, serde_json::Value)> {
-    project
-        .query_opt(
-            "SELECT wiring_id, version, wiring_hash, graph_json \
-               FROM catalog.wirings \
-              WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
-            &[&TENANT, &CANDIDATE_PACKAGE, &CANDIDATE_PACKAGE_VERSION],
-        )
-        .await
-        .expect("read the published wiring")
-        .map(|row| {
-            let version: i32 = row.get(1);
-            (
-                row.get(0),
-                u32::try_from(version).expect("the stored wiring version is non-negative"),
-                row.get(2),
-                row.get(3),
-            )
-        })
-}
-
-async fn published_release_snapshot_count(project: &Client) -> i64 {
-    project
-        .query_one(
-            "SELECT count(*) FROM catalog.releases WHERE tenant_id = $1 \
-               AND canonical_bytes <> convert_to($2, 'UTF8')",
-            &[&TENANT, &CANDIDATE_RELEASE_BYTES],
-        )
-        .await
-        .expect("count published release snapshots")
-        .get(0)
+    assert!(
+        project
+            .query_one("SELECT to_regclass('catalog.wirings') IS NULL", &[])
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    0
 }
 
 /// One `gate` request carrying one document, in one project.
@@ -1125,22 +1077,6 @@ async fn command_rows(admin: &Client) -> Vec<(String, String, String, String)> {
         .collect()
 }
 
-async fn command_provenance(
-    admin: &Client,
-    command_id: &str,
-) -> Option<(String, Option<String>, bool)> {
-    admin
-        .query_opt(
-            "SELECT provenance_commit, provenance_ref, provenance_dirty \
-               FROM catalog.authoring_command_audit \
-              WHERE tenant_id = $1 AND command_id = $2",
-            &[&TENANT, &command_id],
-        )
-        .await
-        .expect("read command provenance")
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-}
-
 /// Every durable authoring row the control store still holds.
 ///
 /// TWO relations: the command audit table, and the gate report keyed by wiring hash
@@ -1403,7 +1339,7 @@ async fn nonempty_case_connection_component_without_release_or_binding_refuses_e
 /// typed, credential-free refusal; the next request reconnects, re-probes the
 /// generation and scope, and succeeds without a database selector in its body.
 #[tokio::test]
-async fn management_surface_reconnects_after_the_verification_database_is_recreated() {
+async fn retired_publish_refuses_without_the_verification_database() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let url = database.url();
@@ -1445,45 +1381,15 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
         .expect("drop the verification database beneath the external Gate");
 
     let command = publish_document("publish-across-verification-recreate");
-    let unavailable = post("/authoring", Some(principal.token()), &[], &command).await;
-    assert_eq!(unavailable.status, 503, "{}", unavailable.body);
+    let refused = post("/authoring", Some(principal.token()), &[], &command).await;
+    assert_eq!(refused.status, 200);
     assert_eq!(
-        as_json(&unavailable.body),
-        serde_json::json!({
-            "type": "management-admission-unavailable",
-            "config-key": "WAMN_MANAGEMENT_ADMISSION_PG_URL",
-            "endpoint": sanitized_admission_endpoint(url),
-        })
+        outcome(&refused.body)["value"]["reason"]["type"],
+        "invalid-document"
     );
-    assert!(!unavailable.body.contains(ADMITTER_PASSWORD));
-    assert!(!unavailable.body.contains(&admitter_role()));
-
-    let (replacement, replacement_task) = provision_project(&admin, url)
-        .await
-        .expect("recreate and reprovision the verification database");
-    replacement
-        .batch_execute(&format!(
-            "GRANT INSERT ON catalog.wirings TO \"{}\"",
-            admitter_role()
-        ))
-        .await
-        .expect("introduce a forbidden privilege on the replacement connection");
-    let reprobe_refusal = post("/authoring", Some(principal.token()), &[], &command).await;
-    assert_eq!(reprobe_refusal.status, 503, "{}", reprobe_refusal.body);
-    replacement
-        .batch_execute(&format!(
-            "REVOKE INSERT ON catalog.wirings FROM \"{}\"",
-            admitter_role()
-        ))
-        .await
-        .expect("restore the exact admission grant set");
-    let recovered = post("/authoring", Some(principal.token()), &[], &command).await;
-    assert_eq!(recovered.status, 200, "{}", recovered.body);
-    assert_eq!(outcome(&recovered.body)["status"], "completed");
-
+    let retry = post("/authoring", Some(principal.token()), &[], &command).await;
+    assert_eq!(retry.body, refused.body);
     surface.abort();
-    drop(replacement);
-    replacement_task.abort();
     admin_task.abort();
 }
 
@@ -1836,7 +1742,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         outcome(&ungated_publish.body)["value"],
         serde_json::json!({
             "command": "publish",
-            "reason": {"type": "report-not-found", "report-id": candidate_hash},
+            "reason": {"type": "invalid-document", "detail": "Released workflows are retired. Author a workflow in the environment."},
         })
     );
     assert_eq!(stored_wiring_count(&project).await, 0);
@@ -2263,242 +2169,28 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(project_queue_count(&project).await, 0);
 
-    // A green report for the candidate cannot authorize different bytes, and a
-    // report under the exact second hash must itself be green. Seeding B red
-    // kills both an any-green lookup and an implementation that ignores passed.
-    let other_document = candidate_graph("orders-red-report", "entity", "create");
-    let other_hash = derived_hash(&other_document);
-    admin
-        .execute(
-            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
-             VALUES ($1, $2, false, '{}'::jsonb)",
-            &[&TENANT, &other_hash],
-        )
-        .await
-        .expect("seed the exact red report counterfactual");
-    let wrong_hash_guard = post(
+    // A green report does not restore the retired publication command.
+    let command = publish_document_in("publish-gated", PROJECT, &candidate_document);
+    let refused = post("/authoring", Some(alice.token()), &[], &command).await;
+    assert_eq!(
+        outcome(&refused.body)["value"]["reason"]["type"],
+        "invalid-document"
+    );
+    let replay = post("/authoring", Some(alice.token()), &[], &command).await;
+    assert_eq!(replay.body, refused.body);
+    let changed = candidate_graph("other", "entity", "create");
+    let collision = post(
         "/authoring",
         Some(alice.token()),
         &[],
-        &publish_document_in("publish-other-hash", PROJECT, &other_document),
+        &publish_document_in("publish-gated", PROJECT, &changed),
     )
     .await;
     assert_eq!(
-        outcome(&wrong_hash_guard.body)["value"],
-        serde_json::json!({
-            "command": "publish",
-            "reason": {"type": "report-not-successful"},
-        }),
-        "{}",
-        wrong_hash_guard.body
+        outcome(&collision.body)["value"]["reason"]["type"],
+        "command-id-reuse"
     );
     assert_eq!(stored_wiring_count(&project).await, 0);
-
-    // A green report is necessary but not sufficient: Publish re-validates the
-    // submitted document against the CURRENT component facts before it writes.
-    // The document is structurally valid but names no admitted operation, so
-    // removing that compatibility check would append it under this green hash.
-    let incompatible_document =
-        candidate_graph("orders-incompatible", "entity", "missing-operation");
-    let incompatible_hash = derived_hash(&incompatible_document);
-    admin
-        .execute(
-            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
-             VALUES ($1, $2, true, '{}'::jsonb)",
-            &[&TENANT, &incompatible_hash],
-        )
-        .await
-        .expect("seed the incompatible document's green report counterfactual");
-    let incompatible = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &publish_document_in("publish-incompatible", PROJECT, &incompatible_document),
-    )
-    .await;
-    assert_eq!(
-        outcome(&incompatible.body)["value"],
-        serde_json::json!({
-            "command": "publish",
-            "reason": {"type": "publish-executable-drift"},
-        }),
-        "{}",
-        incompatible.body
-    );
-    assert_eq!(stored_wiring_count(&project).await, 0);
-
-    // ---- Publish is act 1: exact wiring append, never release publish ----------
-    assert_eq!(published_release_snapshot_count(&project).await, 0);
-    let published = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &publish_document_in("publish-gated", PROJECT, &candidate_document),
-    )
-    .await;
-    assert_eq!(published.status, 200, "{}", published.body);
-    assert_eq!(
-        outcome(&published.body),
-        serde_json::json!({
-            "status": "completed",
-            "value": {
-                "command": "publish",
-                "result": {
-                    "wiring-id": CANDIDATE_WIRING,
-                    "version": 1,
-                    "artifact-hash": candidate_hash,
-                },
-            },
-        })
-    );
-    let normalized_document = serde_json::to_value(
-        wamn_catalog::WiringDocument::parse(&candidate_document)
-            .expect("the published fixture is a wiring document"),
-    )
-    .expect("the parsed wiring serializes");
-    assert_eq!(
-        stored_wiring(&project).await,
-        Some((
-            CANDIDATE_WIRING.to_owned(),
-            1,
-            candidate_hash.clone(),
-            normalized_document,
-        ))
-    );
-    assert_eq!(
-        published_release_snapshot_count(&project).await,
-        0,
-        "act-1 Publish published an act-2 release snapshot"
-    );
-    assert_eq!(
-        command_provenance(&admin, "publish-gated").await,
-        Some(("0123456789abcdef".to_owned(), None, false))
-    );
-
-    // An exact retry replays its stored result and converges on the one row.
-    let publish_command_count = command_rows(&admin).await.len();
-    let replayed_publish = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &publish_document_in("publish-gated", PROJECT, &candidate_document),
-    )
-    .await;
-    assert_eq!(replayed_publish.body, published.body);
-    assert_eq!(stored_wiring_count(&project).await, 1);
-    assert_eq!(command_rows(&admin).await.len(), publish_command_count);
-
-    // A second compatible, green document reusing that command id is refused
-    // before its project append. This is the side-effecting retry invariant:
-    // the control lock chooses one payload, not merely one stored command outcome after
-    // two project writes have escaped.
-    let divergent_document = candidate_graph("orders-create-copy", "entity", "create");
-    let divergent_gate = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &gate_document_in("gate-divergent-publish", PROJECT, &divergent_document),
-    )
-    .await;
-    assert_eq!(
-        outcome(&divergent_gate.body)["status"],
-        serde_json::json!("completed"),
-        "{}",
-        divergent_gate.body
-    );
-    let reused_publish = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &publish_document_in("publish-gated", PROJECT, &divergent_document),
-    )
-    .await;
-    assert_eq!(
-        outcome(&reused_publish.body)["value"],
-        serde_json::json!({
-            "command": "publish",
-            "reason": {"type": "command-id-reuse"},
-        }),
-        "{}",
-        reused_publish.body
-    );
-    assert_eq!(stored_wiring_count(&project).await, 1);
-    assert_eq!(published_release_snapshot_count(&project).await, 0);
-
-    // Retry identity is a CONTROL-store fact and wins before project-side
-    // validation. Reusing the completed id with the incompatible document
-    // above must therefore remain command-id-reuse, not executable drift.
-    let reused_incompatible = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &publish_document_in("publish-gated", PROJECT, &incompatible_document),
-    )
-    .await;
-    assert_eq!(
-        outcome(&reused_incompatible.body)["value"],
-        serde_json::json!({
-            "command": "publish",
-            "reason": {"type": "command-id-reuse"},
-        }),
-        "{}",
-        reused_incompatible.body
-    );
-    assert_eq!(stored_wiring_count(&project).await, 1);
-
-    // ---- the append converges on an identical row and refuses a changed one ---
-    // A NEW command id carrying the identical document reaches the append
-    // itself: the row exists, the insert does nothing, and the exact check
-    // converges on the published result.
-    let published_row = stored_wiring(&project).await;
-    let identical = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &publish_document_in("publish-identical", PROJECT, &candidate_document),
-    )
-    .await;
-    assert_eq!(
-        outcome(&identical.body),
-        outcome(&published.body),
-        "{}",
-        identical.body
-    );
-    assert_eq!(stored_wiring_count(&project).await, 1);
-    assert_eq!(stored_wiring(&project).await, published_row);
-
-    // The same wiring identity with other content passes the green-report
-    // guard, so only the append can refuse it, and the stored row is unchanged.
-    let mut changed_document = candidate_document.clone();
-    changed_document["cases"][0]["input"]["name"] = serde_json::json!("changed");
-    let changed_hash = derived_hash(&changed_document);
-    assert_ne!(changed_hash, candidate_hash);
-    admin
-        .execute(
-            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
-             VALUES ($1, $2, true, '{}'::jsonb)",
-            &[&TENANT, &changed_hash],
-        )
-        .await
-        .expect("seed the changed document's green report");
-    let changed = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &publish_document_in("publish-changed", PROJECT, &changed_document),
-    )
-    .await;
-    assert_eq!(
-        outcome(&changed.body)["value"],
-        serde_json::json!({
-            "command": "publish",
-            "reason": {"type": "publish-executable-drift"},
-        }),
-        "{}",
-        changed.body
-    );
-    assert_eq!(stored_wiring_count(&project).await, 1);
-    assert_eq!(stored_wiring(&project).await, published_row);
 
     // ---- the command table is append-only -----------------------------------------
     let rewrite = admin

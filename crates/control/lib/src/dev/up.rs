@@ -202,14 +202,7 @@ async fn enable_cdc(
         .iter()
         .map(|root| super::config::read_package_manifest(root))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut consumers = wamn_control_provision::events::registration_consumers(
-        &scope,
-        &identity.tenant,
-        &manifests,
-    );
-    consumers.extend(wamn_control_provision::events::entity_consumers(
-        &scope, &manifests,
-    ));
+    let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
     let schemas = manifests
         .iter()
         .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))

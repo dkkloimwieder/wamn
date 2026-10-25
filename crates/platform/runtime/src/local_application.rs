@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use wamn_catalog::{
-    AdmittedComponent, ComponentConnectionRequirement, ComponentPackageScope, ManifestDigest,
-    ServingManifest, WiringDocument,
+    AdmittedComponent, ComponentConnectionRequirement, ManifestDigest, ServingManifest,
+    WiringDocument,
 };
 use wamn_engine::release_manifest::ReleaseScope;
 
@@ -25,18 +25,8 @@ pub struct LocalApplicationFacts {
     #[serde(deserialize_with = "deserialize_manifest_digest")]
     pub manifest_digest: ManifestDigest,
     pub components: Vec<AdmittedComponent>,
-    pub wirings: Vec<LocalWiringFacts>,
     pub requirements: Vec<ComponentConnectionRequirement>,
     pub bindings: Vec<LocalBindingFacts>,
-}
-
-/// The exact generated document and component selection used by release publish.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct LocalWiringFacts {
-    pub scope: ComponentPackageScope,
-    pub document: WiringDocument,
-    pub node_components: BTreeMap<String, AdmittedComponent>,
 }
 
 /// A portable requirement paired with an explicitly selected live instance.
@@ -135,7 +125,8 @@ impl LocalApplication {
                 && lookup.manifest_digest == self.facts.manifest_digest.as_str(),
             "local connection release scope mismatch"
         );
-        let Some((wiring_hash, entry_permitted)) = entry_facts(&self.manifest, &self.facts, lookup)
+        let Some((wiring_hash, entry_permitted)) =
+            entry_facts(client, &self.manifest, &self.scope, &self.facts, lookup).await?
         else {
             return Ok(None);
         };
@@ -202,11 +193,13 @@ impl LocalApplication {
 ///
 /// The same entry rule as the Postgres snapshot: a route needs only its origin
 /// export, and a wiring node must name the origin component.
-fn entry_facts(
+async fn entry_facts(
+    client: &tokio_postgres::Client,
     manifest: &ServingManifest,
+    scope: &ReleaseScope,
     facts: &LocalApplicationFacts,
     lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
-) -> Option<(Option<String>, bool)> {
+) -> anyhow::Result<Option<(Option<String>, bool)>> {
     let origin_exports = |origin: &AdmittedComponent| {
         origin.scope.package_id == lookup.origin_package_id
             && origin.component_digest == lookup.origin_component_digest
@@ -214,7 +207,7 @@ fn entry_facts(
             && origin.interface_version == lookup.origin_interface_version
             && origin.operations.contains_key(lookup.origin_operation)
     };
-    Some(match lookup.entry.wiring {
+    Ok(Some(match lookup.entry.wiring {
         None => {
             if !manifest
                 .release
@@ -222,31 +215,34 @@ fn entry_facts(
                 .iter()
                 .any(|package| package.package_id() == lookup.entry.package_id)
             {
-                return None;
+                return Ok(None);
             }
             (None, facts.components.iter().any(origin_exports))
         }
         Some(position) => {
-            let wiring = facts.wirings.iter().find(|wiring| {
-                wiring.scope.package_id == lookup.entry.package_id
-                    && wiring.document.wiring_id == position.wiring_id
-                    && i32::try_from(wiring.document.version).ok() == Some(position.wiring_version)
-            })?;
-            let permitted = wiring
-                .node_components
-                .get(position.node_id)
-                .is_some_and(origin_exports)
-                && wiring
-                    .document
+            let Some(row) = client.query_opt(
+                "SELECT graph_json::text, wiring_hash FROM catalog.workflows WHERE tenant_id = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
+                &[&scope.tenant_id, &scope.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
+            ).await? else { return Ok(None); };
+            let value: serde_json::Value = serde_json::from_str(&row.get::<_, String>(0))?;
+            let document = WiringDocument::parse(&value)?;
+            let Some(application) = scope.applications.get(lookup.entry.package_id) else {
+                return Ok(None);
+            };
+            let components = wamn_catalog::resolve_workflow_components(
+                &scope.tenant_id,
+                &application.packages,
+                manifest,
+                &document,
+            )?;
+            let permitted = components.get(position.node_id).is_some_and(origin_exports)
+                && document
                     .nodes
                     .get(position.node_id)
                     .is_some_and(|node| node.operation == lookup.origin_operation);
-            (
-                Some(wiring.document.wiring_hash().as_str().to_owned()),
-                permitted,
-            )
+            (Some(row.get(1)), permitted)
         }
-    })
+    }))
 }
 
 /// Resolve an explicit local selection through the live instance and generation.
@@ -326,6 +322,25 @@ async fn read_binding(
 /// File transport for local facts; the canonical serving manifest stays separate.
 pub const LOCAL_FACTS_FILE: &str = "local-admission.json";
 
+/// The release and application map passed to the local host.
+pub const LOCAL_RELEASE_FILE: &str = "local-release.json";
+
+/// Local serving facts used by workflow authoring and enablement.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct LocalRelease {
+    #[serde(deserialize_with = "deserialize_manifest_digest")]
+    pub manifest_digest: ManifestDigest,
+    pub applications: wamn_catalog::EnvironmentApplications,
+}
+
+/// Read the serving facts beside the local admission file.
+pub fn read_local_release(directory: &Path) -> anyhow::Result<LocalRelease> {
+    let bytes =
+        std::fs::read(directory.join(LOCAL_RELEASE_FILE)).context("read local release facts")?;
+    serde_json::from_slice(&bytes).context("parse local release facts")
+}
+
 /// Load and check a local fact closure against its canonical manifest.
 pub fn load_local_facts(
     directory: &Path,
@@ -402,55 +417,6 @@ pub fn validate_local_facts(
         }
         wamn_catalog::verify_stored_effect_projection(fact)
             .context("validate local effect projection")?;
-    }
-    anyhow::ensure!(
-        facts.wirings.len() == manifest.workflow.wirings.len(),
-        "local wiring closure is incomplete"
-    );
-    let mut seen = BTreeSet::new();
-    for fact in &facts.wirings {
-        let document = WiringDocument::parse(&serde_json::to_value(&fact.document)?)?;
-        anyhow::ensure!(
-            seen.insert((
-                fact.scope.package_id.clone(),
-                document.wiring_id.clone(),
-                document.version
-            )),
-            "local wiring is repeated"
-        );
-        anyhow::ensure!(
-            fact.scope.tenant_id == tenant_id
-                && manifest
-                    .release
-                    .packages
-                    .iter()
-                    .any(|package| package.package_id() == fact.scope.package_id
-                        && package.package_version() == fact.scope.package_version),
-            "local wiring package is outside the manifest"
-        );
-        anyhow::ensure!(
-            manifest
-                .workflow
-                .wirings
-                .iter()
-                .any(|wiring| wiring.package_id == fact.scope.package_id
-                    && wiring.identity()
-                        == (
-                            document.wiring_id.as_str(),
-                            document.version,
-                            document.wiring_hash()
-                        )),
-            "local wiring differs from its manifest projection"
-        );
-        anyhow::ensure!(
-            document.nodes.len() == fact.node_components.len()
-                && fact
-                    .node_components
-                    .values()
-                    .all(|component| facts.components.contains(component)),
-            "local wiring component closure is incomplete"
-        );
-        wamn_catalog::validate_resolved_wiring_compatibility(&document, &fact.node_components)?;
     }
     anyhow::ensure!(
         facts.requirements.len() == facts.bindings.len(),
@@ -627,12 +593,11 @@ mod tests {
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{
             PackageCoordinate, ServingComponent, ServingComponentOperation, ServingManifest,
-            ServingRelease, ServingWiring, WiringDocument,
+            ServingRelease,
         };
         let component = wamn_catalog::normalize_component_fact(serde_json::from_value(serde_json::json!({
             "scope": {"tenant-id": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
         })).unwrap(), format!("sha256:{}", "7".repeat(64)), Vec::new(), Vec::new()).unwrap().component;
-        let document = WiringDocument::parse(&serde_json::json!({"format-version": "0.1", "wiring-id": "run", "version": 1, "entry": "node", "nodes": {"node": {"component": "transform", "interface-version": "0.1.0", "operation": "run"}}})).unwrap();
         let manifest = ServingManifest::new(
             ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
@@ -657,33 +622,30 @@ mod tests {
                 ),
             }]),
             BTreeSet::new(),
-            BTreeSet::from([ServingWiring::new("orders", document.clone())]),
-            BTreeMap::new(),
             BTreeMap::new(),
         )
         .unwrap();
         let facts = super::LocalApplicationFacts {
             manifest_digest: manifest.digest(),
             components: vec![component.clone()],
-            wirings: vec![super::LocalWiringFacts {
-                scope: component.scope.clone(),
-                document,
-                node_components: BTreeMap::from([("node".to_owned(), component)]),
-            }],
             requirements: Vec::new(),
             bindings: Vec::new(),
         };
         (facts, manifest)
     }
 
-    #[test]
-    fn a_route_entry_needs_only_its_origin_export_and_a_release_package() {
-        use crate::plugins::wamn_postgres::{
-            ConnectionEffectLookup, ConnectionEntryLookup, WiringLookup,
-        };
+    #[tokio::test]
+    async fn a_route_entry_needs_only_its_origin_export_and_a_release_package() {
+        use crate::plugins::wamn_postgres::{ConnectionEffectLookup, ConnectionEntryLookup};
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_catalog::test_database::tenant();
+        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+            .await
+            .unwrap();
+        let task = tokio::spawn(connection);
+        let scope = wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "dev");
         let (facts, manifest) = fixture();
         let digest = facts.components[0].component_digest.clone();
-        let hash = facts.wirings[0].document.wiring_hash();
         let route = ConnectionEffectLookup {
             entry: ConnectionEntryLookup {
                 package_id: "orders",
@@ -703,7 +665,9 @@ mod tests {
             candidate_binding: None,
         };
         assert_eq!(
-            super::entry_facts(&manifest, &facts, &route),
+            super::entry_facts(&client, &manifest, &scope, &facts, &route)
+                .await
+                .unwrap(),
             Some((None, true))
         );
         let unexported = ConnectionEffectLookup {
@@ -711,7 +675,9 @@ mod tests {
             ..route
         };
         assert_eq!(
-            super::entry_facts(&manifest, &facts, &unexported),
+            super::entry_facts(&client, &manifest, &scope, &facts, &unexported)
+                .await
+                .unwrap(),
             Some((None, false))
         );
         let foreign = ConnectionEffectLookup {
@@ -721,22 +687,13 @@ mod tests {
             },
             ..route
         };
-        assert_eq!(super::entry_facts(&manifest, &facts, &foreign), None);
-        let wiring = ConnectionEffectLookup {
-            entry: ConnectionEntryLookup {
-                package_id: "orders",
-                wiring: Some(WiringLookup {
-                    wiring_id: "run",
-                    wiring_version: 1,
-                    node_id: "node",
-                }),
-            },
-            ..route
-        };
         assert_eq!(
-            super::entry_facts(&manifest, &facts, &wiring),
-            Some((Some(hash.as_str().to_owned()), true))
+            super::entry_facts(&client, &manifest, &scope, &facts, &foreign)
+                .await
+                .unwrap(),
+            None
         );
+        task.abort();
     }
 
     #[test]
@@ -754,9 +711,6 @@ mod tests {
         let mut removed = facts.clone();
         removed.components[0].operations.clear();
         assert!(super::validate_local_facts(&removed, &manifest, "tenant-a").is_err());
-        let mut stale = facts;
-        stale.wirings[0].document.version += 1;
-        assert!(super::validate_local_facts(&stale, &manifest, "tenant-a").is_err());
     }
 
     #[test]

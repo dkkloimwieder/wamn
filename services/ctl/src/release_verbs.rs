@@ -1,67 +1,15 @@
-//! Arguments and output of the `author-wiring`, `publish-release`, and
+//! Arguments and output of the `publish-release` and
 //! `terminalize-effect-uncertain` verbs.
 
 use std::path::PathBuf;
 
 use clap::Args;
 use wamn_catalog::PackageCoordinate;
-use wamn_control::author_wiring::{self, AuthorWiringDocumentRequest};
 use wamn_control::package_artifact::PackageRegistry;
-use wamn_control::publish_release::{
-    self, PublishReleaseRequest, ReleaseWiringTarget, parse_package,
-};
+use wamn_control::publish_release::{self, PublishReleaseRequest, parse_package};
 use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
 use wamn_run_state::operator_action::OperatorActionBasis;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
-
-/// Arguments for the wiring-authorship verb.
-#[derive(Debug, Args)]
-pub struct AuthorWiringArgs {
-    /// Owner URL to the project-environment database holding the catalog facts.
-    #[arg(long)]
-    pub database_url: String,
-
-    /// Owner URL to the CONTROL database holding `wamn_run.gate_reports`.
-    ///
-    /// A separate URL because the report is a separate plane's fact: it is not
-    /// in `catalog.wirings` and never was after wamn-0h0g.8.5.6. Pointing this
-    /// at the project database refuses rather than passing — the relation is
-    /// not there.
-    #[arg(long)]
-    pub control_database_url: String,
-
-    /// Tenant claim carried by the authored wiring.
-    #[arg(long)]
-    pub tenant: String,
-
-    /// Package identity the wiring is authored into.
-    #[arg(long)]
-    pub package_id: String,
-
-    /// Exact package version whose component facts gate this wiring.
-    #[arg(long)]
-    pub package_version: String,
-
-    /// The wiring document to submit; it carries its own id and version.
-    #[arg(long)]
-    pub wiring_document: PathBuf,
-
-    /// Explicit `<registry>/<repository>` base for package artifacts. The
-    /// component facts that gate the wiring are the descriptors of the
-    /// package's artifact, read the way `publish-release` reads them.
-    #[arg(long)]
-    pub artifact_base: String,
-    /// `.dockerconfigjson` file carrying the registry pull credential.
-    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
-    pub registry_auth_file: PathBuf,
-    /// Use plain HTTP for exactly the registry in `--artifact-base`.
-    #[arg(long, default_value_t = false)]
-    pub insecure_registry: bool,
-    /// PEM CA bundle trusted for the registry, on top of the compiled-in
-    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
-    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
-    pub oci_ca_paths: Vec<PathBuf>,
-}
 
 /// Arguments for the release publish verb. Each package is the artifact that
 /// `push-package` pushed under the tag `<package_id>-<version>`.
@@ -88,10 +36,6 @@ pub struct PublishReleaseArgs {
 
     #[arg(long = "package", value_name = "ID@VERSION", value_parser = parse_package, required = true)]
     pub packages: Vec<PackageCoordinate>,
-    /// Exact package-owned wiring in `catalog.wirings`; repeat once per
-    /// wiring. A release whose attachments all target routes names none.
-    #[arg(long = "wiring", value_name = "PACKAGE@VERSION::WIRING=VERSION")]
-    pub wirings: Vec<ReleaseWiringTarget>,
     /// Explicit `<registry>/<repository>` base for package artifacts.
     #[arg(long)]
     pub artifact_base: String,
@@ -141,27 +85,6 @@ pub struct TerminalizeEffectUncertainArgs {
     pub correlation_id: String,
 }
 
-/// Author one gated wiring version and print its definition hash.
-pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
-    let hash = author_wiring::author_wiring_document(AuthorWiringDocumentRequest {
-        database_url: args.database_url,
-        registry: PackageRegistry {
-            artifact_base: args.artifact_base,
-            registry_auth_file: args.registry_auth_file,
-            insecure_registry: args.insecure_registry,
-            oci_ca_paths: args.oci_ca_paths,
-        },
-        control_database_url: args.control_database_url,
-        tenant: args.tenant,
-        package_id: args.package_id,
-        package_version: args.package_version,
-        wiring_document: args.wiring_document,
-    })
-    .await?;
-    println!("{hash}");
-    Ok(())
-}
-
 /// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     // The release repository is the one `env apply` pulls from, named once
@@ -184,7 +107,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
             verified_publisher_principal: args.verified_publisher_principal,
             run_schema: args.run_schema,
             packages: args.packages,
-            wirings: args.wirings,
         },
         &registry,
         &release_artifact_base,
@@ -210,149 +132,4 @@ pub async fn terminalize(args: TerminalizeEffectUncertainArgs) -> anyhow::Result
     .await?;
     println!("{result}");
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use clap::Parser as _;
-
-    use super::*;
-
-    /// Host command for the flattened argument surface under test.
-    #[derive(Debug, clap::Parser)]
-    struct AuthorProbe {
-        #[command(flatten)]
-        args: AuthorWiringArgs,
-    }
-
-    const COORDINATE: [&str; 13] = [
-        "--database-url",
-        "postgres://author.invalid/env",
-        "--control-database-url",
-        "postgres://author.invalid/control",
-        "--tenant",
-        "tenant-a",
-        "--package-id",
-        "orders",
-        "--package-version",
-        "3.0.0",
-        "--artifact-base",
-        "registry.invalid/wamn/packages",
-        "--registry-auth-file=config.json",
-    ];
-
-    fn parse(submission: &[&str]) -> Result<AuthorWiringArgs, clap::Error> {
-        let mut argv = vec!["author-wiring"];
-        argv.extend_from_slice(&COORDINATE);
-        argv.extend_from_slice(submission);
-        AuthorProbe::try_parse_from(argv).map(|probe| probe.args)
-    }
-
-    /// The document is the WHOLE submission, and argv adds nothing to it.
-    ///
-    /// The gate-report argument this used to require is gone (wamn-0h0g.8.5.6):
-    /// the report keys on the wiring hash the document itself determines, so
-    /// there is no report id left for a caller to supply or mis-supply. What
-    /// argv still carries is WHERE to read that report — a database URL, not an
-    /// identity — and it is required, so no invocation can omit the check.
-    #[test]
-    fn the_document_is_the_whole_artifact_and_argv_restates_nothing() {
-        let complete =
-            parse(&["--wiring-document", "wiring.json"]).expect("the submission surface parses");
-        assert_eq!(complete.wiring_document, PathBuf::from("wiring.json"));
-        assert_eq!(
-            complete.control_database_url,
-            "postgres://author.invalid/control"
-        );
-
-        // The control store is not optional: drop its URL and the verb cannot
-        // be invoked at all, so there is no ungated authoring invocation.
-        let mut without_control = vec!["author-wiring"];
-        without_control.extend_from_slice(&COORDINATE[..2]);
-        without_control.extend_from_slice(&COORDINATE[4..]);
-        without_control.extend_from_slice(&["--wiring-document", "wiring.json"]);
-        assert!(
-            AuthorProbe::try_parse_from(without_control).is_err(),
-            "authoring parsed with no control store to read the gate report from"
-        );
-
-        let refusals: [Vec<&str>; 3] = [
-            // There is no artifact to submit.
-            vec![],
-            // The retired report argument is REFUSED, not ignored: a caller
-            // still passing it is asking for an identity that no longer exists,
-            // and silently accepting it would suggest it still meant something.
-            vec![
-                "--wiring-document",
-                "wiring.json",
-                "--gate-report-id",
-                "gate-2026-08-23",
-            ],
-            // The wiring id and version are the document's; argv cannot restate
-            // them, so a second authoring grammar cannot start here.
-            vec!["--wiring-document", "wiring.json", "--wiring-id", "orders"],
-        ];
-        for refused in refusals {
-            assert!(parse(&refused).is_err(), "accepted {refused:?}");
-        }
-    }
-
-    /// Host command for the publish argument surface under test.
-    #[derive(Debug, clap::Parser)]
-    struct PublishProbe {
-        #[command(flatten)]
-        args: PublishReleaseArgs,
-    }
-
-    const PUBLISH: [&str; 20] = [
-        "publish-release",
-        "--database-url",
-        "postgres://publish.invalid/env",
-        "--control-database-url",
-        "postgres://publish.invalid/control",
-        "--org",
-        "acme",
-        "--tenant",
-        "acme--plant--dev",
-        "--environment",
-        "dev",
-        "--verified-publisher-principal",
-        "publisher",
-        "--run-schema",
-        "wamn_run",
-        "--package",
-        "orders@1.0.0",
-        "--artifact-base",
-        "registry.invalid/wamn/packages",
-        "--registry-auth-file=config.json",
-    ];
-
-    /// A package is an id and a version that the registry resolves to its
-    /// artifact by tag, so argv names no package file.
-    #[test]
-    fn publish_release_takes_packages_from_the_registry() {
-        let args = PublishProbe::try_parse_from(PUBLISH)
-            .expect("the registry surface parses")
-            .args;
-        assert_eq!(
-            args.packages,
-            vec![PackageCoordinate::new("orders", "1.0.0").unwrap()]
-        );
-        assert_eq!(args.artifact_base, "registry.invalid/wamn/packages");
-        assert!(
-            PublishProbe::try_parse_from(&PUBLISH[..17]).is_err(),
-            "publish-release parsed with no package artifact base"
-        );
-        for retired in [
-            ["--package-manifest", "apps/orders/generated/wamn.json"],
-            ["--attachments", "apps/orders/publication/attachments.json"],
-        ] {
-            let mut retired_argv = PUBLISH.to_vec();
-            retired_argv.extend(retired);
-            assert!(
-                PublishProbe::try_parse_from(retired_argv).is_err(),
-                "accepted {retired:?}"
-            );
-        }
-    }
 }

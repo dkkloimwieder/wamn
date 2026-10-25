@@ -140,6 +140,8 @@ impl InvocationEntry {
 /// One node occurrence of an exact wiring version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringPosition {
+    /// The immutable graph hash frozen on the run.
+    pub wiring_hash: String,
     /// The wiring can belong to a package that imports the root component.
     pub package_id: String,
     pub wiring_id: String,
@@ -257,6 +259,7 @@ impl ConnectionHttp {
                 !position.package_id.is_empty()
                     && !position.wiring_id.is_empty()
                     && position.wiring_version > 0
+                    && wamn_catalog::DefinitionHash::parse(&position.wiring_hash).is_ok()
                     && !position.node_id.is_empty()
             }
         };
@@ -778,18 +781,8 @@ pub(crate) fn authorize_release_closure(
                 })
         }
         InvocationEntry::Wiring(position) => {
-            let graph_hash = snapshot
-                .wiring_hash
-                .as_deref()
-                .ok_or(ConnectionError::AttestationInvalid)?;
-            manifest.workflow.wirings.iter().any(|wiring| {
-                wiring.package_id == position.package_id && {
-                    let (wiring_id, wiring_version, wiring_hash) = wiring.identity();
-                    wiring_id == position.wiring_id
-                        && wiring_version == position.wiring_version
-                        && wiring_hash.as_str() == graph_hash
-                }
-            })
+            snapshot.node_permitted
+                && snapshot.wiring_hash.as_deref() == Some(position.wiring_hash.as_str())
         }
     };
     let root = manifest.components.iter().find(|component| {
@@ -1516,7 +1509,7 @@ mod tests {
 
     use wamn_catalog::{
         OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponentOperation, ServingRelease, ServingRoute, ServingWiring,
+        ServingComponentOperation, ServingRelease, ServingRoute,
     };
 
     use super::*;
@@ -1539,6 +1532,7 @@ mod tests {
             entry: crate::plugins::connection_http::InvocationEntry::Wiring(
                 crate::plugins::connection_http::WiringPosition {
                     package_id: "package_a".to_string(),
+                    wiring_hash: fixture_wiring_hash(),
                     wiring_id: "orders".to_string(),
                     wiring_version: 3,
                     node_id: "notify".to_string(),
@@ -1653,8 +1647,7 @@ mod tests {
     }
 
     fn manifest() -> ServingManifest {
-        let mut invocation = invocation();
-        let position = position(&mut invocation).clone();
+        let invocation = invocation();
         let snapshot = snapshot();
         ServingManifest {
             composed_entry: None,
@@ -1686,13 +1679,6 @@ mod tests {
             }]),
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
-            workflow: wamn_catalog::WorkflowSection {
-                wirings: BTreeSet::from([ServingWiring::new(
-                    position.package_id,
-                    wamn_catalog::fixture_graph(&position.wiring_id, position.wiring_version),
-                )]),
-                ..wamn_catalog::WorkflowSection::default()
-            },
             host_routes: BTreeSet::new(),
         }
     }

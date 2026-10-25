@@ -203,7 +203,6 @@ async fn publish_through_publish_release(
                 PackageCoordinate::new(&manifest.package.id, &manifest.package.version)
                     .expect("the package coordinate"),
             ],
-            wirings: Vec::new(),
         },
         registry,
         releases,
