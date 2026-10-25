@@ -193,7 +193,18 @@ pub async fn analyse(
         floor_artifacts,
     };
     let actor = actor();
-    let refusals = refusals(document, &authorities);
+    let mut refusals = refusals(document, &authorities);
+    // The sequences live in the package artifacts, which `--dry-run` does not
+    // pull: apply checks them here, before any write.
+    if refusals.is_empty()
+        && !dry_run
+        && let Some(release) = &authorities.release
+    {
+        refusals = sequence_refusals(
+            &document.applications,
+            &read_release_sequences(platform, &release.manifest).await?,
+        );
+    }
     if !refusals.is_empty() {
         bail!("refused:\n- {}", refusals.join("\n- "));
     }
@@ -303,6 +314,67 @@ async fn read_floor_artifacts(
         );
     }
     Ok(artifacts)
+}
+
+/// The sequences that each package of the release declares, read from its
+/// verified artifact: package id to sequence name to default pattern.
+async fn read_release_sequences(
+    platform: &Platform,
+    manifest: &ServingManifest,
+) -> anyhow::Result<BTreeMap<String, BTreeMap<String, String>>> {
+    let mut sequences = BTreeMap::new();
+    for package in &manifest.release.packages {
+        let (id, version) = (package.package_id(), package.package_version());
+        let opened = super::stage::open(platform, id, version).await?;
+        let path = wamn_schema_generator::package_manifest_path(opened.root());
+        let package_manifest = wamn_schema_generator::PackageManifest::from_slice(
+            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+        )
+        .with_context(|| format!("parse {}", path.display()))?;
+        sequences.insert(
+            id.to_owned(),
+            package_manifest
+                .sequences
+                .into_iter()
+                .map(|(name, declaration)| (name, declaration.pattern))
+                .collect(),
+        );
+    }
+    Ok(sequences)
+}
+
+/// The refusals of the sequences that the packages of one application
+/// declare (docs/plan/platform-config.md, Numbering): two packages of one
+/// application that declare one sequence name declare one default pattern.
+/// `sequences` is package id to sequence name to default pattern. The check
+/// reads only the declarations, so a `number_sequence` row whose pattern the
+/// admin edited never refuses.
+fn sequence_refusals(
+    applications: &wamn_catalog::EnvironmentApplications,
+    sequences: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Vec<String> {
+    let mut refusals = Vec::new();
+    for (application, definition) in applications {
+        let mut first: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
+        for package in &definition.packages {
+            for (name, pattern) in sequences.get(package).into_iter().flatten() {
+                match first.get(name.as_str()) {
+                    None => {
+                        first.insert(name, (package, pattern));
+                    }
+                    Some((other, other_pattern)) if other_pattern != pattern => {
+                        refusals.push(format!(
+                            "application {application}: packages {other} and {package} \
+                             declare sequence {name} with different patterns \
+                             {other_pattern:?} and {pattern:?}"
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    refusals
 }
 
 /// The actor: the identity principal the CLI authenticates as, or `$USER`
@@ -1370,6 +1442,72 @@ mod tests {
                 "application netsuite names package rest_consumer_fixture, which the release does not carry"
             ]
         );
+    }
+
+    fn sequences(
+        entries: &[(&str, &[(&str, &str)])],
+    ) -> BTreeMap<String, BTreeMap<String, String>> {
+        entries
+            .iter()
+            .map(|(package, declared)| {
+                (
+                    (*package).to_owned(),
+                    declared
+                        .iter()
+                        .map(|(name, pattern)| ((*name).to_owned(), (*pattern).to_owned()))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_sequence_name_with_two_patterns_in_one_application_is_refused() {
+        let declared = applications(&[("receiving", &["acme_receiving", "wamn_receiving"])]);
+        let declarations = sequences(&[
+            ("acme_receiving", &[("purchase_order", "ACME-{seq:po}")]),
+            (
+                "wamn_receiving",
+                &[("purchase_order", "PO-{seq:po,width=6}")],
+            ),
+        ]);
+        assert_eq!(
+            sequence_refusals(&declared, &declarations),
+            [
+                "application receiving: packages acme_receiving and wamn_receiving declare \
+                 sequence purchase_order with different patterns \"ACME-{seq:po}\" and \
+                 \"PO-{seq:po,width=6}\""
+            ]
+        );
+    }
+
+    #[test]
+    fn one_sequence_name_with_one_pattern_in_one_application_is_allowed() {
+        let declared = applications(&[("receiving", &["acme_receiving", "wamn_receiving"])]);
+        let declarations = sequences(&[
+            (
+                "acme_receiving",
+                &[("purchase_order", "PO-{seq:po,width=6}")],
+            ),
+            (
+                "wamn_receiving",
+                &[("purchase_order", "PO-{seq:po,width=6}")],
+            ),
+        ]);
+        assert!(sequence_refusals(&declared, &declarations).is_empty());
+    }
+
+    #[test]
+    fn one_sequence_name_in_two_applications_is_allowed() {
+        let declared = applications(&[("receiving", &["wamn_receiving"]), ("wms", &["wamn_wms"])]);
+        let declarations = sequences(&[
+            (
+                "wamn_receiving",
+                &[("purchase_order", "PO-{seq:po,width=6}")],
+            ),
+            ("wamn_wms", &[("purchase_order", "W-{seq:po}")]),
+        ]);
+        assert!(sequence_refusals(&declared, &declarations).is_empty());
     }
 
     #[test]
