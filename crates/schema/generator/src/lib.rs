@@ -33,6 +33,7 @@ mod describe;
 mod error;
 mod generate;
 mod inheritance;
+mod key;
 mod manifest;
 mod materialize;
 pub mod operation_reference;

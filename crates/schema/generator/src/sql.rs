@@ -28,13 +28,14 @@ const LIVE_ROW: &str = "model.deleted_at IS NULL";
 const TOMBSTONE_ASSIGNMENT: &str = "        deleted_at = transaction_timestamp(),\n        deleted_by = NULLIF(current_setting('app.user_id', true), '')::uuid";
 
 pub(crate) fn get(table: &Table, tombstoned: bool) -> String {
+    let key_cast = key_cast(table);
     let live = if tombstoned {
         format!("\n  AND {LIVE_ROW}")
     } else {
         String::new()
     };
     format!(
-        "SELECT\n    {}\nFROM {} AS model\nWHERE model.id = $1::uuid{live};\n",
+        "SELECT\n    {}\nFROM {} AS model\nWHERE model.id = $1::{key_cast}{live};\n",
         select_columns(table),
         table.name()
     )
@@ -99,6 +100,7 @@ pub(crate) fn update(
         .revision_field
         .as_deref()
         .expect("update validation requires revision");
+    let key_cast = key_cast(table);
     let revision_cast = postgres_type(column_type(table, revision));
     // A tombstoned row has no target, so an update of one reads as not_found.
     let live = if tombstoned {
@@ -156,7 +158,7 @@ pub(crate) fn update(
         .collect::<Vec<_>>()
         .join(",\n    ");
     format!(
-        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE {} AS model\n    SET\n{assignments}\n    FROM target\n    WHERE model.id = target.id\n      AND target.{revision} = $2::{revision_cast}\n    RETURNING\n    {returning}\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n        ELSE '{OUTCOME_UPDATED}'\n    END AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision},\n    {returned}\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
+        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::{key_cast}{live}\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE {} AS model\n    SET\n{assignments}\n    FROM target\n    WHERE model.id = target.id\n      AND target.{revision} = $2::{revision_cast}\n    RETURNING\n    {returning}\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n        ELSE '{OUTCOME_UPDATED}'\n    END AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision},\n    {returned}\nFROM (SELECT 1) AS singleton\nLEFT JOIN updated ON TRUE;\n",
         table.name(),
         table.name()
     )
@@ -173,6 +175,7 @@ pub(crate) fn delete(table: &Table, operation: &OperationDeclaration, mode: Dele
         .revision_field
         .as_deref()
         .expect("delete validation requires revision");
+    let key_cast = key_cast(table);
     let revision_cast = postgres_type(column_type(table, revision));
     let (live, removal) = match mode {
         DeleteMode::Hard => (
@@ -191,7 +194,7 @@ pub(crate) fn delete(table: &Table, operation: &OperationDeclaration, mode: Dele
         ),
     };
     format!(
-        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\ndeleted AS (\n{removal}\n    WHERE model.id = target.id\n      AND target.{revision} = $2::{revision_cast}\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n    ELSE '{OUTCOME_DELETED}'\nEND AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision};\n",
+        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::{key_cast}{live}\n    FOR UPDATE\n),\ndeleted AS (\n{removal}\n    WHERE model.id = target.id\n      AND target.{revision} = $2::{revision_cast}\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n    ELSE '{OUTCOME_DELETED}'\nEND AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision};\n",
         table.name()
     )
 }
@@ -204,6 +207,7 @@ pub(crate) fn query(
     tombstoned: bool,
     feed: bool,
 ) -> String {
+    let key_cast = key_cast(table);
     let (mut predicates, next_bind) = scope_predicates(table, operation, tombstoned);
     let cursor_value_bind = next_bind;
     let cursor_id_bind = cursor_value_bind + 1;
@@ -214,7 +218,7 @@ pub(crate) fn query(
         CursorDirection::Descending => "<",
     };
     predicates.push(format!(
-        "    (${cursor_value_bind}::{sort_type} IS NULL OR (model.{sort_field}, model.id) {comparison} (${cursor_value_bind}::{sort_type}, ${cursor_id_bind}::uuid))"
+        "    (${cursor_value_bind}::{sort_type} IS NULL OR (model.{sort_field}, model.id) {comparison} (${cursor_value_bind}::{sort_type}, ${cursor_id_bind}::{key_cast}))"
     ));
     let page = format!(
         "SELECT\n    {}\nFROM {} AS model\nWHERE\n{}\nORDER BY model.{sort_field} {direction}, model.id {direction}\nLIMIT ${limit_bind}::int8",
@@ -260,6 +264,7 @@ pub(crate) fn changes(
     tombstoned: bool,
     bounded_retention: bool,
 ) -> String {
+    let key_cast = key_cast(table);
     let (predicates, next_bind) = scope_predicates(table, operation, tombstoned);
     let transaction = next_bind;
     let after = transaction + 1;
@@ -304,7 +309,7 @@ LEFT JOIN LATERAL (
         {model_columns}
     FROM (
         SELECT
-            (entry.row_key->>'id')::uuid AS change_id,
+            (entry.row_key->>'id')::{key_cast} AS change_id,
             max(entry.transaction_id) AS change_transaction,
             max((entry.before->>'{revision}')::int8) FILTER (WHERE entry.type = 'delete') AS deleted_version
         FROM {history} AS entry
@@ -312,11 +317,11 @@ LEFT JOIN LATERAL (
           AND (entry.transaction_id < bound.feed_end
                OR (entry.transaction_id < bound.feed_max
                    AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))
-        GROUP BY (entry.row_key->>'id')::uuid
+        GROUP BY (entry.row_key->>'id')::{key_cast}
     ) AS changed
     LEFT JOIN {table} AS model ON model.id = changed.change_id
-    WHERE ${after}::uuid IS NULL
-       OR (changed.change_transaction, changed.change_id) > (${transaction}::int8, ${after}::uuid)
+    WHERE ${after}::{key_cast} IS NULL
+       OR (changed.change_transaction, changed.change_id) > (${transaction}::int8, ${after}::{key_cast})
     ORDER BY changed.change_transaction, changed.change_id
     LIMIT ${limit}::int8
 ) AS page ON true
@@ -427,6 +432,14 @@ pub(crate) const fn postgres_type(ty: ColumnType) -> &'static str {
     }
 }
 
+fn key_cast(table: &Table) -> &'static str {
+    postgres_type(
+        crate::key::key_type(table)
+            .expect("validation resolved the model key")
+            .column_type(),
+    )
+}
+
 fn column_type(table: &Table, field: &str) -> ColumnType {
     table
         .columns()
@@ -473,10 +486,101 @@ const fn sql_direction(direction: CursorDirection) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::query;
-    use crate::{CursorDirection, OperationDeclaration};
+    use super::{changes, delete, get, query, update};
+    use crate::manifest::DeleteMode;
+    use crate::{CursorDirection, ModelDeclaration, OperationDeclaration};
     use tokio_postgres::{NoTls, SimpleQueryMessage};
-    use wamn_schema_introspection::ir::{Column, ColumnType, Table};
+    use wamn_schema_introspection::ir::{Column, ColumnType, Constraint, Table};
+
+    #[test]
+    fn key_casts_follow_the_primary_key_type() {
+        let operation: OperationDeclaration = serde_json::from_value(serde_json::json!({
+            "permission": "write", "result": "one",
+            "revision_field": "version", "writable_fields": ["label"]
+        }))
+        .unwrap();
+        let model: ModelDeclaration = serde_json::from_value(serde_json::json!({
+            "schema": "public", "table": "key_row", "owner": "fixture", "operations": {}
+        }))
+        .unwrap();
+        for (ty, cast) in [
+            (ColumnType::Uuid, "uuid"),
+            (ColumnType::Int32, "int4"),
+            (ColumnType::Int64, "int8"),
+        ] {
+            let table = Table::new(
+                "public",
+                "key_row",
+                vec![
+                    Column::new("id", ty, false, None, None),
+                    Column::new("label", ColumnType::Text, false, None, None),
+                    Column::new("version", ColumnType::Int64, false, None, None),
+                ],
+                vec![Constraint::primary_key("key_row_pkey", ["id"]).unwrap()],
+                Vec::new(),
+            );
+            for tombstoned in [false, true] {
+                let live = if tombstoned {
+                    "\n  AND model.deleted_at IS NULL"
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    get(&table, tombstoned),
+                    format!(
+                        "SELECT\n    model.id,\n    model.label,\n    model.version\nFROM key_row AS model\nWHERE model.id = $1::{cast}{live};\n"
+                    )
+                );
+                let live = if tombstoned {
+                    "\n      AND deleted_at IS NULL"
+                } else {
+                    ""
+                };
+                let target = format!(
+                    "WITH target AS MATERIALIZED (\n    SELECT id, version\n    FROM key_row\n    WHERE id = $1::{cast}{live}\n    FOR UPDATE\n),\n"
+                );
+                let updated = update(&table, &model, &operation, tombstoned);
+                assert!(updated.starts_with(&target), "{updated}");
+                let mode = if tombstoned {
+                    DeleteMode::Tombstone
+                } else {
+                    DeleteMode::Hard
+                };
+                let deleted = delete(&table, &operation, mode);
+                assert!(deleted.starts_with(&target), "{deleted}");
+                if tombstoned {
+                    assert!(
+                        deleted.contains("NULLIF(current_setting('app.user_id', true), '')::uuid")
+                    );
+                }
+                for (direction, comparison) in [
+                    (CursorDirection::Ascending, ">"),
+                    (CursorDirection::Descending, "<"),
+                ] {
+                    for feed in [false, true] {
+                        let page = query(&table, &operation, "label", direction, tombstoned, feed);
+                        assert!(page.contains(&format!("($1::text IS NULL OR (model.label, model.id) {comparison} ($1::text, $2::{cast}))")), "{page}");
+                        // Sorting by the key casts both cursor values to its type.
+                        let page = query(&table, &operation, "id", direction, tombstoned, feed);
+                        assert!(page.contains(&format!("($1::{cast} IS NULL OR (model.id, model.id) {comparison} ($1::{cast}, $2::{cast}))")), "{page}");
+                    }
+                }
+                for bounded in [false, true] {
+                    let feed = changes(&table, &operation, "version", tombstoned, bounded);
+                    for expected in [
+                        format!("(entry.row_key->>'id')::{cast} AS change_id"),
+                        format!("GROUP BY (entry.row_key->>'id')::{cast}\n"),
+                        format!("WHERE $2::{cast} IS NULL\n"),
+                        format!(
+                            "(changed.change_transaction, changed.change_id) > ($1::int8, $2::{cast})"
+                        ),
+                    ] {
+                        assert!(feed.contains(&expected), "{feed} lacks {expected}");
+                    }
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn query_seeks_and_pages_tied_values_in_both_directions() {
@@ -502,7 +606,7 @@ mod tests {
                 Column::new("id", ColumnType::Uuid, false, None, None),
                 Column::new("rank", ColumnType::Int64, false, None, None),
             ],
-            Vec::new(),
+            vec![Constraint::primary_key("page_row_pkey", ["id"]).unwrap()],
             Vec::new(),
         );
         let operation: OperationDeclaration =

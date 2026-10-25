@@ -12,9 +12,10 @@
 use wamn_number_pattern::{Key, Pattern, Scope};
 
 use super::{
-    BTreeMap, CatalogIr, ColumnType, ConstraintType, CrudAction, GenerateError, GenerateErrorType,
+    BTreeMap, CatalogIr, ColumnType, CrudAction, GenerateError, GenerateErrorType,
     ModelDeclaration, PackageManifest, Table, column, relation, validate_identifier,
 };
+use crate::key::primary_key;
 use crate::manifest::{FieldRole, Target};
 
 /// Refuse what the package's numbering declarations cannot mean.
@@ -264,18 +265,4 @@ fn supplied(operation: &str, model_name: &str, field: &str) -> GenerateError {
             "{operation} writes {model_name}.{field}, which generated SQL fills; remove it from the write"
         ),
     )
-}
-
-/// The model's one-column primary key.
-fn primary_key(table: &Table) -> Option<&str> {
-    table
-        .constraints()
-        .iter()
-        .find_map(|constraint| match constraint.constraint_type() {
-            ConstraintType::PrimaryKey { columns } => match &**columns {
-                [column] => Some(&**column),
-                _ => None,
-            },
-            _ => None,
-        })
 }

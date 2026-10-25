@@ -2893,6 +2893,79 @@ fn a_logged_relation_needs_a_primary_key() {
 }
 
 #[test]
+fn generated_operations_require_a_supported_single_column_key() {
+    let base = catalog(false);
+    let gadget = table(&base, "gadget");
+    let mut manifest = manifest();
+    // Query cursor validation still belongs to the accessor change.
+    manifest["models"]["gadget"]["operations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("query");
+    for ty in [
+        ColumnType::Uuid,
+        ColumnType::Int32,
+        ColumnType::Int64,
+        ColumnType::Text,
+        ColumnType::Boolean,
+        ColumnType::Float64,
+        ColumnType::Bytes,
+        ColumnType::Numeric,
+        ColumnType::Timestamptz,
+        ColumnType::Json,
+    ] {
+        let columns = gadget
+            .columns()
+            .iter()
+            .map(|column| {
+                if column.name() == "id" {
+                    Column::new("id", ty, false, None, None)
+                } else {
+                    column.clone()
+                }
+            })
+            .collect();
+        let catalog = replacing_table(
+            &base,
+            rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
+        );
+        let result = run(&catalog, &manifest, &[]);
+        if matches!(ty, ColumnType::Uuid | ColumnType::Int32 | ColumnType::Int64) {
+            result.unwrap();
+        } else {
+            let error = result.unwrap_err();
+            assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
+            assert_eq!(error.object(), Some("inventory.gadget.id"));
+            assert!(error.context().contains("unsupported primary key type"));
+            assert!(error.context().contains(ty.as_str()));
+        }
+    }
+    for keys in [vec![], vec!["id", "stock_id"], vec!["stock_id"]] {
+        let mut constraints = gadget
+            .constraints()
+            .iter()
+            .filter(|constraint| constraint.name() != "gadget_id_pkey")
+            .cloned()
+            .collect::<Vec<_>>();
+        if !keys.is_empty() {
+            constraints.push(Constraint::primary_key("gadget_id_pkey", keys).unwrap());
+        }
+        let catalog = replacing_table(
+            &base,
+            rebuilt_table(gadget, gadget.columns().to_vec(), constraints),
+        );
+        let error = run(&catalog, &manifest, &[]).unwrap_err();
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
+        assert_eq!(error.object(), Some("inventory.gadget"));
+        assert!(
+            error
+                .context()
+                .contains("single-column primary key named id")
+        );
+    }
+}
+
+#[test]
 fn package_id_wamn_is_reserved_for_the_platform() {
     let mut reserved = manifest();
     reserved["package"]["id"] = json!("wamn");
