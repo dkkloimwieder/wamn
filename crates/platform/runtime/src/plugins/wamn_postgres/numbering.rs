@@ -148,7 +148,7 @@ async fn render_number(
     let Some(application) = transaction.application.clone() else {
         return Err(StatementError::Postgres(PgError::PermissionDenied));
     };
-    let keys = key_map(keys)?;
+    let keys = key_map(keys).map_err(statement_failure)?;
     let project = plugin.project_for(component_id);
     let span = db_span_for_project(plugin, component_id, &project, call.operation());
     let rendered = transaction
@@ -156,8 +156,11 @@ async fn render_number(
             let result =
                 match render(connection.connection(), &application, &name, &keys, call).await {
                     Ok(number) => Ok(Ok(number)),
-                    Err(Failure::Refused(refused)) => Ok(Err(refused)),
-                    Err(Failure::Postgres(error)) => Err(error),
+                    Err(Failure {
+                        kind: FailureKind::Postgres(error),
+                        ..
+                    }) => Err(error),
+                    Err(refused) => Ok(Err(statement_failure(refused))),
                 };
             (connection, result)
         })
@@ -170,27 +173,72 @@ async fn render_number(
 }
 
 /// Why one render did not produce a number.
-enum Failure {
-    /// The renderer refused, with the statement error the guest sees.
-    Refused(StatementError),
+#[derive(Debug)]
+struct Failure {
+    kind: FailureKind,
+    context: String,
+}
+
+#[derive(Debug)]
+enum FailureKind {
+    /// The renderer refused. Only the boundary constructs a WIT error.
+    Refused {
+        code: &'static str,
+        source: Option<anyhow::Error>,
+    },
     /// A statement failed.
     Postgres(tokio_postgres::Error),
 }
 
-impl From<tokio_postgres::Error> for Failure {
-    fn from(error: tokio_postgres::Error) -> Self {
-        Self::Postgres(error)
+impl std::fmt::Display for Failure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.context)?;
+        if let Some(source) = std::error::Error::source(self) {
+            write!(formatter, ": {source}")?;
+        }
+        Ok(())
     }
 }
 
-impl From<StatementError> for Failure {
-    fn from(refused: StatementError) -> Self {
-        Self::Refused(refused)
+impl std::error::Error for Failure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            FailureKind::Refused { source, .. } => source.as_deref().map(|source| source as _),
+            FailureKind::Postgres(error) => Some(error),
+        }
     }
 }
 
-fn refusal(code: &str, message: String) -> StatementError {
-    StatementError::Postgres(PgError::QueryError((code.to_owned(), message)))
+fn statement_failure(failure: Failure) -> StatementError {
+    match failure.kind {
+        FailureKind::Refused { code, .. } => {
+            StatementError::Postgres(PgError::QueryError((code.to_owned(), failure.context)))
+        }
+        FailureKind::Postgres(error) => {
+            StatementError::Postgres(super::types::map_pg_error(&error))
+        }
+    }
+}
+
+fn refusal(code: &'static str, context: String) -> Failure {
+    Failure {
+        kind: FailureKind::Refused { code, source: None },
+        context,
+    }
+}
+
+fn caused_refusal(
+    code: &'static str,
+    context: String,
+    source: impl Into<anyhow::Error>,
+) -> Failure {
+    Failure {
+        kind: FailureKind::Refused {
+            code,
+            source: Some(source.into()),
+        },
+        context,
+    }
 }
 
 async fn render(
@@ -200,10 +248,18 @@ async fn render(
     keys: &BTreeMap<String, Option<String>>,
     call: NumberCall,
 ) -> Result<String, Failure> {
-    let statement = connection.prepare_cached(SEQUENCE_SQL).await?;
+    let failed = |error| Failure {
+        kind: FailureKind::Postgres(error),
+        context: format!("render number sequence {name} of application {application}"),
+    };
+    let statement = connection
+        .prepare_cached(SEQUENCE_SQL)
+        .await
+        .map_err(failed)?;
     let row = connection
         .query_one(&statement, &[&application, &name])
-        .await?;
+        .await
+        .map_err(failed)?;
     let (Some(sequence), Some(pattern)) = (
         row.get::<_, Option<String>>(0),
         row.get::<_, Option<String>>(1),
@@ -211,8 +267,7 @@ async fn render(
         return Err(refusal(
             UNKNOWN_SEQUENCE,
             format!("{name} is not a number sequence of application {application}"),
-        )
-        .into());
+        ));
     };
     let timezone = match row.get::<_, Option<String>>(3).as_deref() {
         None => Timezone::Unset,
@@ -220,9 +275,10 @@ async fn render(
         Some(_) => Timezone::NotText,
     };
     let pattern = wamn_number_pattern::parse(&pattern).map_err(|error| {
-        refusal(
+        caused_refusal(
             INVALID_INPUT,
             format!("the pattern of number sequence {name} does not parse: {error}"),
+            error,
         )
     })?;
     let fields = key_values(&pattern, keys)?;
@@ -249,7 +305,16 @@ async fn render(
             Some(Key::Date(format)) => date(*format),
         };
         let per = matches!(counter.scope(), Scope::Per(_));
-        let value = counter_value(connection, &sequence, counter, &key, per, call).await?;
+        let value = counter_value(connection, &sequence, counter, &key, per, call)
+            .await
+            .map_err(|error| {
+                let context = format!(
+                    "{} counter {} of number sequence {name} of application {application} for key {key:?}",
+                    call.operation(),
+                    counter.name()
+                );
+                Failure { kind: FailureKind::Postgres(error), context }
+            })?;
         let Some(value) = value else {
             return Err(refusal(
                 NO_NUMBER_ISSUED,
@@ -257,8 +322,7 @@ async fn render(
                     "counter {} of number sequence {name} has issued no number for key {key:?}",
                     counter.name()
                 ),
-            )
-            .into());
+            ));
         };
         counters.insert(counter.name(), render_counter(counter, value));
     }
@@ -294,8 +358,12 @@ async fn read_dates(
     timezone: Timezone,
     iso_year: bool,
 ) -> Result<Vec<String>, Failure> {
+    let failed = |error| Failure {
+        kind: FailureKind::Postgres(error),
+        context: format!("read numbering dates for application {application}"),
+    };
     let split = |text: String| text.split('|').map(str::to_owned).collect::<Vec<_>>();
-    let statement = connection.prepare_cached(DATE_SQL).await?;
+    let statement = connection.prepare_cached(DATE_SQL).await.map_err(failed)?;
     let invalid = || {
         refusal(
             INVALID_INPUT,
@@ -306,26 +374,36 @@ async fn read_dates(
         Timezone::Unset => {
             let row = connection
                 .query_one(&statement, &[&"UTC", &iso_year])
-                .await?;
+                .await
+                .map_err(failed)?;
             return Ok(split(row.get(0)));
         }
-        Timezone::NotText => return Err(invalid().into()),
+        Timezone::NotText => return Err(invalid()),
         Timezone::Text(timezone) => timezone,
     };
-    connection.batch_execute(TIMEZONE_SAVEPOINT_SQL).await?;
+    connection
+        .batch_execute(TIMEZONE_SAVEPOINT_SQL)
+        .await
+        .map_err(failed)?;
     match connection
         .query_one(&statement, &[&timezone, &iso_year])
         .await
     {
         Ok(row) => {
-            connection.batch_execute(TIMEZONE_RELEASE_SQL).await?;
+            connection
+                .batch_execute(TIMEZONE_RELEASE_SQL)
+                .await
+                .map_err(failed)?;
             Ok(split(row.get(0)))
         }
         Err(error) if error.code() == Some(&SqlState::INVALID_PARAMETER_VALUE) => {
-            connection.batch_execute(TIMEZONE_ROLLBACK_SQL).await?;
-            Err(invalid().into())
+            connection
+                .batch_execute(TIMEZONE_ROLLBACK_SQL)
+                .await
+                .map_err(failed)?;
+            Err(caused_refusal(INVALID_INPUT, invalid().context, error))
         }
-        Err(error) => Err(error.into()),
+        Err(error) => Err(failed(error)),
     }
 }
 
@@ -367,7 +445,7 @@ async fn counter_value(
 /// The keys of one call as a map. A key given twice is refused.
 fn key_map(
     keys: Vec<(String, Option<String>)>,
-) -> Result<BTreeMap<String, Option<String>>, StatementError> {
+) -> Result<BTreeMap<String, Option<String>>, Failure> {
     let mut map = BTreeMap::new();
     for (name, value) in keys {
         if map.contains_key(&name) {
@@ -384,7 +462,7 @@ fn key_map(
 fn key_values<'a>(
     pattern: &Pattern,
     keys: &'a BTreeMap<String, Option<String>>,
-) -> Result<BTreeMap<&'a str, &'a str>, StatementError> {
+) -> Result<BTreeMap<&'a str, &'a str>, Failure> {
     pattern
         .fields()
         .into_iter()

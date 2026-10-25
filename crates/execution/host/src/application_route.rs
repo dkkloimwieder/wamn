@@ -39,8 +39,7 @@ use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::is_project_admin;
 use wamn_project_state::{ADMIN_ROLE, workflow_user_id};
 use wamn_runtime::plugins::wamn_postgres::{
-    CounterSet, CounterSetError, CounterSetRefusal, ManualRunAdmission, ManualRunAdmitted,
-    WamnPostgres,
+    CounterSet, CounterSetRefusal, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
 };
 
 use crate::control_route::{Refusal, parse};
@@ -462,9 +461,9 @@ impl ApplicationRoutes<'_> {
                 &set,
             )
             .await
-            .map_err(|error| match error {
-                CounterSetError::Refused(refusal) => counter_set_refusal(&refusal),
-                CounterSetError::Failed(error) => Refusal::Failed(error),
+            .map_err(|error| match error.refusal() {
+                Some(refusal) => counter_set_refusal(refusal),
+                None => Refusal::Failed(error.into()),
             })?;
         Ok(json!({ "value": value }))
     }

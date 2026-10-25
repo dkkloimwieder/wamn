@@ -60,16 +60,82 @@ pub enum CounterSetRefusal {
 
 /// Why a set did not commit.
 #[derive(Debug)]
-pub enum CounterSetError {
-    /// The set was refused and changed nothing.
-    Refused(CounterSetRefusal),
-    /// The set failed, and changed nothing.
-    Failed(anyhow::Error),
+pub struct CounterSetError {
+    kind: CounterSetErrorKind,
+    source: Option<anyhow::Error>,
+    context: String,
+    set: Box<CounterSet>,
+    request_id: String,
 }
 
-impl From<CounterSetRefusal> for CounterSetError {
-    fn from(refusal: CounterSetRefusal) -> Self {
-        Self::Refused(refusal)
+#[derive(Debug)]
+enum CounterSetErrorKind {
+    Refused(CounterSetRefusal),
+    Failed,
+}
+
+impl CounterSetError {
+    /// The refusal that the host route translates to its declared literal.
+    pub fn refusal(&self) -> Option<&CounterSetRefusal> {
+        match &self.kind {
+            CounterSetErrorKind::Refused(refusal) => Some(refusal),
+            CounterSetErrorKind::Failed => None,
+        }
+    }
+
+    /// The requested counter and value.
+    pub fn set(&self) -> &CounterSet {
+        &self.set
+    }
+
+    /// The request id that identifies the write log claim.
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+impl std::fmt::Display for CounterSetError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.context)?;
+        if let Some(source) = &self.source {
+            write!(formatter, ": {source:?}")?;
+        }
+        write!(
+            formatter,
+            " (request {:?}, counter {:?})",
+            self.request_id, self.set
+        )
+    }
+}
+
+impl std::error::Error for CounterSetError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_deref().map(|source| source as _)
+    }
+}
+
+fn refused(set: &CounterSet, request_id: &str, refusal: CounterSetRefusal) -> CounterSetError {
+    CounterSetError {
+        context: format!("the counter set was refused: {refusal:?}"),
+        kind: CounterSetErrorKind::Refused(refusal),
+        source: None,
+        set: Box::new(set.clone()),
+        request_id: request_id.to_owned(),
+    }
+}
+
+fn failed(
+    set: &CounterSet,
+    request_id: &str,
+    context: impl Into<String>,
+    source: Option<anyhow::Error>,
+) -> CounterSetError {
+    CounterSetError {
+        kind: CounterSetErrorKind::Failed,
+        source,
+        context: context.into(),
+        set: Box::new(set.clone()),
+        request_id: request_id.to_owned(),
     }
 }
 
@@ -85,8 +151,8 @@ impl WamnPostgres {
     ///
     /// # Errors
     ///
-    /// [`CounterSetError::Refused`] for a refused set, and
-    /// [`CounterSetError::Failed`] for a failed statement or transaction.
+    /// [`CounterSetError::refusal`] identifies a refused set. Other errors
+    /// retain the cause of a failed statement or transaction.
     /// Neither commits anything.
     pub async fn set_number_counter(
         &self,
@@ -98,13 +164,20 @@ impl WamnPostgres {
         set: &CounterSet,
     ) -> Result<i64, CounterSetError> {
         if set.value < 1 {
-            return Err(CounterSetRefusal::InvalidInput { field: "value" }.into());
+            return Err(refused(
+                set,
+                request_id,
+                CounterSetRefusal::InvalidInput { field: "value" },
+            ));
         }
         if request_id.is_empty() {
-            return Err(CounterSetRefusal::InvalidInput {
-                field: "request_id",
-            }
-            .into());
+            return Err(refused(
+                set,
+                request_id,
+                CounterSetRefusal::InvalidInput {
+                    field: "request_id",
+                },
+            ));
         }
         let scope = format!("wamn:number-counter-set:{}", uuid::Uuid::new_v4());
         let claims = SessionClaims {
@@ -118,7 +191,14 @@ impl WamnPostgres {
         let result = async {
             self.bind_session_claims(&scope, &claims)
                 .await
-                .map_err(CounterSetError::Failed)?;
+                .map_err(|error| {
+                    failed(
+                        set,
+                        request_id,
+                        "bind the set's session claims",
+                        Some(error),
+                    )
+                })?;
             self.set_in_transaction(&scope, operation, request_id, set)
                 .await
         }
@@ -134,13 +214,12 @@ impl WamnPostgres {
         request_id: &str,
         set: &CounterSet,
     ) -> Result<i64, CounterSetError> {
-        let failed = |context: &str, error: &dyn std::fmt::Debug| {
-            CounterSetError::Failed(anyhow::anyhow!("{context}: {error:?}"))
-        };
+        let with_source =
+            |context: &str, error: anyhow::Error| failed(set, request_id, context, Some(error));
         let transaction = self
             .begin_operation_transaction(scope)
             .await
-            .map_err(|error| failed("begin the set's transaction", &error))?;
+            .map_err(|error| with_source("begin the set's transaction", error.into()))?;
         let request =
             Sha256::digest(serde_json::to_vec(set).expect("a counter set serializes to JSON"))
                 .to_vec();
@@ -151,7 +230,10 @@ impl WamnPostgres {
             Ok(begun) => begun,
             Err(error) => {
                 let _ = transaction.rollback().await;
-                return Err(failed("claim the request id in the write log", &error));
+                return Err(with_source(
+                    "claim the request id in the write log",
+                    error.into(),
+                ));
             }
         };
         let stored = match begun {
@@ -159,41 +241,46 @@ impl WamnPostgres {
             OpaqueBegun::Finished(result) => Some(result),
             OpaqueBegun::Conflict => {
                 let _ = transaction.rollback().await;
-                return Err(CounterSetRefusal::IdempotencyConflict.into());
+                return Err(refused(
+                    set,
+                    request_id,
+                    CounterSetRefusal::IdempotencyConflict,
+                ));
             }
             OpaqueBegun::Uncertain => {
                 let _ = transaction.rollback().await;
-                return Err(CounterSetError::Failed(anyhow::anyhow!(
-                    "the write log holds an unfinished claim of request {request_id}"
-                )));
+                return Err(failed(
+                    set,
+                    request_id,
+                    format!("the write log holds an unfinished claim of request {request_id}"),
+                    None,
+                ));
             }
         };
         if let Some(result) = stored {
             let _ = transaction.rollback().await;
-            return serde_json::from_str::<serde_json::Value>(&result)
-                .ok()
-                .and_then(|value| value["value"].as_i64())
-                .ok_or_else(|| {
-                    CounterSetError::Failed(anyhow::anyhow!(
-                        "the stored result of request {request_id} names no value"
-                    ))
-                });
+            let context = format!("the stored result of request {request_id} names no value");
+            let result = serde_json::from_str::<serde_json::Value>(&result)
+                .map_err(|error| with_source(&context, error.into()))?;
+            return result["value"]
+                .as_i64()
+                .ok_or_else(|| failed(set, request_id, context, None));
         }
         let outcome = transaction
             .with_host_connection(|connection| async move {
-                let result = set_counter(connection.connection(), set).await;
+                let result = set_counter(connection.connection(), set, request_id).await;
                 (connection, result)
             })
             .await;
         match outcome {
             Ok(Ok(())) => {}
-            Ok(Err(refusal)) => {
+            Ok(Err(error)) => {
                 let _ = transaction.rollback().await;
-                return Err(refusal.into());
+                return Err(error);
             }
             Err(error) => {
                 let _ = transaction.rollback().await;
-                return Err(failed("set the counter", &error));
+                return Err(with_source("set the counter", error.into()));
             }
         }
         transaction.finish_opaque(
@@ -204,7 +291,7 @@ impl WamnPostgres {
         transaction
             .commit()
             .await
-            .map_err(|error| failed("commit the set", &error))?;
+            .map_err(|error| with_source("commit the set", error.into()))?;
         Ok(set.value)
     }
 }
@@ -213,7 +300,9 @@ impl WamnPostgres {
 async fn set_counter(
     connection: &Object,
     set: &CounterSet,
-) -> Result<Result<(), CounterSetRefusal>, tokio_postgres::Error> {
+    request_id: &str,
+) -> Result<Result<(), CounterSetError>, tokio_postgres::Error> {
+    let refused = |refusal| refused(set, request_id, refusal);
     let statement = connection.prepare_cached(SEQUENCE_SQL).await?;
     let row = connection
         .query_one(&statement, &[&set.application, &set.sequence])
@@ -222,22 +311,29 @@ async fn set_counter(
         row.get::<_, Option<String>>(0),
         row.get::<_, Option<String>>(1),
     ) else {
-        return Ok(Err(CounterSetRefusal::SequenceNotFound));
+        return Ok(Err(refused(CounterSetRefusal::SequenceNotFound)));
     };
     // A stored pattern that does not parse has no counter to set.
-    let Ok(pattern) = wamn_number_pattern::parse(&pattern) else {
-        return Ok(Err(CounterSetRefusal::CounterNotFound));
+    let pattern = match wamn_number_pattern::parse(&pattern) {
+        Ok(pattern) => pattern,
+        Err(source) => {
+            let mut error = refused(CounterSetRefusal::CounterNotFound);
+            error.source = Some(source.into());
+            return Ok(Err(error));
+        }
     };
     let Some(target) = pattern
         .counters()
         .find(|counter| counter.name() == set.counter)
     else {
-        return Ok(Err(CounterSetRefusal::CounterNotFound));
+        return Ok(Err(refused(CounterSetRefusal::CounterNotFound)));
     };
     match target.scope() {
-        Scope::Per(_) => return Ok(Err(CounterSetRefusal::AssignedPerKey)),
+        Scope::Per(_) => return Ok(Err(refused(CounterSetRefusal::AssignedPerKey))),
         Scope::Always if !set.key.is_empty() => {
-            return Ok(Err(CounterSetRefusal::InvalidInput { field: "key" }));
+            return Ok(Err(refused(CounterSetRefusal::InvalidInput {
+                field: "key",
+            })));
         }
         Scope::Always | Scope::Reset(_) => {}
     }

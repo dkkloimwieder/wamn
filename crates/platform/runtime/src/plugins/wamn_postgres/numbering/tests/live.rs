@@ -821,7 +821,7 @@ impl Live {
     ) -> CounterSetRefusal {
         let request = format!("refused-{}", self.scopes.fetch_add(1, Ordering::Relaxed));
         match self.set(&request, sequence, counter, key, value).await {
-            Err(CounterSetError::Refused(refusal)) => refusal,
+            Err(error) if error.refusal().is_some() => error.refusal().unwrap().clone(),
             other => panic!("the set of {counter} to {value} is refused: {other:?}"),
         }
     }
@@ -923,6 +923,51 @@ async fn live_set_counter_takes_a_reset_key_and_refuses_a_per_counter() {
     assert_eq!(live.set("period", "yearly", "n", "99", 1).await.unwrap(), 1);
 }
 
+#[tokio::test]
+async fn live_set_errors_keep_the_request_and_source() {
+    let live = Live::new().await;
+    live.sequence(APPLICATION, "broken", "{seq:").await;
+    let error = live
+        .set("bad-pattern", "broken", "n", "", 23)
+        .await
+        .unwrap_err();
+    assert_eq!(error.refusal(), Some(&CounterSetRefusal::CounterNotFound));
+    assert_eq!(error.request_id(), "bad-pattern");
+    assert_eq!(
+        error.set(),
+        &CounterSet {
+            application: APPLICATION.to_owned(),
+            sequence: "broken".to_owned(),
+            counter: "n".to_owned(),
+            key: String::new(),
+            value: 23,
+        }
+    );
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<wamn_number_pattern::PatternError>()
+    );
+
+    live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
+        .await;
+    live.database.execute(&[
+        "ALTER TABLE platform.number_counter ADD CONSTRAINT error_source_probe CHECK (value <> 23)",
+    ]).unwrap();
+    let error = live
+        .set("bad-write", "purchase_order", "po", "", 23)
+        .await
+        .unwrap_err();
+    assert_eq!(error.refusal(), None);
+    assert_eq!(error.request_id(), "bad-write");
+    assert_eq!(error.set().sequence, "purchase_order");
+    assert!(matches!(
+        std::error::Error::source(&error).unwrap().downcast_ref::<PgError>(),
+        Some(PgError::CheckViolation(constraint)) if constraint == "error_source_probe"
+    ));
+    assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-1");
+}
+
 /// A set waits for a concurrent next number that holds the counter row, and
 /// the next number after both renders the set value.
 #[tokio::test]
@@ -1013,12 +1058,13 @@ async fn live_set_counter_is_logged_by_its_request_id() {
         "a retry answers the stored result"
     );
     assert_eq!(live.next("purchase_order", NO_KEYS).await, "P-11");
-    assert!(matches!(
-        live.set("logged", "purchase_order", "po", "", 30).await,
-        Err(CounterSetError::Refused(
-            CounterSetRefusal::IdempotencyConflict
-        ))
-    ));
+    assert_eq!(
+        live.set("logged", "purchase_order", "po", "", 30)
+            .await
+            .unwrap_err()
+            .refusal(),
+        Some(&CounterSetRefusal::IdempotencyConflict)
+    );
     let updated_by: String = superuser
         .query_one(
             "SELECT updated_by::text FROM platform.number_counter WHERE counter = 'po'",

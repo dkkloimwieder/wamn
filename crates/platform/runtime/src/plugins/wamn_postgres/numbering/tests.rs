@@ -67,7 +67,7 @@ fn the_keys_carry_every_value_the_pattern_names_as_text() {
         !values.contains_key("extra"),
         "a key the pattern does not name is not read"
     );
-    let code = |error: StatementError| match error {
+    let code = |error: Failure| match statement_failure(error) {
         StatementError::Postgres(PgError::QueryError((code, _))) => code,
         other => panic!("a query error: {other:?}"),
     };
@@ -100,6 +100,25 @@ fn the_date_formats_name_every_date_token_and_date_key() {
         [DateFormat::Year, DateFormat::Week, DateFormat::ShortYear]
     );
     assert!(formats("P-{seq:po}-{field:dock}").is_empty());
+}
+
+#[test]
+fn a_refusal_keeps_its_cause_until_the_statement_boundary() {
+    let source = wamn_number_pattern::parse("{seq:").unwrap_err();
+    let message = format!("the pattern of number sequence purchase_order does not parse: {source}");
+    let error = caused_refusal(INVALID_INPUT, message.clone(), source);
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<wamn_number_pattern::PatternError>()
+    );
+    match statement_failure(error) {
+        StatementError::Postgres(PgError::QueryError((code, text))) => {
+            assert_eq!(code, INVALID_INPUT);
+            assert_eq!(text, message);
+        }
+        other => panic!("the pattern refusal stays a query error: {other:?}"),
+    }
 }
 
 mod live;
