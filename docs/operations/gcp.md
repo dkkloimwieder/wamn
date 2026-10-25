@@ -145,6 +145,7 @@ The teardown keeps these resources, and the install expects them. The owner make
 
 - The APIs, the quotas and the daily guard that sets every pool to 0 nodes at 03:00 New York time (07:00 UTC).
 - The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself.
+- The project custom role `wamnAgentTofuRead`, bound to `wamn-agent@wamn-dev` with no condition. It holds only `dns.managedZones.get` and `storage.buckets.getIamPolicy`, so that the agent's `tofu plan` can read the DNS zone and the IAM policy of the state bucket. It grants no write.
 - The Google service account `wamn-edge`, its `roles/storage.objectViewer` binding on `gs://wamn-dev-web`, and the Workload Identity binding of `edge/wamn-edge-web` (section 4.20).
 - The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
 - The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases.
@@ -234,6 +235,15 @@ Point the DNS name of each route host (`receiving.wamn.dev.` and `wms.wamn.dev.`
 ```bash
 gcloud dns record-sets create receiving.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 \
   --rrdatas "$(gcloud compute addresses describe wamn-edge --project wamn-dev --global --format='value(address)')"
+```
+
+Make the read-only role of the agent's OpenTofu plan, and bind it to `wamn-agent`:
+
+```bash
+gcloud iam roles create wamnAgentTofuRead --project wamn-dev --title="wamn agent tofu read" \
+  --permissions=dns.managedZones.get,storage.buckets.getIamPolicy --stage=GA
+gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com \
+  --role=projects/wamn-dev/roles/wamnAgentTofuRead --condition=None
 ```
 
 Make the cost guard. The source is in `deploy/gcp/guard`, and its `config.json` names the project, the zone, the cluster and the state bucket. Run its test first:
