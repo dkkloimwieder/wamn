@@ -75,7 +75,7 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor() {
         .unwrap();
 
     admin
-        .batch_execute("BEGIN; SET LOCAL app.operation = 'event-batch-fixture'")
+        .batch_execute("BEGIN; SET LOCAL app.operation = 'admin:event-batch-fixture'")
         .await
         .unwrap();
     admin
@@ -176,7 +176,7 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor() {
     );
 
     admin
-        .batch_execute("BEGIN; SET LOCAL app.operation = 'event-batch-fixture'")
+        .batch_execute("BEGIN; SET LOCAL app.operation = 'admin:event-batch-fixture'")
         .await
         .unwrap();
     admin
