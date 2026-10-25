@@ -199,7 +199,8 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 }
 
 /// The roles a release implies (R4, epic decision D6): http iff the manifest
-/// has an http attachment, materializer iff it has an event registration.
+/// has a route or workflow http attachment, materializer iff it has an event
+/// registration.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
     let tenant = wamn_control_provision::project_env_tenant(org, project, env);
@@ -216,9 +217,8 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
     };
     let mut roles = Vec::new();
     if manifest
-        .attachments
-        .values()
-        .any(|attachment| attachment.type_ == AttachmentType::Http)
+        .every_attachment()
+        .any(|(_, attachment)| attachment.attachment_type() == AttachmentType::Http)
     {
         roles.push(Role {
             name: RoleName::Http,
@@ -847,6 +847,38 @@ mod tests {
                 .as_str()
             )
         );
+    }
+
+    #[test]
+    fn a_workflow_http_attachment_renders_the_http_role() {
+        let manifest: ServingManifest = serde_json::from_value(serde_json::json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": []},
+            "components": [],
+            "routes": [],
+            "attachments": {},
+            "workflow": {
+                "wirings": [],
+                "attachments": {
+                    "orders-http": {
+                        "type": "http",
+                        "package-id": "wamn_wms",
+                        "wiring-id": "orders",
+                        "wiring-version": 1,
+                        "definition-hash": DIGEST,
+                        "definition": {"route": {"method": "POST", "path": "/orders"}},
+                        "auth-policy": {"modes": ["none"]}
+                    }
+                }
+            }
+        }))
+        .expect("manifest");
+        let mut input = input();
+        input.roles = roles(&manifest, &input.org, &input.project, &input.env);
+        assert_eq!(input.roles.len(), 1);
+        assert_eq!(input.roles[0].name, RoleName::Http);
+        let values = values(&input).expect("values render");
+        assert_eq!(values["roles"][0]["name"].as_str(), Some("http"));
     }
 
     #[test]
