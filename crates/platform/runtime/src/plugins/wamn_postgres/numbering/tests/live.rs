@@ -27,18 +27,6 @@ const TENANT: &str = "numbering";
 const APPLICATION: &str = "receiving";
 const OTHER_APPLICATION: &str = "shipping";
 const ADMINISTRATION_PASSWORD: &str = "numbering-administration";
-/// The roles the catalog grants to, as provisioning creates them, and the
-/// run-plane schema the administration surface revokes in.
-const PLATFORM_ROLES_SQL: &str = "DO $roles$ DECLARE role_name text; BEGIN \
-       PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-       FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author'] LOOP \
-         IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
-           EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                           NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-         END IF; \
-       END LOOP; \
-     END $roles$; \
-     CREATE SCHEMA IF NOT EXISTS wamn_run;";
 
 /// The keys of one call: the values the pattern names.
 type Keys<'a> = &'a [(&'a str, Option<&'a str>)];
@@ -62,11 +50,11 @@ enum Finish {
 }
 
 struct Live {
-    _lock: wamn_test_postgres::ProcessLock,
     database: wamn_test_postgres::Database,
     administration: tokio_postgres::Client,
     plugin: WamnPostgres,
     scopes: AtomicU32,
+    _lock: wamn_test_postgres::ProcessLock,
 }
 
 async fn connect(url: &str) -> tokio_postgres::Client {
@@ -82,14 +70,10 @@ async fn connect(url: &str) -> tokio_postgres::Client {
 impl Live {
     async fn new() -> Self {
         let lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::database();
+        let database = wamn_project_state::test_database::tenant_platform();
         database
-            .execute(&[
-                PLATFORM_ROLES_SQL,
-                wamn_catalog::CATALOG_SCHEMA_SQL,
-                wamn_control_provision::APP_SCHEMA_SQL,
-            ])
-            .expect("install the catalog and the application schema");
+            .execute(&["CREATE SCHEMA wamn_run;"])
+            .expect("create the run-plane schema that administration revokes in");
         let generation = workload_generation_role(
             WorkloadRoleFamily::Administration,
             WorkloadRoleScope::ProjectEnvironment {

@@ -501,21 +501,44 @@ pub(crate) mod tests {
     pub(crate) async fn nats() -> (Server, async_nats::Client) {
         let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
             .expect("set WAMN_NATIVE_C_NATS_BIN to a nats-server executable");
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let store =
-            std::env::temp_dir().join(format!("wamn-auth-kv-{}-{port}", std::process::id()));
-        let child = std::process::Command::new(binary)
-            .args(["-js", "-a", "127.0.0.1", "-p", &port.to_string(), "-sd"])
+        let store = std::env::temp_dir().join(format!("wamn-auth-kv-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&store).unwrap();
+        // NATS binds the free port itself and publishes the bound address.
+        let child = std::process::Command::new(&binary)
+            .args(["-js", "-a", "127.0.0.1", "-p", "-1", "-sd"])
+            .arg(&store)
+            .arg("--ports_file_dir")
             .arg(&store)
             .spawn()
             .unwrap();
-        let server = Server(child, store);
-        let url = format!("nats://127.0.0.1:{port}");
+        let ports = store.join(format!(
+            "{}_{}.ports",
+            std::path::Path::new(&binary)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            child.id()
+        ));
+        let mut server = Server(child, store);
         let deadline = Instant::now() + Duration::from_secs(5);
+        let url = loop {
+            assert!(
+                server.0.try_wait().unwrap().is_none(),
+                "NATS exited during startup"
+            );
+            if let Ok(bytes) = tokio::fs::read(&ports).await
+                && let Ok(ports) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                && let Some(url) = ports["nats"][0].as_str()
+            {
+                break url.to_owned();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "NATS did not publish its client port"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
         loop {
             match async_nats::connect(&url).await {
                 Ok(client) => break (server, client),
@@ -586,7 +609,10 @@ pub(crate) mod tests {
         cache.keep_environment_inactive("u", ticket, false).await;
         assert_eq!(cache.environment_inactive("u"), Ok(false));
         // The watch also delivers the put, which can renew the fact once.
-        std::thread::sleep(Duration::from_millis(300));
+        until("the fact expires", || {
+            cache.environment_inactive("u").is_err()
+        })
+        .await;
         assert!(cache.environment_inactive("u").is_err());
     }
 

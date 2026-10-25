@@ -95,6 +95,7 @@ rcgen = { workspace = true }
 # normal wamn-catalog dependency above. That deletes the fence for every crate
 # downstream of it.
 wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-project-state = { workspace = true, features = ["test-util"] }
 # wamn-0h0g.15.53: the executor plugins' host functions live behind each
 # plugin's private `mod bindings`, so the only way to reach them from outside
 # this crate is a real guest. Encoded from WAT in-process, which keeps the
