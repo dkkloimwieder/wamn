@@ -235,8 +235,8 @@ BEGIN
 
     old_key := (SELECT jsonb_object_agg(k, old_row -> k) FROM unnest(key_columns) AS k);
     new_key := (SELECT jsonb_object_agg(k, new_row -> k) FROM unnest(key_columns) AS k);
-    -- Only a history table under a tenant floor has tenant_id. The entry copies
-    -- it from the row.
+    -- Shared tables can retain a tenant floor. Platform administration history
+    -- has no tenant column; the same function writes its unscoped entry.
     tenant := EXISTS (SELECT FROM pg_attribute
                        WHERE attrelid = to_regclass(history) AND attname = 'tenant_id'
                          AND NOT attisdropped);

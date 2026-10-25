@@ -229,13 +229,13 @@ async fn fixture() -> Fixture {
             "INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{READER}', 'user', 'reader@schedule.invalid'), \
                ('{ADMIN}', 'user', 'admin@schedule.invalid');
-             INSERT INTO platform.role (tenant_id, name) VALUES \
-               ('{TENANT}', 'reader'), ('{TENANT}', 'clerk'), ('{TENANT}', 'admin');
-             INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES \
-               ('{TENANT}', '{READER}', 'reader'), ('{TENANT}', '{ADMIN}', 'admin');
-             INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
-               ('{TENANT}', 'reader', '{READ_REFERENCE}');
-             INSERT INTO platform.environment (tenant_id, status) VALUES ('{TENANT}', 'active');
+             INSERT INTO platform.role (name) VALUES \
+               ('reader'), ('clerk'), ('admin');
+             INSERT INTO platform.user_role (user_id, role_name) VALUES \
+               ('{READER}', 'reader'), ('{ADMIN}', 'admin');
+             INSERT INTO platform.permission (role_name, permission) VALUES \
+               ('reader', '{READ_REFERENCE}');
+             INSERT INTO platform.environment (status) VALUES ('active');
              INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class) \
                VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');
              INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest) \
@@ -506,9 +506,9 @@ impl Fixture {
     async fn grant_workflow_user(&self, role: &str) {
         self.admin
             .execute(
-                "INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
-                 VALUES ($1, $2::text::uuid, $3)",
-                &[&TENANT, &workflow_user_id().to_string(), &role],
+                "INSERT INTO platform.user_role (user_id, role_name) \
+                 VALUES ($1::text::uuid, $2)",
+                &[&workflow_user_id().to_string(), &role],
             )
             .await
             .expect("grant the workflow user a role");

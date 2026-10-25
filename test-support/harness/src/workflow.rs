@@ -20,8 +20,8 @@ pub async fn author_and_enable(
     let project_task = tokio::spawn(connection);
     let result = async {
         project.execute(
-            "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
-            &[&request.tenant_id, &request.created_by],
+            "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
+            &[&request.created_by],
         ).await?;
         // The graph still passes the release gate in author_workflow.
         control.execute("SELECT set_config('app.tenant', $1, false)", &[&request.tenant_id]).await?;

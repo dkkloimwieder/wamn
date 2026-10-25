@@ -167,8 +167,8 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .await?;
     admin
         .execute(
-            "INSERT INTO platform.environment (tenant_id, status) VALUES ($1, 'inactive')",
-            &[&TENANT],
+            "INSERT INTO platform.environment (status) VALUES ('inactive')",
+            &[],
         )
         .await?;
     // This host watches no auth bucket, so it keeps no answer and reads the

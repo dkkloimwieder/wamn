@@ -354,6 +354,9 @@ Permitted direct Receiving calls retain base behavior.
 
 The host owns begin, commit, rollback, and connection cleanup.
 An error, trap, cancellation, or deadline destroys unfinished transaction state before another request can acquire the connection.
+Queue lease renewal keeps a connection guard from the start of its transaction through commit or rollback.
+Shutdown cancellation destroys that connection, so the pool cannot retain its open transaction or row locks.
+The shared `finish_queue_transaction` function also guards the connection while commit or rollback awaits PostgreSQL.
 Serialization and deadlock errors reach the caller without an automatic transaction retry.
 
 ### The write log
@@ -892,11 +895,17 @@ These relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `e
 An integration is connector code, and `integration` columns hold its catalog code. A connection is a configured instance of an integration. An external system is the persistent identity that a group of connections reach.
 Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
 `number_counter` has no history table, because one entry per counter advance would double the writes of every create. The write log is its audit.
-The database is the org boundary, so `user` and the seven platform configuration tables have no `tenant_id`, no row policy, and no tenant key index, and neither do their history tables.
-`role`, `user_role`, `permission`, `api_key`, and `environment` still carry `tenant_id`.
-The file creates the history table of each of these five with the tenant flag, so the table has a `tenant_id` column.
-Each of these history tables has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
-A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
+The database separates environments. The platform account and configuration tables and their history tables have no `tenant_id`, row policy, or tenant key index.
+`role` keys on `name`. `user_role` keys on `(user_id, role_name)`, and `permission` keys on `(role_name, permission)`.
+Their foreign keys reference one column. `api_key` keys on `id`, and `key_hash` is unique in the database.
+`environment` uses a boolean `id` primary key constrained to `true`. Its default is `true`, so it holds at most one status row.
+No status row means active. The application login reads that row from its selected environment database.
+Project migration `0038_administration_database_boundary` removes the remaining tenant columns and rebuilds these keys.
+The migration preserves rows and history images. It removes `tenant_id` from history keys and gives environment history the key `{"id": true}`.
+A duplicate resulting key refuses the whole migration. Historical migrations stay unchanged.
+The shared control, catalog, and run tables retain the `org--project--env` key named `tenant`.
+Event fields and credential hashes retain their existing tenant representation.
+Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key`, on a history table, or on `schema_migrations`.
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/control/lib/src/component_admission/declared_sql.rs`). Publish checks the pushed descriptors again. Application guests run only declared statements, so only the plugin calls these functions. The host also runs a text guard (`reject_claim_mutation`) on every statement it runs: on declared statements, which covers a release admitted before the parsed check, and on the raw `wamn:postgres/client` interface, which only platform components import.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
@@ -907,8 +916,12 @@ They add the platform configuration tables and the three counter functions, and 
 `upgrade-schema` applies each migration once in one transaction. A fresh install records them as applied.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `user`, `role`, `user_role`, `permission` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
-It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation. The entry columns include `tenant_id` only on the history tables of `role`, `user_role`, `permission`, and `environment`.
+It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`. No entry column names a tenant, and administration holds no tenant derivation grant.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
+The CLI role writer checks the target database against the registry and needs the administration grants. It requires no superuser or row-security bypass.
+It refuses a tenant key that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
+The session role reader holds `SELECT` only on `user.id`, `user.status`, `user_role.user_id`, and `user_role.role_name`.
+Its connection selects the environment database. Its query filters by principal ID and active status.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
@@ -918,6 +931,14 @@ A column that is secret at rest does not belong in a stamped relation.
 An applier installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
 
 ### System database
+
+The system database owns `registry.integrations`, the connector catalog, and `registry.target`, the deployment target identities.
+System migration `0029_integrations_and_target` installs both tables. A fresh install records the same migration as applied.
+The catalog seeds `http`, `gcs`, and `s3`, each with `form = host` and `exclusive = false`.
+The target table stores `id`, unique `name`, `type` (`local` or `cloud`), `status`, and nullable `last_seen_at`.
+It seeds one active target named `cloud`, with no check-in time. Repeated schema upgrades create no additional seeds.
+Neither table exists in an application database, and neither grants application access.
+The target identity adds no environment assignment, `target_application`, or platform connection.
 
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.

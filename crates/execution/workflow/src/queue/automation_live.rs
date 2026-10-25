@@ -134,8 +134,8 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     admin.batch_execute(&format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
-      INSERT INTO platform.role (tenant_id,name) VALUES ('{TENANT}','automation');
-      INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');")).await?;
+      INSERT INTO platform.role (name) VALUES ('automation');
+      INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');")).await?;
     let released = wamn_catalog::ServingComponentOperation {
         registered_operation: Some(RECORD_RECEIPT.to_owned()),
         permissions: BTreeSet::from([RECORD_RECEIPT.to_owned()]),
@@ -143,7 +143,7 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
         statements: std::collections::BTreeMap::new(),
     };
 
-    let caller = queued_run_caller(&admin, TENANT, SERVICE, None).await?;
+    let caller = queued_run_caller(&admin, SERVICE, None).await?;
     assert_eq!(caller.credential_type(), CredentialType::QueuedService);
     let refusal = authorize_released_operation(Some(&caller), &released)
         .expect_err("a service without the grant was admitted");
@@ -155,12 +155,12 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
 
     admin
         .execute(
-            "INSERT INTO platform.permission (tenant_id,role_name,permission) \
-             VALUES ($1,'automation','wamn-receiving:receiving/record-receipt')",
-            &[&TENANT],
+            "INSERT INTO platform.permission (role_name,permission) \
+             VALUES ('automation','wamn-receiving:receiving/record-receipt')",
+            &[],
         )
         .await?;
-    let caller = queued_run_caller(&admin, TENANT, SERVICE, None).await?;
+    let caller = queued_run_caller(&admin, SERVICE, None).await?;
     assert_eq!(caller.credential_type(), CredentialType::QueuedService);
     authorize_released_operation(Some(&caller), &released)
         .expect("a service granted the operation is admitted");
@@ -231,9 +231,9 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         .await?;
     admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     admin.batch_execute(&format!("INSERT INTO platform.\"user\" (id,type,email) VALUES ('{SERVICE}','service','automation@example.invalid');
-      INSERT INTO platform.role (tenant_id,name) VALUES ('{TENANT}','automation');
-      INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
-      INSERT INTO platform.permission (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}'), ('{TENANT}','automation','wamn-control:workflow/start');
+      INSERT INTO platform.role (name) VALUES ('automation');
+      INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');
+      INSERT INTO platform.permission (role_name,permission) VALUES ('automation','{REFERENCE}'), ('automation','wamn-control:workflow/start');
       INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('{TENANT}','test','standard');
       INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
@@ -269,7 +269,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         "routes":[],"attachments":{},"host-routes":["application"]
     }))?;
     let workflow_user = wamn_project_state::workflow_user_id().to_string();
-    admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'automation')", &[&TENANT, &workflow_user]).await?;
+    admin.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'automation')", &[&workflow_user]).await?;
     admin.execute("INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)", &[&TENANT, &serde_json::to_string(&document)?, &graph_hash.as_str(), &workflow_user]).await?;
     let mut manual = document.clone();
     manual.wiring_id = "echo-manual".into();
@@ -603,10 +603,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     request.idempotency_key = "revoked".to_owned();
     let denied = workflows.start(&request).await?;
     admin
-        .execute(
-            "DELETE FROM platform.permission WHERE tenant_id=$1",
-            &[&TENANT],
-        )
+        .execute("DELETE FROM platform.permission ", &[])
         .await?;
     // A permission refusal terminalizes the run and counts as a handled queue item.
     assert!(drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);

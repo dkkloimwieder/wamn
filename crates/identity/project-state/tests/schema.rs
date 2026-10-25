@@ -2,10 +2,8 @@
 //!
 //! Each test applies `deploy/sql/app-schema.sql` to a test database of the test
 //! PostgreSQL server (a superuser URL; the harness prepares App generations) and
-//! asserts what PostgreSQL enforces: tenant RLS isolation on the tenant floor
-//! tables, the org boundary of `user` and the platform configuration tables
-//! (no tenant column, no row security), the model's columns, the tenant-key
-//! indexes, the FK cascades, the empty-tenant / status / type CHECKs, and the
+//! asserts the database boundary, absence of tenant columns and row policies,
+//! model columns, foreign-key cascades, status and type constraints, and
 //! platform principal rows.
 
 use std::fmt::Write as _;
@@ -17,7 +15,7 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 use wamn_project_state::{
-    HISTORY_EXEMPT, PlatformComponent, SCHEMA_NAME, TABLES, TENANT_FLOOR, UserStatus, UserType,
+    HISTORY_EXEMPT, PlatformComponent, SCHEMA_NAME, TABLES, UserStatus, UserType,
 };
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
@@ -139,7 +137,24 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
 
     let database = current_database(&url);
     let tenant_1_app = app_generation(&database, TENANT_1);
-    let tenant_2_app = app_generation(&database, TENANT_2);
+    let other = wamn_test_postgres::database();
+    let other_database = current_database(other.url());
+    let tenant_2_app = app_generation(&other_database, TENANT_2);
+    let mut other_script = sql::prepare_workload_generation_sql(
+        WorkloadRoleFamily::App,
+        &other_database,
+        &tenant_2_app,
+        APP_GENERATION_PASSWORD,
+        APP_GENERATION_VALID_UNTIL,
+    );
+    other_script.push_str(sql::revoke_public_connect_floor_sql());
+    other_script.push_str(&record_history_sql());
+    other_script.push_str(&record_history_app_grants_sql());
+    other_script.push_str(&app_schema_sql());
+    writeln!(other_script, "SET ROLE {tenant_2_app}; DO $$ BEGIN
+        ASSERT (SELECT count(*) FROM platform.role)=0, 'another environment sees none of the first environment roles';
+        END $$; RESET ROLE;").unwrap();
+    run(other.url(), &other_script);
 
     // Production preparation hardens the stable ACL carrier to passwordless
     // NOLOGIN/NOINHERIT and makes each tenant generation the only LOGIN.
@@ -151,13 +166,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         APP_GENERATION_VALID_UNTIL,
     );
     script.push('\n');
-    script.push_str(&sql::prepare_workload_generation_sql(
-        WorkloadRoleFamily::App,
-        &database,
-        &tenant_2_app,
-        APP_GENERATION_PASSWORD,
-        APP_GENERATION_VALID_UNTIL,
-    ));
+
     script.push_str(
         "\nDROP SCHEMA IF EXISTS platform CASCADE;\n\
          DROP SCHEMA IF EXISTS wamn_sysschema_test CASCADE;\n",
@@ -167,10 +176,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     script.push('\n');
-    // Seed as the superuser (bypasses RLS): one tenant's role rows for the
-    // isolation test, known user ids to tie the docs rows to. U1 has a role,
-    // key, and config. The database is the org boundary, so the user and
-    // setting rows name no tenant.
+    // Seed one environment with known users, roles, a key and a setting.
     // The fixture writes as U1, its test principal, whose row stamps itself.
     writeln!(
         script,
@@ -178,18 +184,15 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          SET app.operation = 'admin:seed-isolation-fixture';\n\
          INSERT INTO platform.\"user\" (id, type, email) VALUES \
            ('{U1}','user','u1@t1'),('{U2}','service','u2@t1'),('{U3}','user','u3@t2');\n\
-         INSERT INTO platform.role (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
-         INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
-         INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
-         INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
+         INSERT INTO platform.role (name) VALUES ('admin'),('clerk');\n\
+         INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');\n\
+         INSERT INTO platform.permission (role_name, permission) VALUES ('clerk','platform-fixture:widget/get');\n\
+         INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES ('{U1}','ci','hash-1','wk_a');\n\
          INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES ('user','{U1}','display.theme','\"dark\"'::jsonb);"
     )
     .expect("writing to a String cannot fail");
 
-    // Tenant isolation of the tenant floor tables follows current_user's
-    // prepared scope: tenant 1 sees only tenant 1's role rows without any
-    // settable tenant claim. Every generation reads every user and setting row
-    // of the database, the org boundary.
+    // Each generation reads the users, roles and settings of its database.
     writeln!(
         script,
         "BEGIN;\n\
@@ -205,19 +208,17 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
-    // Tenant 2 sees no role row of tenant 1, and every user. Spoofing the
-    // retired app.tenant claim does not move tenant 1, and the stable ACL
-    // carrier itself maps to no tenant.
     writeln!(
         script,
-        "BEGIN;\n\
-         SET LOCAL ROLE {tenant_2_app};\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM platform.role)=0, 't2 sees no role of t1';\n\
-           ASSERT (SELECT count(*) FROM platform.\"user\")=3, 't2 sees every user of the database';\n\
-         END $$;\n\
-         COMMIT;\n\
-         BEGIN;\n\
+        "DO $$ BEGIN
+        ASSERT NOT has_database_privilege('{tenant_2_app}', current_database(), 'CONNECT'),
+        'another environment credential cannot connect to this database'; END $$;"
+    )
+    .unwrap();
+    // A caller cannot alter the database boundary with a settable claim.
+    writeln!(
+        script,
+        "         BEGIN;\n\
          SET LOCAL ROLE {tenant_1_app};\n\
          SET LOCAL app.tenant = '{TENANT_2}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
@@ -225,7 +226,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
          SET LOCAL app.tenant = '{TENANT_1}';\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=0, 'the stable ACL carrier derives no tenant'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'the ACL carrier reads the database roles'; END $$;\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
@@ -256,11 +257,8 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
     )
     .expect("writing to a String cannot fail");
-    // The model is the oracle for each table: every model column exists. A
-    // tenant floor table enables and forces row security, and a tenant-key
-    // expression index serves the policy on the table and on its history
-    // table. Any other table is at the org boundary: it and its history table
-    // have no tenant_id, no row security, no policy and no tenant-key index.
+    // Every model column exists. Base and history tables have no tenant
+    // column, row security, policy or tenant-key index.
     for table in TABLES {
         let qualified = table.qualified();
         let history = format!("{SCHEMA_NAME}.{}_history", table.name);
@@ -286,22 +284,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
             count = table.columns.len(),
         )
         .expect("writing to a String cannot fail");
-        if TENANT_FLOOR.contains(&table.name) {
-            writeln!(
-                script,
-                "DO $$ BEGIN\n\
-                   ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_catalog.pg_class \
-                           WHERE oid = '{qualified}'::regclass), '{qualified} must enable and force row security';\n\
-                   ASSERT (SELECT count(*) FROM (VALUES {indexed}) AS relation(qualified_name) \
-                           WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_index AS i \
-                             WHERE i.indrelid = relation.qualified_name::regclass \
-                               AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%wamn_authority.tenant_key(tenant_id)%')) = 0, \
-                          '{qualified} and its history must carry a tenant-key index';\n\
-                 END $$;"
-            )
-            .expect("writing to a String cannot fail");
-        } else {
-            writeln!(
+        writeln!(
                 script,
                 "DO $$ BEGIN\n\
                    ASSERT (SELECT count(*) FROM (VALUES {indexed}) AS relation(qualified_name) \
@@ -318,9 +301,8 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
                  END $$;"
             )
             .expect("writing to a String cannot fail");
-        }
     }
-    // Every tenant floor table refuses a ''-tenant row (a45).
+    // The retired tenant column is refused instead of accepted as input.
     for (table, insert) in [
         ("role", "(tenant_id, name) VALUES ('', 'empty')".to_owned()),
         (
@@ -344,7 +326,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
             "DO $$ BEGIN BEGIN\n\
                INSERT INTO platform.{table} {insert};\n\
                ASSERT false, 'a ''''-tenant {table} row must be rejected (a45)';\n\
-             EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
+             EXCEPTION WHEN undefined_column THEN NULL; END; END $$;"
         )
         .expect("writing to a String cannot fail");
     }
@@ -362,7 +344,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // grant that the user cascade leaves.
     writeln!(
         script,
-        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('t1','{U2}','admin');"
+        "INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U2}','admin');"
     )
     .expect("writing to a String cannot fail");
     // FK cascade: deleting U1 prunes its role grant and api key.
@@ -378,7 +360,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // FK cascade: deleting the clerk role prunes its permission, and deleting
     // the admin role prunes its remaining grant.
     script.push_str(
-        "DELETE FROM platform.role WHERE tenant_id='t1' AND name IN ('admin', 'clerk');\n\
+        "DELETE FROM platform.role WHERE name IN ('admin', 'clerk');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM platform.permission WHERE role_name='clerk')=0, 'permission cascade';\n\
            ASSERT (SELECT count(*) FROM platform.user_role WHERE role_name='admin')=0, 'user_role cascade from role';\n\
@@ -760,15 +742,15 @@ fn platform_relations_log_every_row_change_on_postgres() {
          INSERT INTO platform.\"user\" (id, type, email) VALUES \
            ('{U1}', 'user', 'u1@t1'), ('{U2}', 'user', 'u2@t2'), \
            ('{U3}', 'service', 'u3@t1');\n\
-         INSERT INTO platform.role (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
-         INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES \
-           ('t1', '{U1}', 'admin'), ('t1', '{U3}', 'admin');\n\
-         INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
-           ('t1', 'auditor', 'platform-fixture:widget/get');\n\
+         INSERT INTO platform.role (name) VALUES ('admin'), ('auditor');\n\
+         INSERT INTO platform.user_role (user_id, role_name) VALUES \
+           ('{U1}', 'admin'), ('{U3}', 'admin');\n\
+         INSERT INTO platform.permission (role_name, permission) VALUES \
+           ('auditor', 'platform-fixture:widget/get');\n\
          INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES \
            ('org', 'acme', 'display.theme', '\"dark\"');\n\
-         INSERT INTO platform.api_key (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
-           ('t1', '{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('t1', '{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
+         INSERT INTO platform.api_key (id, user_id, name, key_hash, prefix) VALUES \
+           ('{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL app.user_id = '{U2}';\n\
@@ -839,19 +821,19 @@ fn platform_relations_log_every_row_change_on_postgres() {
         .collect::<Vec<_>>();
     // The expected entries name the fixture ids U1, U2, U3, K1, and K2.
     expected.extend(
-        r#"entry|api_key|t1|insert|admin:seed-history-fixture|U1|{"id": "K1", "tenant_id": "t1"}|{}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
-entry|api_key|t1|insert|admin:seed-history-fixture|U1|{"id": "K2", "tenant_id": "t1"}|{}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
-entry|api_key|t1|update|admin:change-history-fixture|U2|{"id": "K1", "tenant_id": "t1"}|{"revoked_at": null}|{"revoked_at": "2026-09-14T00:00:00.000000Z"}
-entry|api_key|t1|delete|admin:remove-history-fixture|U3|{"id": "K2", "tenant_id": "t1"}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}|{}
-entry|api_key|t1|delete|admin:remove-history-fixture|U3|{"id": "K1", "tenant_id": "t1"}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": "2026-09-14T00:00:00.000000Z", "last_used_at": null}|{}
-entry|permission|t1|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}
-entry|permission|t1|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}
-entry|permission|t1|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}
-entry|permission|t1|delete|admin:remove-history-fixture|U3|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}
-entry|role|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id": "t1"}|{}|{"name": "admin", "tenant_id": "t1", "description": null}
-entry|role|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "tenant_id": "t1", "description": null}
-entry|role|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}
-entry|role|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "tenant_id": "t1", "description": "administrators"}|{}
+        r#"entry|api_key|-|insert|admin:seed-history-fixture|U1|{"id": "K1"}|{}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "expires_at": null, "revoked_at": null, "last_used_at": null}
+entry|api_key|-|insert|admin:seed-history-fixture|U1|{"id": "K2"}|{}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "expires_at": null, "revoked_at": null, "last_used_at": null}
+entry|api_key|-|update|admin:change-history-fixture|U2|{"id": "K1"}|{"revoked_at": null}|{"revoked_at": "2026-09-14T00:00:00.000000Z"}
+entry|api_key|-|delete|admin:remove-history-fixture|U3|{"id": "K2"}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "expires_at": null, "revoked_at": null, "last_used_at": null}|{}
+entry|api_key|-|delete|admin:remove-history-fixture|U3|{"id": "K1"}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "expires_at": null, "revoked_at": "2026-09-14T00:00:00.000000Z", "last_used_at": null}|{}
+entry|permission|-|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}
+entry|permission|-|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}|{}
+entry|permission|-|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}
+entry|permission|-|delete|admin:remove-history-fixture|U3|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}|{}
+entry|role|-|insert|admin:seed-history-fixture|U1|{"name": "admin"}|{}|{"name": "admin", "description": null}
+entry|role|-|insert|admin:seed-history-fixture|U1|{"name": "auditor"}|{}|{"name": "auditor", "description": null}
+entry|role|-|update|admin:change-history-fixture|U2|{"name": "admin"}|{"description": null}|{"description": "administrators"}
+entry|role|-|delete|admin:remove-history-fixture|U3|{"name": "admin"}|{"name": "admin", "description": "administrators"}|{}
 entry|setting|-|insert|admin:seed-history-fixture|U1|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{}|{"key": "display.theme", "value": "dark", "locked": false, "scope_id": "acme", "scope_type": "org"}
 entry|setting|-|update|admin:change-history-fixture|U2|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{"value": "dark"}|{"value": "light"}
 entry|setting|-|delete|admin:remove-history-fixture|U3|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{"key": "display.theme", "value": "light", "locked": false, "scope_id": "acme", "scope_type": "org"}|{}
@@ -861,12 +843,12 @@ entry|user|-|insert|admin:seed-history-fixture|U1|{"id": "U3"}|{}|{"id": "U3", "
 entry|user|-|update|admin:change-history-fixture|U2|{"id": "U2"}|{"status": "active"}|{"status": "disabled"}
 entry|user|-|delete|admin:remove-history-fixture|U3|{"id": "U1"}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "display_name": null}|{}
 entry|user|-|delete|admin:remove-history-fixture|U3|{"id": "U2"}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "disabled", "display_name": null}|{}
-entry|user_role|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}
-entry|user_role|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}
-entry|user_role|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}
-entry|user_role|t1|insert|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}
-entry|user_role|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}
-entry|user_role|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}"#
+entry|user_role|-|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin"}|{}|{"user_id": "U1", "role_name": "admin"}
+entry|user_role|-|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin"}|{}|{"user_id": "U3", "role_name": "admin"}
+entry|user_role|-|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin"}|{"user_id": "U3", "role_name": "admin"}|{}
+entry|user_role|-|insert|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "auditor"}|{}|{"user_id": "U3", "role_name": "auditor"}
+entry|user_role|-|delete|admin:remove-history-fixture|U3|{"user_id": "U3", "role_name": "auditor"}|{"user_id": "U3", "role_name": "auditor"}|{}
+entry|user_role|-|delete|admin:remove-history-fixture|U3|{"user_id": "U1", "role_name": "admin"}|{"user_id": "U1", "role_name": "admin"}|{}"#
             .lines()
             .map(str::to_owned),
     );

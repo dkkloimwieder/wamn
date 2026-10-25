@@ -1,4 +1,5 @@
-//! The pure derivations guest RLS uses to reach a tenant from `current_user`.
+//! The derivations shared catalog and run policies use for `current_user`.
+//! The platform administration tables use the database boundary and call none of them.
 //!
 //! # Why functions and not a mapping table (`wamn-0h0g.22.6`, option (c))
 //!

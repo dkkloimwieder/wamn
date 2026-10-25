@@ -31,22 +31,22 @@ const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
 const SERVICE_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
     (id, type, email, display_name) VALUES ($1::text::uuid, 'service', $2, $3)";
 
-const ROLE_SQL: &str = "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2) \
-    ON CONFLICT (tenant_id, name) DO NOTHING";
+const ROLE_SQL: &str = "INSERT INTO platform.role (name) VALUES ($1) \
+    ON CONFLICT (name) DO NOTHING";
 
-const USER_ROLE_SQL: &str = "INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
-    VALUES ($1, $2::text::uuid, $3) ON CONFLICT DO NOTHING";
+const USER_ROLE_SQL: &str = "INSERT INTO platform.user_role (user_id, role_name) \
+    VALUES ($1::text::uuid, $2) ON CONFLICT DO NOTHING";
 
 const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
-    WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3";
+    WHERE user_id = $1::text::uuid AND role_name = $2";
 
 const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.\"user\" \
     WHERE id = $1::text::uuid AND type = 'user'";
 
 /// The status row of the environment. No row means active.
 const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.environment \
-    (tenant_id, status) VALUES ($1, $2) \
-    ON CONFLICT (tenant_id) DO UPDATE SET status = EXCLUDED.status \
+    (status) VALUES ($1) \
+    ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status \
     WHERE platform.environment.status <> EXCLUDED.status";
 
 /// The user an application row names.
@@ -82,22 +82,22 @@ pub async fn require_platform_rows(
 /// that its host reads (docs/plan/platform-ui.md §5.4).
 pub async fn write_environment_status(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     status: crate::org::EnvironmentStatus,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
-        .execute(ENVIRONMENT_STATUS_ROW_SQL, &[&tenant, &status.as_str()])
+        .execute(ENVIRONMENT_STATUS_ROW_SQL, &[&status.as_str()])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(tenant);
+    drops.tenant(environment_key);
     Ok(())
 }
 
 /// Write the user row of `user`, and keep a row that exists.
 pub async fn write_user(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -108,14 +108,14 @@ pub async fn write_user(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(tenant, user.principal_id.as_str());
+    drops.principal(environment_key, user.principal_id.as_str());
     Ok(())
 }
 
 /// Write the user row of the service principal `service`.
 pub async fn write_service(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     service: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -130,28 +130,25 @@ pub async fn write_service(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(tenant, service.principal_id.as_str());
+    drops.principal(environment_key, service.principal_id.as_str());
     Ok(())
 }
 
 /// Write the user row and the `admin` row of `user`, and the `admin` role
-/// when the tenant has none yet.
+/// when the environment has none yet.
 pub async fn write_admin(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    write_user(client, tenant, user, drops).await?;
+    write_user(client, environment_key, user, drops).await?;
     client
-        .execute(ROLE_SQL, &[&tenant, &ADMIN_ROLE])
+        .execute(ROLE_SQL, &[&ADMIN_ROLE])
         .await
         .map_err(|error| database_error(&error))?;
     client
-        .execute(
-            USER_ROLE_SQL,
-            &[&tenant, &user.principal_id.as_str(), &ADMIN_ROLE],
-        )
+        .execute(USER_ROLE_SQL, &[&user.principal_id.as_str(), &ADMIN_ROLE])
         .await
         .map_err(|error| database_error(&error))?;
     Ok(())
@@ -160,18 +157,15 @@ pub async fn write_admin(
 /// Remove the `admin` row of the principal. Its other roles stay.
 pub async fn remove_admin(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
-        .execute(
-            DROP_USER_ROLE_SQL,
-            &[&tenant, &principal_id.as_str(), &ADMIN_ROLE],
-        )
+        .execute(DROP_USER_ROLE_SQL, &[&principal_id.as_str(), &ADMIN_ROLE])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(tenant, principal_id.as_str());
+    drops.principal(environment_key, principal_id.as_str());
     Ok(())
 }
 
@@ -179,7 +173,7 @@ pub async fn remove_admin(
 /// rows and its API keys.
 pub async fn remove_user(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -187,7 +181,7 @@ pub async fn remove_user(
         .execute(DROP_USER_ROW_SQL, &[&principal_id.as_str()])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(tenant, principal_id.as_str());
+    drops.principal(environment_key, principal_id.as_str());
     Ok(())
 }
 
@@ -203,11 +197,11 @@ pub enum AdministrationRefusal {
     AdminDeleted,
     /// The name is not a role slug.
     NotRoleName { role: String },
-    /// The role does not exist in the tenant.
-    RoleNotFound { role: String, tenant: String },
+    /// The role does not exist in the environment.
+    RoleNotFound { role: String },
     /// The operation is fixed to `admin` or to every member (§2.5).
     NotGrantable { reference: String },
-    /// The tenant has no application user with the id.
+    /// The environment has no application user with the id.
     UserNotFound { user_id: String },
     /// `admin` stays while the user holds `project-admin` in the project,
     /// which `org-admin` also writes (§2.8).
@@ -233,8 +227,8 @@ impl fmt::Display for AdministrationRefusal {
                 "role {role:?} is not a role name: lowercase letters, digits and hyphens after \
                  the first character, at most 64 bytes"
             ),
-            Self::RoleNotFound { role, tenant } => {
-                write!(formatter, "role {role} does not exist in tenant {tenant}")
+            Self::RoleNotFound { role } => {
+                write!(formatter, "role {role} does not exist in the environment")
             }
             Self::NotGrantable { reference } => write!(
                 formatter,
@@ -292,16 +286,16 @@ pub struct PermissionGrantOutcome {
     pub rows_added: u64,
 }
 
-const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM platform.role WHERE tenant_id = $1 AND name = $2";
+const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM platform.role WHERE name = $1";
 
-const DROP_ROLE_SQL: &str = "DELETE FROM platform.role WHERE tenant_id = $1 AND name = $2";
+const DROP_ROLE_SQL: &str = "DELETE FROM platform.role WHERE name = $1";
 
 const PERMISSION_SQL: &str = "INSERT INTO platform.permission \
-    (tenant_id, role_name, permission) VALUES ($1, $2, $3) \
+    (role_name, permission) VALUES ($1, $2) \
     ON CONFLICT DO NOTHING";
 
 const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
-    WHERE tenant_id = $1 AND role_name = $2 AND permission = $3";
+    WHERE role_name = $1 AND permission = $2";
 
 // The writes below run in a transaction that the caller prepared: it holds
 // the tenant's operation grant lock and binds the actor of the writes.
@@ -310,7 +304,7 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -324,10 +318,10 @@ pub async fn create_role(
         .into());
     }
     let written = client
-        .execute(ROLE_SQL, &[&tenant, &role])
+        .execute(ROLE_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(tenant);
+    drops.tenant(environment_key);
     Ok(written == 1)
 }
 
@@ -335,7 +329,7 @@ pub async fn create_role(
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -343,21 +337,20 @@ pub async fn delete_role(
         return Err(AdministrationRefusal::AdminDeleted.into());
     }
     let removed = client
-        .execute(DROP_ROLE_SQL, &[&tenant, &role])
+        .execute(DROP_ROLE_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(tenant);
+    drops.tenant(environment_key);
     Ok(removed == 1)
 }
 
-/// Refuse unless `role` exists in the tenant.
+/// Refuse unless `role` exists in the environment.
 pub async fn require_role(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
     role: &str,
 ) -> Result<(), AdministrationError> {
     let exists = client
-        .query_opt(ROLE_EXISTS_SQL, &[&tenant, &role])
+        .query_opt(ROLE_EXISTS_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?
         .is_some();
@@ -366,7 +359,6 @@ pub async fn require_role(
     } else {
         Err(AdministrationRefusal::RoleNotFound {
             role: role.to_owned(),
-            tenant: tenant.to_owned(),
         }
         .into())
     }
@@ -377,7 +369,7 @@ pub async fn require_role(
 /// release serves it or not.
 pub async fn grant_permission(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
@@ -385,12 +377,12 @@ pub async fn grant_permission(
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminTakesNoPermission.into());
     }
-    require_role(client, tenant, role).await?;
+    require_role(client, role).await?;
     let rows_added = client
-        .execute(PERMISSION_SQL, &[&tenant, &role, &reference])
+        .execute(PERMISSION_SQL, &[&role, &reference])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(tenant);
+    drops.tenant(environment_key);
     Ok(PermissionGrantOutcome { rows_added })
 }
 
@@ -398,14 +390,14 @@ pub async fn grant_permission(
 /// does not hold refuses.
 pub async fn revoke_permission(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), AdministrationError> {
-    require_role(client, tenant, role).await?;
+    require_role(client, role).await?;
     let removed = client
-        .execute(DROP_PERMISSION_SQL, &[&tenant, &role, &reference])
+        .execute(DROP_PERMISSION_SQL, &[&role, &reference])
         .await
         .map_err(|error| database_error(&error))?;
     if removed == 0 {
@@ -415,7 +407,7 @@ pub async fn revoke_permission(
         }
         .into());
     }
-    drops.tenant(tenant);
+    drops.tenant(environment_key);
     Ok(())
 }
 
@@ -423,17 +415,17 @@ pub async fn revoke_permission(
 /// changes nothing.
 pub async fn grant_user_role(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
-    require_role(client, tenant, role).await?;
+    require_role(client, role).await?;
     let written = client
-        .execute(USER_ROLE_SQL, &[&tenant, &user_id, &role])
+        .execute(USER_ROLE_SQL, &[&user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(tenant, user_id);
+    drops.principal(environment_key, user_id);
     Ok(written == 1)
 }
 
@@ -441,16 +433,16 @@ pub async fn grant_user_role(
 /// does not hold changes nothing.
 pub async fn revoke_user_role(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
+    environment_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     let removed = client
-        .execute(DROP_USER_ROLE_SQL, &[&tenant, &user_id, &role])
+        .execute(DROP_USER_ROLE_SQL, &[&user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(tenant, user_id);
+    drops.principal(environment_key, user_id);
     Ok(removed == 1)
 }
 
@@ -461,14 +453,14 @@ const USER_LIST_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
     FROM platform.\"user\" u \
-    LEFT JOIN platform.user_role r ON r.tenant_id = $1 AND r.user_id = u.id \
+    LEFT JOIN platform.user_role r ON r.user_id = u.id \
     WHERE u.type = 'user' \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
 
-const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role WHERE tenant_id = $1 ORDER BY name";
+const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role ORDER BY name";
 
 const PERMISSION_LIST_SQL: &str = "SELECT permission FROM platform.permission \
-    WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission";
+    WHERE role_name = $1 ORDER BY permission";
 
 /// One application user with the roles it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -499,13 +491,12 @@ pub async fn require_user(
     }
 }
 
-/// The application users of the tenant with their roles, by email.
+/// The application users of the database with their roles, by email.
 pub async fn application_users(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
 ) -> Result<Vec<ApplicationUserRow>, AdministrationError> {
     Ok(client
-        .query(USER_LIST_SQL, &[&tenant])
+        .query(USER_LIST_SQL, &[])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -518,13 +509,12 @@ pub async fn application_users(
         .collect())
 }
 
-/// The role names of the tenant, `admin` included.
+/// The role names of the database, `admin` included.
 pub async fn role_names(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
 ) -> Result<Vec<String>, AdministrationError> {
     Ok(client
-        .query(ROLE_LIST_SQL, &[&tenant])
+        .query(ROLE_LIST_SQL, &[])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -535,12 +525,11 @@ pub async fn role_names(
 /// The stored permissions of `role`.
 pub async fn permission_rows(
     client: &(impl GenericClient + Sync),
-    tenant: &str,
     role: &str,
 ) -> Result<Vec<String>, AdministrationError> {
-    require_role(client, tenant, role).await?;
+    require_role(client, role).await?;
     Ok(client
-        .query(PERMISSION_LIST_SQL, &[&tenant, &role])
+        .query(PERMISSION_LIST_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?
         .iter()

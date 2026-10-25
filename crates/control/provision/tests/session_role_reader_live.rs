@@ -19,7 +19,7 @@ const PASSWORD: &str = "session-role-reader-fixture-password";
 const FAMILY: WorkloadRoleFamily = WorkloadRoleFamily::SessionRoleReader;
 const PRINCIPAL: &str = "00000000-0000-0000-0000-000000000001";
 const READ_ROLES: &str = "SELECT r.role_name FROM platform.\"user\" u \
-    JOIN platform.user_role r ON r.tenant_id = 'fixture-a' AND r.user_id = u.id \
+    JOIN platform.user_role r ON r.user_id = u.id \
     WHERE u.id = '00000000-0000-0000-0000-000000000001' \
       AND u.status = 'active' ORDER BY r.role_name";
 
@@ -145,12 +145,11 @@ fn assert_surface(admin: &str) {
             "column|platform|user.id|SELECT|f",
             "column|platform|user.status|SELECT|f",
             "column|platform|user_role.role_name|SELECT|f",
-            "column|platform|user_role.tenant_id|SELECT|f",
             "column|platform|user_role.user_id|SELECT|f",
             "schema|platform|platform|USAGE|f",
         ]
         .join("\n"),
-        "dedicated reader must hold only the five approved SELECT columns"
+        "dedicated reader must hold only the four approved SELECT columns"
     );
 }
 
@@ -190,6 +189,11 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
         .map(str::to_owned),
     );
     reset(&admin, &roles);
+    let other = server
+        .create_database("session_reader_other")
+        .expect("second environment")
+        .url()
+        .to_owned();
     let outcome = std::panic::catch_unwind(|| {
         run(
             &admin,
@@ -213,11 +217,21 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             SET app.operation = 'admin:seed-session-role-reader-fixture'; \
             INSERT INTO platform.\"user\" (id,type,email) VALUES \
               ('{PRINCIPAL}','user','a@fixture.invalid'); \
-            INSERT INTO platform.role (tenant_id,name) VALUES ('fixture-a','receiver'), ('fixture-b','outsider'); \
-            INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES \
-              ('fixture-a','{PRINCIPAL}','receiver'), ('fixture-b','{PRINCIPAL}','outsider');"
+            INSERT INTO platform.role (name) VALUES ('receiver'); \
+            INSERT INTO platform.user_role (user_id,role_name) VALUES \
+              ('{PRINCIPAL}','receiver');"
             ),
         );
+        run(&other, wamn_catalog::CATALOG_SCHEMA_SQL);
+        run(
+            &other,
+            include_str!("../../../../deploy/sql/app-schema.sql"),
+        );
+        run(&other, &format!("SET app.user_id = '{PRINCIPAL}'; SET app.operation = 'admin:seed-other';
+            INSERT INTO platform.\"user\" (id,type,email) VALUES ('{PRINCIPAL}','user','other@fixture.invalid');
+            INSERT INTO platform.role (name) VALUES ('outsider');
+            INSERT INTO platform.user_role (user_id,role_name) VALUES ('{PRINCIPAL}','outsider');"));
+        assert_eq!(run(&other, READ_ROLES), "outsider");
         for generation in [CredentialGeneration::A, CredentialGeneration::B] {
             run(
                 &admin,
@@ -274,16 +288,14 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             assert_eq!(
                 run(url, READ_ROLES),
                 "receiver",
-                "dedicated login must read the requested tenant's active-user roles"
+                "dedicated login must read the requested environment's active-user roles"
             );
-            // The approved platform arm spans tenants; the consumer predicate
-            // above, not a new RLS model, selects one tenant.
             assert_eq!(
                 run(
                     url,
-                    "SELECT tenant_id FROM platform.user_role ORDER BY tenant_id"
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'platform' AND table_name = 'user_role' AND column_name = 'tenant_id'"
                 ),
-                "fixture-a\nfixture-b"
+                "0"
             );
             for statement in [
                 "SELECT email FROM platform.\"user\"",
@@ -361,6 +373,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             "B remains usable after A retirement"
         );
     });
+    run(&admin, "DROP DATABASE session_reader_other");
     reset(&admin, &roles);
     if let Err(error) = outcome {
         std::panic::resume_unwind(error);

@@ -1,7 +1,8 @@
 //! Live test of `project/0007_environment_status.sql` (wamn-zua8.2): on a
 //! project database installed before it, the migration creates
-//! `app_system.environment` and its history table as a fresh install has
-//! them. The test holds the process lock of its server, because the catalog
+//! `app_system.environment` and its history table as the pre-0038 fixture has
+//! them. Migration 0038 then removes their tenant columns and row policies.
+//! The test holds the process lock of its server, because the catalog
 //! creates cluster-wide roles.
 
 use tokio_postgres::{Client, NoTls};
@@ -9,7 +10,7 @@ use wamn_test_infrastructure::locked_database;
 
 const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/project/0007_environment_status.sql");
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA: &str = include_str!("fixtures/app-schema-before-0038.sql");
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -121,6 +122,21 @@ async fn the_migration_creates_the_environment_table_as_a_fresh_install_has_it()
     assert_eq!(
         definition(&client).await,
         fresh,
-        "the migration creates the environment tables as a fresh install has them"
+        "0007 creates the environment tables of the historical fixture"
     );
+    client
+        .batch_execute("ALTER SCHEMA app_system RENAME TO platform; CREATE SCHEMA wamn_run")
+        .await
+        .unwrap();
+    client
+        .batch_execute(include_str!(
+            "../../../../deploy/sql/migrations/project/0038_administration_database_boundary.sql"
+        ))
+        .await
+        .unwrap();
+    assert!(client.query_one("SELECT bool_and(NOT c.relrowsecurity AND NOT c.relforcerowsecurity
+        AND NOT EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped)
+        AND NOT EXISTS (SELECT FROM pg_policy p WHERE p.polrelid=c.oid))
+        FROM pg_class c WHERE c.oid IN ('platform.environment'::regclass, 'platform.environment_history'::regclass)", &[])
+        .await.unwrap().get::<_, bool>(0));
 }

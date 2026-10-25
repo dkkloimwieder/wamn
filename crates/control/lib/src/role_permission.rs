@@ -19,12 +19,12 @@ use wamn_control_provision::operation_grants::{
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
-/// Lock the tenant's roles and permissions, refuse a filtered view, and bind
+/// Lock the environment's roles and permissions, refuse a filtered view, and bind
 /// `wamn:provisioning` as the actor of the writes.
-async fn prepare(tx: &Transaction<'_>, tenant: &str) -> anyhow::Result<()> {
-    tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&tenant])
+async fn prepare(tx: &Transaction<'_>, environment_key: &str) -> anyhow::Result<()> {
+    tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&environment_key])
         .await
-        .context("lock the tenant roles and permissions")?;
+        .context("lock the environment roles and permissions")?;
     tx.batch_execute(OPERATION_GRANT_TRANSACTION_PRELUDE_SQL)
         .await
         .context("disable row filtering for the permission write")?;
@@ -41,49 +41,49 @@ async fn prepare(tx: &Transaction<'_>, tenant: &str) -> anyhow::Result<()> {
 /// Grant `reference` to the authored `role`.
 pub async fn grant_permission(
     tx: &Transaction<'_>,
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<PermissionGrantOutcome> {
-    prepare(tx, tenant).await?;
-    Ok(application::grant_permission(tx, tenant, role, reference, drops).await?)
+    prepare(tx, environment_key).await?;
+    Ok(application::grant_permission(tx, environment_key, role, reference, drops).await?)
 }
 
 /// Remove the permission `reference` from `role`. A reference the role does
 /// not hold refuses.
 pub async fn revoke_permission(
     tx: &Transaction<'_>,
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<()> {
-    prepare(tx, tenant).await?;
-    Ok(application::revoke_permission(tx, tenant, role, reference, drops).await?)
+    prepare(tx, environment_key).await?;
+    Ok(application::revoke_permission(tx, environment_key, role, reference, drops).await?)
 }
 
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
     tx: &Transaction<'_>,
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<bool> {
-    prepare(tx, tenant).await?;
-    Ok(application::create_role(tx, tenant, role, drops).await?)
+    prepare(tx, environment_key).await?;
+    Ok(application::create_role(tx, environment_key, role, drops).await?)
 }
 
 /// Delete the authored role `role` with its assignments and permissions. A
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
     tx: &Transaction<'_>,
-    tenant: &str,
+    environment_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<bool> {
-    prepare(tx, tenant).await?;
-    Ok(application::delete_role(tx, tenant, role, drops).await?)
+    prepare(tx, environment_key).await?;
+    Ok(application::delete_role(tx, environment_key, role, drops).await?)
 }
 
 /// Run `change` in one transaction on the registry-checked database of

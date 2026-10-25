@@ -319,14 +319,14 @@ async fn fixture() -> Fixture {
             "INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{READER}', 'user', 'reader@manual.invalid'), \
                ('{CLERK}', 'user', 'clerk@manual.invalid');
-             INSERT INTO platform.role (tenant_id, name) VALUES ('{TENANT}', 'reader'), ('{TENANT}', 'clerk');
-             INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES \
-               ('{TENANT}', '{READER}', 'reader'), ('{TENANT}', '{CLERK}', 'clerk');
-             INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
-               ('{TENANT}', 'reader', '{READ_REFERENCE}'), \
-               ('{TENANT}', 'reader', '{START_REFERENCE}'), \
-               ('{TENANT}', 'clerk', '{START_REFERENCE}');
-             INSERT INTO platform.environment (tenant_id, status) VALUES ('{TENANT}', 'active');
+             INSERT INTO platform.role (name) VALUES ('reader'), ('clerk');
+             INSERT INTO platform.user_role (user_id, role_name) VALUES \
+               ('{READER}', 'reader'), ('{CLERK}', 'clerk');
+             INSERT INTO platform.permission (role_name, permission) VALUES \
+               ('reader', '{READ_REFERENCE}'), \
+               ('reader', '{START_REFERENCE}'), \
+               ('clerk', '{START_REFERENCE}');
+             INSERT INTO platform.environment (status) VALUES ('active');
              INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class) \
                VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');
              INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest) \
@@ -594,8 +594,8 @@ impl Fixture {
             .admin
             .query(
                 "SELECT role_name FROM platform.user_role \
-                  WHERE tenant_id = $1 AND user_id = $2::text::uuid",
-                &[&TENANT, &user],
+                  WHERE user_id = $1::text::uuid",
+                &[&user],
             )
             .await
             .unwrap()
@@ -718,7 +718,7 @@ impl Fixture {
                 "SELECT format('release %s %s', manifest_digest, md5(canonical_bytes)) \
                    FROM catalog.releases WHERE tenant_id = $1 \
                  UNION ALL SELECT format('environment %s %s %s', status, created_at, updated_at) \
-                   FROM platform.environment WHERE tenant_id = $1 \
+                   FROM platform.environment \
                  UNION ALL SELECT format('policy %s %s', expected_environment, durability_class) \
                    FROM wamn_run.environment_policies WHERE tenant_id = $1 \
                  ORDER BY 1",
@@ -990,8 +990,8 @@ async fn a_grant_revoked_between_enable_and_start_fails_the_first_node() {
         .admin
         .execute(
             "DELETE FROM platform.permission \
-              WHERE tenant_id = $1 AND role_name = 'reader' AND permission = $2",
-            &[&TENANT, &READ_REFERENCE],
+              WHERE role_name = 'reader' AND permission = $1",
+            &[&READ_REFERENCE],
         )
         .await
         .unwrap();

@@ -587,3 +587,29 @@ fn the_bootstrap_and_literal_renderings_install_the_same_object() {
         );
     }
 }
+
+#[test]
+fn administration_uses_the_database_boundary_while_catalog_keeps_tenant_keys() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let url = database.url();
+    psql_file(
+        url,
+        "CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN",
+    );
+    psql_file(url, wamn_catalog::CATALOG_SCHEMA_SQL);
+    psql_file(url, wamn_control_provision::APP_SCHEMA_SQL);
+    psql_file(url, "DO $$ BEGIN
+        ASSERT NOT EXISTS (
+            SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='platform' AND c.relname IN
+              ('role','user_role','permission','api_key','environment',
+               'role_history','user_role_history','permission_history','api_key_history','environment_history')
+              AND (c.relrowsecurity OR c.relforcerowsecurity
+                OR EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped)
+                OR EXISTS (SELECT FROM pg_policy p WHERE p.polrelid=c.oid)
+                OR EXISTS (SELECT FROM pg_index i WHERE i.indrelid=c.oid AND pg_get_indexdef(i.indexrelid) LIKE '%tenant_key%')));
+        ASSERT EXISTS (SELECT FROM pg_index WHERE indrelid='catalog.packages'::regclass AND pg_get_indexdef(indexrelid) LIKE '%tenant_key%');
+        ASSERT EXISTS (SELECT FROM pg_attribute WHERE attrelid='catalog.packages'::regclass AND attname='tenant_id' AND NOT attisdropped);
+        END $$;");
+}

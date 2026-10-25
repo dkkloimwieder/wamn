@@ -120,7 +120,7 @@ async fn control_plane_tables(client: &Client) -> i64 {
     client
         .query_one(
             "SELECT count(*) FROM information_schema.tables \
-              WHERE table_name IN ('credential', 'target', 'target_application')",
+              WHERE table_name IN ('credential', 'target', 'target_application', 'integrations')",
             &[],
         )
         .await
@@ -130,7 +130,7 @@ async fn control_plane_tables(client: &Client) -> i64 {
 
 /// A project database with the catalog and the application schema of this
 /// commit, as provisioning installs them.
-async fn fresh_install(url: &str) -> Client {
+async fn install(url: &str, schema: &str) -> Client {
     let client = connect(url).await;
     client
         .batch_execute(
@@ -151,7 +151,7 @@ async fn fresh_install(url: &str) -> Client {
         .await
         .expect("install the catalog");
     client
-        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+        .batch_execute(schema)
         .await
         .expect("install the application schema");
     client
@@ -160,7 +160,7 @@ async fn fresh_install(url: &str) -> Client {
 #[tokio::test]
 async fn a_fresh_install_grants_the_application_role_invariant_one() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = fresh_install(&url).await;
+    let client = install(&url, wamn_control_provision::APP_SCHEMA_SQL).await;
     assert_eq!(surface(&client).await, invariant_one());
     assert_eq!(control_plane_tables(&client).await, 0);
 }
@@ -168,7 +168,7 @@ async fn a_fresh_install_grants_the_application_role_invariant_one() {
 #[tokio::test]
 async fn the_migration_grants_the_application_role_invariant_one() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = fresh_install(&url).await;
+    let client = install(&url, include_str!("fixtures/app-schema-before-0038.sql")).await;
     // The database as 0024 left it: the plural table names, no platform
     // configuration tables, the configurations table with its history and
     // grants, and the api_keys read, and user under the tenant floor of
@@ -233,6 +233,12 @@ async fn the_migration_grants_the_application_role_invariant_one() {
         .batch_execute(&format!("BEGIN; {ORG_BOUNDARY} COMMIT;"))
         .await
         .expect("drop the tenant floor");
+    client
+        .batch_execute(include_str!(
+            "../../../../deploy/sql/migrations/project/0038_administration_database_boundary.sql"
+        ))
+        .await
+        .unwrap();
     assert_eq!(surface(&client).await, invariant_one());
     assert_eq!(control_plane_tables(&client).await, 0);
 }
@@ -258,7 +264,7 @@ async fn the_org_boundary_migration_keeps_the_rows_of_the_old_shape() {
         "setting",
     ];
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = fresh_install(&url).await;
+    let client = install(&url, include_str!("fixtures/app-schema-before-0038.sql")).await;
     client
         .batch_execute(&format!(
             "CREATE SCHEMA wamn_run; SET wamn.fixture_tenant = 't1'; {TENANT_FLOOR}"
@@ -381,5 +387,363 @@ async fn the_org_boundary_migration_keeps_the_rows_of_the_old_shape() {
     assert_eq!(
         cascaded, 0,
         "the user's foreign keys remove its role and key rows"
+    );
+}
+
+/// Server-owned shape, including keys, policies, indexes and column grants.
+async fn administration_shape(client: &Client) -> Vec<String> {
+    client.query(
+        "WITH relations AS (SELECT oid FROM pg_class WHERE relnamespace = 'platform'::regnamespace
+          AND relname IN ('role','user_role','permission','api_key','environment',
+          'role_history','user_role_history','permission_history','api_key_history','environment_history'))
+        SELECT entry FROM (
+          SELECT 'column ' || c.relname || '.' || a.attname || ' ' || format_type(a.atttypid,a.atttypmod)
+            || ' ' || a.attnotnull || ' ' || coalesce(pg_get_expr(d.adbin,d.adrelid),'') AS entry
+          FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN relations r ON r.oid=c.oid
+          LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+          WHERE a.attnum>0 AND NOT a.attisdropped
+          UNION ALL SELECT 'constraint ' || conrelid::regclass || ' ' || conname || ' ' || pg_get_constraintdef(c.oid)
+          FROM pg_constraint c JOIN relations r ON r.oid=c.conrelid
+          UNION ALL SELECT 'index ' || pg_get_indexdef(i.indexrelid) FROM pg_index i JOIN relations r ON r.oid=i.indrelid
+          UNION ALL SELECT 'policy ' || polrelid::regclass || ' ' || polname FROM pg_policy p JOIN relations r ON r.oid=p.polrelid
+          UNION ALL SELECT 'security ' || c.relname || ' ' || relrowsecurity || ' ' || relforcerowsecurity
+          FROM pg_class c JOIN relations r ON r.oid=c.oid
+          UNION ALL SELECT 'table grant ' || c.relname || ' ' || x.grantee::regrole || ' ' || x.privilege_type
+          FROM pg_class c JOIN relations r ON r.oid=c.oid, aclexplode(c.relacl) x WHERE x.grantee<>c.relowner
+          UNION ALL SELECT 'column grant ' || c.relname || '.' || a.attname || ' ' || x.grantee::regrole || ' ' || x.privilege_type
+          FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN relations r ON r.oid=c.oid,
+          aclexplode(a.attacl) x WHERE NOT a.attisdropped AND x.grantee<>c.relowner
+        ) q ORDER BY entry COLLATE \"C\"",
+        &[],
+    ).await.expect("read administration definitions").iter().map(|r| r.get(0)).collect()
+}
+
+#[tokio::test]
+async fn administration_boundary_retains_rows_history_and_real_role_access() {
+    use wamn_control_provision::schema_migrations::MigrationTarget;
+    use wamn_control_provision::sql;
+    use wamn_platform_identity::application;
+    use wamn_platform_identity::auth_changes::AuthDrops;
+    use wamn_platform_identity::org::EnvironmentStatus;
+
+    const RETAINED_IMAGES: &str = "SELECT image FROM (
+        SELECT 'role' || position || before::text || after::text AS image FROM platform.role_history
+        UNION ALL SELECT 'user_role' || position || before::text || after::text FROM platform.user_role_history
+        UNION ALL SELECT 'permission' || position || before::text || after::text FROM platform.permission_history
+        UNION ALL SELECT 'api_key' || position || before::text || after::text FROM platform.api_key_history
+        UNION ALL SELECT 'environment' || position || before::text || after::text FROM platform.environment_history
+        ) entries ORDER BY image COLLATE \"C\"";
+
+    let url = locked_database::database(wamn_test_postgres::database);
+    let mut client = install(&url, include_str!("fixtures/app-schema-before-0038.sql")).await;
+    client.batch_execute("CREATE SCHEMA wamn_run;
+        SET app.user_id = '00000000-0000-4000-8000-000000000035';
+        SET app.operation = 'admin:boundary-fixture';
+        INSERT INTO platform.\"user\" (id,type,email) VALUES
+          ('00000000-0000-4000-8000-000000000035','user','boundary@example.invalid');
+        INSERT INTO platform.role (tenant_id,name) VALUES ('env','reader');
+        INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES
+          ('env','00000000-0000-4000-8000-000000000035','reader');
+        INSERT INTO platform.permission (tenant_id,role_name,permission) VALUES ('env','reader','fixture:record/get');
+        INSERT INTO platform.api_key (tenant_id,user_id,name,key_hash,prefix) VALUES
+          ('env','00000000-0000-4000-8000-000000000035','key','digest','prefix');
+        INSERT INTO platform.environment (tenant_id,status) VALUES ('env','inactive');").await.unwrap();
+    client
+        .batch_execute(MigrationTarget::Project.record_table_sql())
+        .await
+        .unwrap();
+    for migration in MigrationTarget::Project
+        .migrations()
+        .iter()
+        .filter(|m| m.ordinal() < 38)
+    {
+        client
+            .execute(
+                &MigrationTarget::Project.record_sql(),
+                &[
+                    &migration.ordinal(),
+                    &migration.relative_path,
+                    &migration.sha256(),
+                ],
+            )
+            .await
+            .unwrap();
+    }
+    let prior: Vec<String> = client
+        .query(RETAINED_IMAGES, &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    for _ in 0..2 {
+        wamn_control::upgrade_schema::upgrade_project(&mut client)
+            .await
+            .unwrap();
+    }
+    let entries: Vec<String> = client
+        .query(RETAINED_IMAGES, &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(entries, prior, "retained row images stay unchanged");
+    for table in ["role", "user_role", "permission", "api_key", "environment"] {
+        let row=client.query_one(&format!("SELECT (SELECT count(*) FROM platform.{table}), count(*), bool_and(NOT (row_key ? 'tenant_id')) FROM platform.{table}_history"), &[]).await.unwrap();
+        assert_eq!(
+            (
+                row.get::<_, i64>(0),
+                row.get::<_, i64>(1),
+                row.get::<_, bool>(2)
+            ),
+            (1, 1, true)
+        );
+    }
+    client
+        .batch_execute(&sql::grant_administration_surface_sql("wamn_run"))
+        .await
+        .unwrap();
+    client
+        .batch_execute(&sql::grant_session_role_reader_surface_sql())
+        .await
+        .unwrap();
+    let migrated = administration_shape(&client).await;
+    assert!(
+        !migrated.iter().any(|s| s.contains("tenant_id")
+            || s.contains("tenant_key")
+            || s.starts_with("policy "))
+    );
+    assert_eq!(control_plane_tables(&client).await, 0);
+    assert_eq!(surface(&client).await, invariant_one());
+    client
+        .batch_execute("SET ROLE wamn_administration")
+        .await
+        .unwrap();
+    assert!(
+        !client
+            .query_one(
+                "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    assert!(!client.query_one("SELECT has_function_privilege(current_user,p.oid,'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='wamn_authority' AND p.proname='tenant_key'",&[]).await.unwrap().get::<_,bool>(0));
+    let tx = client.transaction().await.unwrap();
+    let mut drops = AuthDrops::default();
+    wamn_control::role_permission::create_role(&tx, "env", "writer", &mut drops)
+        .await
+        .unwrap();
+    wamn_control::role_permission::grant_permission(
+        &tx,
+        "env",
+        "writer",
+        "fixture:record/update",
+        &mut drops,
+    )
+    .await
+    .unwrap();
+    application::grant_user_role(
+        &tx,
+        "env",
+        "00000000-0000-4000-8000-000000000035",
+        "writer",
+        &mut drops,
+    )
+    .await
+    .unwrap();
+    application::write_environment_status(&tx, "env", EnvironmentStatus::Active, &mut drops)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(!drops.is_empty());
+    client
+        .batch_execute("RESET ROLE; SET ROLE wamn_session_role_reader")
+        .await
+        .unwrap();
+    let roles: Vec<String> = client
+        .query(
+            "SELECT role_name FROM platform.user_role ORDER BY role_name",
+            &[],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(roles, ["reader", "writer"]);
+    client
+        .batch_execute("RESET ROLE; SET ROLE wamn_app")
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .query_one("SELECT status FROM platform.environment", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "active"
+    );
+    assert!(
+        client
+            .batch_execute("UPDATE platform.environment SET status='inactive'")
+            .await
+            .is_err()
+    );
+    client.batch_execute("RESET ROLE").await.unwrap();
+    let duplicate = client
+        .batch_execute("INSERT INTO platform.environment (status) VALUES ('active')")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        duplicate.code(),
+        Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
+    );
+    client.batch_execute("SET ROLE wamn_administration; DELETE FROM platform.role WHERE name='writer'; RESET ROLE").await.unwrap();
+    assert_eq!(client.query_one("SELECT (SELECT count(*) FROM platform.user_role WHERE role_name='writer') + (SELECT count(*) FROM platform.permission WHERE role_name='writer')",&[]).await.unwrap().get::<_,i64>(0),0);
+    client
+        .batch_execute("DROP SCHEMA platform CASCADE")
+        .await
+        .unwrap();
+    client
+        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+        .await
+        .unwrap();
+    client
+        .batch_execute(&sql::grant_administration_surface_sql("wamn_run"))
+        .await
+        .unwrap();
+    client
+        .batch_execute(&sql::grant_session_role_reader_surface_sql())
+        .await
+        .unwrap();
+    assert_eq!(
+        administration_shape(&client).await,
+        migrated,
+        "fresh and migrated definitions agree"
+    );
+}
+
+#[tokio::test]
+async fn integration_and_target_seeds_live_only_in_the_system_database() {
+    use wamn_control_provision::schema_migrations::MigrationTarget;
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("wamn_system").unwrap();
+    let admin = connect(database.url()).await;
+    admin
+        .batch_execute(
+            "CREATE ROLE wamn_db_owner NOLOGIN; CREATE ROLE wamn_system LOGIN PASSWORD 'c31-system-fixture';
+        ALTER DATABASE wamn_system OWNER TO wamn_system; SET ROLE wamn_system",
+        )
+        .await
+        .unwrap();
+    admin
+        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .await
+        .unwrap();
+    wamn_control::upgrade_schema::record_fresh_install(&admin, MigrationTarget::System)
+        .await
+        .unwrap();
+    let expected = vec![
+        "gcs:host:false".to_owned(),
+        "http:host:false".to_owned(),
+        "s3:host:false".to_owned(),
+    ];
+    let seeds = async || -> Vec<String> {
+        admin.query("SELECT code || ':' || form || ':' || exclusive FROM registry.integrations ORDER BY code",&[]).await.unwrap().iter().map(|r|r.get(0)).collect()
+    };
+    assert_eq!(seeds().await, expected);
+    let target: String=admin.query_one("SELECT name || ':' || type || ':' || status FROM registry.target WHERE last_seen_at IS NULL",&[]).await.unwrap().get(0);
+    assert_eq!(target, "cloud:cloud:active");
+    admin.batch_execute("DROP TABLE registry.integrations,registry.target; DELETE FROM registry.schema_migrations WHERE ordinal=29").await.unwrap();
+    let mut owner_url = url::Url::parse(database.url()).unwrap();
+    owner_url.set_username("wamn_system").unwrap();
+    owner_url.set_password(Some("c31-system-fixture")).unwrap();
+    let request = wamn_control::upgrade_schema::UpgradeSchemaRequest {
+        system_database_url: owner_url.into(),
+        admin_database_url: None,
+        baseline: None,
+        confirm: true,
+    };
+    for _ in 0..2 {
+        wamn_control::upgrade_schema::upgrade_schema(&request)
+            .await
+            .unwrap();
+    }
+    assert_eq!(seeds().await, expected);
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM registry.target WHERE name='cloud' AND type='cloud'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM registry.schema_migrations WHERE ordinal=29",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    let app = server.create_database("c31_application").unwrap();
+    let application = install(app.url(), wamn_control_provision::APP_SCHEMA_SQL).await;
+    assert_eq!(control_plane_tables(&application).await, 0);
+}
+
+#[tokio::test]
+async fn administration_migration_refuses_duplicate_keys_without_losing_rows() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = install(&url, include_str!("fixtures/app-schema-before-0038.sql")).await;
+    client
+        .batch_execute(
+            "SET app.user_id='00000000-0000-4000-8000-000000000035';
+        SET app.operation='admin:duplicate-fixture';
+        INSERT INTO platform.role (tenant_id,name) VALUES ('one','reader'),('two','reader');",
+        )
+        .await
+        .unwrap();
+    client.batch_execute("BEGIN").await.unwrap();
+    let error = client
+        .batch_execute(include_str!(
+            "../../../../deploy/sql/migrations/project/0038_administration_database_boundary.sql"
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.code(),
+        Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)
+    );
+    client.batch_execute("ROLLBACK").await.unwrap();
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT count(DISTINCT tenant_id) FROM platform.role WHERE name='reader'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        2
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT count(*) FROM platform.role_history WHERE row_key ? 'tenant_id'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        2
     );
 }

@@ -309,7 +309,7 @@ impl ApplicationRoutes<'_> {
                 let (identity, org) = self.identity_reader()?;
                 self.run(attachment, principal, false, async |client| {
                     let mut listed = Vec::new();
-                    for user in application_users(client, tenant).await? {
+                    for user in application_users(client).await? {
                         let id: PrincipalId = user.id.parse()?;
                         let covered = is_project_admin(identity, &id, org, self.project).await?;
                         listed.push(json!({
@@ -327,7 +327,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleList => {
                 let Empty {} = parse(payload)?;
                 self.run(attachment, principal, false, async |client| {
-                    Ok(json!({ "roles": role_names(client, tenant).await? }))
+                    Ok(json!({ "roles": role_names(client).await? }))
                 })
                 .await
             }
@@ -353,7 +353,7 @@ impl ApplicationRoutes<'_> {
                     let rows = if request.role == ADMIN_ROLE {
                         Vec::new()
                     } else {
-                        permission_rows(client, tenant, &request.role).await?
+                        permission_rows(client, &request.role).await?
                     };
                     Ok(self.permission_list(&request.role, &rows))
                 })

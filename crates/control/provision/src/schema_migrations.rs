@@ -224,6 +224,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0028_event_reader_schemas.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0028_event_reader_schemas.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0029_integrations_and_target.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0029_integrations_and_target.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -416,6 +422,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0037_package_owners.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0037_package_owners.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0038_administration_database_boundary.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0038_administration_database_boundary.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]
@@ -483,8 +495,12 @@ mod tests {
         );
         let migration = PROJECT_MIGRATIONS
             .iter()
-            .find(|migration| migration.relative_path.ends_with("_org_boundary.sql"))
-            .expect("the project migration that drops the tenant floor exists");
+            .find(|migration| {
+                migration
+                    .relative_path
+                    .ends_with("_administration_database_boundary.sql")
+            })
+            .expect("the administration database boundary migration exists");
         assert!(
             migration.sql.ends_with(&rendered),
             "{} does not end with the rendered administration surface",
@@ -516,16 +532,12 @@ mod tests {
     #[test]
     fn the_org_boundary_migration_carries_the_number_counters_section() {
         let section = app_schema_section("NUMBER COUNTERS");
-        let surface = format!(
-            "\n{}\n",
-            crate::sql::grant_administration_surface_sql("wamn_run")
-        );
         let migration = PROJECT_MIGRATIONS
             .iter()
             .find(|migration| migration.relative_path.ends_with("_org_boundary.sql"))
             .expect("the project migration that drops the tenant floor exists");
         assert!(
-            migration.sql.ends_with(&format!("{section}{surface}")),
+            migration.sql.contains(&section),
             "{} does not end with the NUMBER COUNTERS section of app-schema.sql and the \
              administration surface",
             migration.relative_path

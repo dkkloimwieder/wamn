@@ -517,14 +517,14 @@ async fn the_administration_prepare_accepts_its_own_write_surface() {
     )
     .await;
     administration
-        .batch_execute(&format!(
+        .batch_execute(
             "BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000a1', true), \
                     set_config('app.operation', 'admin:provisioning-order-fixture', true); \
-             INSERT INTO platform.role (tenant_id, name) VALUES ('{TENANT}', 'clerk'); \
-             DELETE FROM platform.role WHERE tenant_id = '{TENANT}' AND name = 'clerk'; \
-             COMMIT;"
-        ))
+             INSERT INTO platform.role (name) VALUES ('clerk'); \
+             DELETE FROM platform.role WHERE name = 'clerk'; \
+             COMMIT;",
+        )
         .await
         .expect("the administration login writes and appends history");
 

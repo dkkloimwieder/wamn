@@ -36,8 +36,8 @@ use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
 #[path = "support/application_fixture.rs"]
 mod application_fixture;
 use application_fixture::{
-    ApplicationHost, MEMBER, PASSWORD, PROJECT, TENANT, application_host, connect, credentials,
-    install, load_release, login,
+    ApplicationHost, MEMBER, PASSWORD, PROJECT, application_host, connect, credentials, install,
+    load_release, login,
 };
 
 fn permission_mine() -> String {
@@ -133,8 +133,8 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             "BEGIN; \
              SELECT set_config('app.user_id', '{MEMBER}', true), \
                     set_config('app.operation', 'admin:host-route-fixture', true); \
-             INSERT INTO platform.role (tenant_id, name) VALUES ('{TENANT}', 'written'); \
-             DELETE FROM platform.role WHERE tenant_id = '{TENANT}' AND name = 'written'; \
+             INSERT INTO platform.role (name) VALUES ('written'); \
+             DELETE FROM platform.role WHERE name = 'written'; \
              COMMIT;"
         ))
         .await?;
@@ -347,9 +347,9 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     // the route.
     admin
         .execute(
-            "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-             VALUES ($1, 'purchase-reader', 'wamn-control:role/list')",
-            &[&TENANT],
+            "INSERT INTO platform.permission (role_name, permission) \
+             VALUES ('purchase-reader', 'wamn-control:role/list')",
+            &[],
         )
         .await?;
     for reference in [

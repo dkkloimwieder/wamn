@@ -490,8 +490,8 @@ async fn seed_with_client(
         )?)
         .await?;
 
-    client.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
-        &[&TENANT, &wamn_project_state::workflow_user_id().to_string()]).await?;
+    client.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
+        &[&wamn_project_state::workflow_user_id().to_string()]).await?;
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     // The whole portable record component admission mints, not just its

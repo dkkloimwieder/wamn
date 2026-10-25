@@ -37,11 +37,11 @@ SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, e
    AND workflow_id = $4 AND version = $5 \
    FOR UPDATE";
 
-/// Params: `$1` tenant, `$2` user id, `$3` the roles that suffice.
+/// Params: `$1` user id, `$2` the roles that suffice.
 const HOLDS_ROLE_SQL: &str = "\
 SELECT EXISTS (\
     SELECT 1 FROM platform.user_role \
-     WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = ANY($3)\
+     WHERE user_id = $1::text::uuid AND role_name = ANY($2)\
     )";
 
 /// Params `$1` to `$5`: the version that stays or becomes enabled.
@@ -392,14 +392,14 @@ async fn enable_in(
     };
     if let Some(role) = assigned {
         let sufficient = [role, ADMIN_ROLE];
-        if !holds_role(transaction, workflow.tenant_id, enabler, &sufficient).await? {
+        if !holds_role(transaction, enabler, &sufficient).await? {
             return Err(WorkflowLifecycleError::new(
                 WorkflowLifecycleErrorType::RoleNotHeldByEnabler,
                 format!("the enabler holds neither role {role:?} nor {ADMIN_ROLE:?}"),
             ));
         }
         let workflow_user = workflow_user_id().to_string();
-        if !holds_role(transaction, workflow.tenant_id, &workflow_user, &[role]).await? {
+        if !holds_role(transaction, &workflow_user, &[role]).await? {
             return Err(WorkflowLifecycleError::new(
                 WorkflowLifecycleErrorType::RoleNotHeldByWorkflowUser,
                 format!("the workflow user does not hold role {role:?}"),
@@ -468,12 +468,11 @@ async fn enable_in(
 
 async fn holds_role(
     transaction: &Transaction<'_>,
-    tenant_id: &str,
     user_id: &str,
     roles: &[&str],
 ) -> Result<bool, WorkflowLifecycleError> {
     Ok(transaction
-        .query_one(HOLDS_ROLE_SQL, &[&tenant_id, &user_id, &roles])
+        .query_one(HOLDS_ROLE_SQL, &[&user_id, &roles])
         .await
         .map_err(|error| storage("read the role assignments", error))?
         .get(0))

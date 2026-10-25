@@ -121,6 +121,16 @@ pub(super) async fn run(
         .await?;
     assert_eq!(before.get::<_, String>(0), "running");
     let generation: i64 = before.get(1);
+    let destroyed_connections = execution.postgres.destroyed_connections();
+    // Hold the queue row through shutdown so lease renewal must wait on this
+    // transaction. Cancellation must destroy its connection, not repool it.
+    admin.batch_execute("BEGIN").await?;
+    admin
+        .query_one(
+            "SELECT run_id FROM wamn_run.run_queue WHERE run_id=$1 FOR UPDATE",
+            &[&run],
+        )
+        .await?;
     stop.send(true)?;
     let error = wamn_engine::lifecycle::bounded_cleanup(
         wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
@@ -133,6 +143,11 @@ pub(super) async fn run(
         "{error:#}"
     );
     drop(queue);
+    assert!(
+        execution.postgres.destroyed_connections() > destroyed_connections,
+        "shutdown must discard the interrupted lease renewal connection"
+    );
+    admin.batch_execute("ROLLBACK").await?;
     assert!(execution.postgres.invocation(scope).is_none());
     assert!(execution.postgres.session_claims(scope).is_none());
     assert!(execution.logging.claim_snapshot(scope).is_none());

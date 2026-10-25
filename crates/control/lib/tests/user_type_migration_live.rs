@@ -9,7 +9,7 @@ use wamn_test_infrastructure::locked_database;
 
 const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/project/0004_user_type.sql");
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA: &str = include_str!("fixtures/app-schema-before-0038.sql");
 const PLURAL_USER: &str = include_str!("fixtures/platform-user-before-0027.sql");
 const TENANT_FLOOR: &str = include_str!("fixtures/org-boundary-before-0031.sql");
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";

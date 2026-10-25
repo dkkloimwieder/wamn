@@ -399,9 +399,9 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     .await
     .expect("bind the fixture actor");
     su.batch_execute(&format!(
-        "INSERT INTO platform.role (tenant_id, name) VALUES ('t1', 'stale-reader'); \
-         INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
-           VALUES ('t1', '{FIXTURE_USER_ID}', 'stale-reader')"
+        "INSERT INTO platform.role (name) VALUES ('stale-reader'); \
+         INSERT INTO platform.user_role (user_id, role_name) \
+           VALUES ('{FIXTURE_USER_ID}', 'stale-reader')"
     ))
     .await
     .expect("give the fixture user a role");
@@ -431,10 +431,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         "the user row goes, and the platform and service rows stay"
     );
     let roles: i64 = su
-        .query_one(
-            "SELECT count(*) FROM platform.user_role WHERE tenant_id = 't1'",
-            &[],
-        )
+        .query_one("SELECT count(*) FROM platform.user_role ", &[])
         .await
         .expect("count the role assignments")
         .get(0);
@@ -449,7 +446,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .await
         .expect("grant the membership again");
     assert_eq!(reconcile().await.tenant_identity.user_rows_written, 1);
-    su.batch_execute("DELETE FROM platform.role WHERE tenant_id = 't1' AND name = 'stale-reader'")
+    su.batch_execute("DELETE FROM platform.role WHERE name = 'stale-reader'")
         .await
         .expect("remove the fixture role");
 
@@ -468,7 +465,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     let admin: i64 = su
         .query_one(
             "SELECT count(*) FROM platform.user_role \
-             WHERE tenant_id = 't1' AND user_id = $1::text::uuid AND role_name = 'admin'",
+             WHERE user_id = $1::text::uuid AND role_name = 'admin'",
             &[&FIXTURE_USER_ID],
         )
         .await
@@ -484,7 +481,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .await
         .expect("remove the fixture project admin");
     su.execute(
-        "DELETE FROM platform.user_role WHERE tenant_id = 't1' AND user_id = $1::text::uuid",
+        "DELETE FROM platform.user_role WHERE user_id = $1::text::uuid",
         &[&FIXTURE_USER_ID],
     )
     .await

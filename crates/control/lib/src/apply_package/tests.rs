@@ -218,5 +218,11 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
         cache.grants("apply-drops", "principal").is_err()
     })
     .await;
-    assert_eq!(database.execute(&["SELECT count(*) FROM platform.role WHERE tenant_id = 'apply-drops' AND name = 'admin'"]).unwrap().trim(), "1");
+    assert_eq!(
+        database
+            .execute(&["SELECT count(*) FROM platform.role WHERE name = 'admin'"])
+            .unwrap()
+            .trim(),
+        "1"
+    );
 }

@@ -29,8 +29,8 @@ const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_
     WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
     AND status = 'active')";
 const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM platform.\"user\" u \
-    JOIN platform.user_role r ON r.tenant_id = $1 AND r.user_id = u.id \
-    WHERE u.id = $2::text::uuid AND u.status = 'active' \
+    JOIN platform.user_role r ON r.user_id = u.id \
+    WHERE u.id = $1::text::uuid AND u.status = 'active' \
     ORDER BY r.role_name";
 
 #[derive(Deserialize)]
@@ -318,10 +318,7 @@ pub(super) async fn authorized_roles(
     };
     let rows = roles_database
         .client
-        .query(
-            ENVIRONMENT_ROLES_SQL,
-            &[&target.tenant_id(), &principal.id().as_str()],
-        )
+        .query(ENVIRONMENT_ROLES_SQL, &[&principal.id().as_str()])
         .await
         .map_err(|_| failed())?;
     let roles: Vec<String> = rows.iter().map(|row| row.get(0)).collect();

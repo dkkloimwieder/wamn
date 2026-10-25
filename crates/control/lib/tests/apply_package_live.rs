@@ -506,8 +506,8 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         observer
             .query_one(
                 "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
-                  WHERE tenant_id = $1",
-                &[&RACE_TENANT],
+                  ",
+                &[],
             )
             .await
             .expect("read the shared user roles")
@@ -517,10 +517,7 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     );
     assert_eq!(
         observer
-            .query_one(
-                "SELECT count(*) FROM platform.permission WHERE tenant_id = $1",
-                &[&RACE_TENANT],
-            )
+            .query_one("SELECT count(*) FROM platform.permission ", &[],)
             .await
             .expect("read the tenant permission rows")
             .get::<_, i64>(0),
@@ -551,10 +548,10 @@ async fn write_identity(client: &Client) -> Vec<String> {
                  FROM inventory.wamn_cdc_exclusions \
                UNION ALL \
                SELECT 'role:' || name || ':' || xmin::text \
-                 FROM platform.role WHERE tenant_id = $1 \
+                 FROM platform.role \
                UNION ALL \
                SELECT 'permission:' || permission || ':' || xmin::text \
-                 FROM platform.permission WHERE tenant_id = $1 \
+                 FROM platform.permission \
              ) AS observed ORDER BY identity COLLATE \"C\"",
             &[&TENANT],
         )
@@ -759,11 +756,11 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                     set_config('app.operation', 'admin:seed-grant-residue-fixture', true); \
              INSERT INTO platform.\"user\" (id, type, email) \
                  VALUES ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
-             INSERT INTO platform.role (tenant_id, name) \
-                 VALUES ('{TENANT}', 'clerk'); \
-             INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES \
-                 ('{TENANT}', 'clerk', 'wamn-inventory:obsolete/operation'), \
-                 ('{TENANT}', 'clerk', 'client-overlay:rack/get'); \
+             INSERT INTO platform.role (name) \
+                 VALUES ('clerk'); \
+             INSERT INTO platform.permission (role_name, permission) VALUES \
+                 ('clerk', 'wamn-inventory:obsolete/operation'), \
+                 ('clerk', 'client-overlay:rack/get'); \
              COMMIT;"
         ))
         .await
@@ -815,8 +812,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT string_agg(name, ',' ORDER BY name) FROM platform.role \
-                  WHERE tenant_id = $1",
-                &[&TENANT],
+                  ",
+                &[],
             )
             .await
             .unwrap()
@@ -827,8 +824,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query(
                 "SELECT role_name || ' ' || permission FROM platform.permission \
-                  WHERE tenant_id = $1 ORDER BY 1",
-                &[&TENANT],
+                   ORDER BY 1",
+                &[],
             )
             .await
             .unwrap()
@@ -1583,13 +1580,10 @@ async fn record_history_triggers_follow_the_declaration() {
     // Spec test 11: the admin role row stamps wamn:apply-package.
     let grant_stamps = client
         .query_one(
-            "SELECT count(*), count(*) FILTER (WHERE created_by = $2::text::uuid \
-                                                AND updated_by = $2::text::uuid) \
-               FROM platform.role WHERE tenant_id = $1 AND name = 'admin'",
-            &[
-                &TENANT,
-                &PlatformComponent::ApplyPackage.principal_id().to_string(),
-            ],
+            "SELECT count(*), count(*) FILTER (WHERE created_by = $1::text::uuid \
+                                                AND updated_by = $1::text::uuid) \
+               FROM platform.role WHERE name = 'admin'",
+            &[&PlatformComponent::ApplyPackage.principal_id().to_string()],
         )
         .await
         .expect("read the operation grant stamps");

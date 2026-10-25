@@ -32,7 +32,7 @@ mod pools;
 pub(super) mod transactions;
 
 /// The status row of the environment, which `wamn_app` reads under its
-/// tenant floor.
+/// database boundary.
 const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform.environment";
 
 /// The user row of one principal, each role it holds and each permission
@@ -41,10 +41,10 @@ const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform
 /// principal without roles yields one row with a null role.
 const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission \
     FROM platform.\"user\" u LEFT JOIN platform.user_role r \
-    ON r.tenant_id = $1 AND r.user_id = u.id \
+    ON r.user_id = u.id \
     LEFT JOIN platform.permission p \
-    ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
-    WHERE u.id = $2::text::uuid";
+    ON p.role_name = r.role_name \
+    WHERE u.id = $1::text::uuid";
 
 /// One row of the bound principal, read under the tenant's own guest login.
 ///
@@ -58,11 +58,10 @@ const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
     FROM platform.\"user\" AS \"user\" \
     JOIN platform.user_role AS user_role \
-      ON user_role.tenant_id = $1 AND user_role.user_id = \"user\".id \
+      ON user_role.user_id = \"user\".id \
     LEFT JOIN platform.permission AS permission \
-      ON permission.tenant_id = user_role.tenant_id \
-      AND permission.role_name = user_role.role_name \
-    WHERE \"user\".id = $2::text::uuid AND \"user\".status = 'active'";
+      ON permission.role_name = user_role.role_name \
+    WHERE \"user\".id = $1::text::uuid AND \"user\".status = 'active'";
 
 /// The application authority a caller holds now: whether it holds `admin`,
 /// and the stable operation references its other roles grant under the loaded
@@ -2130,7 +2129,7 @@ impl WamnPostgres {
             }
         };
         let rows = connection
-            .query(&statement, &[&tenant, &principal.as_str()])
+            .query(&statement, &[&principal.as_str()])
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read the principal grants")?;
@@ -2154,10 +2153,7 @@ impl WamnPostgres {
         let rows = self
             .administration_transaction(project, tenant, principal_id, operation, async |client| {
                 client
-                    .query(
-                        USER_OPERATION_PERMISSIONS_SQL,
-                        &[&tenant, &principal_id.as_str()],
-                    )
+                    .query(USER_OPERATION_PERMISSIONS_SQL, &[&principal_id.as_str()])
                     .await
                     .context("read held operation grants")
             })
@@ -2265,13 +2261,8 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        crate::plugins::route_authentication::queued_run_caller(
-            &**connection,
-            tenant,
-            principal_id,
-            role,
-        )
-        .await
+        crate::plugins::route_authentication::queued_run_caller(&**connection, principal_id, role)
+            .await
     }
 
     /// The caller of one node of a workflow run that executes as

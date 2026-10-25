@@ -1,6 +1,9 @@
 //! Host-only composition of one production queue claim transaction.
 
+use std::sync::Arc;
 use std::time::SystemTime;
+
+use super::resources::StatementConnectionGuard;
 
 use deadpool_postgres::Object;
 use tokio_postgres::Row;
@@ -399,9 +402,10 @@ impl RunStore for WamnPostgres {
                     format!("{error:?}"),
                 )
             })?;
+        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         if let Err(error) = self
             .begin_with_claims(
-                &connection,
+                connection.connection(),
                 AuthorityClass::ExecutorPlatform,
                 false,
                 &tenant,
@@ -416,17 +420,21 @@ impl RunStore for WamnPostgres {
             )
             .await
         {
-            self.destroy(connection);
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorType::Storage,
                 "begin renewal transaction",
                 format!("{error:?}"),
             ));
         }
-        let result =
-            renew_in_transaction(&connection, run_id, &runner, lease_generation, lease_ttl_ms)
-                .await;
-        finish_queue_transaction(self, connection, result, "commit production renewal").await
+        let result = renew_in_transaction(
+            connection.connection(),
+            run_id,
+            &runner,
+            lease_generation,
+            lease_ttl_ms,
+        )
+        .await;
+        finish_guarded_queue_transaction(connection, result, "commit production renewal").await
     }
 
     /// Persist one router terminal outcome and dequeue under the claim fence.
@@ -604,22 +612,38 @@ pub(super) async fn finish_queue_transaction<T>(
     result: Result<T, ProductionClaimError>,
     commit_operation: &'static str,
 ) -> Result<T, ProductionClaimError> {
+    finish_guarded_queue_transaction(
+        StatementConnectionGuard::new(connection, Arc::clone(&postgres.destroyed)),
+        result,
+        commit_operation,
+    )
+    .await
+}
+
+async fn finish_guarded_queue_transaction<T>(
+    connection: StatementConnectionGuard,
+    result: Result<T, ProductionClaimError>,
+    commit_operation: &'static str,
+) -> Result<T, ProductionClaimError> {
     match result {
         Ok(value) => {
-            if let Err(error) = connection.batch_execute("COMMIT").await {
-                postgres.destroy(connection);
-                return Err(storage(commit_operation, &error));
-            }
+            connection
+                .connection()
+                .batch_execute("COMMIT")
+                .await
+                .map_err(|error| storage(commit_operation, &error))?;
+            connection.repool();
             Ok(value)
         }
         Err(error) => {
-            if let Err(rollback_error) = connection.batch_execute("ROLLBACK").await {
+            if let Err(rollback_error) = connection.connection().batch_execute("ROLLBACK").await {
                 tracing::warn!(
                     error = %rollback_error,
                     operation = error.operation(),
                     "production queue rollback failed; destroying connection"
                 );
-                postgres.destroy(connection);
+            } else {
+                connection.repool();
             }
             Err(error)
         }

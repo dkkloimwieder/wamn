@@ -26,6 +26,7 @@ use wamn_gate_harness::environment::apply_project_database;
 
 const ORG_BOUNDARY: &str =
     include_str!("../../../crates/control/lib/tests/fixtures/org-boundary-before-0031.sql");
+const ADMINISTRATION_BOUNDARY: &str = include_str!("fixtures/administration-before-0038.sql");
 const PLURAL_USER: &str =
     include_str!("../../../crates/control/lib/tests/fixtures/platform-user-before-0027.sql");
 const PLURAL_TABLES: &str = include_str!(
@@ -294,19 +295,21 @@ async fn upgrade_schema_applies_each_pending_file_once() {
 
     // A project database installed before 0024: the run reads the record
     // table in the old schema, applies the rename and records it in platform,
-    // then applies 0025 to 0031. The database also loses what 0025, 0029 and
-    // 0030 add, gets back what 0025 removes, has the table names from before
-    // 0027 and 0028, and has the tenant floor that 0031 drops. Its platform
-    // rows and their history entries carry the tenant, as before 0031.
+    // then applies 0025 to 0038. It loses what 0025, 0029, 0030 and 0038 add,
+    // gets back what 0025 removes, has the table names from before
+    // 0027 and 0028, and has the tenant floors that 0031 and 0038 drop.
+    // Its platform rows and history keys carry the tenant, as before 0031.
+    // The system database loses the integrations and target tables from
+    // system 0029, which the system upgrade below recreates and records.
     let fresh_shape = platform_shape(&project_url).await;
     let client = connect(&project_url).await;
     client
         .0
         .batch_execute(&format!(
-            "SET wamn.fixture_tenant = '{TENANT}'; {ORG_BOUNDARY}"
+            "SET wamn.fixture_tenant = '{TENANT}'; {ADMINISTRATION_BOUNDARY} {ORG_BOUNDARY}"
         ))
         .await
-        .expect("give user and the platform configuration tables the tenant floor of before 0031");
+        .expect("restore the tenant floors before 0038 and 0031");
     client
         .0
         .batch_execute(PLURAL_USER)
@@ -342,12 +345,31 @@ async fn upgrade_schema_applies_each_pending_file_once() {
         .await
         .expect("make the database as 0023 left it");
     close(client).await;
+    let system = connect(&system_url).await;
+    system
+        .0
+        .batch_execute(
+            "DROP TABLE registry.integrations, registry.target; \
+             DELETE FROM registry.schema_migrations WHERE ordinal = 29",
+        )
+        .await
+        .expect("make the system database as 0028 left it");
+    close(system).await;
     upgrade_schema_with(
         &request(&system_url, Some(&project_url), None, true),
         project_files,
     )
     .await
     .expect("apply the rename");
+    assert_eq!(
+        scalar(
+            &project_url,
+            "SELECT count(*) FROM platform.schema_migrations WHERE ordinal = 38"
+        )
+        .await,
+        1,
+        "the project upgrade records 0038"
+    );
     assert_eq!(
         scalar(
             &project_url,
@@ -406,6 +428,23 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     upgrade_schema_with(&request(&system_url, None, None, true), &files)
         .await
         .expect("apply");
+    assert_eq!(
+        scalar(
+            &system_url,
+            "SELECT count(*) FROM registry.schema_migrations WHERE ordinal = 29"
+        )
+        .await,
+        1,
+        "the system upgrade records 0029"
+    );
+    assert_eq!(
+        scalar(&system_url, "SELECT count(*) FROM registry.integrations").await,
+        3
+    );
+    assert_eq!(
+        scalar(&system_url, "SELECT count(*) FROM registry.target").await,
+        1
+    );
     assert_eq!(
         scalar(
             &system_url,

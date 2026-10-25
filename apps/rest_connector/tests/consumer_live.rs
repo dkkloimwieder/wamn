@@ -58,17 +58,14 @@ pub async fn execution_role(
         )
         .await?;
     project
-        .execute(
-            "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2)",
-            &[&TENANT, &role],
-        )
+        .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
         .await?;
     for operation in operations {
         project
             .execute(
-                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-                 VALUES ($1, $2, $3)",
-                &[&TENANT, &role, operation],
+                "INSERT INTO platform.permission (role_name, permission) \
+                 VALUES ($1, $2)",
+                &[&role, operation],
             )
             .await?;
     }
@@ -76,9 +73,9 @@ pub async fn execution_role(
     for user in [ENABLER, workflow_user.as_str()] {
         project
             .execute(
-                "INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
-                 VALUES ($1, $2::text::uuid, $3)",
-                &[&TENANT, &user, &role],
+                "INSERT INTO platform.user_role (user_id, role_name) \
+                 VALUES ($1::text::uuid, $2)",
+                &[&user, &role],
             )
             .await?;
     }

@@ -164,8 +164,8 @@ async fn fixture() -> Fixture {
              INSERT INTO platform.\"user\" (id, type, email) VALUES \
                ('{ALICE}', 'user', 'alice@{DOMAIN}'), \
                ('{BOB}', 'user', 'bob@{DOMAIN}');\n\
-             INSERT INTO platform.role (tenant_id, name) VALUES \
-               ('{TENANT}', 'admin'), ('{TENANT}', 'clerk');\n\
+             INSERT INTO platform.role (name) VALUES \
+               ('admin'), ('clerk');\n\
              COMMIT;",
             bind_platform_principal_sql(PlatformComponent::Provisioning)
         ))
@@ -232,8 +232,8 @@ impl Fixture {
         self.project
             .batch_execute(&format!(
                 "BEGIN;\n{}\
-                 INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
-                 VALUES ('{TENANT}', '{user}', '{role}');\nCOMMIT;",
+                 INSERT INTO platform.user_role (user_id, role_name) \
+                 VALUES ('{user}', '{role}');\nCOMMIT;",
                 bind_platform_principal_sql(PlatformComponent::Provisioning)
             ))
             .await

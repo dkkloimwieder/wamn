@@ -12,7 +12,7 @@ async fn enroll(fixture: &Fixture, email: &str, password: &str) -> Principal {
     let user = create_user(&fixture.system.client, email, email, "Renewal user")
         .await
         .expect_redacted("user");
-    seed_user(&fixture.environments[0].client, &user, TENANT, "receiver").await;
+    seed_user(&fixture.environments[0].client, &user, "receiver").await;
     grant(&fixture.system.client, &user, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
         .principal_id()
@@ -259,7 +259,14 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.environments[0].client.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'receiver')",&[&TENANT,&user.id().as_str()]).await.unwrap();
+    fixture.environments[0]
+        .client
+        .execute(
+            "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'receiver')",
+            &[&user.id().as_str()],
+        )
+        .await
+        .unwrap();
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)

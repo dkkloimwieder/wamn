@@ -12,7 +12,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
     PlatformComponent, bind_platform_principal_sql, project_env_database_name, validate_project_env,
 };
-use wamn_control_registry::Triple;
+use wamn_control_registry::{Triple, project_env_tenant};
 use wamn_platform_identity::application;
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 
@@ -22,7 +22,7 @@ pub struct UserRoleRequest {
     /// Administrative Postgres URL to the system registry.
     pub system_database_url: String,
     /// Administrative Postgres URL to the registry-derived project database.
-    /// It must be SUPERUSER or BYPASSRLS, because the tables force RLS.
+    /// The login holds the administration surface in this database.
     pub admin_database_url: String,
     /// Registry organization.
     pub org: String,
@@ -196,7 +196,7 @@ pub struct EnvironmentTarget {
     /// Administrative Postgres URL to the system registry.
     pub system_database_url: String,
     /// Administrative Postgres URL to the registry-derived project database.
-    /// It must be SUPERUSER or BYPASSRLS, because the tables force RLS.
+    /// The login holds the administration surface in this database.
     pub admin_database_url: String,
     /// Registry organization.
     pub org: String,
@@ -219,6 +219,11 @@ pub(crate) async fn connect_target(
     let triple = Triple::new(&request.org, &request.project, request.env.as_str());
     validate_project_env(&request.org, &request.project, &request.env)
         .with_context(|| format!("registry target identity {triple} is invalid"))?;
+    anyhow::ensure!(
+        request.tenant == project_env_tenant(&request.org, &request.project, &request.env),
+        "tenant key {} does not match registry target {triple}",
+        request.tenant
+    );
     let instance = crate::provision_project_env::read_project_env_instance(
         &request.system_database_url,
         &triple,
@@ -233,12 +238,7 @@ pub(crate) async fn connect_target(
     let connection = tokio::spawn(connection);
     let checked = async {
         let row = client
-            .query_one(
-                "SELECT pg_catalog.current_database()::text, \
-                        (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles \
-                          WHERE rolname = CURRENT_USER)",
-                &[],
-            )
+            .query_one("SELECT pg_catalog.current_database()::text", &[])
             .await
             .context("identify the database target")?;
         let actual: String = row.get(0);
@@ -246,10 +246,6 @@ pub(crate) async fn connect_target(
             actual == expected,
             "database target for registry triple {triple} is {actual}, but the registry \
              records {expected}"
-        );
-        anyhow::ensure!(
-            row.get::<_, bool>(1),
-            "the role verbs require SUPERUSER or BYPASSRLS, because platform forces RLS"
         );
         Ok(())
     }
@@ -261,5 +257,29 @@ pub(crate) async fn connect_target(
             let _ = connection.await;
             Err(error)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EnvironmentTarget, connect_target};
+
+    #[tokio::test]
+    async fn a_different_environment_key_refuses_before_connecting() {
+        let target = EnvironmentTarget {
+            system_database_url: "not-a-database-url".into(),
+            admin_database_url: "not-a-database-url".into(),
+            org: "acme".into(),
+            project: "shop".into(),
+            env: "dev".into(),
+            tenant: "acme--shop--prod".into(),
+        };
+        let Err(error) = connect_target(&target).await else {
+            panic!("refuse the key");
+        };
+        assert!(
+            error.to_string().contains("does not match registry target"),
+            "{error:#}"
+        );
     }
 }

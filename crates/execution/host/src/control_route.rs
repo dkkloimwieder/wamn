@@ -376,11 +376,7 @@ impl ControlRoutes<'_> {
                         .map_err(|_| {
                             anyhow::anyhow!("no administration login for status counts")
                         })?;
-                    application_counts(
-                        &logins[0],
-                        &project_env_tenant(self.org, &request.project, &request.env),
-                    )
-                    .await
+                    application_counts(&logins[0]).await
                 };
                 let memberships = async {
                     let row = self
@@ -421,8 +417,7 @@ impl ControlRoutes<'_> {
                     directory.join(control_administration_key(&request.project, &request.env));
                 let url = std::fs::read_to_string(&path)
                     .with_context(|| format!("read the administration login {}", path.display()))?;
-                let tenant = project_env_tenant(self.org, &request.project, &request.env);
-                match release_profile(url.trim(), &tenant, &request.digest).await? {
+                match release_profile(url.trim(), &request.digest).await? {
                     Some((profile, roles)) => Ok(json!({
                         "digest": request.digest,
                         "operations": profile.operations,
@@ -921,17 +916,17 @@ impl ControlRoutes<'_> {
 /// prevent the runtime status from answering. Each read has its own deadline.
 const STATUS_COUNTS_TIMEOUT: Duration = Duration::from_secs(2);
 
-// The role rows of the tenant `$1` of the environment. EXISTS counts each
+// The role rows of the selected environment database. EXISTS counts each
 // human user once even when that user holds several roles, and excludes
 // services.
 const APPLICATION_COUNTS_SQL: &str = "SELECT \
     (SELECT count(*)::int4 FROM platform.\"user\" u \
      WHERE u.type = 'user' AND EXISTS \
        (SELECT 1 FROM platform.user_role r \
-        WHERE r.tenant_id = $1 AND r.user_id = u.id)), \
-    (SELECT count(*)::int4 FROM platform.role r WHERE r.tenant_id = $1)";
+        WHERE r.user_id = u.id)), \
+    (SELECT count(*)::int4 FROM platform.role r)";
 
-async fn application_counts(url: &str, tenant: &str) -> anyhow::Result<(i32, i32)> {
+async fn application_counts(url: &str) -> anyhow::Result<(i32, i32)> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls).await?;
     // Poll the connection here so cancellation drops its socket too. A spawned
     // connection could retain a blocked query after the deadline.
@@ -939,7 +934,7 @@ async fn application_counts(url: &str, tenant: &str) -> anyhow::Result<(i32, i32
         result = async {
             let transaction = client.build_transaction().read_only(true).start().await?;
             let row = transaction
-                .query_one(APPLICATION_COUNTS_SQL, &[&tenant])
+                .query_one(APPLICATION_COUNTS_SQL, &[])
                 .await?;
             let counts = (row.get(0), row.get(1));
             transaction.commit().await?;
@@ -1076,7 +1071,6 @@ const RELATION_COLUMNS_SQL: &str = "SELECT c.relname::text, a.attname::text \
 /// release. `admin` holds every operation of the release. It writes nothing.
 async fn release_profile(
     url: &str,
-    tenant: &str,
     digest: &str,
 ) -> anyhow::Result<
     Option<(
@@ -1103,7 +1097,7 @@ async fn release_profile(
             wamn_schema_generator::profile::release_profile(&manifest.components, &relations);
         require_platform_rows(&client).await?;
         let mut roles = BTreeMap::new();
-        for role in role_names(&client, tenant).await? {
+        for role in role_names(&client).await? {
             let operations = if role == ADMIN_ROLE {
                 profile
                     .operations
@@ -1111,7 +1105,7 @@ async fn release_profile(
                     .map(|each| each.operation.clone())
                     .collect()
             } else {
-                permission_rows(&client, tenant, &role).await?
+                permission_rows(&client, &role).await?
             };
             roles.insert(role, operations);
         }

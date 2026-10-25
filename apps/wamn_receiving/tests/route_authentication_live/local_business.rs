@@ -54,7 +54,6 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         let (client, connection) =
             tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
         let connection = tokio::spawn(connection);
-        let tenant = super::identity().tenant.as_str();
         super::bind_fixture_principal(&client).await?;
         client
             .batch_execute(
@@ -82,23 +81,23 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         // role admin for an authored role with one row: Acme's entry.
         client
             .execute(
-                "INSERT INTO platform.role (tenant_id, name) VALUES ($1, 'receipt-clerk')",
-                &[&tenant],
+                "INSERT INTO platform.role (name) VALUES ('receipt-clerk')",
+                &[],
             )
             .await?;
         client
             .execute(
-                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-                 VALUES ($1, 'receipt-clerk', 'client-acme-receiving:acme/record-receipt')",
-                &[&tenant],
+                "INSERT INTO platform.permission (role_name, permission) \
+                 VALUES ('receipt-clerk', 'client-acme-receiving:acme/record-receipt')",
+                &[],
             )
             .await?;
         ensure!(
             client
                 .execute(
                     "UPDATE platform.user_role SET role_name = 'receipt-clerk' \
-                     WHERE tenant_id = $1 AND role_name = 'admin'",
-                    &[&tenant],
+                     WHERE role_name = 'admin'",
+                    &[],
                 )
                 .await?
                 == 1,
@@ -203,7 +202,6 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
         let (client, connection) =
             tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
         let connection = tokio::spawn(connection);
-        let tenant = super::identity().tenant.as_str();
         super::bind_fixture_principal(&client).await?;
         let supplier = "00000000-0000-0000-0000-000000000950";
         client
@@ -249,8 +247,8 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
         let caller: String = client
             .query_one(
                 "SELECT user_id::text FROM platform.user_role \
-                 WHERE tenant_id = $1 AND role_name = 'admin'",
-                &[&tenant],
+                 WHERE role_name = 'admin'",
+                &[],
             )
             .await?
             .get(0);

@@ -26,14 +26,13 @@
 //! It is DISTINCT from the T1 control-plane registry (`wamn-control-registry` /
 //! `deploy/sql/system-schema.sql`): that is the platform-global system DB (orgs /
 //! projects / envs), owned by `wamn_system`, not tenant-scoped. This schema is
-//! PER-PROJECT TENANT DATA under the same RLS floor as the catalog.
+//! project-environment data, isolated by its database.
 //!
 //! # Claim integration (3.5 / 4.2)
 //!
 //! [`USER_ID_CLAIM`] (`app.user_id`) resolves to a `user.id` (`uuid`) — the
 //! ownership target the 3.5 RLS builder reads. [`ROLE_CLAIM`] (`app.role`)
-//! resolves to a `role.name` (text) — the role-gate target. [`TENANT_CLAIM`]
-//! (`app.tenant`) is the RLS floor every table keys on. The claims are injected
+//! resolves to a `role.name` (text), the role-gate target. The database separates environments. The claims are injected
 //! by the plugin from a resolved session (4.2); this schema is the substrate.
 //!
 //! # Platform principals
@@ -50,9 +49,6 @@ pub const SCHEMA_NAME: &str = "platform";
 /// Storage-format version, additive-within-major per the `0.1.x` freeze. A
 /// schema model, not a published JSON-Schema contract — no generated file.
 pub const SCHEMA_VERSION: &str = "0.1";
-
-/// The tenant RLS-floor claim every table keys on (`app.tenant`).
-pub const TENANT_CLAIM: &str = "app.tenant";
 
 /// The per-user claim the 3.5 RLS builder reads as
 /// `NULLIF(current_setting('app.user_id', true), '')::uuid` — so the ownership
@@ -250,7 +246,7 @@ pub const USER: Table = Table {
 /// Named roles. `name` is the [`ROLE_CLAIM`] gate target.
 pub const ROLE: Table = Table {
     name: "role",
-    columns: &["tenant_id", "name"],
+    columns: &["name"],
 };
 
 /// The one built-in user role. It has no permission rows and holds every
@@ -261,26 +257,26 @@ pub const ADMIN_ROLE: &str = "admin";
 /// The user↔role linkage (many-to-many).
 pub const USER_ROLE: Table = Table {
     name: "user_role",
-    columns: &["tenant_id", "user_id", "role_name"],
+    columns: &["user_id", "role_name"],
 };
 
 /// Role → permission grants (read by 4.3 AuthZ).
 pub const PERMISSION: Table = Table {
     name: "permission",
-    columns: &["tenant_id", "role_name", "permission"],
+    columns: &["role_name", "permission"],
 };
 
 /// The api-key substrate. `key_hash` is a one-way digest, never the raw key.
 pub const API_KEY: Table = Table {
     name: "api_key",
-    columns: &["tenant_id", "user_id", "key_hash", "prefix"],
+    columns: &["user_id", "key_hash", "prefix"],
 };
 
 /// The status of the environment, mirrored from the system database. No row
 /// means active.
 pub const ENVIRONMENT: Table = Table {
     name: "environment",
-    columns: &["tenant_id", "status"],
+    columns: &["id", "status"],
 };
 
 /// The persistent identity that a group of connections reach. `integration`
@@ -362,12 +358,6 @@ pub const TABLES: &[Table] = &[
 /// wamn-aqd0m.1).
 pub const HISTORY_EXEMPT: &[&str] = &["number_counter"];
 
-/// The tables of [`TABLES`] that carry `tenant_id` and its row policy. The
-/// database is the org boundary (owner ruling of 2026-10-23 on
-/// `wamn-83eth.6`), so `user` and the platform configuration tables carry
-/// neither.
-pub const TENANT_FLOOR: &[&str] = &["role", "user_role", "permission", "api_key", "environment"];
-
 /// Test databases with the tenant+platform floor.
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_database;
@@ -407,12 +397,11 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), TABLES.len(), "table names must be unique");
-        // Exactly the tenant floor tables carry the tenant floor column.
+        // The database separates environments; no platform table carries tenant_id.
         for t in TABLES {
-            assert_eq!(
-                t.columns.contains(&"tenant_id"),
-                TENANT_FLOOR.contains(&t.name),
-                "{} pins tenant_id exactly when it is under the tenant floor",
+            assert!(
+                !t.columns.contains(&"tenant_id"),
+                "{} has no tenant column",
                 t.name
             );
         }

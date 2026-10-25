@@ -26,7 +26,7 @@ const SINGULAR_TABLES: &str =
     include_str!("../../../../deploy/sql/migrations/project/0028_platform_singular_tables.sql");
 const ORG_BOUNDARY: &str =
     include_str!("../../../../deploy/sql/migrations/project/0031_org_boundary.sql");
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA: &str = include_str!("fixtures/app-schema-before-0038.sql");
 const TENANT_FLOOR: &str = include_str!("fixtures/org-boundary-before-0031.sql");
 const PLURAL_USER: &str = include_str!("fixtures/platform-user-before-0027.sql");
 const PLURAL_TABLES: &str = include_str!("fixtures/platform-singular-tables-before-0028.sql");
@@ -134,10 +134,15 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         .batch_execute(&format!("BEGIN; {ORG_BOUNDARY} COMMIT;"))
         .await
         .expect("drop the tenant floor");
+    client
+        .batch_execute(include_str!(
+            "../../../../deploy/sql/migrations/project/0038_administration_database_boundary.sql"
+        ))
+        .await
+        .expect("remove the remaining tenant columns");
     let migrated = surface(&client).await;
     for expected in [
         "column platform.role_history.operation INSERT",
-        "routine wamn_authority.tenant_key(text) EXECUTE",
         "routine wamn_history.row_image(record) EXECUTE",
         "schema platform USAGE",
         "schema catalog USAGE",
@@ -153,7 +158,6 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         "table platform.number_sequence SELECT",
         "table platform.setting UPDATE",
         "column platform.setting_history.after INSERT",
-        "column platform.role_history.tenant_id INSERT",
     ] {
         assert!(
             migrated.iter().any(|entry| entry == expected),
@@ -166,7 +170,15 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
             .any(|entry| entry.contains("platform.number_counter")),
         "the migration grants nothing on number_counter: {migrated:#?}"
     );
-    for history in ["user_history", "setting_history", "connection_history"] {
+    for history in [
+        "user_history",
+        "role_history",
+        "user_role_history",
+        "permission_history",
+        "environment_history",
+        "setting_history",
+        "connection_history",
+    ] {
         assert!(
             !migrated
                 .iter()

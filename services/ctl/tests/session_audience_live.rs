@@ -291,7 +291,23 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         ))
         .await?;
     // The fixture writes as its test principal, whose rows stamp themselves.
-    project.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; SET app.operation = 'admin:seed-session-audience-fixture'; INSERT INTO platform.\"user\" (id,type,email) VALUES ('11111111-1111-1111-1111-111111111111','user','one@example.invalid'); INSERT INTO platform.role (tenant_id,name) VALUES ('t1','member'),('t2','other'); INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ('t1','11111111-1111-1111-1111-111111111111','member'),('t2','11111111-1111-1111-1111-111111111111','other');").await?;
+    project.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; SET app.operation = 'admin:seed-session-audience-fixture'; INSERT INTO platform.\"user\" (id,type,email) VALUES ('11111111-1111-1111-1111-111111111111','user','one@example.invalid'); INSERT INTO platform.role (name) VALUES ('member'); INSERT INTO platform.user_role (user_id,role_name) VALUES ('11111111-1111-1111-1111-111111111111','member');").await?;
+    let other = connect(&database_url(system_url, &database(OTHER_INSTANCE))?).await?;
+    other
+        .batch_execute(include_str!("../../../deploy/sql/record-history.sql"))
+        .await?;
+    other
+        .batch_execute(include_str!(
+            "../../../deploy/sql/record-history-app-grants.sql"
+        ))
+        .await?;
+    other
+        .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
+        .await?;
+    other.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; SET app.operation = 'admin:seed-other';
+        INSERT INTO platform.\"user\" (id,type,email) VALUES ('11111111-1111-1111-1111-111111111111','user','one@example.invalid');
+        INSERT INTO platform.role (name) VALUES ('other');
+        INSERT INTO platform.user_role (user_id,role_name) VALUES ('11111111-1111-1111-1111-111111111111','other');").await?;
     Ok(project)
 }
 
@@ -344,7 +360,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
         "CLI exposed the prepared credential"
     );
     let a = connect(a_target.connection().url()).await?;
-    let rows = a.query("SELECT r.role_name FROM platform.\"user\" u JOIN platform.user_role r ON r.tenant_id=$1 AND r.user_id=u.id WHERE u.status='active'", &[&TENANT]).await?;
+    let rows = a.query("SELECT r.role_name FROM platform.\"user\" u JOIN platform.user_role r ON r.user_id=u.id WHERE u.status='active'", &[]).await?;
     anyhow::ensure!(
         rows.len() == 1 && rows[0].get::<_, String>(0) == "member",
         "reader cannot load the target tenant's fresh roles"

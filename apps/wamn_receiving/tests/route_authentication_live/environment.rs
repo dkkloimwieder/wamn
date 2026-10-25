@@ -90,8 +90,8 @@ pub(super) async fn reconcile_journey_data_access(
 pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()> {
     let roles = project
         .query(
-            "SELECT name FROM platform.role WHERE tenant_id = $1 ORDER BY name COLLATE \"C\"",
-            &[&identity().tenant.as_str()],
+            "SELECT name FROM platform.role ORDER BY name COLLATE \"C\"",
+            &[],
         )
         .await
         .context("read the installed roles")?
@@ -99,10 +99,7 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
         .map(|row| row.get::<_, String>(0))
         .collect::<Vec<_>>();
     let permissions: i64 = project
-        .query_one(
-            "SELECT count(*) FROM platform.permission WHERE tenant_id = $1",
-            &[&identity().tenant.as_str()],
-        )
+        .query_one("SELECT count(*) FROM platform.permission", &[])
         .await
         .context("count the installed permission rows")?
         .get(0);

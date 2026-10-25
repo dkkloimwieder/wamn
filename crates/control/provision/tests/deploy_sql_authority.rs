@@ -1,7 +1,7 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
-//! the current package-era relation set contains 32 governed relations, all off
+//! the current package-era relation set contains 22 governed relations, all off
 //! the settable `app.tenant` claim and onto
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
@@ -373,10 +373,13 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "32",
-        "the sweep must cover exactly the 32 governed relations: user, the platform \
-         configuration tables and their history tables have no tenant floor (wamn-83eth.6); \
-         catalog.wirings and catalog.event_registrations are retired (wamn-kx378.3)"
+        governed, "22",
+        "the sweep must cover exactly the 22 governed relations: C3.1 removes role, \
+         user_role, permission, api_key, environment, role_history, user_role_history, \
+         permission_history, api_key_history and environment_history from the tenant \
+         floor; project 0036 removes catalog.wirings and catalog.event_registrations; \
+         user, the platform configuration tables and their \
+         history tables already have no tenant floor (wamn-83eth.6)"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
@@ -2568,6 +2571,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
              {migrations}\n\
              CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.widget\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');\n\
+             SELECT wamn_history.create_history_table('inventory', 'counter', false);\n\
              SELECT wamn_history.create_history_table('inventory', 'widget', false);\n\
              SELECT wamn_history.create_history_table('inventory', 'widget_tag', false);\n\
              SELECT wamn_history.create_history_table('inventory', 'counter', false);\n\

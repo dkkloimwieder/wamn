@@ -22,7 +22,7 @@ pub(super) async fn ensure_admin_role(
         .await
         .context("verify the application authorization floor")?;
     let written = tx
-        .execute(ENSURE_ADMIN_ROLE_SQL, &[&tenant])
+        .execute(ENSURE_ADMIN_ROLE_SQL, &[])
         .await
         .context("create the admin role")?;
     if written > 0 {

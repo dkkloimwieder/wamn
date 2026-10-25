@@ -334,7 +334,7 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.user_role|SELECT|table",
             "platform.user_role|UPDATE|table",
         ],
-        routines: &["wamn_authority.tenant_key(text)"],
+        routines: &[],
     },
 ];
 
@@ -1184,9 +1184,9 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
 // Dropping catalog.wirings removed ManagementAdmitter's INSERT surface.
-// Its remaining tenant_key grant is shared by administration, app and executor.
-const CONTAINED_PAIRS: [(&str, &str); 9] = [
-    ("administration", "management-admitter"),
+// Its remaining tenant_key grant is shared by app and executor. C3.1 revokes
+// that grant from administration, so that pair now requires a denial.
+const CONTAINED_PAIRS: [(&str, &str); 8] = [
     ("administration", "session-role-reader"),
     ("app", "event-materializer"),
     ("app", "http-admitter"),

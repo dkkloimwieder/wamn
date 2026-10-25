@@ -1105,10 +1105,10 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
                 "BEGIN;
                  SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
                         set_config('app.operation', 'admin:feed-reader', true);
-                 INSERT INTO platform.role (tenant_id, name)
-                     SELECT tenant_id, 'reader' FROM platform.user_role WHERE role_name = 'admin';
-                 INSERT INTO platform.permission (tenant_id, role_name, permission)
-                     SELECT tenant_id, 'reader', 'platform-fixture:widget/query'
+                 INSERT INTO platform.role (name)
+                     SELECT 'reader' FROM platform.user_role WHERE role_name = 'admin';
+                 INSERT INTO platform.permission (role_name, permission)
+                     SELECT 'reader', 'platform-fixture:widget/query'
                      FROM platform.user_role WHERE role_name = 'admin';
                  UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
                  COMMIT;",
@@ -1286,8 +1286,8 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
                 "BEGIN;
                  SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
                         set_config('app.operation', 'admin:feed-reader', true);
-                 INSERT INTO platform.role (tenant_id, name)
-                     SELECT tenant_id, 'reader' FROM platform.user_role WHERE role_name = 'admin';
+                 INSERT INTO platform.role (name)
+                     SELECT 'reader' FROM platform.user_role WHERE role_name = 'admin';
                  UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
                  COMMIT;",
             )

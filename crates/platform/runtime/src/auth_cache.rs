@@ -567,6 +567,13 @@ pub(crate) mod tests {
         assert_eq!(b.provisioned("t", "p"), Ok(()));
         assert!(other.grants("t", "p").is_err());
 
+        let ticket = other.grants("u", "p").unwrap_err();
+        other.keep_grants("u", "p", ticket, present.clone()).await;
+        let ticket = other.environment_inactive("u").unwrap_err();
+        other.keep_environment_inactive("u", ticket, true).await;
+        assert_eq!(other.grants("u", "p"), Ok(present.clone()));
+        assert_eq!(other.environment_inactive("u"), Ok(true));
+
         // A writer's delete reaches both hosts.
         let mut drops = AuthDrops::default();
         drops.principal("t", "p");
@@ -602,6 +609,9 @@ pub(crate) mod tests {
             b.environment_inactive("t").is_err() && b.grants("t", "p").is_err()
         })
         .await;
+
+        assert_eq!(other.grants("u", "p"), Ok(present.clone()));
+        assert_eq!(other.environment_inactive("u"), Ok(true));
 
         // An identity change drops the session of its principal on every
         // host, and a session read during any identity change is not kept.

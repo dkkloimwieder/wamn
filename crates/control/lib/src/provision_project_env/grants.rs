@@ -501,7 +501,7 @@ pub(super) fn verify_session_role_reader_grants(
     )]);
     for (relation, columns) in [
         ("user", &["id", "status"][..]),
-        ("user_role", &["tenant_id", "user_id", "role_name"][..]),
+        ("user_role", &["user_id", "role_name"][..]),
     ] {
         for column in columns {
             expected.insert((
@@ -784,10 +784,8 @@ pub(super) fn verify_http_admitter_grants(
 /// Exact surface of the administration family (`wamn-a40n.2`): `USAGE` on
 /// `catalog`, `platform` and `wamn_history`, `SELECT`, `INSERT`, `UPDATE`
 /// and `DELETE` on each relation of `sql::ADMINISTRATION_RELATIONS`, `INSERT`
-/// on the entry columns of its history table (`tenant_id` only under the
-/// tenant floor, `sql::ADMINISTRATION_TENANT_RELATIONS`), `SELECT` on `catalog.releases`
-/// (`wamn-aemxz.1`), and `EXECUTE` on `row_image` and on the tenant-key
-/// derivation. The grants go to `wamn_administration` alone.
+/// on the entry columns of its history table (without a tenant column), `SELECT` on `catalog.releases`
+/// (`wamn-aemxz.1`), and `EXECUTE` on `row_image`. The grants go to `wamn_administration` alone.
 pub(super) fn verify_administration_grants(
     role: &str,
     database: &str,
@@ -815,17 +813,13 @@ pub(super) fn verify_administration_grants(
         tuple("schema", "platform", "platform", "USAGE"),
         tuple("schema", "wamn_history", "wamn_history", "USAGE"),
         tuple("routine", "wamn_history", "row_image", "EXECUTE"),
-        tuple("routine", "wamn_authority", "tenant_key", "EXECUTE"),
         tuple("relation", "catalog", "releases", "SELECT"),
     ]);
     for relation in sql::ADMINISTRATION_RELATIONS {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             expected.insert(tuple("relation", "platform", relation, privilege));
         }
-        let tenant = sql::ADMINISTRATION_TENANT_RELATIONS
-            .contains(&relation)
-            .then_some("tenant_id");
-        for column in tenant.into_iter().chain([
+        for column in [
             "row_key",
             "type",
             "operation",
@@ -834,7 +828,7 @@ pub(super) fn verify_administration_grants(
             "transaction_id",
             "before",
             "after",
-        ]) {
+        ] {
             expected.insert(tuple(
                 "column",
                 "platform",

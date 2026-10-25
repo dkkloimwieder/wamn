@@ -114,27 +114,21 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
             &[&first],
         )
         .await?;
-    for tenant in [TENANT, "tenant-b"] {
-        for role in ["purchase-reader", "purchase-writer"] {
-            admin
-                .execute(
-                    "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2)",
-                    &[&tenant, &role],
-                )
-                .await?;
-        }
+    for role in ["purchase-reader", "purchase-writer"] {
+        admin
+            .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
+            .await?;
     }
-    for (tenant, role, permission) in [
-        (TENANT, "purchase-reader", READ),
-        (TENANT, "purchase-writer", READ),
-        (TENANT, "purchase-writer", WRITE),
-        ("tenant-b", "purchase-reader", OTHER_TENANT),
+    for (role, permission) in [
+        ("purchase-reader", READ),
+        ("purchase-writer", READ),
+        ("purchase-writer", WRITE),
     ] {
         admin
             .execute(
-                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''))",
-                &[&tenant, &role, &permission],
+                "INSERT INTO platform.permission (role_name, permission) \
+             VALUES ($1, regexp_replace($2, '@[^@]*$', ''))",
+                &[&role, &permission],
             )
             .await?;
     }
@@ -144,11 +138,11 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
     ] {
         admin.execute("INSERT INTO platform.\"user\" (id, type, email) VALUES ($1::text::uuid, 'user', $2)",
             &[&principal, &email]).await?;
-        admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-reader')",
-            &[&TENANT, &principal]).await?;
+        admin.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'purchase-reader')",
+            &[&principal]).await?;
     }
-    admin.execute("INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-writer')",
-        &[&TENANT, &first]).await?;
+    admin.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'purchase-writer')",
+        &[&first]).await?;
     Ok(())
 }
 
@@ -290,8 +284,9 @@ fn assert_permission_reads(
     assert!(query.starts_with("SELECT u.status = "), "{query}");
     assert!(
         query.contains("FROM platform.\"user\" u LEFT JOIN platform.user_role r")
-            && query.contains("r.tenant_id = $1 AND r.user_id = u.id")
-            && query.contains("WHERE u.id = $2::text::uuid"),
+            && query.contains("r.user_id = u.id")
+            && !query.contains("tenant_id")
+            && query.contains("WHERE u.id = $1::text::uuid"),
         "{query}"
     );
     assert_eq!(calls, expected, "one permission read per admitted request");
@@ -323,6 +318,17 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     )?;
     install(&admin, &database, &generation).await?;
     seed(&admin).await?;
+    let other_database = postgres.create_database("session_route_other")?;
+    let other_admin = connect(other_database.url()).await?;
+    other_admin
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .await?;
+    other_admin
+        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
+        .await?;
+    seed(&other_admin).await?;
+    other_admin.execute("INSERT INTO platform.permission (role_name, permission) VALUES ('purchase-reader', regexp_replace($1, '@[^@]*$', ''))", &[&OTHER_TENANT]).await?;
+
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&generation)
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
@@ -392,7 +398,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     assert!(admitted.permits(READ) && admitted.permits(WRITE));
     assert!(
         !admitted.permits(OTHER_TENANT),
-        "same role name cannot cross the tenant predicate"
+        "same role name cannot cross the environment database"
     );
     let other = accepted(&route, &second).await;
     assert_eq!(other.principal_id(), SECOND_PRINCIPAL);
@@ -496,8 +502,8 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     admin
         .execute(
             "DELETE FROM platform.permission \
-             WHERE tenant_id = $1 AND permission = regexp_replace($2, '@[^@]*$', '')",
-            &[&TENANT, &WRITE],
+             WHERE permission = regexp_replace($1, '@[^@]*$', '')",
+            &[&WRITE],
         )
         .await?;
     let changed = accepted(&route, &first).await;
@@ -511,16 +517,13 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     );
     admin
         .execute(
-            "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-         VALUES ($1, 'purchase-writer', regexp_replace($2, '@[^@]*$', ''))",
-            &[&TENANT, &WRITE],
+            "INSERT INTO platform.permission (role_name, permission) \
+         VALUES ('purchase-writer', regexp_replace($1, '@[^@]*$', ''))",
+            &[&WRITE],
         )
         .await?;
     admin
-        .execute(
-            "DELETE FROM platform.user_role WHERE tenant_id = $1",
-            &[&TENANT],
-        )
+        .execute("DELETE FROM platform.user_role ", &[])
         .await?;
     admin
         .execute("UPDATE platform.\"user\" SET status = 'disabled'", &[])

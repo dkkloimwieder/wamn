@@ -678,8 +678,8 @@ async fn converge_tenant_identity(
         client
             .query(
                 "SELECT user_id::text FROM platform.user_role \
-                  WHERE tenant_id = $1 AND role_name = $2",
-                &[&tenant_id, &wamn_project_state::ADMIN_ROLE],
+                  WHERE role_name = $1",
+                &[&wamn_project_state::ADMIN_ROLE],
             )
             .await
             .context("read the tenant's admin rows")?

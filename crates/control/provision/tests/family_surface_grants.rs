@@ -932,14 +932,14 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                      '00000000-0000-4000-8000-000000000001');\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
-             INSERT INTO platform.role (tenant_id, name) \
-             VALUES ('tenant-a', 'widget-reader');\n\
+             INSERT INTO platform.role (name) \
+             VALUES ('widget-reader');\n\
              INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ('00000000-0000-4000-8000-000000000001', 'user', 'caller@example.test');\n\
-             INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
-             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'widget-reader');\n\
-             INSERT INTO platform.permission (tenant_id, role_name, permission) \
-             VALUES ('tenant-a', 'widget-reader', 'wamn-widgets:widget/get');\n\
+             INSERT INTO platform.user_role (user_id, role_name) \
+             VALUES ('00000000-0000-4000-8000-000000000001', 'widget-reader');\n\
+             INSERT INTO platform.permission (role_name, permission) \
+             VALUES ('widget-reader', 'wamn-widgets:widget/get');\n\
              COMMIT;\n"
         ),
     );
@@ -993,8 +993,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         query(
             &as_login,
             "SELECT p.permission FROM platform.\"user\" u \
-             JOIN platform.user_role ur ON ur.tenant_id = 'tenant-a' AND ur.user_id = u.id \
-             JOIN platform.permission p ON p.tenant_id = ur.tenant_id AND p.role_name = ur.role_name \
+             JOIN platform.user_role ur ON ur.user_id = u.id \
+             JOIN platform.permission p ON p.role_name = ur.role_name \
              WHERE u.id = '00000000-0000-4000-8000-000000000001' \
                AND u.status = 'active'"
         ),

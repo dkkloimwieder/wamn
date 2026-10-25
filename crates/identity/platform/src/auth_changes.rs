@@ -6,7 +6,7 @@
 //! with [`AuthChanges::publish`] after the commit, which deletes the keys of
 //! the facts from the NATS KV bucket [`BUCKET`]. Every host watches the
 //! bucket and keeps the values as its memory. The facts are the users
-//! rows, roles, permissions and user roles of a tenant, its environment
+//! rows, roles, permissions and user roles of an environment, its
 //! status, and the PATs, logins, memberships and status of a principal.
 
 use std::collections::BTreeSet;
@@ -71,7 +71,8 @@ pub const BUCKET: &str = "wamn-auth";
 /// a lost delete.
 pub const AUTH_TTL: Duration = Duration::from_secs(60);
 
-/// The key of the grants of `principal` in `tenant`.
+/// The key of the grants of `principal` in the environment named `tenant`.
+/// This shared cache key stays scoped after the table tenant columns leave.
 pub fn principal_key(tenant: &str, principal: &str) -> String {
     format!("{tenant}.{principal}")
 }

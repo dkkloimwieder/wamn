@@ -189,7 +189,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             .get::<_, i64>(0),
         1
     );
-    let caller = queued_run_caller(&admin, TENANT, &principal, None).await?;
+    let caller = queued_run_caller(&admin, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     let before: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     materialize_application_principals(
@@ -203,7 +203,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .await?;
     let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
     assert_eq!(before, after, "reapplying must write no application rows");
-    let caller = queued_run_caller(&admin, TENANT, &principal, None).await?;
+    let caller = queued_run_caller(&admin, &principal, None).await?;
     authorize_registered_operation(Some(&caller), Some(OPERATION))?;
     assert!(
         authorize_registered_operation(Some(&caller), Some("consumer:item/delete@1.0.0")).is_err()

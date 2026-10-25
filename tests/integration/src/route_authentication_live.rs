@@ -140,8 +140,8 @@ async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<Strin
     Ok(project
         .query(
             "SELECT role_name || ':' || permission || ':' || xmin::text FROM platform.permission \
-             WHERE tenant_id = $1 ORDER BY role_name, permission COLLATE \"C\"",
-            &[&TENANT],
+             ORDER BY role_name, permission COLLATE \"C\"",
+            &[],
         )
         .await
         .context("read permission write identities")?
@@ -183,16 +183,16 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("seed the fixture test principal")?;
     project
         .execute(
-            "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2)",
-            &[&TENANT, &ITEM_READER],
+            "INSERT INTO platform.role (name) VALUES ($1)",
+            &[&ITEM_READER],
         )
         .await
         .context("seed the authored role")?;
     project
         .execute(
-            "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-             VALUES ($1, $2, $3), ($1, $2, $4)",
-            &[&TENANT, &ITEM_READER, &OPERATION_REFERENCE, &UNSERVED],
+            "INSERT INTO platform.permission (role_name, permission) \
+             VALUES ($1, $2), ($1, $3)",
+            &[&ITEM_READER, &OPERATION_REFERENCE, &UNSERVED],
         )
         .await
         .context("seed the authored role's references")?;
@@ -214,10 +214,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .await
         .context("apply the route-authentication fixture package")?;
     let roles = project
-        .query(
-            "SELECT name FROM platform.role WHERE tenant_id = $1 ORDER BY name",
-            &[&TENANT],
-        )
+        .query("SELECT name FROM platform.role ORDER BY name", &[])
         .await
         .context("read the roles")?
         .into_iter()
@@ -466,29 +463,66 @@ async fn assert_user_environment_membership(
         .await?;
     project
         .execute(
-            "INSERT INTO platform.role (tenant_id, name) \
-         VALUES ($1, 'user-reader'), ($1, 'user-extra'), \
-                ('other-tenant', 'user-reader')",
-            &[&TENANT],
+            "INSERT INTO platform.role (name) VALUES ('user-reader'), ('user-extra')",
+            &[],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO platform.user_role (tenant_id, user_id, role_name) \
-         VALUES ($1, $2::text::uuid, 'user-reader'), ($1, $2::text::uuid, 'user-extra'), \
-                ('other-tenant', $2::text::uuid, 'user-reader')",
-            &[&TENANT, &user.id().as_str()],
+            "INSERT INTO platform.user_role (user_id, role_name) \
+         VALUES ($1::text::uuid, 'user-reader'), ($1::text::uuid, 'user-extra')",
+            &[&user.id().as_str()],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-         VALUES ($1, 'user-reader', $2), \
-                ($1, 'user-extra', 'route-auth-fixture:item/extra'), \
-                ('other-tenant', 'user-reader', 'route-auth-fixture:item/other-tenant')",
-            &[&TENANT, &OPERATION_REFERENCE],
+            "INSERT INTO platform.permission (role_name, permission) \
+         VALUES ('user-reader', $1), ('user-extra', 'route-auth-fixture:item/extra')",
+            &[&OPERATION_REFERENCE],
         )
         .await?;
+    // The same principal and role in another environment hold a different grant.
+    let other_database = wamn_test_postgres::database();
+    let (other_project, other_connection) = connect(other_database.url()).await?;
+    other_project
+        .batch_execute(&format!(
+            "{} {}",
+            wamn_control_provision::sql::ensure_app_acl_role_sql(),
+            wamn_schema_control::ensure_scenario_author_role_sql(),
+        ))
+        .await?;
+    wamn_control::dev::environment::install_journey_platform_floor(&other_project, "example.test")
+        .await?;
+    other_project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:other-environment-fixture', false)",
+            &[&user.id().as_str()],
+        )
+        .await?;
+    other_project
+        .execute(
+            "INSERT INTO platform.\"user\" (id, type, email) \
+             VALUES ($1::text::uuid, 'user', 'member@example.test')",
+            &[&user.id().as_str()],
+        )
+        .await?;
+    other_project
+        .batch_execute(
+            "INSERT INTO platform.role (name) VALUES ('user-reader'); \
+             INSERT INTO platform.permission (role_name, permission) \
+             VALUES ('user-reader', 'route-auth-fixture:item/other-tenant')",
+        )
+        .await?;
+    other_project
+        .execute(
+            "INSERT INTO platform.user_role (user_id, role_name) \
+             VALUES ($1::text::uuid, 'user-reader')",
+            &[&user.id().as_str()],
+        )
+        .await?;
+    drop(other_project);
+    other_connection.await?;
     // A project-wide role and another environment's membership cannot authorize this route.
     assign_project_role(
         admin,
@@ -657,8 +691,8 @@ async fn assert_user_environment_membership(
         "membership alone cannot supply another user's permissions"
     );
     project.execute(
-        "DELETE FROM platform.user_role WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = 'user-reader'",
-        &[&TENANT, &user.id().as_str()],
+        "DELETE FROM platform.user_role WHERE user_id = $1::text::uuid AND role_name = 'user-reader'",
+        &[&user.id().as_str()],
     ).await?;
     assert_eq!(
         invoke(
@@ -672,8 +706,8 @@ async fn assert_user_environment_membership(
         "role removal must affect the next request"
     );
     project.execute(
-        "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'user-reader')",
-        &[&TENANT, &user.id().as_str()],
+        "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'user-reader')",
+        &[&user.id().as_str()],
     ).await?;
     project
         .execute(
@@ -1074,8 +1108,8 @@ async fn production_operator_authentication_and_operation_authorization() {
     project
         .execute(
             "DELETE FROM platform.permission \
-             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &ITEM_READER, &OPERATION_REFERENCE],
+             WHERE role_name = $1 AND permission = $2",
+            &[&ITEM_READER, &OPERATION_REFERENCE],
         )
         .await
         .expect("remove the operation grant");
@@ -1213,8 +1247,8 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
                 .query(
                     "SELECT r.role_name FROM platform.user_role r \
                      JOIN platform.\"user\" u ON u.id = r.user_id \
-                     WHERE r.tenant_id = $1 AND u.email = $2 ORDER BY r.role_name",
-                    &[&TENANT, &email],
+                     WHERE u.email = $1 ORDER BY r.role_name",
+                    &[&email],
                 )
                 .await
                 .expect("read held roles")

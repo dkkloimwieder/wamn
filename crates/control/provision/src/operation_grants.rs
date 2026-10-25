@@ -16,10 +16,10 @@ use wamn_schema_generator::{
     validate_operation_vocabulary,
 };
 
-/// Serialize the writes of the tenant's roles and permission rows.
+/// Serialize the writes of the environment's roles and permission rows.
 ///
 /// Package lineage remains independently locked per family. Role and
-/// permission writes additionally share this tenant-grain lock.
+/// permission writes additionally share this environment lock.
 pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.operation-grants:' || $1, 0))";
 
@@ -29,7 +29,7 @@ pub const PLATFORM_FLOOR_MISSING: &str = "wamn-operation-grants-platform-floor-m
 /// Required statement inside the administrator-owned transaction.
 ///
 /// A principal that cannot bypass forced RLS errors on the subsequent read or
-/// write instead of observing a silently filtered tenant+role grant set.
+/// write instead of observing a silently filtered role grant set.
 pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_security = off";
 
 /// Refuse unless the existing application-authorization floor is installed.
@@ -145,15 +145,15 @@ pub fn operation_grant_tokens(
         })
 }
 
-/// Create the tenant's `admin` role when it is absent. `$1` is the tenant.
+/// Create the environment's `admin` role when it is absent.
 ///
 /// The caller owns the surrounding transaction: it acquires
 /// [`OPERATION_GRANT_LOCK_SQL`], applies
 /// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
 /// [`operation_grant_floor_check_sql`], then executes this statement. It
 /// changes one row or none.
-pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.role (tenant_id, name) \
-     VALUES ($1, 'admin') ON CONFLICT (tenant_id, name) DO NOTHING";
+pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO platform.role (name) \
+     VALUES ('admin') ON CONFLICT (name) DO NOTHING";
 
 #[cfg(test)]
 mod tests {

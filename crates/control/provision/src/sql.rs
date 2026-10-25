@@ -582,13 +582,6 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "setting",
 ];
 
-/// The [`ADMINISTRATION_RELATIONS`] that still carry `tenant_id`, so their
-/// history tables do too. `user` and the platform configuration tables have
-/// none: the database is the org boundary (owner ruling of 2026-10-23 on
-/// `wamn-83eth.6`).
-pub const ADMINISTRATION_TENANT_RELATIONS: [&str; 4] =
-    ["role", "user_role", "permission", "environment"];
-
 /// Converge the stable administration role to its exact surface
 /// (`wamn-a40n.2`).
 ///
@@ -596,10 +589,9 @@ pub const ADMINISTRATION_TENANT_RELATIONS: [&str; 4] =
 /// this one family, not to [`PLATFORM_GROUP_ROLE`], which every platform
 /// family inherits (owner correction of 2026-09-30). A write of one of them
 /// also appends the entry of its `<table>_history` table and renders it
-/// through `wamn_history.row_image` with the writer's authority, and forms
-/// `<table>_tkey` index entries, so the role holds `INSERT` on the entry
+/// through `wamn_history.row_image` with the writer's authority, so the role holds `INSERT` on the entry
 /// columns of those history tables, `USAGE` on `wamn_history`, `EXECUTE` on
-/// `row_image`, and `EXECUTE` on the tenant-key derivation. On the catalog it
+/// `row_image`. On the catalog it
 /// reads `catalog.releases` only, for the control host's `release.profile`.
 /// It holds nothing on the run plane. `schema` is the run-plane revoke scope.
 pub fn grant_administration_surface_sql(schema: &str) -> String {
@@ -611,36 +603,30 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
          REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_history, {schema} \
          FROM {role}; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_history, {schema} FROM {role}; \
+         REVOKE EXECUTE ON FUNCTION wamn_authority.tenant_key(text) FROM {role}; \
          GRANT USAGE ON SCHEMA catalog, platform, wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
          GRANT SELECT ON TABLE catalog.releases TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
     );
     for relation in ADMINISTRATION_RELATIONS {
-        let tenant = if ADMINISTRATION_TENANT_RELATIONS.contains(&relation) {
-            "tenant_id, "
-        } else {
-            ""
-        };
         write!(
             sql,
             " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE platform.{relation} TO {role}; \
-             GRANT INSERT ({tenant}row_key, type, operation, changed_by, changed_at, \
+             GRANT INSERT (row_key, type, operation, changed_by, changed_at, \
              transaction_id, before, after) ON TABLE platform.{history} TO {role};",
             relation = quote_ident(relation),
             history = quote_ident(&format!("{relation}_history")),
         )
         .expect("writing to a String cannot fail");
     }
-    sql.push(' ');
-    sql.push_str(&grant_tenant_key_execute_sql(ADMINISTRATION_ROLE));
+
     sql
 }
 
-/// Converge the session role reader onto five columns and no execution authority.
+/// Converge the session role reader onto four columns and no execution authority.
 ///
-/// Apply after the project schemas exist. The existing platform RLS arm admits
-/// these reads; consumers must bind the target tenant explicitly. Revoke column
+/// Apply after the project schemas exist. The connection selects the environment database for these reads. Revoke column
 /// ACLs as well as table ACLs so replay removes a widened read or write.
 pub fn grant_session_role_reader_surface_sql() -> String {
     let role = quote_ident(SESSION_ROLE_READER_ROLE);
@@ -666,7 +652,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
          GRANT USAGE ON SCHEMA platform TO {role}; \
          GRANT SELECT (id, status) ON TABLE platform.\"user\" TO {role}; \
-         GRANT SELECT (tenant_id, user_id, role_name) ON TABLE platform.user_role TO {role};",
+         GRANT SELECT (user_id, role_name) ON TABLE platform.user_role TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
         role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
     )

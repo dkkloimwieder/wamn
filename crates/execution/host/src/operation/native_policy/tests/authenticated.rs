@@ -136,24 +136,21 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
         .await?;
     for role in ["native-parent", "native-child"] {
         admin
-            .execute(
-                "INSERT INTO platform.role (tenant_id, name) VALUES ($1, $2)",
-                &[&TENANT, &role],
-            )
+            .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
             .await?;
         admin
             .execute(
-                "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''))",
-                &[&TENANT, &role, &ROOT],
+                "INSERT INTO platform.permission (role_name, permission) \
+             VALUES ($1, regexp_replace($2, '@[^@]*$', ''))",
+                &[&role, &ROOT],
             )
             .await?;
     }
     admin
         .execute(
-            "INSERT INTO platform.permission (tenant_id, role_name, permission) \
-             VALUES ($1, 'native-child', regexp_replace($2, '@[^@]*$', ''))",
-            &[&TENANT, &CHILD],
+            "INSERT INTO platform.permission (role_name, permission) \
+             VALUES ('native-child', regexp_replace($1, '@[^@]*$', ''))",
+            &[&CHILD],
         )
         .await?;
     let mut scoped_url = url::Url::parse(admin_url)?;
@@ -237,7 +234,12 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             )
             .await?;
         for role in ["native-parent", "native-child"] {
-            admin.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)", &[&TENANT,&principal,&role]).await?;
+            admin
+                .execute(
+                    "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2)",
+                    &[&principal, &role],
+                )
+                .await?;
         }
     }
     let authentication = Arc::new(SessionRouteAuthentication::new(
@@ -1300,7 +1302,7 @@ async fn pat_caller(
     let admin = connect(admin_url).await?;
     admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
     admin.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','warm-pat@example.invalid')", &[&principal.id().as_str()]).await?;
-    admin.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'native-child')", &[&TENANT, &principal.id().as_str()]).await?;
+    admin.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')", &[&principal.id().as_str()]).await?;
     let reader_role = workload_generation_role(
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleScope::Control {

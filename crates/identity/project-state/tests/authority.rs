@@ -120,10 +120,10 @@ fn prelude(url: &str) -> (String, String) {
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
 INSERT INTO platform."user" (id, type, email) VALUES ('{U1}','user','u1@t1');
-INSERT INTO platform.role (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
-INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
-INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES ('{TENANT}','auditor','platform-fixture:widget/get');
-INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
+INSERT INTO platform.role (name) VALUES ('admin'),('auditor');
+INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');
+INSERT INTO platform.permission (role_name, permission) VALUES ('auditor','platform-fixture:widget/get');
+INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES ('{U1}','ci','hash-1','wk_a');
 INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
 INSERT INTO platform.number_sequence (id, application, name, pattern) VALUES
   ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}'),
@@ -226,16 +226,16 @@ BEGIN
     'UPDATE platform."user" SET status = ''disabled''',
     'UPDATE platform."user" SET display_name = ''wamn:intruder''',
     'DELETE FROM platform."user"',
-    'INSERT INTO platform.role (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
+    'INSERT INTO platform.role (name) VALUES (''superadmin'')',
     'UPDATE platform.role SET description = ''changed''',
     'DELETE FROM platform.role',
-    'INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES (''{TENANT}'', ''{U1}'', ''auditor'')',
+    'INSERT INTO platform.user_role (user_id, role_name) VALUES (''{U1}'', ''auditor'')',
     'UPDATE platform.user_role SET role_name = ''admin''',
     'DELETE FROM platform.user_role',
-    'INSERT INTO platform.permission (tenant_id, role_name, permission) VALUES (''{TENANT}'', ''auditor'', ''platform-fixture:widget/list'')',
+    'INSERT INTO platform.permission (role_name, permission) VALUES (''auditor'', ''platform-fixture:widget/list'')',
     'UPDATE platform.permission SET permission = ''platform-fixture:widget/list''',
     'DELETE FROM platform.permission',
-    'INSERT INTO platform.api_key (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
+    'INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES (''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
     'UPDATE platform.api_key SET revoked_at = now()',
     'DELETE FROM platform.api_key',
     'SELECT count(*) FROM platform.api_key',
@@ -250,7 +250,7 @@ BEGIN
     'INSERT INTO platform.connection (integration, name, transport, exchange) VALUES (''netsuite'', ''forged'', ''http'', ''request'')',
     'INSERT INTO platform.integration_allow (scope_type, scope_id, integration) VALUES (''org'', ''acme'', ''modbus'')',
     'DELETE FROM platform.project_connection',
-    'INSERT INTO platform.environment (tenant_id, status) VALUES (''{TENANT}'', ''active'')',
+    'INSERT INTO platform.environment (status) VALUES (''active'')',
     'UPDATE platform.environment SET status = ''active''',
     'DELETE FROM platform.environment'
   ] LOOP
@@ -465,9 +465,8 @@ ROLLBACK;"
 /// reads no history table and writes none, not even an entry column, so it
 /// cannot choose a `position` with `OVERRIDING SYSTEM VALUE` either.
 ///
-/// Each denied insert is RLS-legal for the probe tenant, so `42501` here is
-/// the missing privilege and not a `WITH CHECK` rejection. A history table at
-/// the org boundary has no tenant_id, so its entry names none.
+/// These history tables have no row security, so `42501` here means that
+/// the caller lacks the privilege to write an entry.
 #[test]
 fn author_sql_reads_and_writes_no_history_table() {
     let _serialized = wamn_test_postgres::lock();
@@ -476,7 +475,7 @@ fn author_sql_reads_and_writes_no_history_table() {
 
     let (app_generation, mut script) = prelude(&url);
     // One direct entry insert. A position also names the position column.
-    let entry = |history: &str, position: Option<i64>, tenant: bool, row_key: &str| {
+    let entry = |history: &str, position: Option<i64>, row_key: &str| {
         let (column, value, overriding) = match position {
             None => ("", String::new(), ""),
             Some(position) => (
@@ -485,62 +484,36 @@ fn author_sql_reads_and_writes_no_history_table() {
                 " OVERRIDING SYSTEM VALUE",
             ),
         };
-        let (tenant_column, tenant_value) = if tenant {
-            ("tenant_id, ", format!("''{TENANT}'', "))
-        } else {
-            ("", String::new())
-        };
         format!(
-            "'INSERT INTO platform.{history} ({column}{tenant_column}row_key, type, operation, \
+            "'INSERT INTO platform.{history} ({column}row_key, type, operation, \
              changed_by, changed_at, transaction_id, before, after){overriding} VALUES \
-             ({value}{tenant_value}''{row_key}'', ''delete'', ''admin:forge-history'', \
+             ({value}''{row_key}'', ''delete'', ''admin:forge-history'', \
              ''{U1}'', now(), 1, ''{{}}'', ''{{}}'')'"
         )
     };
     let direct_writes = [
-        entry("user_history", None, false, &format!(r#"{{"id": "{U2}"}}"#)),
-        entry(
-            "role_history",
-            None,
-            true,
-            &format!(r#"{{"name": "admin", "tenant_id": "{TENANT}"}}"#),
-        ),
+        entry("user_history", None, &format!(r#"{{"id": "{U2}"}}"#)),
+        entry("role_history", None, r#"{"name": "admin"}"#),
         entry(
             "user_role_history",
             None,
-            true,
-            &format!(r#"{{"user_id": "{U1}", "role_name": "admin", "tenant_id": "{TENANT}"}}"#),
+            &format!(r#"{{"user_id": "{U1}", "role_name": "admin"}}"#),
         ),
         entry(
             "permission_history",
             None,
-            true,
-            &format!(
-                r#"{{"role_name": "auditor", "tenant_id": "{TENANT}", "permission": "platform-fixture:widget/get"}}"#
-            ),
+            r#"{"role_name": "auditor", "permission": "platform-fixture:widget/get"}"#,
         ),
-        entry(
-            "api_key_history",
-            None,
-            true,
-            &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
-        ),
-        entry(
-            "environment_history",
-            None,
-            true,
-            &format!(r#"{{"tenant_id": "{TENANT}"}}"#),
-        ),
+        entry("api_key_history", None, &format!(r#"{{"id": "{U2}"}}"#)),
+        entry("environment_history", None, r#"{"id": true}"#),
         entry(
             "setting_history",
             Some(-5),
-            false,
             r#"{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}"#,
         ),
         entry(
             "number_sequence_history",
             None,
-            false,
             &format!(r#"{{"id": "{SEQUENCE}"}}"#),
         ),
     ]

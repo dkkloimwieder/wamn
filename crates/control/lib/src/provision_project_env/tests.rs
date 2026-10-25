@@ -629,7 +629,6 @@ fn session_reader_requires_exact_grants() {
     for column in [
         "user.id",
         "user.status",
-        "user_role.tenant_id",
         "user_role.user_id",
         "user_role.role_name",
     ] {
@@ -650,6 +649,7 @@ fn session_reader_requires_exact_grants() {
         assert!(verify(&missing).is_err());
     }
     for extra in [
+        role_acl("column", "platform", "user_role.tenant_id", "SELECT"),
         role_acl("relation", "platform", "user", "SELECT"),
         role_acl("column", "platform", "user.email", "SELECT"),
         role_acl("column", "platform", "user.status", "UPDATE"),

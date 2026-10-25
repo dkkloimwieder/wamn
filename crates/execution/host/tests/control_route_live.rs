@@ -802,7 +802,7 @@ async fn application_rows(target: &Client, principal: &str) -> Vec<String> {
     target
         .query(
             "SELECT 'user' FROM platform.\"user\" WHERE id = $1::text::uuid \
-             UNION ALL SELECT 'role ' || role_name || ' ' || tenant_id FROM platform.user_role \
+             UNION ALL SELECT 'role ' || role_name FROM platform.user_role \
                WHERE user_id = $1::text::uuid \
              ORDER BY 1",
             &[&principal],
@@ -870,12 +870,9 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&billing, ann).await,
-        ["role admin org-a--billing--dev", "user"]
+        ["role admin", "user"]
     );
-    assert_eq!(
-        application_rows(&shop, ann).await,
-        ["role admin org-a--shop--dev", "user"]
-    );
+    assert_eq!(application_rows(&shop, ann).await, ["role admin", "user"]);
     assert_eq!(
         call(
             &delivery,
@@ -888,7 +885,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&billing, ann).await,
-        ["role admin org-a--billing--dev", "user"],
+        ["role admin", "user"],
         "a refused revoke changes no application row"
     );
     assert_eq!(
@@ -911,7 +908,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(
         application_rows(&billing, ann).await,
-        ["role admin org-a--billing--dev", "user"]
+        ["role admin", "user"]
     );
     assert_eq!(application_rows(&shop, ann).await, ["user"]);
     assert_eq!(
@@ -1402,7 +1399,7 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     let database = postgres.create_database("control_status_counts")?;
     let admin = connect(database.url()).await?;
     let control_url = install(&admin, database.url()).await?;
-    let (logins, billing, _shop) = environments(&admin, database.url(), "counts").await?;
+    let (logins, billing, shop) = environments(&admin, database.url(), "counts").await?;
     admin
         .execute(
             "SELECT set_config('app.user_id', $1, false)",
@@ -1422,19 +1419,27 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
         },
     )
     .await?;
-    billing.batch_execute(
-        "INSERT INTO platform.role (tenant_id, name) VALUES ('org-a--billing--dev', 'first'), ('org-a--billing--dev', 'second'), ('other', 'ignored');
+    billing
+        .batch_execute(
+            "INSERT INTO platform.role (name) VALUES ('first'), ('second');
          INSERT INTO platform.\"user\" (id, type, email) VALUES
            ('00000000-0000-0000-0000-000000000001', 'user', 'one@example.test'),
            ('00000000-0000-0000-0000-000000000002', 'user', 'two@example.test'),
-           ('00000000-0000-0000-0000-000000000003', 'service', 'service@example.test'),
-           ('00000000-0000-0000-0000-000000000004', 'user', 'other@example.test');
-         INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES
-           ('org-a--billing--dev', '00000000-0000-0000-0000-000000000001', 'first'),
-           ('org-a--billing--dev', '00000000-0000-0000-0000-000000000001', 'second'),
-           ('org-a--billing--dev', '00000000-0000-0000-0000-000000000003', 'first'),
-           ('other', '00000000-0000-0000-0000-000000000004', 'ignored');"
-    ).await?;
+           ('00000000-0000-0000-0000-000000000003', 'service', 'service@example.test');
+         INSERT INTO platform.user_role (user_id, role_name) VALUES
+           ('00000000-0000-0000-0000-000000000001', 'first'),
+           ('00000000-0000-0000-0000-000000000001', 'second'),
+           ('00000000-0000-0000-0000-000000000003', 'first');",
+        )
+        .await?;
+    shop.batch_execute(
+        "INSERT INTO platform.role (name) VALUES ('ignored');
+        INSERT INTO platform.\"user\" (id, type, email) VALUES
+        ('00000000-0000-0000-0000-000000000004', 'user', 'other@example.test');
+        INSERT INTO platform.user_role (user_id, role_name) VALUES
+        ('00000000-0000-0000-0000-000000000004', 'ignored');",
+    )
+    .await?;
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
@@ -1461,6 +1466,19 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
         .await,
         Ok(expected.clone())
     );
+    let mut other = expected.clone();
+    other["roles"] = json!(1);
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/status",
+            principal.as_str(),
+            json!({"project": "shop", "env": "dev"})
+        )
+        .await,
+        Ok(other)
+    );
+    shop.batch_execute("DELETE FROM platform.role").await?;
     let mut empty = expected.clone();
     empty["users_with_role"] = json!(0);
     empty["roles"] = json!(0);

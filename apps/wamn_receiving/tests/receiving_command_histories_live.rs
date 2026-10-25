@@ -905,8 +905,8 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         .query(
             "SELECT u.email FROM platform.user_role AS r \
              JOIN platform.\"user\" AS u ON u.id=r.user_id \
-             WHERE r.tenant_id=$1 AND r.role_name=$2 ORDER BY u.id",
-            &[&inputs.tenant, &inputs.caller_role],
+             WHERE r.role_name=$1 ORDER BY u.id",
+            &[&inputs.caller_role],
         )
         .await?
         .into_iter()

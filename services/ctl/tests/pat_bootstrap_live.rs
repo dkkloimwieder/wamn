@@ -242,10 +242,15 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
             .execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)", &[&actor])
             .await
             .unwrap();
-        project.execute("INSERT INTO platform.role (tenant_id,name) VALUES ($1,'admin') ON CONFLICT DO NOTHING",
-            &[&wamn_control::dev::environment::TENANT]).await.unwrap();
-        project.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin')",
-            &[&wamn_control::dev::environment::TENANT, &user]).await.unwrap();
+        project
+            .execute(
+                "INSERT INTO platform.role (name) VALUES ('admin') ON CONFLICT DO NOTHING",
+                &[],
+            )
+            .await
+            .unwrap();
+        project.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'admin')",
+            &[&user]).await.unwrap();
         task.abort();
     }
     wamn_test_postgres::require_prerequisites(&["RESEND_API_KEY", "RESEND_FROM"]);

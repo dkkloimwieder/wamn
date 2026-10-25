@@ -200,11 +200,21 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         .into_iter()
         .enumerate()
     {
-        seed_user(&fixture.environments[index].client, &alice, TENANT, role).await;
+        seed_user(&fixture.environments[index].client, &alice, role).await;
     }
-    seed_user(dev, &alice, OTHER_TENANT, "tenant-outsider").await;
-    seed_user(dev, &bob, TENANT, "auditor").await;
-    seed_user(dev, &service, TENANT, "machine-role").await;
+    assert!(
+        fixture.environments[1]
+            .client
+            .query_one(
+                "SELECT EXISTS (SELECT FROM platform.user_role WHERE user_id=$1::text::uuid)",
+                &[&alice.id().as_str()]
+            )
+            .await
+            .expect_redacted("other environment keeps Alice's role")
+            .get::<_, bool>(0)
+    );
+    seed_user(dev, &bob, "auditor").await;
+    seed_user(dev, &service, "machine-role").await;
     grant(system, &bob, "demo", "dev").await;
     let aud = fixture.targets[0].audience();
 
@@ -392,14 +402,14 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     .await;
 
     dev.execute(
-        "DELETE FROM platform.user_role WHERE tenant_id=$1 AND user_id=$2::text::uuid",
-        &[&TENANT, &alice.id().as_str()],
+        "DELETE FROM platform.user_role WHERE user_id=$1::text::uuid",
+        &[&alice.id().as_str()],
     )
     .await
     .expect_redacted("remove only target principal roles");
     // Alice's other-tenant role and Bob's current-tenant row both remain active.
     refuse(https, alice_pat.token(), aud).await;
-    seed_user(dev, &alice, TENANT, "receiver").await;
+    seed_user(dev, &alice, "receiver").await;
     for status in ["disabled", "invited"] {
         dev.execute(
             "UPDATE platform.\"user\" SET status=$1 WHERE id=$2::text::uuid",
@@ -416,7 +426,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     .await
     .expect_redacted("remove target tenant user");
     refuse(https, alice_pat.token(), aud).await;
-    seed_user(dev, &alice, TENANT, "receiver").await;
+    seed_user(dev, &alice, "receiver").await;
 
     // Same triple and old membership, different current physical incarnation.
     system.batch_execute("UPDATE registry.project_envs SET instance_suffix='n3w00002' WHERE org='demo' AND project='widgets' AND env='dev'")
@@ -1154,17 +1164,17 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
     snapshots
 }
 
-async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &str) {
+async fn seed_user(client: &Client, principal: &Principal, role: &str) {
     client.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'", &[&principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
         .await.expect_redacted("tenant user fixture");
     client
         .execute(
-            "INSERT INTO platform.role (tenant_id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-            &[&tenant, &role],
+            "INSERT INTO platform.role (name) VALUES ($1) ON CONFLICT DO NOTHING",
+            &[&role],
         )
         .await
         .expect_redacted("tenant role fixture");
-    client.execute("INSERT INTO platform.user_role (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3) ON CONFLICT DO NOTHING", &[&tenant, &principal.id().as_str(), &role])
+    client.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING", &[&principal.id().as_str(), &role])
         .await.expect_redacted("exact tenant/principal role fixture");
 }
 
@@ -1540,7 +1550,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     )
     .await
     .expect_redacted("password user");
-    seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
+    seed_user(&fixture.environments[0].client, &alice, "receiver").await;
     grant(&fixture.system.client, &alice, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
         .principal_id()
@@ -1737,7 +1747,7 @@ async fn password_environment_discovery_requires_current_authority() {
     .await
     .expect_redacted("discovery user");
     for database in &fixture.environments {
-        seed_user(&database.client, &alice, TENANT, "receiver").await;
+        seed_user(&database.client, &alice, "receiver").await;
     }
     let actor = PlatformComponent::Provisioning
         .principal_id()
@@ -1816,8 +1826,8 @@ async fn password_environment_discovery_requires_current_authority() {
     fixture.environments[1]
         .client
         .execute(
-            "DELETE FROM platform.user_role WHERE tenant_id=$1 AND user_id=$2::text::uuid",
-            &[&TENANT, &alice.id().as_str()],
+            "DELETE FROM platform.user_role WHERE user_id=$1::text::uuid",
+            &[&alice.id().as_str()],
         )
         .await
         .unwrap();
@@ -1831,7 +1841,7 @@ async fn password_environment_discovery_requires_current_authority() {
         .await
         .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
-    seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
+    seed_user(&fixture.environments[0].client, &alice, "receiver").await;
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();

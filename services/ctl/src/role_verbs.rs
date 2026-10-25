@@ -15,7 +15,7 @@ pub struct UserRoleArgs {
     pub system_database_url: String,
 
     /// Administrative Postgres URL to the registry-derived project database.
-    /// It must be SUPERUSER or BYPASSRLS. Env `WAMN_PG_ADMIN_URL`.
+    /// The login holds administration grants. Env `WAMN_PG_ADMIN_URL`.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
 
@@ -91,7 +91,7 @@ pub struct EnvironmentArgs {
     pub system_database_url: String,
 
     /// Administrative Postgres URL to the registry-derived project database.
-    /// It must be SUPERUSER or BYPASSRLS. Env `WAMN_PG_ADMIN_URL`.
+    /// The login holds administration grants. Env `WAMN_PG_ADMIN_URL`.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
 

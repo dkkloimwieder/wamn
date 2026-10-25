@@ -36,14 +36,13 @@ const QUEUED_RUN_CALLER_SQL: &str = "SELECT \"user\".id::text, \"user\".type, us
          permission.permission \
     FROM platform.\"user\" AS \"user\" \
     LEFT JOIN platform.user_role AS user_role \
-      ON user_role.tenant_id = $1 AND user_role.user_id = \"user\".id \
+      ON user_role.user_id = \"user\".id \
     LEFT JOIN platform.permission AS permission \
-      ON permission.tenant_id = user_role.tenant_id \
-     AND permission.role_name = user_role.role_name \
-   WHERE \"user\".id = $2::text::uuid \
+      ON permission.role_name = user_role.role_name \
+   WHERE \"user\".id = $1::text::uuid \
      AND \"user\".type IN ('service', 'user') AND \"user\".status = 'active'";
 
-/// Resolve the principal of a queued run against its current tenant status
+/// Resolve the principal of a queued run against its current environment status
 /// and role grants.
 ///
 /// With `role`, the run executes with that one role active
@@ -57,12 +56,11 @@ const QUEUED_RUN_CALLER_SQL: &str = "SELECT \"user\".id::text, \"user\".type, us
 /// role it holds.
 pub async fn queued_run_caller(
     client: &(impl tokio_postgres::GenericClient + Sync),
-    tenant: &str,
     principal_id: &str,
     role: Option<&str>,
 ) -> anyhow::Result<AuthenticatedCaller> {
     let rows = client
-        .query(QUEUED_RUN_CALLER_SQL, &[&tenant, &principal_id])
+        .query(QUEUED_RUN_CALLER_SQL, &[&principal_id])
         .await?;
     let first = rows
         .first()
