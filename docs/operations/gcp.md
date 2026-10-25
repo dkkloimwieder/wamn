@@ -869,12 +869,12 @@ It runs `apply-package` and `reconcile-package-data-access` as Jobs, then runs `
 The Jobs skip when their completed input digests match.
 The commands below describe the manual equivalent.
 
-The packages are `wamn_receiving` 2.2.6 and `wamn_wms` 2.1.3. If a tag is missing from the registry, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
+The packages are `wamn_receiving` 2.2.7 and `wamn_wms` 2.1.4. If a tag is missing from the registry, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
-declare -A V=([receiving]=2.2.6 [wms]=2.1.3)
+declare -A V=([receiving]=2.2.7 [wms]=2.1.4)
 for project in receiving wms; do
   gcloud artifacts docker images describe $WAMN_PACKAGE_ARTIFACT_BASE:wamn_$project-${V[$project]} --format="value(image_summary.digest)" \
   || $CARGO_TARGET_DIR/debug/wamn-ctl push-package --package apps/wamn_$project --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE \
@@ -887,7 +887,7 @@ Install each package into its environment. `reconcile-replica-identity` runs for
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 R="--artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE"
-declare -A V=([receiving]=2.2.6 [wms]=2.1.3)
+declare -A V=([receiving]=2.2.7 [wms]=2.1.4)
 for project in receiving wms; do
   $CARGO_TARGET_DIR/debug/wamn-ctl apply-package --package-artifact wamn_$project-${V[$project]} $R \
     --database-url "$(db_url $project)" --tenant dkk--$project--dev
@@ -922,7 +922,7 @@ registry_token
 RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url receiving)" \
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--receiving--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--receiving--dev \
-  --run-schema wamn_run --package wamn_receiving@2.2.6 \
+  --run-schema wamn_run --package wamn_receiving@2.2.7 \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
 echo "$RELEASE_receiving" > $W/release-receiving
 ```
@@ -979,7 +979,7 @@ WAMN_SYSTEM_URL="$(cat $G/identity-reader.url)" WAMN_CONTROL_AUTHORING_PG_URL="$
 WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
 WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=dkk--wms--dev \
   setsid $CARGO_TARGET_DIR/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $G/gate.log 2>&1 < /dev/null &
-cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.3 wms dev \
+cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.4 wms dev \
   apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $G/gate-request.json
 for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:18090/ && break; sleep 1; done
 (umask 077; python3 -c 'import json,sys;print("Authorization: Bearer "+json.load(open(sys.argv[1]))["stringData"]["token"])' \
@@ -997,13 +997,13 @@ The outcome has `status` `completed`. Record the wiring and publish WMS:
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
 $CARGO_TARGET_DIR/debug/wamn-ctl author-wiring --database-url "$(db_url wms)" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
-  --tenant dkk--wms--dev --package-id wamn_wms --package-version 2.1.3 \
+  --tenant dkk--wms--dev --package-id wamn_wms --package-version 2.1.4 \
   --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
 RELEASE_wms=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url wms)" \
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--wms--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--wms--dev \
-  --run-schema wamn_run --package wamn_wms@2.1.3 --wiring "wamn_wms@2.1.3::inventory_move_and_label=2" \
+  --run-schema wamn_run --package wamn_wms@2.1.4 --wiring "wamn_wms@2.1.4::inventory_move_and_label=2" \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
 echo "$RELEASE_wms" > $W/release-wms
 shred -u $G/management-author-pat.json
