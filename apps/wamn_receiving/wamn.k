@@ -16,7 +16,7 @@ manifest.Package {
         item = manifest.Model("item", _schema) {
             table = "item"
             owner = "wamn_receiving"
-            server_owned_fields = ["id"]
+            server_owned_fields = []
             field_text = {item_number = {label = "Item number", visible = True}}
             audit_log = {columns = []}
             operations = {}
@@ -24,7 +24,7 @@ manifest.Package {
         location = manifest.Model("location", _schema) {
             table = "location"
             owner = "wamn_receiving"
-            server_owned_fields = ["id"]
+            server_owned_fields = []
             field_text = {location_code = {label = "Location code", visible = True}}
             audit_log = {columns = []}
             operations = {}
@@ -33,7 +33,7 @@ manifest.Package {
             table = "purchase_order"
             owner = "wamn_receiving"
             client_field_extensible = True
-            server_owned_fields = ["id", "purchase_order_number", "status", "row_version"]
+            server_owned_fields = ["purchase_order_number", "status", "row_version"]
             field_text = {
                 purchase_order_number = {label = "Order number", visible = True}
                 supplier_id = {label = "Supplier", visible = True}
@@ -79,7 +79,7 @@ manifest.Package {
         purchase_order_line = manifest.Model("purchase_order_line", _schema) {
             table = "purchase_order_line"
             owner = "wamn_receiving"
-            server_owned_fields = ["id"]
+            server_owned_fields = []
             field_text = {
                 line_number = {label = "Line", visible = True}
                 item_id = {label = "Item", visible = True}
@@ -92,7 +92,7 @@ manifest.Package {
         receipt = manifest.Model("receipt", _schema) {
             table = "receipt"
             owner = "wamn_receiving"
-            server_owned_fields = ["id", "purchase_order_id", "receipt_reference", "occurred_at"]
+            server_owned_fields = ["purchase_order_id", "receipt_reference", "occurred_at"]
             field_text = {
                 receipt_reference = {label = "Receipt reference", visible = True}
                 purchase_order_id = {label = "Purchase order", visible = True}
@@ -109,7 +109,7 @@ manifest.Package {
         receipt_line = manifest.Model("receipt_line", _schema) {
             table = "receipt_line"
             owner = "wamn_receiving"
-            server_owned_fields = ["id"]
+            server_owned_fields = []
             field_text = {
                 quantity = {label = "Quantity", visible = True}
                 location_id = {label = "Location", visible = True}
@@ -122,7 +122,7 @@ manifest.Package {
             table = "supplier"
             owner = "wamn_receiving"
             min_lengths = {name = 1}
-            server_owned_fields = ["id"]
+            server_owned_fields = []
             field_text = {name = {label = "Supplier name", visible = True}, created_at = {label = "Added"}}
             audit_log = {columns = ["created_at"]}
             operations: {

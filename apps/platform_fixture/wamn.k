@@ -32,7 +32,7 @@ manifest.Package {
             table = "widget"
             owner = "platform_fixture"
             client_field_extensible = True
-            server_owned_fields = ["id", "edit_version"]
+            server_owned_fields = ["edit_version"]
             field_text = {
                 code = {label = "Widget code", description = "The code an operator types to find one widget."}
                 note = {label = "Operator note"}
@@ -61,7 +61,7 @@ manifest.Package {
         widget_maker = manifest.Model("widget_maker", _schema) {
             table = "widget_maker"
             owner = "platform_fixture"
-            server_owned_fields = ["id", "edit_version"]
+            server_owned_fields = ["edit_version"]
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {revision_field = "edit_version", result = "one"}
@@ -82,7 +82,7 @@ manifest.Package {
         widget_tag = manifest.Model("widget_tag", _schema) {
             table = "widget_tag"
             owner = "platform_fixture"
-            server_owned_fields = ["id", "edit_version"]
+            server_owned_fields = ["edit_version"]
             audit_log = {columns = [], retention = "P30D"}
             operations: {
                 update: {writable_fields = ["label"], revision_field = "edit_version", result = "one"}

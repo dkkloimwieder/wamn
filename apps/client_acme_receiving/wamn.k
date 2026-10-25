@@ -29,7 +29,7 @@ manifest.Package {
                 acme_quality_status = "client_acme_receiving"
             }
             constraint_owners = {purchase_order_acme_quality_status_check = "client_acme_receiving"}
-            server_owned_fields = ["id", "purchase_order_number", "supplier_id", "status", "row_version"]
+            server_owned_fields = ["purchase_order_number", "supplier_id", "status", "row_version"]
             operations: {
                 get: {result = "one"}
                 update: {

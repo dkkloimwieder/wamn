@@ -15,7 +15,7 @@ manifest.Package {
         inventory_transaction = manifest.Model("inventory_transaction", _schema) {
             table = "inventory_transaction"
             owner = "wamn_wms"
-            server_owned_fields = ["id"]
+            server_owned_fields = []
             audit_log = {columns = ["created_at", "created_by"]}
             operations: {
                 get: {result = "one"}
@@ -26,7 +26,7 @@ manifest.Package {
             table = "location"
             owner = "wamn_wms"
             min_lengths = {location_code = 1}
-            server_owned_fields = ["id", "row_version"]
+            server_owned_fields = ["row_version"]
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {result = "one"}
@@ -39,7 +39,7 @@ manifest.Package {
             table = "packaging"
             owner = "wamn_wms"
             min_lengths = {packaging_code = 1}
-            server_owned_fields = ["id", "row_version"]
+            server_owned_fields = ["row_version"]
             audit_log = {columns = ["created_at", "created_by", "updated_at", "updated_by"], retention = "unlimited"}
             operations: {
                 get: {revision_field = "row_version", result = "one"}
@@ -67,7 +67,7 @@ manifest.Package {
         packaging_quantity = manifest.Model("packaging_quantity", _schema) {
             table = "packaging_quantity"
             owner = "wamn_wms"
-            server_owned_fields = ["id"]
+            server_owned_fields = []
             audit_log = {columns = ["created_at"]}
             delete_mode = "hard"
             operations: {
@@ -79,7 +79,7 @@ manifest.Package {
             table = "product"
             owner = "wamn_wms"
             min_lengths = {product_code = 1}
-            server_owned_fields = ["id", "row_version"]
+            server_owned_fields = ["row_version"]
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {result = "one"}
