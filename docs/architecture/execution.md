@@ -1072,4 +1072,11 @@ The feed is the `query` operation with its feed part, `feed: { cursor, limit }`,
 Its value is `{ rows, next_cursor, complete }`. Each row carries `id`, `row_version` and `deleted`, and a row that is not deleted carries `data`.
 The page of such a `query` also carries `cursor`, which starts the feed at the page's snapshot.
 The cursor is opaque: the URL-safe base64 of the model name and a snapshot xmin, which [`feed.rs`](../../apps/platform/data/access/src/feed.rs) encodes.
+The statement reads entries from the cursor transaction and uses one snapshot for xmin, xmax, and transaction visibility.
+It reads rows below xmin first, then fills remaining page space with visible rows below xmax.
+Rows follow transaction and id order, with one change per id.
+A cut page below xmin continues after its last transaction and id.
+Any returned row at or above xmin sets `next_cursor` to xmin without an id and `complete` to true.
+These rows repeat on later calls until xmin advances, and the client ignores an equal `row_version`.
+An empty page keeps its incoming cursor, so an unchanged feed still answers 304.
 A cursor of another model, or one that does not decode, refuses with `invalid_input` on `cursor`. A cursor older than the oldest entry a `P<n>D` retention keeps refuses with `cursor_expired`.

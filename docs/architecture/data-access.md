@@ -786,6 +786,11 @@ Authored SQL validation, the SQL lexer, the required schema contract, and grant 
 A custom operation cannot require or map a constraint of a history table.
 The generated data-access evidence grants `wamn_app` `INSERT` on every entry column of the history table, and no update or row lock.
 A model with a change feed ([execution](execution.md#change-feed)) also grants `wamn_app` `SELECT` on `transaction_id`, `row_key`, `type` and `before`, the columns its changes statement reads.
+The changes statement reads entries at or after the cursor transaction.
+One snapshot supplies xmin, xmax, and the visibility test.
+It includes entries below xmin and visible entries below xmax.
+Rows below xmin page first, and visible rows at or above xmin fill the remaining page space.
+A page that carries any such row completes the pass and leaves its next cursor at xmin without an id.
 `create_history_table` also creates an index on `transaction_id`, and apply-package runs it for a present table too, so an older table gains the index.
 The log function is `SECURITY INVOKER`, so the writer needs that grant.
 The reconciler reads the history table like any other package relation and keeps that grant.

@@ -256,7 +256,8 @@ const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8
 /// The change feed of a list read (`docs/plan/wamn-sync.md`, "Change feed").
 ///
 /// The statement reads the history entries of the transactions from the
-/// cursor transaction up to the snapshot xmin, collapsed to one row per id in
+/// cursor transaction, including visible transactions at or above xmin and
+/// below xmax, from one snapshot. It collapses entries to one row per id in
 /// transaction and id order. Each row carries the live row when it is still
 /// in the scope of the list's filters. Otherwise it is a deletion, and it
 /// carries the revision the delete entry left. The outer row carries the
@@ -301,8 +302,11 @@ pub(crate) fn changes(
     {columns}
 FROM (
     SELECT
-        {SNAPSHOT_XMIN} AS feed_end,
+        pg_snapshot_xmin(snapshot)::text::int8 AS feed_end,
+        pg_snapshot_xmax(snapshot)::text::int8 AS feed_max,
+        snapshot,
         {expired} AS expired
+    FROM (SELECT pg_current_snapshot() AS snapshot OFFSET 0) AS current
 ) AS bound
 LEFT JOIN LATERAL (
     SELECT
@@ -318,7 +322,9 @@ LEFT JOIN LATERAL (
             max((entry.before->>'{revision}')::int8) FILTER (WHERE entry.type = 'delete') AS deleted_version
         FROM {history} AS entry
         WHERE entry.transaction_id >= ${transaction}::int8
-          AND entry.transaction_id < bound.feed_end
+          AND (entry.transaction_id < bound.feed_end
+               OR (entry.transaction_id < bound.feed_max
+                   AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))
         GROUP BY (entry.row_key->>'id')::uuid
     ) AS changed
     LEFT JOIN {table} AS model ON model.id = changed.change_id

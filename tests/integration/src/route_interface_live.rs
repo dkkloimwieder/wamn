@@ -1080,6 +1080,187 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
     result
 }
 
+/// A held transaction leaves room for one page of visible commits above xmin.
+/// Replacing the priority row keeps the fixture's two-code constraint intact.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let result = async {
+        let (standard, version) = create_widget(&paths, "standard", "before").await?;
+        let (mut writer, writer_connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls)
+                .await
+                .context("connect the feed writer")?;
+        let writer_connection = tokio::spawn(writer_connection);
+        writer
+            .batch_execute(
+                "BEGIN;
+                 SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
+                        set_config('app.operation', 'admin:feed-reader', true);
+                 INSERT INTO platform.role (tenant_id, name)
+                     SELECT tenant_id, 'reader' FROM platform.user_role WHERE role_name = 'admin';
+                 INSERT INTO platform.permission (tenant_id, role_name, permission)
+                     SELECT tenant_id, 'reader', 'platform-fixture:widget/query'
+                     FROM platform.user_role WHERE role_name = 'admin';
+                 UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
+                 COMMIT;",
+            )
+            .await
+            .context("grant the list permission and move the caller to reader")?;
+        let list = paths.route("/widget/query", &json!([{}])).await?;
+        let cursor = value(&list)?["cursor"].as_str().context("a list cursor")?;
+        let (mut holder, holder_connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls)
+                .await
+                .context("connect the held writer")?;
+        let holder_connection = tokio::spawn(holder_connection);
+        let stamp = "SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'reader'), true),
+                            set_config('app.operation', 'admin:feed-write', true)";
+        let held = holder.transaction().await.context("begin the held transaction")?;
+        held.batch_execute(stamp).await.context("stamp the held transaction")?;
+        let held_row = held
+            .query_one(
+                "UPDATE inventory.widget SET note = 'held', edit_version = edit_version + 1
+                 WHERE code = 'standard' RETURNING id::text, edit_version,
+                 pg_current_xact_id()::text::int8",
+                &[],
+            )
+            .await
+            .context("update the held standard row")?;
+        let xmin: i64 = held_row.get(2);
+        let held_version: i64 = held_row.get(1);
+        anyhow::ensure!(held_version == version + 1, "the held row advances its version");
+        let mut expected = BTreeMap::from([(held_row.get::<_, String>(0), (held_version, false))]);
+        let mut live_id = String::new();
+        for version in 1_i64..=200 {
+            let transaction = writer.transaction().await.with_context(|| format!("begin priority transaction {version}"))?;
+            transaction.batch_execute(stamp).await.with_context(|| format!("stamp priority transaction {version}"))?;
+            let deleted = transaction
+                .execute("DELETE FROM inventory.widget WHERE code = 'priority'", &[])
+                .await
+                .with_context(|| format!("delete the prior priority row in transaction {version}"))?;
+            anyhow::ensure!(deleted == u64::from(version > 1), "delete the previous id once");
+            let row = transaction
+                .query_one(
+                    "INSERT INTO inventory.widget (code, note, edit_version)
+                     VALUES ('priority', 'visible', $1) RETURNING id::text",
+                    &[&version],
+                )
+                .await
+                .with_context(|| format!("insert the priority row in transaction {version}"))?;
+            live_id = row.get(0);
+            anyhow::ensure!(
+                expected.insert(live_id.clone(), (version, version < 200)).is_none(),
+                "each transaction inserts a new id"
+            );
+            transaction.commit().await.with_context(|| format!("commit priority transaction {version}"))?;
+        }
+        let snapshot_xmin: i64 = writer
+            .query_one("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::int8", &[])
+            .await
+            .context("read xmin while the standard row stays uncommitted")?
+            .get(0);
+        anyhow::ensure!(snapshot_xmin == xmin, "the held transaction holds xmin");
+        let read = |cursor: &str| json!([{"feed": {"cursor": cursor, "limit": 100}}]);
+        let first = paths.route("/widget/query", &read(cursor)).await?;
+        let first = value(&first)?.clone();
+        anyhow::ensure!(
+            first["rows"].as_array().context("feed rows")?.len() == 100
+                && first["complete"] == json!(true),
+            "the first page fills with visible rows above xmin: {first}"
+        );
+        let next = first["next_cursor"].as_str().context("a next cursor")?;
+        anyhow::ensure!(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(next)?
+                == format!("widget:{xmin}").as_bytes(),
+            "the cursor is snapshot xmin without an id: {next}"
+        );
+        for row in first["rows"].as_array().context("feed rows")? {
+            let id = row["id"].as_str().context("a change id")?;
+            let transaction: i64 = writer
+                .query_one(
+                    "SELECT max(transaction_id) FROM inventory.widget_history WHERE row_key->>'id' = $1",
+                    &[&id],
+                )
+                .await
+                .with_context(|| format!("read the history transaction of {id}"))?
+                .get(0);
+            anyhow::ensure!(transaction > xmin, "{id} committed above xmin");
+        }
+        let repeated = paths.route("/widget/query", &read(next)).await?;
+        anyhow::ensure!(value(&repeated)? == &first, "visible rows repeat while xmin is held");
+        held.commit().await.context("commit the held standard row")?;
+
+        let mut applied = BTreeMap::<String, i64>::new();
+        let mut applications = BTreeMap::<String, usize>::new();
+        let mut page = first;
+        let mut empty = false;
+        // One repeated page plus three pages can carry all 201 ids after commit.
+        for _ in 0..5 {
+            let rows = page["rows"].as_array().context("feed rows")?;
+            if rows.is_empty() {
+                empty = true;
+                break;
+            }
+            anyhow::ensure!(rows.len() <= 100, "pages stay bounded");
+            for row in rows {
+                let id = row["id"].as_str().context("a change id")?;
+                let version = row["row_version"].as_i64().context("a row_version")?;
+                let &(final_version, deleted) = expected.get(id).context("an expected id")?;
+                anyhow::ensure!(
+                    version == final_version && row["deleted"] == json!(deleted),
+                    "{id} arrives with its final row_version and deletion: {row}"
+                );
+                if deleted {
+                    anyhow::ensure!(row.get("data").is_none(), "a deleted row has no data");
+                } else {
+                    let (code, note) = if row["id"] == standard {
+                        ("standard", "held")
+                    } else {
+                        anyhow::ensure!(id == live_id, "the last priority row stays live");
+                        ("priority", "visible")
+                    };
+                    anyhow::ensure!(
+                        row["data"]["id"] == row["id"]
+                            && row["data"]["code"] == json!(code)
+                            && row["data"]["note"] == json!(note)
+                            && row["data"]["edit_version"] == json!(version.to_string()),
+                        "the live row carries its final data: {row}"
+                    );
+                }
+                if applied.get(id).is_none_or(|previous| version > *previous) {
+                    applied.insert(id.to_owned(), version);
+                    *applications.entry(id.to_owned()).or_default() += 1;
+                }
+            }
+            let next = page["next_cursor"].as_str().context("a next cursor")?;
+            let answer = paths.route("/widget/query", &read(next)).await?;
+            page = value(&answer)?.clone();
+        }
+        anyhow::ensure!(empty, "the feed reaches an empty page after the held commit");
+        anyhow::ensure!(applied.len() == 201, "every written id arrives: {}", applied.len());
+        anyhow::ensure!(applications.values().all(|count| *count == 1), "each id applies once");
+        drop(holder);
+        drop(writer);
+        holder_connection.await.context("join the held connection")?.context("close the held connection")?;
+        writer_connection.await.context("join the feed writer connection")?.context("close the feed writer connection")?;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
 /// A role without the widget list's permission is refused the feed exactly as
 /// it is refused the list: the feed is the list read with its feed part.
 ///

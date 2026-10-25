@@ -2570,7 +2570,10 @@ fn a_logged_list_read_gets_its_change_feed() {
     )
     .unwrap();
     for part in [
-        "pg_snapshot_xmin(pg_current_snapshot())",
+        "pg_snapshot_xmin(snapshot)::text::int8 AS feed_end",
+        "pg_snapshot_xmax(snapshot)::text::int8 AS feed_max",
+        "FROM (SELECT pg_current_snapshot() AS snapshot OFFSET 0) AS current",
+        "AND (entry.transaction_id < bound.feed_end\n               OR (entry.transaction_id < bound.feed_max\n                   AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))",
         "FROM gadget_history AS entry",
         "LEFT JOIN gadget AS model ON model.id = changed.change_id",
         "min(entry.transaction_id)",

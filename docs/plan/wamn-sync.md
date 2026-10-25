@@ -177,14 +177,20 @@ changes(<the same arguments as list>, cursor: string?, limit: int32?) ->
 ```
 
 - `cursor` absent: the read starts from the current end of history and returns no rows. The client takes a snapshot with `list` first, then opens the feed with the cursor that `list` returns in its outcome (see below).
-- `rows` are ordered by history position ascending; one entry per row per call, the latest state wins (collapsed server-side, so a row changed five times since the cursor appears once).
+- `rows` follow transaction and id order. The server collapses changes to one entry per id with its latest state.
 - `deleted: true` carries `id` and `row_version` only; `data` is absent.
-- `complete: false` means more rows exist past `limit`; the client calls again with `next_cursor` before serving the result as current.
+- `complete: false` means the page stopped below xmin and more rows exist. The client continues with `next_cursor` within the same pass.
 - `limit` defaults to the model's declared page maximum; the platform ceiling applies.
 
 ### Cursor
 
-The cursor is an opaque string: base64 of the model name and the snapshot xmin the host read up to (Epic 2b replaced the history position, see Assumptions). A page that stops at its limit also carries the transaction and the id of its last row. The frontend never parses it. Postgres internals (`xid8`, history `position`) never cross into the contract; the cursor encodes them, the contract does not name them. This keeps the existing rule for paging cursors.
+The cursor is an opaque string that encodes the model name and transaction with URL-safe base64.
+The frontend never parses it.
+All transactions below the snapshot xmin ended before the snapshot.
+A cut page with only rows below xmin carries its last transaction and id.
+A page with any visible row at or above xmin returns xmin without an id and sets `complete` to true.
+An empty page keeps the incoming cursor.
+Postgres internals stay inside the opaque cursor.
 
 ### Snapshot handoff
 
@@ -194,7 +200,18 @@ Implementation (Epic 2b): the list statement returns the cursor as a column, so 
 
 ### Source
 
-The per-relation history tables and their trigger functions already exist on main. `changes` is a generated SQL statement over the model's history table: the entries with `transaction_id` from the cursor xmin up to the statement's snapshot xmin, collapsed to one row per id in transaction and id order, with `limit`. Each row joins the live row for `data`. A row that is gone, or no longer matches the list's filters, is marked `deleted`. Migration `0021_remove_model_versions.sql` removed the per-model version table, so no cheap poll signal exists.
+The per-relation history tables and their trigger functions already exist on main.
+`changes` reads history entries at or after the cursor transaction.
+One snapshot supplies xmin, xmax, and the visibility test.
+Entries qualify below xmin, or below xmax when `pg_visible_in_snapshot` marks their transaction as visible.
+The statement collapses entries to one row per id and orders them by transaction and id.
+Rows below xmin page as before.
+
+When those rows end inside a page, visible rows at or above xmin fill the remaining space up to `limit`.
+These rows repeat on later calls until xmin passes them, and the client ignores an equal `row_version`.
+Each row joins the live row for `data`.
+A row that is gone, or no longer matches the filters, is marked `deleted`.
+Migration `0021_remove_model_versions.sql` removed the per-model version table, so no cheap poll signal exists.
 
 ### Delivery
 
@@ -595,7 +612,8 @@ Testing budget follows the existing rule: build, clippy, unit per issue; live ta
 
 | Assumption | How to verify | Invalidated if false |
 | --- | --- | --- |
-| False (Epic 2b): the history `position` orders commits. It is an identity value that a write takes at insert time ([`record-history.sql`](../../deploy/sql/record-history.sql)), so a writer that takes a lower position and commits later is missed by a reader that passed it | Read the history table definition | Replaced: the cursor carries the snapshot xmin. `changes` reads the entries of the transactions from the cursor xmin up to its own snapshot xmin, so every entry it returns belongs to an ended transaction and none is missed. A change can arrive twice, and the client ignores an equal `row_version`. A long open transaction delays the feed. The history table has an index on `transaction_id` |
+| False (Epic 2b): the history `position` orders commits. It is an identity value that a write takes at insert time ([`record-history.sql`](../../deploy/sql/record-history.sql)), so a writer that takes a lower position and commits later is missed by a reader that passed it | Read the history table definition | Replaced: the cursor carries the snapshot xmin. `changes` reads entries from the cursor transaction, including visible commits at or above its snapshot xmin. The cursor never advances past those commits. A change can arrive twice, and the client ignores an equal `row_version`. The history table has an index on `transaction_id` |
+| Feed latency under a long-open transaction is one page of commits. Beyond that it waits for xmin | Hold one transaction open and commit 200 others. Read with limit 100, then commit the held transaction and drain the feed | Visible rows beyond one page wait until xmin advances |
 | History retention covers the longest offline period plus one day | Retention exists: `audit_log.retention` (`none`, `unlimited` or `P<n>D`), pruned daily by the retention task ([data access](../architecture/data-access.md)). WMS packaging declares `unlimited`, so its history is unbounded today | `cursor_expired` becomes common; `fill` runs on every reopen. `cursor_expired` answers a cursor older than the oldest entry the retention keeps, only for a `P<n>D` retention |
 | Answered (Epic 2b): `list` and the cursor read share one snapshot | The cursor is a column of the list statement itself, `pg_snapshot_xmin(pg_current_snapshot())`, so one statement reads the rows and the cursor at one snapshot, with no shared transaction. An outer row carries the cursor when the page has no rows | — |
 | A model with no `row_version` cannot be synced | A model with a list read gets a feed only when it also has a history table and a revision field on that read | Epic 2b skips such models, and Epic 5 adds the build refusal and `feed = false` |

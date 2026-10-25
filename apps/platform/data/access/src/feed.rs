@@ -3,9 +3,9 @@
 //!
 //! The cursor is opaque to the client: the URL-safe base64 of
 //! `<model>:<transaction>` or `<model>:<transaction>:<id>`. `transaction` is
-//! the snapshot xmin the read started from. A page that stops at its limit
-//! also carries the transaction and the id of its last row, so the next read
-//! continues after that row.
+//! the snapshot xmin the read started from. A cut page below xmin also carries
+//! the transaction and the id of its last row. A page with visible rows at or
+//! above xmin completes the pass and keeps its next cursor at xmin.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -90,10 +90,12 @@ impl<Row> Changes<Row> {
     /// A page of up to `limit` changes from a statement that read up to
     /// `limit + 1`, in transaction and id order.
     ///
-    /// `end` is the snapshot xmin of the statement. A complete page with rows
-    /// continues from `end`. A page with no rows keeps `cursor`, so an
-    /// unchanged feed keeps its cursor. With no cursor, the feed starts at
-    /// `end`.
+    /// `end` is the snapshot xmin of the statement. A page with any row at or
+    /// above `end` is complete and continues from `end`, without an id.
+    /// Otherwise, a cut page continues after its last row, and a complete
+    /// page with rows continues from `end`. A page with no rows keeps `cursor`,
+    /// so an unchanged feed keeps its cursor. With no cursor, the feed starts
+    /// at `end`.
     ///
     /// # Errors
     ///
@@ -106,9 +108,10 @@ impl<Row> Changes<Row> {
         limit: i64,
     ) -> Result<Self, Invalid> {
         let limit = usize::try_from(limit).unwrap_or(0);
-        let complete = rows.len() <= limit;
+        let within_limit = rows.len() <= limit;
+        rows.truncate(limit);
+        let complete = within_limit || rows.iter().any(|row| row.transaction >= end);
         let next_cursor = if !complete {
-            rows.truncate(limit);
             let last = rows.last().ok_or(Invalid)?;
             encode(
                 model,
@@ -240,6 +243,55 @@ mod tests {
             Cursor {
                 transaction: 800,
                 after: Some(Uuid(ID.to_owned()))
+            }
+        );
+    }
+
+    #[test]
+    fn a_page_fills_above_xmin_and_completes_even_with_an_extra_row() {
+        for count in [100, 101] {
+            let rows = (0..count)
+                .map(|index| {
+                    changed(
+                        104 + index,
+                        &format!("00000000-0000-4000-8000-{index:012x}"),
+                    )
+                })
+                .collect();
+            let page = Changes::new("packaging", Some("old"), 105, rows, 100).unwrap();
+            assert!(page.complete);
+            assert_eq!(page.rows.len(), 100);
+            assert_eq!(
+                page.rows.last().unwrap().id,
+                "00000000-0000-4000-8000-000000000063"
+            );
+            assert_eq!(
+                decode(&page.next_cursor, "packaging").unwrap(),
+                Cursor {
+                    transaction: 105,
+                    after: None,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn an_extra_row_above_xmin_does_not_complete_a_cut_page_below_it() {
+        let page = Changes::new(
+            "packaging",
+            Some("old"),
+            105,
+            vec![changed(104, ID), changed(106, ID)],
+            1,
+        )
+        .unwrap();
+        assert!(!page.complete);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            decode(&page.next_cursor, "packaging").unwrap(),
+            Cursor {
+                transaction: 104,
+                after: Some(Uuid(ID.to_owned())),
             }
         );
     }
