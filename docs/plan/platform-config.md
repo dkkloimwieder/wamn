@@ -480,7 +480,7 @@ Each rule has one check that runs in the platform test set.
 
 ### Rules
 
-Baseline: `origin/main` at `17f777f81`, then C1 done at `3bb4c488e`. C2.1 to C2.3 are done on main at `4c3725f2d`, and C2 stays open until C2.4 is finished. C3 is filed as `wamn-vzbx0` and starts after C2.4 closes. Epic numbering: C1 schema (done), C2 numbering (scoped), C3 connections/bindings/targets, C4 files (now, integrations agent after C3), C5 admin screens (UI after M6), C6 active role (UI after M4), C7 environment copy and seed rows (platform-install after E5), C8 transaction refusal (perf-arch after A5), C9 loadable connectors (integrations after C4), C10 local environments (edge owner). Queues: integrations C2 → C3 → C4 → C9; platform UI M3 → M4 → C6 → M5 → M6 → C5; platform-install E4 → E5 → C7; perf-arch M6/M7 → A5 → C8.
+Baseline: `origin/main` at `17f777f81`, then C1 done at `3bb4c488e`. C2.1 to C2.3 are done on main at `4c3725f2d`. The C2.4 decouple and counter authority work is on main at `435f82885` and `b343b608a` (platform 0.1.108). C2 stays open until C2.4 is finished. C3 is filed as `wamn-vzbx0` and starts after C2.4 closes. Epic numbering: C1 schema (done), C2 numbering (scoped), C3 connections/bindings/targets, C4 files (now, integrations agent after C3), C5 admin screens (UI after M6), C6 active role (UI after M4), C7 environment copy and seed rows (platform-install after E5), C8 transaction refusal (perf-arch after A5), C9 loadable connectors (integrations after C4), C10 local environments (edge owner). Queues: integrations C2 → C3 → C4 → C9; platform UI M3 → M4 → C6 → M5 → M6 → C5; platform-install E4 → E5 → C7; perf-arch M6/M7 → A5 → C8.
 
 The rules of `platform-deploy.md` "How this plan is worked" apply (worktree lane, ≤3 issues per epic, build+clippy+fmt+unit per issue, fast-forward merge after review, report ≤10 lines at merge). Plus:
 
@@ -489,15 +489,15 @@ The rules of `platform-deploy.md` "How this plan is worked" apply (worktree lane
 - One agent per lane that touches `crates/control`. Epics C1–C4 run in sequence in the integrations agent; the UI agent and platform-install agent keep their own epics.
 - Platform version bumps as rule 6 says. C1 and C2 are host-plugin changes, so they are image bumps; plan the build with the cloud path.
 
-### What exists today (facts, main `10f06916f`, platform 0.1.105)
+### What exists today (facts, main `9f1788812`, platform 0.1.108)
 
 | spec item | today | gap |
 | --- | --- | --- |
 | `platform` schema | Built in C1 and renamed to singular names in C2 (migrations 0024 to 0028). `user`, `role`, `user_role`, `permission`, `api_key`, `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence`, `number_counter` and `setting` exist. The application role holds the invariant 1 grants (`crates/control/lib/tests/platform_grants_live.rs`). The control host writes the rows as `wamn_administration`. | the application role also holds `SELECT` on `setting`, and `setting.scope_id` is text (docs audit item 5, open) |
 | org boundary | Migration 0031 removed the tenant column, the row policy and the tenant key index from `platform.user` and the configuration tables (wamn-83eth.6). wamn-dev never ran 0031, so it was rewritten in place (wamn-83eth.7). | `role`, `user_role`, `permission`, `api_key` and `environment` keep `tenant_id`, a row policy and two-column foreign keys: C3.1 |
 | transaction claims | `app.user_id`, `app.role`, `app.operation` and `app.application` are set with `set_config` at the host-opened transaction. `app.application` is for logging only. | none |
-| numbering | Built in C2, see "C2 numbering" below. `next-number` and `peek-number` take the record as JSON text. The route is `number_counter.set` and refuses any `per=` counter. `peek-number` returns the last number issued, with no lock. | C2.4 |
-| counter authority | `bump_counter`, `assign_counter` and `set_counter` check only that the sequence exists. The plugin resolves the sequence id from the application in host state (wamn-9e4ks). A run-time text check refuses guest SQL that names a counter function or writes `platform.*` (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`). | C2.4.6: a parsed check at component admission |
+| numbering | Built in C2, see "C2 numbering" below. `next-number` and `peek-number` take a key map of the values the pattern names, and every declared sequence gets `sequences::<name>::next` and `peek`. The route is `number_counter.set`. It refuses any `per=` counter, renders nothing and answers `{"value": n}`. `peek-number` returns the last number issued, with no lock. | C2.4.8 to C2.4.14 |
+| counter authority | `bump_counter`, `assign_counter` and `set_counter` check only that the sequence exists. The plugin resolves the sequence id from the application in host state (wamn-9e4ks). Component admission and publish parse each declared statement with `pg_query` and refuse a counter function call, a `platform.*` write and the other constructs under Numbering (`crates/control/lib/src/component_admission/declared_sql.rs`). The run-time text check stays (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`). | who may author backfill SQL (`wamn-o1hwr`) |
 | connections | org-scoped connection (`registry.org_connections`, credentials file `orgs`); `wamn_integration` package (`setting`, `log`); one service principal per scheduled or integration application with the declared-dependency role (Epics 4–5, `integrations.md`) | C3.2 and C3.3 |
 | roles | per application environment; a request is checked against every role the token carries; the host derives a role only when the caller holds exactly one | active-role claim map and picker: C6 |
 | revocation | The host keeps an auth fact only while it watches the NATS KV bucket `wamn-auth`. A drop on that bucket reaches the next request. A host without the bucket keeps no fact and reads on every request (wamn-f2qud). | none |
@@ -549,8 +549,10 @@ C2 is `wamn-83eth`. Its code ships from platform 0.1.100. The work on main:
 | a host without the auth bucket keeps no auth facts | `wamn-f2qud` | `27ef3d199` (0.1.103) |
 | component Clippy passes in the integration components | `wamn-cih1c` | `ac41e969b` (0.1.104) |
 | `wamn-identity` keeps serving after its supervisor closes stderr | `wamn-dihkz` | `e8b00541a` (0.1.105) |
+| C2.4 decouple: the key map, a binding for every sequence, the numbered-field key rule, `set_counter` without the dry render, the copied date code removed | `wamn-83eth.8` to `.12`, `.21`, `.22`, `.25` | `435f82885` (0.1.108) |
+| C2.4 counter authority: the parsed check of declared SQL at admission and publish | `wamn-83eth.13` | `b343b608a` (0.1.108) |
 
-The owner's review of C2 (2026-10-24) opened C2.4, `wamn-83eth.7` to `.27`. C2 closes when C2.4 is finished. Its rulings replace the C2 rulings below where they differ:
+The owner's review of C2 (2026-10-24) opened C2.4, `wamn-83eth.7` to `.27`. `.7` to `.13`, `.21`, `.22` and `.25` are done. C2 closes when C2.4 is finished. Its rulings replace the C2 rulings below where they differ:
 
 - Sequences and records are independent. A package declares a sequence and its default pattern, and the admin owns the pattern after that.
 - `next-number(name, keys)` and `peek-number(name, keys)` take a key map with only the values the pattern names (`per=`, `reset=`, `{field:}`). A bare `{seq}` or `{date:}` pattern takes none. Any command can call them. A field with `number = "<sequence>"` is one caller, and the generated insert passes that model's fields as the keys (C2.4.1).
