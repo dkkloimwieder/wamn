@@ -1669,7 +1669,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     dev_b.release = DeclaredRelease::Digest(digest_b.clone());
     apply(&dev_b, "dev-b").await?;
     let after_b = run.live_digests(&name).await?;
-    let rolled = environment::rollback::rollback(&platform, &dev_triple, "kind check").await?;
+    // A rollback renders the host group as an apply does, so it takes the
+    // event host group the dev applies wrote. Without it the dev host has no
+    // events binding, and its materializer cannot start.
+    let mut events_platform = platform.clone();
+    events_platform.host_group = Some(work.join("dev-event-host-group.yaml"));
+    let rolled =
+        environment::rollback::rollback(&events_platform, &dev_triple, "kind check").await?;
     let after_rollback = run.live_digests(&name).await?;
     let shown_after = environment::show::show(&platform, &dev_triple).await?;
     let history = run
