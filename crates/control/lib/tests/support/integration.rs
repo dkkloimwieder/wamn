@@ -27,8 +27,8 @@ use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_test_infrastructure::event_broker;
 
 use super::{
-    ConnectionDefinition, DeclaredRelease, EnvironmentDocument, NAMESPACE, ORG, POLICY, PROJECT,
-    Run, http_connection, qualification_artifact,
+    DeclaredRelease, EnvironmentDocument, NAMESPACE, ORG, POLICY, PROJECT, Run, http_connection,
+    qualification_artifact,
 };
 
 const ENVIRONMENT: &str = "integration";
@@ -489,6 +489,7 @@ pub async fn exercise(
         dup_window_secs: 120,
     });
     let mut document = EnvironmentDocument {
+        target: "cloud".into(),
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENVIRONMENT.into(),
@@ -501,33 +502,28 @@ pub async fn exercise(
         applications: BTreeMap::from([(
             connector.to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connections: std::collections::BTreeMap::new(),
                 packages: [connector, "wamn_integration", CONSUMER]
                     .map(str::to_owned)
                     .into(),
             },
         )]),
-        connections: BTreeMap::new(),
         floors: BTreeMap::new(),
     };
-    if connector == "netsuite" {
-        wamn_control::org_connection::declare(&wamn_control::org_connection::DeclareConnectionRequest {
-            system_database_url: platform.system_database_url.clone(),
-            org: ORG.into(), name: "netsuite".into(),
-            requirement_type: wamn_catalog::RequirementType::Http,
-            definition: json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
-        }, &platform.auth_changes().await?).await?;
-        document.connections.insert(
-            "upstream".into(),
-            ConnectionDefinition::Org {
-                org: "netsuite".into(),
-            },
-        );
-    } else {
-        document.connections.insert("upstream".into(), ConnectionDefinition::Inline {
-            requirement_type: wamn_catalog::RequirementType::Http,
-            definition: json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
-        });
-    }
+    super::org_bindings::bind(
+        &platform,
+        &mut document,
+        connector,
+        "upstream",
+        if connector == "netsuite" {
+            "netsuite"
+        } else {
+            "upstream"
+        },
+        "http",
+        json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
+    )
+    .await?;
     // The preceding edge paging assertion used the same route. A fresh process
     // gives this independent flow its own page-two refusal and request log.
     run.run(
@@ -711,11 +707,26 @@ pub async fn exercise(
         digest: &digest,
         applications: &environment::show::serving_applications(&platform, &scope).await?,
     };
+    let source_id: String = project
+        .query_one(
+            "SELECT external_system_id::text FROM platform.connection WHERE name=$1",
+            &[&if connector == "netsuite" {
+                "netsuite"
+            } else {
+                "upstream"
+            }],
+        )
+        .await?
+        .get(0);
     let read = |name: &str| -> anyhow::Result<WiringDocument> {
         let mut value = wamn_schema_generator::operation_reference::read_authored_document(
             &repository.join(format!("apps/{connector}/publication/wirings/{name}.json")),
             wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
         )?;
+        if name == pull_wiring(connector) {
+            value["nodes"]["rows"]["params"]["parameters"] =
+                json!({"external_system_id":source_id});
+        }
         if connector == "netsuite" && name == "netsuite_pull" {
             value["nodes"]["page"]["params"]["path-and-query"] =
                 json!("/services/rest/query/v1/suiteql?limit=2");
@@ -881,6 +892,7 @@ async fn publish(
         applications: [(
             connector.to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connections: std::collections::BTreeMap::new(),
                 packages: manifests.iter().map(|m| m.package.id.clone()).collect(),
             },
         )]
@@ -1298,7 +1310,7 @@ async fn assertions(
         let rows: Value = project.query_one(
             "SELECT jsonb_build_object(\
             'runs', (SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY created_at), '[]') FROM wamn_run.runs r WHERE tenant_id=$1 AND package_id='rest_connector' AND wiring_id='rest_item'),\
-            'items', (SELECT COALESCE(jsonb_agg(to_jsonb(i) ORDER BY key), '[]') FROM rest_consumer_fixture.item i),\
+            'items', (SELECT COALESCE(jsonb_agg(jsonb_build_object('key',key,'name',name) ORDER BY key), '[]') FROM rest_consumer_fixture.item i),\
             'last_synced_at', (SELECT value FROM wamn_integration.setting WHERE key='last_synced_at'),\
             'logs', (SELECT COALESCE(jsonb_agg(to_jsonb(l) ORDER BY record_id), '[]') FROM wamn_integration.log l))", &[&tenant],
         ).await?.get(0);
@@ -1334,6 +1346,8 @@ async fn assertions(
             );
             let expected = json!([{"key":"five","name":"Fifth"},{"key":"four","name":"Fourth"},{"key":"one","name":"First"},{"key":"three","name":"Third"},{"key":"two","name":"Second"}]);
             ensure!(rows["items"] == expected, "consumer rows differ: {rows}");
+            let provenance: bool = project.query_one("SELECT count(*) = 5 AND bool_and(external_id = key AND external_system_id IS NOT NULL) FROM rest_consumer_fixture.item", &[]).await?.get(0);
+            ensure!(provenance, "consumer records must retain source provenance");
             let logs = rows["logs"].as_array().unwrap();
             ensure!(
                 logs.len() == 5

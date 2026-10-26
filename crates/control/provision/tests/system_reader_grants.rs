@@ -472,6 +472,32 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         ],
     );
 
+    assert_eq!(
+        load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
+        vec![
+            "relation|identity|credential|SELECT|false".to_owned(),
+            "relation|registry|connection_generation|SELECT|false".to_owned(),
+            "relation|registry|connection|SELECT|false".to_owned(),
+            "relation|registry|project_connection|SELECT|false".to_owned(),
+            "schema|identity|identity|USAGE|false".to_owned(),
+            "schema|registry|registry|USAGE|false".to_owned(),
+        ],
+        "the connection reader holds exactly its credential and connection read surface"
+    );
+    assert_eq!(
+        reader_sqlstate(
+            &reader_url[2].1,
+            "SELECT connection_id FROM registry.project_connection"
+        ),
+        None,
+        "the connection reader can test project enablement"
+    );
+    assert_eq!(
+        reader_sqlstate(&reader_url[2].1, "DELETE FROM registry.project_connection"),
+        Some("42501".to_owned()),
+        "the connection reader cannot change project enablement"
+    );
+
     let identity_role = &reader_url[0].2;
     let mut probes = format!(
         "DO $probe$ DECLARE r text := '{identity_role}'; BEGIN \

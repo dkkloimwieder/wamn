@@ -1036,7 +1036,7 @@ mod tests {
                 }
             }
         },
-        "connections":["postgres"],
+        "connections":{},
         "components":{"test_package":{"connections":["postgres"]}}
     }"#;
 

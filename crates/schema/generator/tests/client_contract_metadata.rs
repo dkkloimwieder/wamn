@@ -47,7 +47,7 @@ fn manifest() -> Value {
                 "operations": operations
             }
         },
-        "connections": ["postgres"],
+        "connections": {},
         "components": {"example": {"connections": ["postgres"]}}
     })
 }

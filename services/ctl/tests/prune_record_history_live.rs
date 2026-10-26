@@ -136,7 +136,7 @@ fn write_package(root: &Path) {
             "state": "unsatisfied"
         },
         "models": models,
-        "connections": ["postgres"],
+        "connections": {},
         "components": {"data": {"connections": ["postgres"]}}
     });
     let migration = RELATIONS

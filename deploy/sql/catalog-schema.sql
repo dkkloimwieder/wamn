@@ -228,12 +228,14 @@ CREATE TABLE catalog.connection_bindings (
     store_alias          text        NOT NULL CHECK (store_alias <> ''),
     environment          text        NOT NULL CHECK (environment <> ''),
     instance_id          text        NOT NULL CHECK (instance_id <> ''),
+    package_id           text        NOT NULL DEFAULT '',
+    mode                 text        NOT NULL DEFAULT 'write' CHECK (mode IN ('read', 'write')),
     binding_status       text        NOT NULL CHECK (binding_status IN ('active', 'disabled')),
     validation_status    text        NOT NULL CHECK (validation_status IN ('valid', 'invalid')),
     validation_hash      text        NOT NULL CHECK (validation_hash ~ '^sha256:[0-9a-f]{64}$'),
     bound_at             timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT connection_bindings_pkey
-        PRIMARY KEY (tenant_id, manifest_digest, component_digest, store_alias),
+        PRIMARY KEY (tenant_id, manifest_digest, component_digest, store_alias, package_id),
     CONSTRAINT connection_bindings_release_fkey
         FOREIGN KEY (tenant_id, manifest_digest)
         REFERENCES catalog.releases (tenant_id, manifest_digest),

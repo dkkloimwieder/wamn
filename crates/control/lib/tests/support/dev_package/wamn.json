@@ -31,6 +31,6 @@
       "cdc": "excluded"
     }
   },
-  "connections": ["postgres"],
+  "connections": {},
   "components": { "records": { "connections": ["postgres"] } }
 }

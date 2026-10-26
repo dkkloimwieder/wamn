@@ -37,7 +37,7 @@ use tokio_postgres::NoTls;
 use wamn_catalog::{ConnectionTypeDescriptor, RequirementType};
 use wamn_runtime::connection_generation::definition_hash;
 use wamn_schema_control::connections::{
-    activate_connection_generation_sql, insert_component_connection_binding_sql,
+    activate_connection_generation_sql, insert_component_connection_binding_with_mode_sql,
     insert_connection_generation_sql, insert_connection_instance_sql,
     lock_connection_selection_sql, select_connection_instance_sql, set_org_connection_source_sql,
 };
@@ -54,7 +54,7 @@ SELECT requirement.requirement_json::text, requirement.requirement_hash \
              convert_from(release.canonical_bytes, 'UTF8')::jsonb -> 'components' \
          ) AS component(value) \
       WHERE release.tenant_id = $1 AND release.manifest_digest = $4 \
-        AND component.value -> 'descriptor' ->> 'component-digest' = $2)";
+        AND component.value -> 'descriptor' ->> 'component-digest' = $2 AND ($5 = '' OR component.value ->> 'package-id' = $5))";
 const FIRST_GENERATION: i64 = 1;
 /// Enable a disabled instance again, at the revision the caller read.
 const ENABLE_INSTANCE_SQL: &str = "\
@@ -215,6 +215,19 @@ pub use wamn_runtime::connection_generation::binding_validation_subject as valid
 /// nothing, and a disabled instance of the same type is enabled again
 /// (docs/plan/platform-deploy.md R22).
 pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnection> {
+    bind_with_mode(args, wamn_schema_generator::ConnectionMode::Write, "").await
+}
+
+/// Bind a release alias with the mode declared by its package.
+pub async fn bind_with_mode(
+    args: &BindConnectionRequest,
+    mode: wamn_schema_generator::ConnectionMode,
+    package_id: &str,
+) -> anyhow::Result<BoundConnection> {
+    let mode = match mode {
+        wamn_schema_generator::ConnectionMode::Read => "read",
+        wamn_schema_generator::ConnectionMode::Write => "write",
+    };
     let definition = &args.definition;
     validate_definition(args.requirement_type, definition)?;
     let descriptor = args.requirement_type.descriptor();
@@ -224,7 +237,7 @@ pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnectio
         .await
         .context("connect to the project-environment database")?;
     let connection_task = tokio::spawn(connection);
-    let result = bind_in(&mut client, args, &descriptor, definition).await;
+    let result = bind_in(&mut client, args, &descriptor, definition, mode, package_id).await;
     drop(client);
     connection_task
         .await
@@ -238,6 +251,8 @@ async fn bind_in(
     args: &BindConnectionRequest,
     descriptor: &ConnectionTypeDescriptor,
     definition: &Value,
+    mode: &str,
+    package_id: &str,
 ) -> anyhow::Result<BoundConnection> {
     let transaction = client
         .transaction()
@@ -261,6 +276,7 @@ async fn bind_in(
                 &args.component_digest,
                 &args.store_alias,
                 &args.manifest_digest,
+                &package_id,
             ],
         )
         .await
@@ -301,14 +317,15 @@ async fn bind_in(
     ));
     let existing_binding = transaction
         .query_opt(
-            "SELECT environment, instance_id, binding_status, validation_status \
+            "SELECT environment, instance_id, binding_status, validation_status, mode \
            FROM catalog.connection_bindings WHERE tenant_id = $1 \
-            AND manifest_digest = $2 AND component_digest = $3 AND store_alias = $4",
+            AND manifest_digest = $2 AND component_digest = $3 AND store_alias = $4 AND package_id = $5",
             &[
                 &args.tenant(),
                 &args.manifest_digest,
                 &args.component_digest,
                 &args.store_alias,
+                &package_id,
             ],
         )
         .await?;
@@ -317,7 +334,8 @@ async fn bind_in(
             binding.get::<_, String>(0) == args.environment
                 && binding.get::<_, String>(1) == args.instance_id
                 && binding.get::<_, String>(2) == "active"
-                && binding.get::<_, String>(3) == "valid",
+                && binding.get::<_, String>(3) == "valid"
+                && binding.get::<_, String>(4) == mode,
             "the existing binding has a different scope, instance, or validation state"
         );
     }
@@ -331,7 +349,7 @@ async fn bind_in(
     if existing_binding.is_none() {
         transaction
             .execute(
-                insert_component_connection_binding_sql(),
+                insert_component_connection_binding_with_mode_sql(),
                 &[
                     &args.tenant(),
                     &args.manifest_digest,
@@ -342,6 +360,8 @@ async fn bind_in(
                     &"active",
                     &"valid",
                     &validation_digest,
+                    &mode,
+                    &package_id,
                 ],
             )
             .await
@@ -391,10 +411,17 @@ fn validate_handle(instance: &ConnectionInstance) -> anyhow::Result<()> {
             .check_credential_handle(&instance.definition, instance.credential_handle.as_deref())
             .map_err(anyhow::Error::msg),
         Some(name) => {
-            ensure!(
-                instance.requirement_type == RequirementType::Http,
-                "org connections support only http"
-            );
+            if instance.requirement_type == RequirementType::Blobstore
+                && instance.definition["provider"] == "gcs"
+            {
+                return instance
+                    .requirement_type
+                    .check_credential_handle(
+                        &instance.definition,
+                        instance.credential_handle.as_deref(),
+                    )
+                    .map_err(anyhow::Error::msg);
+            }
             let handle = instance
                 .credential_handle
                 .as_deref()
@@ -554,6 +581,38 @@ mod tests {
     }
 
     #[test]
+    fn org_blobstores_keep_the_provider_credential_contract() {
+        let mut instance = ConnectionInstance {
+            database_url: String::new(),
+            org: "acme".into(),
+            project: "one".into(),
+            environment: "dev".into(),
+            instance_id: "app/files".into(),
+            requirement_type: RequirementType::Blobstore,
+            definition: serde_json::json!({"endpoint":"https://s3.example","container":"files","prefix":"app/"}),
+            credential_handle: Some("org:acme:files@1".into()),
+            org_connection_name: Some("files".into()),
+        };
+        validate_handle(&instance).unwrap();
+        instance.credential_handle = Some("org:other:files@1".into());
+        assert!(validate_handle(&instance).is_err());
+        instance.definition =
+            serde_json::json!({"provider":"gcs","container":"files","prefix":"app/"});
+        assert!(validate_handle(&instance).is_err());
+        instance.credential_handle = None;
+        validate_handle(&instance).unwrap();
+        let mut resolved = crate::org_connection::ResolvedConnection {
+            requirement_type: instance.requirement_type,
+            definition: instance.definition,
+            credential_handle: None,
+            org_connection_name: instance.org_connection_name,
+        };
+        prepare_org_instance(&resolved).unwrap();
+        resolved.credential_handle = Some("org:acme:files@1".into());
+        assert!(prepare_org_instance(&resolved).is_err());
+    }
+
+    #[test]
     fn a_blobstore_definition_needs_exactly_the_coordinates_the_plugin_reads() {
         blobstore(&serde_json::json!({
             "endpoint": "http://10.0.0.7:9000", "container": "labels", "prefix": "wms/"
@@ -644,7 +703,35 @@ pub struct LocalInstanceInput {
 pub struct PreparedLocalInstance {
     requirement_type: RequirementType,
     definition: Value,
-    credential_handle: String,
+    credential_handle: Option<String>,
+}
+
+/// Prepare the generation that the system authority resolved for a local binding.
+pub fn prepare_org_instance(
+    connection: &crate::org_connection::ResolvedConnection,
+) -> anyhow::Result<PreparedLocalInstance> {
+    validate_definition(connection.requirement_type, &connection.definition)?;
+    if connection.requirement_type == RequirementType::Blobstore
+        && connection.definition["provider"] == "gcs"
+    {
+        connection
+            .requirement_type
+            .check_credential_handle(
+                &connection.definition,
+                connection.credential_handle.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+    } else {
+        ensure!(
+            connection.credential_handle.is_some(),
+            "org connection has no credential handle"
+        );
+    }
+    Ok(PreparedLocalInstance {
+        requirement_type: connection.requirement_type,
+        definition: connection.definition.clone(),
+        credential_handle: connection.credential_handle.clone(),
+    })
 }
 
 pub fn read_local_instance(input: &LocalInstanceInput) -> anyhow::Result<PreparedLocalInstance> {
@@ -667,7 +754,7 @@ pub fn read_local_instance(input: &LocalInstanceInput) -> anyhow::Result<Prepare
     Ok(PreparedLocalInstance {
         requirement_type: input.requirement_type,
         definition,
-        credential_handle: input.credential_handle.clone(),
+        credential_handle: Some(input.credential_handle.clone()),
     })
 }
 
@@ -707,7 +794,7 @@ pub async fn prepare_local_instance(
                 && row.try_get::<_, Option<String>>(5)?.as_deref()
                     == Some(definition_hash(definition).as_str())
                 && row.try_get::<_, Option<String>>(6)?.as_deref()
-                    == Some(input.credential_handle.as_str()),
+                    == input.credential_handle.as_deref(),
             "local instance inputs differ from live authority; use a distinct instance-id for a changed definition or credential handle"
         );
         return Ok(());
@@ -719,7 +806,7 @@ pub async fn prepare_local_instance(
         instance_id,
         &descriptor,
         definition,
-        Some(input.credential_handle.as_str()),
+        input.credential_handle.as_deref(),
     )
     .await
 }

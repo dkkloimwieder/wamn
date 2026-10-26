@@ -236,6 +236,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0030_org_connection_authority.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0031_environment_connection_bindings.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0031_environment_connection_bindings.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -439,6 +445,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         sql: include_str!(
             "../../../../deploy/sql/migrations/project/0039_connection_reference_reader.sql"
         ),
+    },
+    Migration {
+        relative_path: "migrations/project/0040_connection_mode.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0040_connection_mode.sql"),
     },
 ];
 

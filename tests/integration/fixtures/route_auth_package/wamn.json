@@ -25,9 +25,7 @@
       }
     }
   },
-  "connections": [
-    "postgres"
-  ],
+  "connections": {},
   "components": {
     "route_auth_fixture": {
       "connections": [

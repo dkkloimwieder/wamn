@@ -15,18 +15,19 @@ manifest.Package {
         "item.record" = manifest.Command("item.record") {
             idempotent_by = "claim"
             input: {fields = [manifest.request_id, manifest.idempotency_key,
-                {path = "value.items", type = "json"}]}
+                {path = "value.items", type = "json"},
+                {path = "value.external_system_id", type = "uuid"}]}
             result = {class = "one", fields = [{path = "keys", type = "json"}]}
             errors = ["invalid_input", "idempotency_conflict", "retry", "timeout", "permission_denied", "internal_error"]
             statements = {
                 record_item = manifest.Statement("command/item", "record") {
                     fetch = "optional_one"
-                    parameters = [manifest.text("key"), manifest.text("name")]
-                    row = [manifest.text("key")]
+                    parameters = [manifest.text("key"), manifest.text("name"), manifest.uuid("external_system_id")]
+                    row = [manifest.text("key"), manifest.uuid("external_system_id"), manifest.text("external_id")]
                 }
             }
         }
     }
-    connections = ["postgres"]
+    connections = {}
     components = {rest_consumer_fixture = {connections = ["postgres"]}}
 }

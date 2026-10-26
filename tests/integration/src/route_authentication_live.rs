@@ -282,6 +282,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             [(
                 "inventory".to_owned(),
                 wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
                     packages: [FIXTURE_PACKAGE_ID.to_owned()].into(),
                 },
             )]

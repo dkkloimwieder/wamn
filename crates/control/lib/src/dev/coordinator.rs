@@ -874,10 +874,20 @@ impl ProductionDevStageRunner {
         .map_err(|source| {
             ProductionDevStageError::owner("create local number sequences", source)
         })?;
-        let binding_inputs =
-            prepare_local_bindings(&self.config, &self.admissions).map_err(|source| {
-                ProductionDevStageError::owner("prepare local connection selections", source)
-            })?;
+        let binding_inputs = prepare_local_bindings(
+            &self.config,
+            &self.admissions,
+            &self.environment,
+            &self
+                .package_inputs()?
+                .iter()
+                .map(|package| package.manifest.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("prepare local connection selections", source)
+        })?;
         local_facts.bindings = resolve_local_bindings(&self.config, &binding_inputs, None)
             .await
             .map_err(|source| {
@@ -985,6 +995,21 @@ impl ProductionDevStageRunner {
     }
 
     async fn activate(&mut self) -> Result<(), ProductionDevStageError> {
+        let packages = self
+            .package_inputs()?
+            .iter()
+            .map(|package| package.manifest.clone())
+            .collect::<Vec<_>>();
+        reserve_local_bindings(
+            &self.config,
+            &self.environment,
+            &packages,
+            &self.local_binding_inputs,
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("reserve local connection bindings", source)
+        })?;
         if self.activation.is_some() {
             self.shutdown().await?;
         }
@@ -1450,13 +1475,16 @@ struct LocalBindingSelection {
     package_id: String,
     component: String,
     store_alias: String,
-    instance_id: String,
-    #[serde(default)]
-    instance: Option<crate::bind_connection::LocalInstanceInput>,
+    #[serde(rename = "instance-id")]
+    _instance_id: String,
+    #[serde(default, rename = "instance")]
+    _instance: Option<crate::bind_connection::LocalInstanceInput>,
 }
 
 #[derive(Debug)]
 struct PreparedLocalBinding {
+    package_id: String,
+    read_only: bool,
     requirement: wamn_catalog::ComponentConnectionRequirement,
     instance_id: String,
     instance: Option<crate::bind_connection::PreparedLocalInstance>,
@@ -1530,66 +1558,93 @@ fn read_local_binding_selections(config: &DevConfig) -> anyhow::Result<Vec<Local
         .unwrap_or_default())
 }
 
-fn prepare_local_bindings(
+async fn prepare_local_bindings(
     config: &DevConfig,
     admissions: &[ComponentAdmission],
+    environment: &crate::environment::document::EnvironmentDocument,
+    packages: &[wamn_schema_generator::PackageManifest],
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
-    let selections = read_local_binding_selections(config)?;
-    let requirements = admissions
-        .iter()
-        .flat_map(|admission| {
-            admission
-                .requirements()
-                .iter()
-                .map(move |requirement| (admission, requirement))
-        })
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        selections.len() == requirements.len(),
-        "local components require exactly one explicit selection for every declared connection; set local_artifacts.bindings"
-    );
+    let system = crate::environment::analyse::connect(config.system_database_url()).await?;
+    system.batch_execute("SET ROLE wamn_system").await?;
+    let bindings = crate::environment::bindings::analyse(&system, environment, packages).await?;
+    let drops = crate::environment::bindings::project_authority(
+        config.system_database_url(),
+        config.target_database_url(),
+        environment,
+    )
+    .await?;
+    wamn_platform_identity::auth_changes::AuthChanges::new(
+        async_nats::connect(config.scheduler_nats_url()).await?,
+    )
+    .publish(drops)
+    .await;
+
     let mut prepared = Vec::new();
-    let mut used = BTreeSet::new();
-    for (admission, requirement) in requirements {
-        let matches = selections
-            .iter()
-            .enumerate()
-            .filter(|(_, selection)| {
-                selection.package_id == admission.package_id()
-                    && selection.component == admission.component()
-                    && selection.store_alias == requirement.store_alias()
-            })
-            .collect::<Vec<_>>();
-        anyhow::ensure!(
-            matches.len() == 1,
-            "local connection selection is missing or repeated for {}::{}:{}",
+    for admission in admissions {
+        let application = wamn_catalog::application_for_package(
+            &environment.applications,
             admission.package_id(),
-            admission.component(),
-            requirement.store_alias()
-        );
-        let (index, selection) = matches[0];
-        anyhow::ensure!(
-            used.insert(index),
-            "local connection selection was used more than once"
-        );
-        let instance = selection
-            .instance
-            .as_ref()
-            .map(|input| -> anyhow::Result<_> {
-                anyhow::ensure!(
-                    &input.requirement_type.descriptor() == requirement.requirement(),
-                    "local instance type differs from the declared requirement"
-                );
-                crate::bind_connection::read_local_instance(input)
-            })
-            .transpose()?;
-        prepared.push(PreparedLocalBinding {
-            requirement: requirement.clone(),
-            instance_id: selection.instance_id.clone(),
-            instance,
-        });
+        )
+        .context("local component has no application")?;
+        for requirement in admission.requirements() {
+            let binding = bindings
+                .iter()
+                .find(|binding| {
+                    binding.application == application && binding.alias == requirement.store_alias()
+                })
+                .with_context(|| {
+                    format!(
+                        "connection_unbound: {application}.{}",
+                        requirement.store_alias()
+                    )
+                })?;
+            anyhow::ensure!(
+                &binding.resolved.requirement_type.descriptor() == requirement.requirement(),
+                "local instance type differs from the declared requirement"
+            );
+            prepared.push(PreparedLocalBinding {
+                package_id: admission.package_id().to_owned(),
+                read_only: binding.mode == wamn_schema_generator::ConnectionMode::Read,
+                requirement: requirement.clone(),
+                // A candidate pins an immutable org generation, including across rotation.
+                instance_id: format!("{}@{}", binding.connection_id, binding.generation),
+                instance: Some(crate::bind_connection::prepare_org_instance(
+                    &binding.resolved,
+                )?),
+            });
+        }
     }
     Ok(prepared)
+}
+
+async fn reserve_local_bindings(
+    config: &DevConfig,
+    environment: &crate::environment::document::EnvironmentDocument,
+    packages: &[wamn_schema_generator::PackageManifest],
+    prepared: &[PreparedLocalBinding],
+) -> anyhow::Result<()> {
+    let mut system = crate::environment::analyse::connect(config.system_database_url()).await?;
+    let tx = system.transaction().await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
+    let bindings = crate::environment::bindings::reserve(&tx, environment, packages).await?;
+    for input in prepared {
+        let application =
+            wamn_catalog::application_for_package(&environment.applications, &input.package_id)
+                .context("local component has no application")?;
+        anyhow::ensure!(
+            bindings.iter().any(|binding| {
+                binding.application == application
+                    && input.requirement.store_alias() == binding.alias
+                    && input.instance_id
+                        == format!("{}@{}", binding.connection_id, binding.generation)
+                    && input.read_only
+                        == (binding.mode == wamn_schema_generator::ConnectionMode::Read)
+            }),
+            "local org connection authority changed after candidate validation"
+        );
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 async fn resolve_local_bindings(
@@ -1628,7 +1683,7 @@ async fn resolve_local_bindings(
                 )
                 .await?;
             }
-            let selection = wamn_runtime::local_application::read_local_binding(
+            let mut selection = wamn_runtime::local_application::read_local_binding(
                 &client,
                 &config.activation_identity().tenant(),
                 &config.activation_identity().environment,
@@ -1636,7 +1691,9 @@ async fn resolve_local_bindings(
                 &binding.instance_id,
             )
             .await?;
+            selection.read_only = binding.read_only;
             bindings.push(wamn_runtime::local_application::LocalBindingFacts {
+                package_id: binding.package_id.clone(),
                 requirement: binding.requirement.clone(),
                 selection,
             });
@@ -1859,7 +1916,7 @@ mod tests {
             "package": {"id": id, "version": version},
             "required_platform_policy_contract": {"id": "fixture_data_access", "state": "satisfied"},
             "models": {},
-            "connections": ["postgres"],
+            "connections": {},
             "components": {(component): {"connections": ["postgres"]}}
         }))
         .expect("fixture package manifest");

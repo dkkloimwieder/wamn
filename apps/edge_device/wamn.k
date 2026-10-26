@@ -28,6 +28,6 @@ manifest.Package {
             error_details = {}
         }
     }
-    connections = []
+    connections = {}
     components = {device = {connections = []}}
 }

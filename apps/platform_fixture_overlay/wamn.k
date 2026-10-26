@@ -35,7 +35,7 @@ manifest.Package {
             }
         }
     }
-    connections = ["postgres"]
+    connections = {}
     components = {fixture_overlay = {connections = ["postgres"]}}
     routes = {auth_modes = ["pat"], path_prefix = "/overlay"}
 }

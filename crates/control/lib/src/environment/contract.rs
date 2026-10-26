@@ -50,7 +50,7 @@ pub async fn contract(
         wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
     let live_digests: Vec<String> = live.keys().cloned().collect();
-    let declared: Vec<String> = document.connections.keys().cloned().collect();
+    let declared: Vec<String> = analysis.authorities.connections.keys().cloned().collect();
 
     let mut client = connect(&project_url).await?;
     let transaction = client

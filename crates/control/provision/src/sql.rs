@@ -931,16 +931,20 @@ pub fn grant_identity_reader_surface_sql() -> String {
     )
 }
 
-/// The host connection reader holds no identity or application grants.
-pub const CONNECTION_READER_RELATIONS: [&str; 3] =
-    ["connection", "connection_generation", "identity.credential"];
+/// The host connection reader reads connection authority and its identity credentials.
+pub const CONNECTION_READER_RELATIONS: [&str; 4] = [
+    "connection",
+    "connection_generation",
+    "identity.credential",
+    "project_connection",
+];
 
 /// Grant the dedicated credential reader its read-only system surface.
 pub fn grant_connection_reader_surface_sql() -> String {
     let mut sql = grant_system_reader_surface_sql(
         WorkloadRoleFamily::ConnectionReader,
         "registry",
-        &["connection", "connection_generation"],
+        &["connection", "connection_generation", "project_connection"],
     );
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
     write!(sql, " GRANT USAGE ON SCHEMA identity TO {role}; GRANT SELECT ON TABLE identity.credential TO {role};")

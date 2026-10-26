@@ -3,19 +3,18 @@
 //!
 //! The document names the coordinate, the release digest or `none`, the route
 //! host, the policy by name, the applications and their packages
-//! (docs/plan/platform-config.md), the connection definitions and the floors,
+//! (docs/plan/platform-config.md), the target, connection names and floors,
 //! and nothing else. It compiles with the `environment` KCL schema module to JSON,
 //! which this module reads into [`EnvironmentDocument`]. Its canonical form is
 //! RFC 8785 JSON, as `wamn.json` is.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use wamn_catalog::{EnvironmentApplications, RequirementType};
+use wamn_catalog::EnvironmentApplications;
 use wamn_control_registry::Triple;
 
 /// One environment document.
@@ -25,6 +24,8 @@ pub struct EnvironmentDocument {
     pub org: String,
     pub project: String,
     pub env: String,
+    /// The immutable deployment target name.
+    pub target: String,
     /// `none`, or a full `sha256:` digest.
     pub release: DeclaredRelease,
     pub route_host: String,
@@ -35,26 +36,9 @@ pub struct EnvironmentDocument {
     pub policy: String,
     /// Application name to the packages of the release that belong to it.
     pub applications: EnvironmentApplications,
-    /// Connection definitions by instance id.
-    #[serde(default)]
-    pub connections: BTreeMap<String, ConnectionDefinition>,
     /// Package id to the version to contract to (R13).
     #[serde(default)]
     pub floors: BTreeMap<String, String>,
-}
-
-/// A connection definition. Credentials are provisioned, never declared.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
-pub enum ConnectionDefinition {
-    Inline {
-        #[serde(rename = "type")]
-        requirement_type: RequirementType,
-        definition: Value,
-    },
-    Org {
-        org: String,
-    },
 }
 
 /// The `release` field: a full digest or `none`.
@@ -160,29 +144,14 @@ impl EnvironmentDocument {
                 "application {name} has an empty package id"
             );
         }
-        let mut org_names = BTreeSet::new();
-        for (instance, connection) in &self.connections {
-            ensure!(
-                !instance.is_empty(),
-                "a connection has an empty instance id"
-            );
-            match connection {
-                ConnectionDefinition::Inline {
-                    requirement_type,
-                    definition,
-                } => {
-                    if let Err(error) = requirement_type.check_definition(definition) {
-                        bail!("connection {instance}: {error}");
-                    }
-                }
-                ConnectionDefinition::Org { org } => {
-                    wamn_catalog::org_credential_handle(&self.org, org)
-                        .map_err(anyhow::Error::msg)?;
-                    ensure!(
-                        org_names.insert(org),
-                        "org connection {org} is referenced by two aliases"
-                    );
-                }
+        ensure!(!self.target.trim().is_empty(), "target is empty");
+        for (application, definition) in &self.applications {
+            for (alias, name) in &definition.connections {
+                ensure!(
+                    !alias.is_empty(),
+                    "application {application} has an empty connection alias"
+                );
+                wamn_catalog::org_credential_handle(&self.org, name).map_err(anyhow::Error::msg)?;
             }
         }
         for (package, version) in &self.floors {
@@ -219,6 +188,7 @@ impl EnvironmentDocument {
             ("org", self.org.clone()),
             ("project", self.project.clone()),
             ("env", self.env.clone()),
+            ("target", self.target.clone()),
             ("release", self.release.to_string()),
             ("route_host", self.route_host.clone()),
             ("policy", self.policy.clone()),
@@ -231,35 +201,17 @@ impl EnvironmentDocument {
         lines.push("    applications = {".to_owned());
         for (name, application) in &self.applications {
             let packages: Vec<String> = application.packages.iter().map(|id| quote(id)).collect();
+            let bindings = application
+                .connections
+                .iter()
+                .map(|(alias, name)| format!("{} = {}", quote(alias), quote(name)))
+                .collect::<Vec<_>>()
+                .join(", ");
             lines.push(format!(
-                "        {} = {{packages = [{}]}}",
+                "        {} = {{packages = [{}], connections = {{{bindings}}}}}",
                 quote(name),
                 packages.join(", ")
             ));
-        }
-        lines.push("    }".to_owned());
-        lines.push("    connections = {".to_owned());
-        for (instance, connection) in &self.connections {
-            match connection {
-                ConnectionDefinition::Inline {
-                    requirement_type,
-                    definition,
-                } => {
-                    let kind =
-                        serde_json::to_value(requirement_type).expect("a requirement type encodes");
-                    lines.push(format!(
-                        "        {} = {{type = {kind}, definition = {definition}}}",
-                        quote(instance)
-                    ));
-                }
-                ConnectionDefinition::Org { org } => {
-                    lines.push(format!(
-                        "        {} = {{org = {}}}",
-                        quote(instance),
-                        quote(org)
-                    ));
-                }
-            }
         }
         lines.push("    }".to_owned());
         lines.push("    floors = {".to_owned());
@@ -279,7 +231,7 @@ impl EnvironmentDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn document() -> Value {
         json!({
@@ -289,173 +241,105 @@ mod tests {
             "release": format!("sha256:{}", "a".repeat(64)),
             "route_host": "wms.acme.example",
             "policy": "prod",
-            "applications": {"wms": {"packages": ["wamn_wms"]}},
-            "connections": {
-                "files": {"type": "blobstore", "definition": {"endpoint": "https://s3.example", "container": "files", "prefix": "wms/"}}
-            },
+            "target": "cloud",
+            "applications": {"wms": {"packages": ["wamn_wms"], "connections": {"erp": "shared_erp", "files": "files"}}},
             "floors": {"wamn_wms": "2.4.0"}
         })
     }
 
-    fn http_document() -> Value {
-        let mut value = document();
-        value["connections"] = json!({
-            "erp": {"type": "http", "definition": {
-                "primary-authority": "http://http-fixture:8080/", "tls-verification": "disabled"
-            }}
-        });
-        value
+    #[test]
+    fn refuses_inline_connection_definitions() {
+        let mut input = document();
+        input["connections"] = json!({"erp": {"type": "http", "definition": {}}});
+        assert_eq!(
+            serde_json::from_value::<EnvironmentDocument>(input)
+                .unwrap_err()
+                .to_string(),
+            "unknown field `connections`, expected one of `org`, `project`, `env`, `target`, `release`, `route_host`, `client_package`, `policy`, `applications`, `floors`"
+        );
     }
 
     #[test]
-    fn org_references_round_trip_and_refuse_mixed_or_duplicate_forms() {
-        let mut value = http_document();
-        value["connections"]["erp"] = json!({"org": "shared_erp"});
-        let parsed = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap();
-        assert_eq!(
-            parsed.connections["erp"],
-            ConnectionDefinition::Org {
-                org: "shared_erp".to_owned()
-            }
-        );
+    fn names_round_trip_and_values_are_refused() {
+        let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        assert_eq!(parsed.target, "cloud");
+        assert_eq!(parsed.applications["wms"].connections["erp"], "shared_erp");
+        for value in [
+            json!({"org":"shared_erp"}),
+            json!({"url":"https://example.com"}),
+            json!({"credential":"secret"}),
+            json!({"parameters":{}}),
+        ] {
+            let mut input = document();
+            input["applications"]["wms"]["connections"]["erp"] = value;
+            assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
+        }
+        for field in ["integration", "mode"] {
+            let mut input = document();
+            input["applications"]["wms"][field] = json!("http");
+            assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn target_is_required_and_nonempty() {
+        let mut input = document();
+        input.as_object_mut().unwrap().remove("target");
+        assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
+        for target in [json!(""), json!("  "), json!(42)] {
+            input["target"] = target;
+            assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn org_references_round_trip_and_refuse_mixed_forms() {
+        for binding in [
+            json!({"org":"shared_erp","type":"http"}),
+            json!({"org":"shared_erp","definition":{}}),
+            json!({"org":"shared_erp","secret":"forbidden"}),
+        ] {
+            let mut input = document();
+            let parsed = EnvironmentDocument::from_json(input.to_string().as_bytes()).unwrap();
+            assert_eq!(parsed.applications["wms"].connections["erp"], "shared_erp");
+            input["applications"]["wms"]["connections"]["erp"] = binding;
+            assert_eq!(
+                serde_json::from_value::<EnvironmentDocument>(input)
+                    .unwrap_err()
+                    .to_string(),
+                "invalid type: map, expected a string"
+            );
+        }
+    }
+
+    #[test]
+    fn the_kcl_schema_accepts_names_and_refuses_connection_values() {
+        let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
         let directory =
-            std::env::temp_dir().join(format!("wamn-org-connection-kcl-{}", std::process::id()));
+            std::env::temp_dir().join(format!("wamn-binding-kcl-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let file = directory.join("environment.k");
         let kcl = parsed.to_kcl();
         std::fs::write(&file, &kcl).unwrap();
         assert_eq!(EnvironmentDocument::compile(&file).unwrap(), parsed);
-        std::fs::write(
-            &file,
-            kcl.replace(
-                "org = \"shared_erp\"",
-                "org = \"shared_erp\", type = \"http\", definition = {}",
-            ),
-        )
-        .unwrap();
-        assert!(EnvironmentDocument::compile(&file).is_err());
-        std::fs::remove_dir_all(&directory).unwrap();
-        for extra in [
-            json!({"type": "http"}),
-            json!({"definition": {}}),
-            json!({"secret": "forbidden"}),
+        for replacement in [
+            "{type = \"ftp\"}",
+            "{type = \"http\", definition = {}}",
+            "{org = \"shared_erp\"}",
         ] {
-            let mut mixed = value.clone();
-            mixed["connections"]["erp"]
-                .as_object_mut()
-                .unwrap()
-                .extend(extra.as_object().unwrap().clone());
-            assert!(EnvironmentDocument::from_json(mixed.to_string().as_bytes()).is_err());
-        }
-        value["connections"]["second"] = json!({"org": "shared_erp"});
-        assert!(
-            EnvironmentDocument::from_json(value.to_string().as_bytes())
-                .unwrap_err()
-                .to_string()
-                .contains("two aliases")
-        );
-    }
-
-    #[test]
-    fn reads_an_http_connection_and_refuses_an_unknown_type() {
-        let mut value = http_document();
-        let parsed = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap();
-        assert_eq!(
-            parsed.connections["erp"],
-            ConnectionDefinition::Inline {
-                requirement_type: RequirementType::Http,
-                definition: value["connections"]["erp"]["definition"].clone(),
-            }
-        );
-        value["connections"]["erp"]["type"] = json!("ftp");
-        let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
-        assert!(
-            error
-                .root_cause()
-                .to_string()
-                .contains("did not match any variant"),
-            "{error:#}"
-        );
-    }
-
-    #[test]
-    fn refuses_invalid_http_coordinates_by_name() {
-        for coordinate in ["primary-authority", "tls-verification"] {
-            for (replacement, reason) in [
-                (
-                    None,
-                    format!(" lacks {coordinate}; Http reads it at resolve time"),
+            std::fs::write(
+                &file,
+                kcl.replace(
+                    "\"erp\" = \"shared_erp\"",
+                    &format!("\"erp\" = {replacement}"),
                 ),
-                (
-                    Some(json!("")),
-                    format!("'s {coordinate} is empty; Http needs it"),
-                ),
-                (
-                    Some(json!(42)),
-                    format!("'s {coordinate} must be a string; Http reads it as one"),
-                ),
-            ] {
-                let mut value = http_document();
-                let definition = value["connections"]["erp"]["definition"]
-                    .as_object_mut()
-                    .unwrap();
-                if let Some(replacement) = replacement {
-                    definition.insert(coordinate.to_owned(), replacement);
-                } else {
-                    definition.remove(coordinate);
-                }
-                let error =
-                    EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
-                assert_eq!(
-                    error.to_string(),
-                    format!("connection erp: the generation definition{reason}")
-                );
-            }
+            )
+            .unwrap();
+            assert!(EnvironmentDocument::compile(&file).is_err());
         }
-    }
-
-    #[test]
-    fn refuses_unread_http_keys_and_a_nonobject_definition() {
-        for key in ["provider", "endpoint", "headers"] {
-            let mut value = http_document();
-            value["connections"]["erp"]["definition"][key] = json!("unused");
-            let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "connection erp: the generation definition carries {key}, which Http never reads; a coordinate nobody reads is a coordinate nobody validates"
-                )
-            );
-        }
-        let mut value = http_document();
-        value["connections"]["erp"]["definition"] = json!("not an object");
-        let error = EnvironmentDocument::from_json(value.to_string().as_bytes()).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "connection erp: the generation definition must be a JSON object"
-        );
-    }
-
-    #[test]
-    fn the_kcl_schema_accepts_http_and_refuses_an_unknown_connection_type() {
-        let parsed =
-            EnvironmentDocument::from_json(http_document().to_string().as_bytes()).unwrap();
-        let directory =
-            std::env::temp_dir().join(format!("wamn-environment-http-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).expect("create the directory");
-        let file = directory.join("environment.k");
-        let kcl = parsed.to_kcl();
-        std::fs::write(&file, &kcl).expect("write the document");
-        let compiled = EnvironmentDocument::compile(&file);
-        std::fs::write(&file, kcl.replace("type = \"http\"", "type = \"ftp\""))
-            .expect("write the unknown type");
-        let refused = EnvironmentDocument::compile(&file);
-        std::fs::remove_dir_all(&directory).expect("remove the directory");
-        assert_eq!(compiled.expect("HTTP compiles"), parsed);
-        assert!(
-            refused.is_err(),
-            "the schema refuses an unknown connection type"
-        );
+        std::fs::write(&file, kcl.replace("    target = \"cloud\"\n", "")).unwrap();
+        assert!(EnvironmentDocument::compile(&file).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -544,18 +428,6 @@ mod tests {
         ] {
             assert!(DeclaredRelease::parse(refused).is_err(), "{refused}");
         }
-    }
-
-    #[test]
-    fn refuses_a_connection_definition_its_type_refuses() {
-        let mut bad = document();
-        bad["connections"]["files"]["definition"] = json!("not an object");
-        let error = EnvironmentDocument::from_json(bad.to_string().as_bytes())
-            .expect_err("the definition is refused");
-        assert!(
-            format!("{error:#}").contains("connection files"),
-            "{error:#}"
-        );
     }
 
     #[test]

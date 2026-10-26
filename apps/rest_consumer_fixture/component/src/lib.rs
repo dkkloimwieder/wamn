@@ -27,6 +27,10 @@ mod codec {
         "/../../target/wamn/rest_consumer_fixture/wit/item_record_codec.rs"
     ));
 }
+#[expect(
+    dead_code,
+    reason = "The SQL returns provenance columns to derive its conflict-key SELECT grants."
+)]
 mod statements {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -62,17 +66,22 @@ async fn handle(
     use wamn_postgres_statements::StatementErrorType;
     let mut keys = Vec::new();
     for item in items(&request.items)? {
-        let row = statements::record_item(transaction, item.key.clone(), item.name)
-            .await
-            .map_err(|error| {
-                let code = match error.type_() {
-                    StatementErrorType::SerializationFailure
-                    | StatementErrorType::ConnectionUnavailable => "retry",
-                    StatementErrorType::StatementTimeout => "timeout",
-                    _ => "internal_error",
-                };
-                codec::map_error(code, |_| None)
-            })?;
+        let row = statements::record_item(
+            transaction,
+            item.key.clone(),
+            item.name,
+            wamn_postgres_statements::Uuid(request.external_system_id.clone()),
+        )
+        .await
+        .map_err(|error| {
+            let code = match error.type_() {
+                StatementErrorType::SerializationFailure
+                | StatementErrorType::ConnectionUnavailable => "retry",
+                StatementErrorType::StatementTimeout => "timeout",
+                _ => "internal_error",
+            };
+            codec::map_error(code, |_| None)
+        })?;
         keys.push(row.map_or(item.key, |row| row.key));
     }
     Ok(contract::RecordResult {

@@ -68,6 +68,6 @@ manifest.Package {
             }
         }
     }
-    connections = ["postgres"]
+    connections = {}
     components = {wamn_integration = {connections = ["postgres"]}}
 }

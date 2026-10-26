@@ -205,6 +205,7 @@ async fn build_with_credentials(
                     [(
                         "orders".to_owned(),
                         wamn_catalog::ApplicationDefinition {
+                            connections: std::collections::BTreeMap::new(),
                             packages: [PACKAGE.to_owned()].into(),
                         },
                     )]
@@ -735,7 +736,7 @@ async fn seed_additional_wirings(
     let package_version = &component.scope.package_version;
     if package != PACKAGE {
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
-            "models": {}, "custom_operations": {}, "queries": {}, "connections": [], "components": {}});
+            "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
         client.execute(
             "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest) \
              VALUES ($1, $2, $3, $4)",

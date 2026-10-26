@@ -200,9 +200,7 @@
       }
     }
   },
-  "connections": [
-    "postgres"
-  ],
+  "connections": {},
   "components": {
     "client_overlay_inventory": {
       "connections": [

@@ -364,6 +364,14 @@ schema Routes:
     path_prefix?: str
     id_prefix?: str
 
+schema Connection:
+    """An external connection requirement. Deployment supplies the named row."""
+    integration: str
+    mode: "read" | "write"
+
+    check:
+        integration != "", "integration is empty"
+
 schema Package:
     """The whole manifest. A package's wamn.k is one Package instance."""
     package: PackageIdentity
@@ -377,7 +385,7 @@ schema Package:
     models: {str:Model}
     internal_relations?: {str:InternalRelation}
     custom_operations?: {str:CustomOperation}
-    connections: [str]
+    connections: {str:Connection} = {}
     components: {str:Component}
     routes?: Routes
 

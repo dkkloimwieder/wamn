@@ -33,6 +33,8 @@ pub struct LocalApplicationFacts {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct LocalBindingFacts {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub package_id: String,
     pub requirement: ComponentConnectionRequirement,
     pub selection: CandidateConnectionBinding,
 }
@@ -97,7 +99,7 @@ impl LocalApplication {
             {
                 continue;
             }
-            let current = read_local_binding(
+            let mut current = read_local_binding(
                 client,
                 &self.scope.tenant_id,
                 &self.scope.environment,
@@ -105,6 +107,7 @@ impl LocalApplication {
                 &binding.selection.instance_id,
             )
             .await?;
+            current.read_only = binding.selection.read_only;
             if current != binding.selection {
                 return Ok(false);
             }
@@ -137,7 +140,8 @@ impl LocalApplication {
             return Ok(None);
         };
         let Some(binding) = self.facts.bindings.iter().find(|binding| {
-            binding.requirement.component_digest() == lookup.component_digest
+            (binding.package_id.is_empty() || binding.package_id == lookup.package_id)
+                && binding.requirement.component_digest() == lookup.component_digest
                 && binding.requirement.store_alias() == lookup.store_alias
         }) else {
             return Ok(None);
@@ -158,6 +162,7 @@ impl LocalApplication {
                 .is_none_or(|candidate| candidate == &current);
         Ok(Some(
             crate::plugins::wamn_postgres::ConnectionEffectSnapshot {
+                read_only: current.read_only,
                 wiring_hash,
                 component: Some(component.component.clone()),
                 interface_version: Some(component.interface_version.clone()),
@@ -302,6 +307,7 @@ async fn read_binding(
     );
     Ok((
         CandidateConnectionBinding {
+            read_only: pin.is_some_and(|binding| binding.read_only),
             component_digest: requirement.component_digest().to_owned(),
             store_alias: requirement.store_alias().to_owned(),
             requirement_hash,
@@ -422,16 +428,26 @@ pub fn validate_local_facts(
         facts.requirements.len() == facts.bindings.len(),
         "local binding selection is missing"
     );
+    for component in &manifest.components {
+        for requirement in &component.descriptor.connections {
+            anyhow::ensure!(
+                facts
+                    .bindings
+                    .iter()
+                    .filter(|binding| {
+                        (binding.package_id.is_empty()
+                            || binding.package_id == component.package_id)
+                            && binding.requirement.component_digest()
+                                == component.descriptor.component_digest
+                            && binding.requirement.store_alias() == requirement.store_alias
+                    })
+                    .count()
+                    == 1,
+                "local binding does not cover its exact requirement"
+            );
+        }
+    }
     for requirement in &facts.requirements {
-        anyhow::ensure!(
-            facts
-                .bindings
-                .iter()
-                .filter(|binding| &binding.requirement == requirement)
-                .count()
-                == 1,
-            "local binding does not cover its exact requirement"
-        );
         let descriptor = requirement.requirement();
         anyhow::ensure!(
             descriptor == &wamn_catalog::ConnectionTypeDescriptor::http_v1()
@@ -444,14 +460,22 @@ pub fn validate_local_facts(
         let requirement = &binding.requirement;
         let selected = &binding.selection;
         anyhow::ensure!(
-            seen.insert((requirement.component_digest(), requirement.store_alias())),
+            seen.insert((
+                binding.package_id.as_str(),
+                requirement.component_digest(),
+                requirement.store_alias()
+            )),
             "local connection requirement is repeated"
         );
         anyhow::ensure!(
             facts
                 .components
                 .iter()
-                .any(|component| component.component_digest == requirement.component_digest()),
+                .any(
+                    |component| component.component_digest == requirement.component_digest()
+                        && (binding.package_id.is_empty()
+                            || component.scope.package_id == binding.package_id)
+                ),
             "local requirement is outside the component closure"
         );
         anyhow::ensure!(
@@ -740,8 +764,10 @@ mod tests {
             wamn_catalog::ConnectionTypeDescriptor::http_v1(),
         );
         facts.bindings.push(super::LocalBindingFacts {
+            package_id: String::new(),
             requirement: requirement.clone(),
             selection: crate::plugins::wamn_postgres::CandidateConnectionBinding {
+                read_only: false,
                 component_digest: requirement.component_digest().to_owned(),
                 store_alias: "erp".to_owned(),
                 requirement_hash: requirement.requirement_hash(),
@@ -769,8 +795,10 @@ mod tests {
             wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
         );
         facts.bindings.push(super::LocalBindingFacts {
+            package_id: String::new(),
             requirement: requirement.clone(),
             selection: crate::plugins::wamn_postgres::CandidateConnectionBinding {
+                read_only: false,
                 component_digest: requirement.component_digest().to_owned(),
                 store_alias: "objects".to_owned(),
                 requirement_hash: requirement.requirement_hash(),

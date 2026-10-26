@@ -229,6 +229,7 @@ fn declared() -> wamn_catalog::EnvironmentApplications {
     [(
         APP.to_owned(),
         wamn_catalog::ApplicationDefinition {
+            connections: std::collections::BTreeMap::new(),
             packages: [APPLICATION.to_owned()].into(),
         },
     )]

@@ -100,9 +100,9 @@ fn a_blank_supplier_name_refuses_on_its_field() {
     use crate::generated::supplier::create::codec as create;
     let input = create::decode(
         r#"[
-            {"request_id":"empty","idempotency_key":"k1","name":""},
-            {"request_id":"spaces","idempotency_key":"k2","name":"  "},
-            {"request_id":"tab","idempotency_key":"k3","name":"\t"}
+            {"request_id":"empty","id":"00000000-0000-4000-8000-000000000001","idempotency_key":"k1","name":""},
+            {"request_id":"spaces","id":"00000000-0000-4000-8000-000000000001","idempotency_key":"k2","name":"  "},
+            {"request_id":"tab","id":"00000000-0000-4000-8000-000000000001","idempotency_key":"k3","name":"\t"}
         ]"#,
     )
     .unwrap();

@@ -98,7 +98,8 @@ wamn-execution-host = { workspace = true }
 wamn-workflow = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-uuid-1"] }
+uuid = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }

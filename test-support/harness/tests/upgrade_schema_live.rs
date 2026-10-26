@@ -325,6 +325,9 @@ async fn upgrade_schema_applies_each_pending_file_once() {
         .0
         .batch_execute(
             "DELETE FROM platform.schema_migrations WHERE ordinal >= 24; \
+             ALTER TABLE catalog.connection_bindings DROP CONSTRAINT connection_bindings_pkey; \
+             ALTER TABLE catalog.connection_bindings DROP COLUMN mode, DROP COLUMN package_id; \
+             ALTER TABLE catalog.connection_bindings ADD PRIMARY KEY (tenant_id, manifest_digest, component_digest, store_alias); \
              DROP TABLE catalog.workflows; \
              DROP FUNCTION catalog.guard_workflow_update(); \
              CREATE TABLE catalog.workflow_schedules (); \
@@ -355,7 +358,11 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     system
         .0
         .batch_execute(
-            "DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); DROP TABLE registry.integrations, registry.target; \
+            "DROP TABLE registry.environment_connection_binding; \
+             DROP TRIGGER environment_target_immutable ON registry.project_envs; \
+             DROP FUNCTION registry.keep_environment_target(); \
+             ALTER TABLE registry.project_envs DROP COLUMN target_id; \
+             DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); DROP TABLE registry.integrations, registry.target; \
              DELETE FROM registry.schema_migrations WHERE ordinal >= 29",
         )
         .await

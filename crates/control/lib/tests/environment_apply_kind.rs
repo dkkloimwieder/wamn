@@ -142,9 +142,7 @@ use wamn_control::delivery::qualification_artifact::{
     self, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload, image_set_digests,
 };
 use wamn_control::dev::environment::{connect, reset_control_store};
-use wamn_control::environment::document::{
-    ConnectionDefinition, DeclaredRelease, EnvironmentDocument,
-};
+use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
@@ -186,6 +184,9 @@ const PROJECT: &str = "orders";
 /// The policy provision-org stamps for the trials template.
 const POLICY: &str = "dev";
 /// The fixture package. Its version is the one `wamn build` wrote.
+#[path = "support/org_bindings.rs"]
+mod org_bindings;
+
 const PACKAGE: &str = "edge_device";
 /// The fixture release A: the fixture package, no http attachment, no
 /// registration, a component no host pulls. `@VERSION@` is the package version.
@@ -884,6 +885,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         insecure_registry: false,
         oci_ca_paths: ca.clone(),
     };
+    Box::pin(org_bindings::publish_declarations(
+        &work.join("connection-packages"),
+        &package_registry,
+        &format!("{local}/wamn/components"),
+        &admin_url,
+    ))
+    .await?;
     let mut pushed = None;
     for _ in 0..30 {
         match push_package(&PushPackageRequest {
@@ -1100,6 +1108,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         }),
     };
     let document = |env: &str, route_host: &str| EnvironmentDocument {
+        target: "cloud".into(),
         client_package: None,
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
@@ -1110,13 +1119,36 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         applications: std::collections::BTreeMap::from([(
             PACKAGE.to_owned(),
             wamn_catalog::ApplicationDefinition {
-                packages: std::collections::BTreeSet::from([PACKAGE.to_owned()]),
+                connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
+                packages: std::collections::BTreeSet::from([
+                    PACKAGE.to_owned(),
+                    "label_fixture".to_owned(),
+                ]),
             },
         )]),
-        connections: std::collections::BTreeMap::new(),
         floors: std::collections::BTreeMap::new(),
     };
     let apply = async |document: &EnvironmentDocument, name: &str| -> anyhow::Result<()> {
+        let mut declaration = document.clone();
+        if let Some(connection) = document
+            .applications
+            .get(PACKAGE)
+            .and_then(|app| app.connections.get("labels"))
+        {
+            let (system, driver) = connect(&platform.system_database_url).await?;
+            let exists = system
+                .query_opt(
+                    "SELECT 1 FROM registry.connection WHERE org=$1 AND name=$2",
+                    &[&ORG, connection],
+                )
+                .await?
+                .is_some();
+            driver.abort();
+            if !exists {
+                org_bindings::bind(&platform,&mut declaration,PACKAGE,"labels",connection,"s3",
+                    json!({"provider":"s3","endpoint":"http://store.invalid","container":"labels","prefix":"a/"})).await?;
+            }
+        }
         let secret_name = format!(
             "apply-events-{}--{}--{}",
             document.org, document.project, document.env
@@ -1407,7 +1439,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         let active = project
             .query_opt(
                 "SELECT active_generation FROM catalog.connection_instances \
-                  WHERE tenant_id = $1 AND environment = 'dev' AND instance_id = 'labels'",
+                  WHERE tenant_id = $1 AND environment = 'dev' AND instance_id = 'edge_device/labels'",
                 &[&tenant],
             )
             .await?
@@ -1416,24 +1448,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         Ok(active)
     };
     let mut connected = dev.clone();
-    connected.connections.insert(
-        "labels".to_owned(),
-        ConnectionDefinition::Inline {
-            requirement_type: wamn_catalog::RequirementType::Blobstore,
-            definition: json!({"endpoint": "http://store.invalid", "container": "labels", "prefix": "a/"}),
-        },
-    );
+    org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev", "s3",
+        json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"a/"})).await?;
     apply(&connected, "dev-connection").await?;
     let generation_one = generation(system.as_ref()).await?;
-    let ConnectionDefinition::Inline { definition, .. } = connected
-        .connections
-        .get_mut("labels")
-        .context("the labels connection")?
-    else {
-        anyhow::bail!("the labels connection must be inline")
-    };
-    *definition =
-        json!({"endpoint": "http://store.invalid", "container": "labels", "prefix": "b/"});
+    org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev", "s3",
+        json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"b/"})).await?;
     apply(&connected, "dev-connection-changed").await?;
     let generation_two = generation(system.as_ref()).await?;
     let after_connection = run.revisions(&name).await?;
@@ -1471,23 +1491,30 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .to_owned();
     let mut http = document("http", "http.orders.example");
     http.release = DeclaredRelease::Digest(http_digest.clone());
+    let application = http.applications.get_mut(PACKAGE).unwrap();
+    application.packages.remove("label_fixture");
+    application.packages.insert("http_fixture".into());
+    application.connections.clear();
     for handle in [
         "upstream",
         http_connection::OUTBOUND_HANDLE,
         http_connection::OAUTH2_HANDLE,
         http_connection::OAUTH1_HANDLE,
     ] {
-        http.connections.insert(
-            handle.to_owned(),
-            ConnectionDefinition::Inline {
-                requirement_type: wamn_catalog::RequirementType::Http,
-                definition: json!({
-                    "primary-authority": format!("{}/{}", http_connection::ORIGIN,
-                        if handle == http_connection::OAUTH2_HANDLE { "oauth/" } else { "" }),
-                    "tls-verification": "disabled"
-                }),
-            },
-        );
+        org_bindings::bind(
+            &platform,
+            &mut http,
+            PACKAGE,
+            handle,
+            handle,
+            "http",
+            json!({
+                "primary-authority": format!("{}/{}", http_connection::ORIGIN,
+                    if handle == http_connection::OAUTH2_HANDLE { "oauth/" } else { "" }),
+                "tls-verification": "disabled"
+            }),
+        )
+        .await?;
     }
     apply(&http, "http-first").await?;
     let http_name = release_name(ORG, PROJECT, "http")?;
@@ -2089,13 +2116,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // enabled, and the release's bindings are gone.
     let mut qa_none = environment::show::show(&platform, &qa_triple).await?;
     qa_none.release = DeclaredRelease::None;
-    qa_none.connections.insert(
-        "labels".to_owned(),
-        ConnectionDefinition::Inline {
-            requirement_type: wamn_catalog::RequirementType::Blobstore,
-            definition: json!({"endpoint": "http://store.invalid", "container": "labels", "prefix": "qa/"}),
-        },
-    );
+    org_bindings::bind(&platform, &mut qa_none, PACKAGE, "labels", "qa-labels", "s3",
+        json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"qa/"})).await?;
     apply(&qa_none, "qa-none").await?;
     let qa_live = run.live_digests(&qa_name).await?;
     let (_, qa_url) = project_database("qa").await?;
@@ -2126,7 +2148,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         ),
         json!({"live": qa_live, "enabled": enabled, "bindings": bindings,
             "note": "the fixture's components declare no store alias, so A had no binding"}),
-        qa_live.is_empty() && enabled == ["labels"] && bindings == 0,
+        qa_live.is_empty() && enabled == ["edge_device/labels"] && bindings == 0,
     );
 
     Ok(())
@@ -2473,6 +2495,10 @@ fn release(
         text = text.replace("@OPERATION@", operation);
     }
     let mut value: Value = serde_json::from_str(&text)?;
+    value["release"]["packages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"package-id":"label_fixture","package-version":"1.0.0"}));
     if let Some(device) = device {
         let fact = device
             .clone()

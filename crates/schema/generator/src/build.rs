@@ -667,6 +667,9 @@ async fn migrate(
                 .await
                 .context("create the package schemas")?;
         }
+        // Only the public provenance key is needed by application foreign keys.
+        // This verification relation contains no system database or registry data.
+        client.batch_execute("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY)").await.context("create the provenance reference for package verification")?;
         for directory in directories {
             if !directory.exists() {
                 continue;
@@ -898,7 +901,7 @@ mod tests {
         let manifest = json!({
             "package": {"id": "sort_fixture", "version": "0.1.0"},
             "required_platform_policy_contract": {"id": "sort_fixture_data_access", "state": "satisfied"},
-            "connections": ["postgres"],
+            "connections": {},
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
                 "feed": false,
@@ -995,7 +998,7 @@ mod tests {
         let manifest = json!({
             "package": {"id": "sort_fixture", "version": "0.1.0"},
             "required_platform_policy_contract": {"id": "sort_fixture_data_access", "state": "satisfied"},
-            "connections": ["postgres"],
+            "connections": {},
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
                 "feed": false,

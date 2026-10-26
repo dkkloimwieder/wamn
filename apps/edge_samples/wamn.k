@@ -55,6 +55,6 @@ manifest.Package {
             error_details = {}
         }
     }
-    connections = ["postgres"]
+    connections = {}
     components = {samples = {connections = ["postgres"]}}
 }

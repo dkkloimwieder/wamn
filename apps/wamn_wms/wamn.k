@@ -449,6 +449,6 @@ manifest.Package {
             }
         }
     }
-    connections = ["postgres"]
+    connections = {labels = {integration = "gcs", mode = "write"}}
     components = {wms = {connections = ["postgres"]}}
 }

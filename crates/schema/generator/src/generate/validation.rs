@@ -1414,14 +1414,8 @@ fn validate_authored_variants(
 }
 
 fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError> {
-    if manifest.connections.is_empty() && !manifest.declares_no_sql() {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidConnection,
-            "manifest declares no database connection",
-        ));
-    }
-    for name in &manifest.connections {
-        validate_identifier(name, "connection")?;
+    for name in manifest.connections.keys() {
+        validate_identifier(&name.replace('-', "_"), "connection")?;
     }
     Ok(())
 }

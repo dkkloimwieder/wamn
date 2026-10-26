@@ -750,6 +750,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(rows(&project).await, (1, 1, 1));
 
     let pinned = CandidateConnectionBinding {
+        read_only: false,
         component_digest: BLOB_PUT.to_owned(),
         store_alias: "labels".to_owned(),
         requirement_hash: after.requirement_hash.clone().unwrap(),

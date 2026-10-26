@@ -7,9 +7,9 @@ use http_route::{
 
 use super::*;
 
-const BODY: &[u8] = b"{ \"z\": 1, \"a\": 2 }\n";
+pub(super) const BODY: &[u8] = b"{ \"z\": 1, \"a\": 2 }\n";
 
-fn signed(body: &[u8]) -> String {
+pub(super) fn signed(body: &[u8]) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret").unwrap();
     mac.update(body);
     format!("sha256={}", hex::encode(mac.finalize().into_bytes()))

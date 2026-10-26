@@ -86,6 +86,7 @@ pub fn invocation_span(
                 crate::flow_http_routing::CredentialType::Pat => "pat",
                 crate::flow_http_routing::CredentialType::Session => "session",
                 crate::flow_http_routing::CredentialType::QueuedService => "queued-service",
+                crate::flow_http_routing::CredentialType::Connection => "connection",
             },
         );
     }

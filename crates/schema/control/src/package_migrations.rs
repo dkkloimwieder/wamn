@@ -796,7 +796,7 @@ mod tests {
 
     fn manifest(version: &str) -> Vec<u8> {
         format!(
-            r#"{{"package":{{"id":"orders","version":"{version}"}},"required_platform_policy_contract":{{"id":"orders_access","state":"unsatisfied"}},"models":{{"widget_tag":{{"schema":"fixture","table":"widget_tag","owner":"orders","audit_log":{{"columns":[],"retention":"none"}},"operations":{{"get":{{"permission":"widget_tag.get","result":"one"}}}}}}}},"connections":["postgres"],"components":{{"data":{{"connections":["postgres"]}}}}}}"#
+            r#"{{"package":{{"id":"orders","version":"{version}"}},"required_platform_policy_contract":{{"id":"orders_access","state":"unsatisfied"}},"models":{{"widget_tag":{{"schema":"fixture","table":"widget_tag","owner":"orders","audit_log":{{"columns":[],"retention":"none"}},"operations":{{"get":{{"permission":"widget_tag.get","result":"one"}}}}}}}},"connections":{{}},"components":{{"data":{{"connections":["postgres"]}}}}}}"#
         )
         .into_bytes()
     }
@@ -841,7 +841,7 @@ mod tests {
             r#""owner":"orders","audit_log":{"columns":[],"retention":"none"},"#,
             r#""operations":{"get":{"permission":"widget_tag.get","#,
             r#""result":"one"}}}},"#,
-            r#""connections":["postgres"],"#,
+            r#""connections":{},"#,
             r#""components":{"data":{"connections":["postgres"]}}}"#,
         );
         const PINNED_MIGRATION: &str = "SELECT 1;";

@@ -261,7 +261,7 @@ mod tests {
             serde_json::from_value::<wamn_schema_generator::PackageManifest>(serde_json::json!({
                 "package": {"id": package, "version": "1.0.0"},
                 "required_platform_policy_contract": {"id": "fixture", "state": "satisfied"},
-                "connections": [], "components": {},
+                "connections": {}, "components": {},
                 "models": {entity: {"schema": package, "table": entity, "owner": package, "operations": {}}}
             }))
             .unwrap()

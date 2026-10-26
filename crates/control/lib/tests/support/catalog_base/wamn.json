@@ -15,6 +15,6 @@
       "operations": { "get": { "permission": "record.get", "result": "one" } }
     }
   },
-  "connections": ["postgres"],
+  "connections": {},
   "components": { "catalog_base": { "connections": ["postgres"] } }
 }

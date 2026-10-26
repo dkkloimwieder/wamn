@@ -16,7 +16,10 @@ A refusal prevents that write.
 The checkpoint value is a JSON string containing an RFC 3339 timestamp.
 An absent checkpoint means that no sync completed.
 
-Bind the `http-page` requirement `upstream` to the fixture API before deployment.
+Bind `applications.<app>.connections.upstream` to an enabled org HTTP connection before deployment.
+Keep the endpoint and credentials in that connection row.
+Set the workflow’s `rows.params.parameters.external_system_id` to the external system ID from that connection.
+The consumer records that identity with each imported item.
 The pull runs as the `workflow` user with its execution role. Grant that role the consumer's `item.record` permission.
 The fixture uses `/pages?limit=2`.
 

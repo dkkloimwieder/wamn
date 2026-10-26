@@ -287,7 +287,7 @@ impl PlatformRouteAuthenticator {
             .as_ref()
             .ok_or_else(signature_unauthorized)?;
         let secret = credentials
-            .read(project, credential)
+            .read_connection(project, credential)
             .await
             .map_err(|_| signature_unauthorized())?
             .ok_or_else(signature_unauthorized)?;
@@ -431,6 +431,45 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
             self.authenticate_signature(header, credential, request.headers, request.body)
                 .await?;
+            if credential.starts_with("org:") {
+                let (credentials, project) = self
+                    .signature_authentication
+                    .as_ref()
+                    .ok_or_else(signature_unauthorized)?;
+                let id = credentials
+                    .inbound_principal(project, credential)
+                    .await
+                    .map_err(|_| signature_unauthorized())?
+                    .ok_or_else(signature_unauthorized)?;
+                let principal = id
+                    .parse::<wamn_platform_identity::PrincipalId>()
+                    .map_err(|_| signature_unauthorized())?;
+                let authentication = self
+                    .authentication
+                    .as_ref()
+                    .ok_or_else(authentication_unavailable)?;
+                let grants = authentication
+                    .postgres
+                    .principal_grants(project, &request.scope.tenant_id, &principal)
+                    .await
+                    .map_err(|_| authentication_unavailable())?;
+                if !grants.active || grants.user {
+                    return Err(signature_unauthorized());
+                }
+                let permissions = authentication
+                    .postgres
+                    .user_operation_permissions(project, &request.scope.tenant_id, &principal)
+                    .await
+                    .map_err(|_| authentication_unavailable())?;
+                return Ok(Some(AuthenticatedCaller::new(
+                    request.attachment_id,
+                    id,
+                    CredentialType::Connection,
+                    permissions.admin,
+                    permissions.references.into_iter().collect(),
+                    None,
+                )));
+            }
             return Ok(None);
         }
         let AuthenticationRequest {
@@ -695,6 +734,7 @@ pub(crate) mod tests {
                 [(
                     "catalog".to_owned(),
                     wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
                         packages: ["cat".to_owned()].into(),
                     },
                 )]
@@ -706,6 +746,7 @@ pub(crate) mod tests {
             .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
     }
 
+    mod connection_live;
     mod signature;
 
     #[tokio::test]

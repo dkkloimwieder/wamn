@@ -285,6 +285,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
             [(
                 "automation".to_owned(),
                 wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
                     packages: ["automation".to_owned()].into(),
                 },
             )]

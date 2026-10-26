@@ -1282,7 +1282,8 @@ mod tests {
         {
             operation["component"] = serde_json::json!(primary);
         }
-        document["connections"] = serde_json::json!(["postgres", "secondary_only"]);
+        document["connections"] =
+            serde_json::json!({"secondary_only":{"integration":"http","mode":"write"}});
         document["components"]["secondary"] =
             serde_json::json!({"connections": ["postgres", "secondary_only"]});
         document["custom_operations"]["audit.observe"]["component"] =

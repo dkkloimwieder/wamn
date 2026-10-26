@@ -1,14 +1,16 @@
 # REST consumer fixture
 
-This application owns `rest_consumer_fixture.item`, with the upstream key and item name.
+This application owns `rest_consumer_fixture.item`, with a local UUID, the upstream key, the item name, and source provenance.
 Its registered `item.record` command requires the `rest-consumer-fixture:item/record` permission.
 The integration principal is the application's service identity.
 An administrator grants it that permission through the existing role administration.
 
 The command accepts an array of envelopes.
-Each envelope contains `request_id`, `value.idempotency_key`, and `value.items`.
+Each envelope contains `request_id`, `value.idempotency_key`, `value.items`, and `value.external_system_id`.
 Each item has a nonempty text `key` and `name`.
-The command inserts the items in one transaction and ignores keys that already exist.
+The command inserts the items in one transaction and ignores external IDs that already exist in the same source system.
+The pair `external_system_id` and `external_id` identifies the imported record.
+The source must exist in the project’s `platform.external_system` projection.
 An empty item array succeeds and returns an empty `keys` array.
 The result retains `request_id`, which lets the integration carry its schedule due time without storing temporary state.
 

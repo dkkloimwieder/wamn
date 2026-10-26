@@ -35,6 +35,6 @@
       "operations": {}
     }
   },
-  "connections": ["postgres"],
+  "connections": {},
   "components": { "catalog_overlay": { "connections": ["postgres"] } }
 }

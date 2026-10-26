@@ -64,17 +64,17 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
         "netsuite_pull",
         "rows",
         &json!({"carry": due, "items": [{"id": "42", "name": "Acme"}]}),
-        None,
+        Some(&json!({"external_system_id":"00000000-0000-4000-8000-00000000e001"})),
     );
     assert_eq!(
         rows,
-        json!([{"request_id": due, "value": {"idempotency_key": due, "items": [{"key": "42", "name": "Acme"}]}}])
+        json!([{"request_id": due, "value": {"external_system_id":"00000000-0000-4000-8000-00000000e001", "idempotency_key": due, "items": [{"key": "42", "name": "Acme"}]}}])
     );
     let empty = mapping(
         "netsuite_pull",
         "rows",
         &json!({"carry": due, "items": []}),
-        None,
+        Some(&json!({"external_system_id":"00000000-0000-4000-8000-00000000e001"})),
     );
     assert_eq!(empty[0]["value"]["items"], json!([]));
     let finish = mapping(

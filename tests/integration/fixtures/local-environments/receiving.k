@@ -1,6 +1,7 @@
 import environment
 
 environment.Environment {
+    target = "cloud"
     org = "acme"
     project = "receiving"
     env = "dev"
@@ -8,6 +9,5 @@ environment.Environment {
     route_host = "receiving.localhost"
     policy = "dev"
     applications = {receiving = {packages = ["wamn_receiving"]}}
-    connections = {}
     floors = {}
 }

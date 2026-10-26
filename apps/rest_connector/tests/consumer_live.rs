@@ -170,6 +170,7 @@ pub fn declared(
     [(
         application.to_owned(),
         wamn_catalog::ApplicationDefinition {
+            connections: std::collections::BTreeMap::new(),
             packages: manifest
                 .release
                 .packages
@@ -402,23 +403,43 @@ pub async fn install(
          has_table_privilege($1, 'platform.write_log', 'SELECT') \
            AND has_table_privilege($1, 'platform.write_log', 'INSERT') \
            AND has_table_privilege($1, 'platform.write_log', 'DELETE'), \
-         has_column_privilege($1, 'platform.write_log', 'result', 'UPDATE')",
+         has_column_privilege($1, 'platform.write_log', 'result', 'UPDATE'), \
+         has_column_privilege($1, 'rest_consumer_fixture.item', 'external_system_id', 'SELECT,INSERT'), \
+         has_column_privilege($1, 'rest_consumer_fixture.item', 'external_id', 'SELECT,INSERT')",
             &[&role],
         )
         .await?;
     assert_eq!(
-        (0..6)
+        (0..8)
             .map(|index| privileges.get::<_, bool>(index))
             .collect::<Vec<_>>(),
-        [true, false, true, true, true, true]
+        [true, false, true, true, true, true, true, true]
     );
     eprintln!(
-        "consumer SQL role={role}, schema=rest_consumer_fixture; item SELECT(key), INSERT(key,name); write_log SELECT/INSERT/DELETE, UPDATE(result)"
+        "consumer SQL role={role}, schema=rest_consumer_fixture; item SELECT(key,external_system_id,external_id), INSERT(key,name,external_system_id,external_id); write_log SELECT/INSERT/DELETE, UPDATE(result)"
     );
     let mut url = url::Url::parse(database.url())?;
     url.set_username(&role).unwrap();
     url.set_password(Some(PASSWORD)).unwrap();
     Ok(url.into())
+}
+
+pub async fn source(admin: &tokio_postgres::Client, name: &str) -> anyhow::Result<uuid::Uuid> {
+    admin.batch_execute("BEGIN").await?;
+    admin
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await?;
+    let id = admin
+        .query_one(
+            "INSERT INTO platform.external_system(integration,name) VALUES ('http',$1) RETURNING id",
+            &[&name],
+        )
+        .await?
+        .get(0);
+    admin.batch_execute("COMMIT").await?;
+    Ok(id)
 }
 
 pub async fn invoke(
@@ -505,6 +526,7 @@ pub async fn invoke(
     let (admin, connection) =
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     tokio::spawn(connection);
+    let source_id = source(&admin, "rest-fixture").await?.to_string();
     // The rest_connector item is an environment workflow, authored, enabled
     // and admitted at one due moment (docs/plan/workflows.md epic 2).
     let document: wamn_catalog::WiringDocument = serde_json::from_value(
@@ -576,7 +598,7 @@ pub async fn invoke(
             } else {
                 ("live-key", "native name")
             };
-            json!([{"request_id":request, "value":{"idempotency_key":key, "items":[{"key":"native-item", "name":name}]}}])
+            json!([{"request_id":request, "value":{"external_system_id":source_id,"idempotency_key":key, "items":[{"key":"native-item", "name":name}]}}])
         };
         let intents = host.call_intents(component, operation)?;
         let call = OperationCall {

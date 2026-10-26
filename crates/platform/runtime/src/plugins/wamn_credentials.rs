@@ -85,6 +85,28 @@ impl WamnCredentials {
         self.read(project, handle).await
     }
 
+    /// Resolve an enabled external connection's inbound principal in this host org.
+    pub async fn inbound_principal(
+        &self,
+        project: &str,
+        handle: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(client) = &self.database else {
+            return Ok(None);
+        };
+        let org = self
+            .org
+            .as_deref()
+            .context("credential reader has no org")?;
+        let (handle_org, name) =
+            wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
+        anyhow::ensure!(handle_org == org, "credential org mismatch");
+        Ok(client.query_opt(
+            "SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.project_connection p ON p.connection_id = c.id AND p.org = c.org WHERE c.org = $1 AND c.name = $2 AND p.project = $3 AND c.status = 'active' AND c.integration <> 'wamn'",
+            &[&org, &name, &project],
+        ).await?.map(|row| row.get(0)))
+    }
+
     /// Read an imported project credential. An org handle never falls back here.
     pub async fn read(&self, project: &str, handle: &str) -> anyhow::Result<Option<String>> {
         if handle.starts_with("org:") {

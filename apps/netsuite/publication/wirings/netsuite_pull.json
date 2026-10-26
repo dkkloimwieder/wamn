@@ -56,7 +56,7 @@
       "interface-version": "0.1.0",
       "operation": "wamn:node/handler@0.1.0",
       "params": {
-        "expression": "[{\"request_id\": carry, \"value\": {\"idempotency_key\": carry, \"items\": [items.{\"key\": $string(id), \"name\": name}]}}]",
+        "expression": "[{\"request_id\": carry, \"value\": {\"external_system_id\": $parameters.external_system_id, \"idempotency_key\": carry, \"items\": [items.{\"key\": $string(id), \"name\": name}]}}]",
         "port": "items"
       }
     },

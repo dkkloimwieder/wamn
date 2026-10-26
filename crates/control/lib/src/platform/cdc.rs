@@ -137,7 +137,7 @@ mod tests {
         for project in ["receiving", "wms"] {
             let environment: EnvironmentDocument = serde_json::from_value(json!({
                 "org": "test", "project": project, "env": "dev", "release": "none",
-                "route_host": "test.example.com", "policy": "dev", "applications": {}
+                "target": "cloud", "route_host": "test.example.com", "policy": "dev", "applications": {}
             }))
             .unwrap();
             let desired = deployment(&environment, "registry/gates@sha256:abc");

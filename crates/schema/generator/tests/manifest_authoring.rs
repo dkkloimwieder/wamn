@@ -92,7 +92,7 @@ manifest.Package {{
 {command}
         }}
     }}
-    connections = ["postgres"]
+    connections = {{}}
     components = {{fixture = {{connections = ["postgres"]}}}}
 }}
 "#

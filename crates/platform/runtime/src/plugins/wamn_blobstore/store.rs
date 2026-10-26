@@ -97,6 +97,7 @@ pub struct BoundContainer {
     store: Arc<dyn ObjectStore>,
     container: String,
     prefix: String,
+    read_only: bool,
 }
 
 impl core::fmt::Debug for BoundContainer {
@@ -121,7 +122,23 @@ impl BoundContainer {
             store,
             container: container.into(),
             prefix: prefix.into(),
+            read_only: false,
         }
+    }
+
+    pub(super) fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    fn permit_write(&self, verb: &'static str) -> Result<(), StoreError> {
+        if self.read_only {
+            return Err(StoreError::Refused {
+                verb,
+                reason: "the connection binding is read-only",
+            });
+        }
+        Ok(())
     }
 
     /// The bound container's name. The only container this component can see.
@@ -147,6 +164,7 @@ impl BoundContainer {
     /// Confinement or backend failure. The drain checks that the body is
     /// complete before it reaches here.
     pub async fn put(&self, author_key: &str, body: Vec<u8>) -> Result<(), StoreError> {
+        self.permit_write("put")?;
         let path = self.path(author_key)?;
         self.store
             .put(&path, body.into())
@@ -198,6 +216,7 @@ impl BoundContainer {
     ///
     /// Confinement or backend failure.
     pub async fn delete(&self, author_key: &str) -> Result<(), StoreError> {
+        self.permit_write("delete")?;
         let path = self.path(author_key)?;
         match self.store.delete(&path).await {
             Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
@@ -237,6 +256,7 @@ impl BoundContainer {
     ///
     /// Backend failure.
     pub async fn clear(&self) -> Result<(), StoreError> {
+        self.permit_write("clear")?;
         for key in self.list().await? {
             self.delete(&key).await?;
         }
@@ -468,6 +488,20 @@ mod tests {
             "clearing one binding must not touch a neighbour sharing the container"
         );
         assert_eq!(theirs.get("x.zpl").await.expect("get"), b"theirs");
+    }
+
+    #[tokio::test]
+    async fn read_binding_reads_but_refuses_every_mutation() {
+        let (container, _) = bound("p");
+        container.put("item", b"original".to_vec()).await.unwrap();
+        let reader = container.with_read_only(true);
+        assert!(reader.put("item", b"changed".to_vec()).await.is_err());
+        assert!(reader.delete("item").await.is_err());
+        assert!(reader.clear().await.is_err());
+        assert_eq!(reader.get("item").await.unwrap(), b"original");
+        assert!(reader.has("item").await.unwrap());
+        assert_eq!(reader.head("item").await.unwrap().size, 8);
+        assert_eq!(reader.list().await.unwrap(), vec!["item"]);
     }
 
     /// The store handle can carry credentials; Debug must never render it.

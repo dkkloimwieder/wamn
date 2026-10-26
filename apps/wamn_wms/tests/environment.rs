@@ -698,6 +698,7 @@ pub async fn publish(
     stage::stage(
         platform,
         &EnvironmentDocument {
+            target: "cloud".into(),
             org: identity().org.clone(),
             project: identity().project.clone(),
             env: identity().environment.clone(),
@@ -708,10 +709,10 @@ pub async fn publish(
             applications: BTreeMap::from([(
                 package.package_id().to_owned(),
                 wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
                     packages: BTreeSet::from([package.package_id().to_owned()]),
                 },
             )]),
-            connections: BTreeMap::new(),
             floors: BTreeMap::new(),
         },
         &BTreeMap::from([(
@@ -800,6 +801,7 @@ async fn author_event_workflow(
     let declared = BTreeMap::from([(
         "wamn_wms".into(),
         wamn_catalog::ApplicationDefinition {
+            connections: std::collections::BTreeMap::new(),
             packages: BTreeSet::from(["wamn_wms".into()]),
         },
     )]);

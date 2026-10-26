@@ -142,6 +142,7 @@ async fn composed_sql_uses_released_schemas(
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     let driver = tokio::spawn(connection);
     let guest_url = consumer_live::install(&client, &database, roots, release).await?;
+    let source = consumer_live::source(&client, "sql-proof").await?;
     let (mut guest, guest_connection) =
         tokio_postgres::connect(&guest_url, tokio_postgres::NoTls).await?;
     let guest_driver = tokio::spawn(guest_connection);
@@ -230,7 +231,7 @@ async fn composed_sql_uses_released_schemas(
                 .next()
                 .unwrap();
             let key: String = transaction
-                .query_one(&statement.sql, &[&"item", &"name"])
+                .query_one(&statement.sql, &[&"item", &"name", &source])
                 .await?
                 .get(0);
             assert_eq!(key, "item");

@@ -353,7 +353,8 @@ impl WamnBlobstore {
             tracing::warn!(error = %error, "blobstore client construction failed");
             BindingError::Unauthorized
         })?;
-        Ok(BoundContainer::new(store, bound.container, bound.prefix))
+        Ok(BoundContainer::new(store, bound.container, bound.prefix)
+            .with_read_only(snapshot.read_only))
     }
 }
 
@@ -570,6 +571,7 @@ mod tests {
                 [(
                     "warehouse".to_owned(),
                     wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
                         packages: [package.to_owned()].into(),
                     },
                 )]
@@ -704,6 +706,7 @@ mod tests {
     /// the frozen row in every field the frozen row names.
     fn matching_snapshot(binding: &CandidateConnectionBinding) -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
+            read_only: false,
             wiring_hash: Some(fixture_wiring_hash()),
             component: Some("archiver".to_string()),
             interface_version: Some("0.1.0".to_string()),

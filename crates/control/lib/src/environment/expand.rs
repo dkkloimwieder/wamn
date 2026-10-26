@@ -11,6 +11,7 @@
 //! reads its own bindings.
 
 use anyhow::{Context as _, ensure};
+#[cfg(test)]
 use wamn_catalog::RequirementType;
 use wamn_schema_control::BareSchemaName;
 
@@ -18,7 +19,9 @@ use super::Platform;
 use super::analyse::{Analysis, connect};
 use super::document::EnvironmentDocument;
 use super::ensure::{RUN_SCHEMA, ensure_cdc, project_url};
-use crate::bind_connection::{BindConnectionRequest, ConnectionInstance, bind, ensure_instance};
+use crate::bind_connection::{
+    BindConnectionRequest, ConnectionInstance, bind_with_mode, ensure_instance,
+};
 
 /// Write the policy name and the route host where they differ.
 const UPDATE_ROW_SQL: &str = "\
@@ -40,7 +43,7 @@ pub async fn expand(
     let triple = document.triple();
     let tenant =
         wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
-    let system = connect(&platform.system_database_url).await?;
+    let mut system = connect(&platform.system_database_url).await?;
     system
         .batch_execute("SET ROLE wamn_system")
         .await
@@ -58,10 +61,17 @@ pub async fn expand(
         )
         .await
         .context("write the policy name and the route host")?;
+    let tx = system.transaction().await?;
+    let bindings = super::bindings::reserve(&tx, document, &analysis.packages).await?;
+    tx.commit().await?;
     drop(system);
 
     // The durability projection of the declared policy (R2).
     let project_url = project_url(platform, &triple).await?;
+    let drops =
+        super::bindings::project_authority(&platform.system_database_url, &project_url, document)
+            .await?;
+    platform.auth_changes().await?.publish(drops).await;
     let source = crate::verification_policy::read_authoritative_environment_policy(
         &platform.system_database_url,
         &document.org,
@@ -83,7 +93,6 @@ pub async fn expand(
 
     // The package stage, CDC of its packages, then the release's bindings,
     // which name the release cache row the stage wrote.
-    let mut targets = Vec::new();
     let mut clients = std::collections::BTreeMap::new();
     if let Some(release) = &analysis.authorities.release {
         let analysed = analysis
@@ -111,28 +120,56 @@ pub async fn expand(
             }),
         )?;
         ensure_cdc(platform, document, &manifests).await?;
-        // The admitted descriptors the manifest carries name the release's
-        // connections (R2 (3)); the projection the stage wrote is not read back.
-        targets.extend(
-            super::stage::release_requirements(&release.manifest)
-                .iter()
-                .map(|requirement| {
-                    (
-                        release.digest.clone(),
-                        requirement.component_digest().to_owned(),
-                        requirement.store_alias().to_owned(),
-                    )
-                }),
-        );
     }
-    materialize_connections(
-        &project_url,
-        document,
-        &analysis.authorities.connections,
-        &targets,
-    )
-    .await?;
+    let mut targets = Vec::new();
+    if let Some(release) = &analysis.authorities.release {
+        for component in &release.manifest.components {
+            let application = wamn_catalog::application_for_package(
+                &document.applications,
+                &component.package_id,
+            )
+            .context("component has no application")?;
+            for requirement in &component.descriptor.connections {
+                let binding = bindings
+                    .iter()
+                    .find(|binding| {
+                        binding.application == application
+                            && binding.alias == requirement.store_alias
+                    })
+                    .context("connection_unbound")?;
+                targets.push(ConnectionTarget {
+                    instance_id: super::bindings::key(application, &binding.alias),
+                    manifest_digest: release.digest.clone(),
+                    component_digest: component.descriptor.component_digest.clone(),
+                    store_alias: binding.alias.clone(),
+                    package_id: component.package_id.clone(),
+                    mode: binding.mode,
+                });
+            }
+        }
+    }
+    let connections = bindings
+        .into_iter()
+        .map(|binding| {
+            (
+                super::bindings::key(&binding.application, &binding.alias),
+                binding.resolved,
+            )
+        })
+        .collect();
+    materialize_connections(&project_url, document, &connections, &targets).await?;
     Ok(clients)
+}
+
+/// One release component's application-qualified connection binding.
+#[derive(Debug, Clone)]
+pub struct ConnectionTarget {
+    pub instance_id: String,
+    pub manifest_digest: String,
+    pub component_digest: String,
+    pub store_alias: String,
+    pub package_id: String,
+    pub mode: wamn_schema_generator::ConnectionMode,
 }
 
 /// Materialize one apply snapshot through the existing instance and bind paths.
@@ -140,7 +177,7 @@ pub async fn materialize_connections(
     project_url: &str,
     document: &EnvironmentDocument,
     connections: &std::collections::BTreeMap<String, crate::org_connection::ResolvedConnection>,
-    targets: &[(String, String, String)],
+    targets: &[ConnectionTarget],
 ) -> anyhow::Result<()> {
     for (instance_id, declared) in connections {
         let instance = ConnectionInstance {
@@ -154,39 +191,44 @@ pub async fn materialize_connections(
             credential_handle: declared.credential_handle.clone(),
             org_connection_name: declared.org_connection_name.clone(),
         };
-        let bound: Vec<_> = targets
-            .iter()
-            .filter(|(_, _, alias)| alias == instance_id)
-            .collect();
-        if bound.is_empty() {
-            ensure_instance(&instance)
-                .await
-                .with_context(|| format!("ensure connection {instance_id}"))?;
-            continue;
-        }
-        for (manifest_digest, component_digest, alias) in bound {
-            bind(&BindConnectionRequest {
-                database_url: instance.database_url.clone(),
-                org: instance.org.clone(),
-                project: instance.project.clone(),
-                environment: instance.environment.clone(),
-                instance_id: instance.instance_id.clone(),
-                requirement_type: instance.requirement_type,
-                definition: instance.definition.clone(),
-                credential_handle: instance.credential_handle.clone(),
-                org_connection_name: instance.org_connection_name.clone(),
-                manifest_digest: manifest_digest.clone(),
-                component_digest: component_digest.clone(),
-                store_alias: alias.clone(),
-            })
+        ensure_instance(&instance)
             .await
-            .with_context(|| format!("bind connection {instance_id} to {component_digest}"))?;
+            .with_context(|| format!("ensure connection {instance_id}"))?;
+        for target in targets
+            .iter()
+            .filter(|target| target.instance_id == *instance_id)
+        {
+            bind_with_mode(
+                &BindConnectionRequest {
+                    database_url: instance.database_url.clone(),
+                    org: instance.org.clone(),
+                    project: instance.project.clone(),
+                    environment: instance.environment.clone(),
+                    instance_id: instance.instance_id.clone(),
+                    requirement_type: instance.requirement_type,
+                    definition: instance.definition.clone(),
+                    credential_handle: instance.credential_handle.clone(),
+                    org_connection_name: instance.org_connection_name.clone(),
+                    manifest_digest: target.manifest_digest.clone(),
+                    component_digest: target.component_digest.clone(),
+                    store_alias: target.store_alias.clone(),
+                },
+                target.mode,
+                &target.package_id,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "bind connection {instance_id} to {}",
+                    target.component_digest
+                )
+            })?;
         }
     }
     let unbound: Vec<&str> = targets
         .iter()
-        .map(|(_, _, alias)| alias.as_str())
-        .filter(|alias| !connections.contains_key(*alias))
+        .filter(|target| !connections.contains_key(&target.instance_id))
+        .map(|target| target.instance_id.as_str())
         .collect();
     ensure!(
         unbound.is_empty(),
@@ -198,7 +240,8 @@ pub async fn materialize_connections(
 /// The credential handle of a declared instance. Credentials are provisioned,
 /// never declared: a definition that needs a handle names the host-held
 /// credential set by its instance id.
-pub(super) fn credential_handle(
+#[cfg(test)]
+fn credential_handle(
     requirement_type: RequirementType,
     definition: &serde_json::Value,
     instance_id: &str,

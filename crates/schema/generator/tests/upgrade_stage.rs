@@ -5,7 +5,7 @@ fn manifest() -> Value {
     json!({
         "package": {"id":"fixture", "version":"2.0.0", "predecessor_version":"1.0.0"},
         "required_platform_policy_contract":{"id":"fixture_data_access", "state":"satisfied"},
-        "models":{}, "components":{}, "connections":["main"],
+        "models":{}, "components":{"fixture":{"connections":["postgres"]}}, "connections":{},
         "upgrade_stage": {
             "phase":"backfill",
             "preconditions":{"ready":"SELECT true"},
@@ -52,7 +52,7 @@ fn strict_stage_refuses_unknown_fields_and_invalid_combinations() {
         ("/upgrade_stage/backfill", Value::Null),
         ("/upgrade_stage/phase", json!("expand")),
         ("/package/predecessor_version", Value::Null),
-        ("/connections", json!([])),
+        ("/components", json!({})),
     ] {
         let mut input = manifest();
         *input.pointer_mut(path).unwrap() = value;
@@ -113,8 +113,8 @@ manifest.Package {
     package = {id = "fixture", version = "2.0.0", predecessor_version = "1.0.0"}
     required_platform_policy_contract = {id = "fixture_data_access", state = "satisfied"}
     models = {}
-    components = {}
-    connections = ["main"]
+    components = {fixture = {connections = ["postgres"]}}
+    connections = {}
     upgrade_stage = {
         phase = "backfill"
         preconditions = {ready = "SELECT true"}

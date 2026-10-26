@@ -12,6 +12,7 @@
 //! not document fields (epic decision D2).
 
 pub mod analyse;
+pub mod bindings;
 mod clients;
 pub mod contract;
 pub mod delete;

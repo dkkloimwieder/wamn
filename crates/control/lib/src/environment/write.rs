@@ -93,6 +93,10 @@ pub async fn write(
         &document.env,
     );
     let names = roles.iter().map(|role| role.name).collect();
+    let mut applications = document.applications.clone();
+    for application in applications.values_mut() {
+        application.connections.clear();
+    }
     let mut rendered = release_chart::values(&ValuesInput {
         org: document.org.clone(),
         project: document.project.clone(),
@@ -100,7 +104,7 @@ pub async fn write(
         manifest_digest: release.digest.clone(),
         artifact_base: platform.release_artifact_base.clone(),
         route_host: document.route_host.clone(),
-        applications: document.applications.clone(),
+        applications,
         roles,
         drain_bound_seconds: u32::try_from(policy.drain_bound_seconds)?,
         actor: analysis.actor.clone(),

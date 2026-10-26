@@ -738,6 +738,7 @@ mod tests {
             applications: [(
                 "wms".to_owned(),
                 wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
                     packages: ["wamn_wms".to_owned()].into(),
                 },
             )]

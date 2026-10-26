@@ -429,6 +429,7 @@ impl ConnectionHttp {
             _ => return Err(ConnectionError::AttestationInvalid),
         }
         authorize_snapshot(&snapshot, &http_descriptor())?;
+        authorize_method(snapshot.read_only, &request.method)?;
 
         let definition = snapshot
             .definition
@@ -697,6 +698,13 @@ async fn fetch_oauth2_token(
         return Err(ConnectionError::CredentialUnavailable);
     }
     Ok(token)
+}
+
+fn authorize_method(read_only: bool, method: &str) -> Result<(), ConnectionError> {
+    if read_only && !matches!(method, "GET" | "HEAD") {
+        return Err(ConnectionError::AuthorityDenied);
+    }
+    Ok(())
 }
 
 fn authority_denied(phase: &'static str, error: &AuthorityError) -> ConnectionError {
@@ -1609,6 +1617,7 @@ mod tests {
 
     fn snapshot() -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
+            read_only: false,
             wiring_hash: Some(fixture_wiring_hash()),
             component: Some("notifier".to_string()),
             interface_version: Some("0.1".to_string()),
@@ -2736,5 +2745,19 @@ mod tests {
             spans[0], spans[1],
             "two node operations of one component must not read alike",
         );
+    }
+}
+
+#[cfg(test)]
+mod connection_mode_tests {
+    #[test]
+    fn read_mode_refuses_every_mutating_http_method() {
+        for method in ["GET", "HEAD"] {
+            super::authorize_method(true, method).unwrap();
+        }
+        for method in ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "get"] {
+            assert!(super::authorize_method(true, method).is_err());
+            super::authorize_method(false, method).unwrap();
+        }
     }
 }

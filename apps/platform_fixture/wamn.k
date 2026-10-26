@@ -234,7 +234,7 @@ manifest.Package {
             lists = {key_field = "id"}
         }
     }
-    connections = ["postgres"]
+    connections = {}
     components = {fixture = {connections = ["postgres"]}}
     routes = {auth_modes = ["pat"]}
 }

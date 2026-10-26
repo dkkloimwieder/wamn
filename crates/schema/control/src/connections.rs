@@ -90,6 +90,14 @@ pub fn insert_component_connection_binding_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 }
 
+/// Insert an immutable binding with its declared access mode.
+pub fn insert_component_connection_binding_with_mode_sql() -> &'static str {
+    "INSERT INTO catalog.connection_bindings \
+       (tenant_id, manifest_digest, component_digest, store_alias, \
+        environment, instance_id, binding_status, validation_status, validation_hash, mode, package_id) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+}
+
 /// Remove the bindings of every release outside the live set `$3` (a text
 /// array) after the drain (docs/plan/platform-deploy.md R22 (3)). Returns the
 /// removed bindings' release digests.

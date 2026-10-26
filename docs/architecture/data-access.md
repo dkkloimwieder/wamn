@@ -179,7 +179,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `relations[].constraints` | The constraints a statement relies on: each one its SQL names in `ON CONFLICT ON CONSTRAINT`, and each one `constraint_errors` maps, on the reached relation that defines it. Derive. |
 | `statements.*.path`, `.fetch`, `.parameters`, `.row` | Static SQL selection and accessor contract. PostgreSQL checks types, privileges, and transaction requirements. Retain names and declared shape. |
 | Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
-| `connections` aliases | Application database-capability selection. Retain alias names as an array. The PostgreSQL interface is fixed, so remove repeated interface records. |
+| `connections` | Map each application alias to an integration code and a `read` or `write` mode. PostgreSQL stays outside this map. |
 | `components` keys and `.connections` | Component grouping and declared capability selection before compilation. Retain. Cargo artifact names do not determine operation grouping. |
 | `targets` | The target types a package runs on: `cloud` or `local`. The default is `cloud`. Generation refuses a package with models that lists `local`. Retain. |
 | `sequences.*.pattern`, `.callable` | Application numbering choices: the default pattern of a number sequence, and whether the package's commands call it. Generation parses each pattern with the one pattern parser. Retain. |
@@ -938,7 +938,7 @@ The catalog seeds `http`, `gcs`, and `s3`, each with `form = host` and `exclusiv
 The target table stores `id`, unique `name`, `type` (`local` or `cloud`), `status`, and nullable `last_seen_at`.
 It seeds one active target named `cloud`, with no check-in time. Repeated schema upgrades create no additional seeds.
 Neither table exists in an application database, and neither grants application access.
-The target identity adds no environment assignment, `target_application`, or platform connection.
+An environment stores its target identity on first apply. The target cannot change. `target_application` and the target platform connection remain separate work.
 
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
@@ -1134,12 +1134,14 @@ Each connection names one `registry.integrations` entry: `http`, `gcs`, or `s3`.
 The writer refuses an integration change or an external system with a different integration.
 The writer refuses a rename when a project enables the connection or an applied binding names it.
 Project enablement also prevents connection disablement.
-Project migration 0039 grants the administration role read access to catalog connection references for this refusal.
+Project migration 0039 supplies `catalog.connection_is_referenced(text)` for this refusal. The administration role cannot read the catalog table directly.
 
 A connection has one unique inbound service principal and a current generation.
 Creation grants that principal no roles. Administrators grant its roles explicitly.
 The existing integration application principals keep their schedules and grants.
-Connection principals do not replace them. Inbound authentication remains separate work.
+Connection principals do not replace them. An inbound signature with an org connection handle authenticates as that connection’s service principal.
+The host requires an active, enabled external connection and an active service principal in the project.
+It uses only the principal’s current grants and assigns no active user role.
 The owner ruling of 2026-10-25 moves the `wamn` integration and automatic peer creation to `wamn-ym204`.
 
 The control operations `external_system.write`, `connection.write`, `project_connection.enable`, and `integration_allow.allow` write the system authority.
@@ -1162,7 +1164,7 @@ Org entries require an existing named connection. Project entries use the comman
 The import is atomic, and a stored marker refuses a second import for an org.
 `wamn-ctl connection rotate` reads replacement material from its input file and appends a generation.
 The runtime no longer reads or mounts the legacy credential file.
-Org handles pin the first connection generation that holds the selected credential as `org:<org>:<name>@<generation>`.
+Org handles identify a stored connection generation as `org:<org>:<name>@<generation>`.
 A legacy handle without a generation reads the first stored credential generation.
 The host refuses an org mismatch and never falls back from an org handle to a project credential.
 
@@ -1172,7 +1174,7 @@ A service principal has no user active role, even when it holds an application p
 Principal and grant writes record `AuthDrops`, and their callers publish the deletions after commit.
 A failed deletion is logged without retry. The auth cache TTL bounds stale access.
 
-A session with an unheld signed role or a disabled principal receives 401. A failure to read the database still receives 503.
+A session with an unknown or unheld signed role, or a disabled principal, receives 401. A failure to read the database receives 503.
 
 The control role keeps its existing table grants. Connection administration uses `registry.configure_connection` and the scoped `registry.connection_*` read functions.
 These functions return only non-secret authority. The write function creates a service principal only with its connection and returns its id for `AuthDrops`.
@@ -1186,3 +1188,48 @@ Migration and provisioning install the same grants. Registry reads and writes re
 A PAT-authenticated service can start an invoker workflow with its own held role.
 The host derives that role from current grants, with the existing single-role or held-admin selection rule.
 A service never borrows a user's active role. User sessions with a service role or any unheld role still refuse.
+
+### Application connection bindings
+
+A package declares `connections` in `wamn.k`. Each alias names an integration and a mode, `read` or `write`.
+The build rejects malformed connection declarations without reading a registry. Component PostgreSQL capabilities remain in `components.<name>.connections` as `postgres`.
+
+An environment names its target with `target`.
+Its `applications.<app>.connections` map binds package aliases to org connection names.
+Two packages in one application can bind different aliases to one shared org connection, but exclusive media permit only one binding per target.
+The document holds no endpoint, parameter, or credential values. Old inline connection definitions are refused.
+
+Environment apply resolves declarations against `registry.integrations` and active org connections.
+It separately refuses an unbound name, a connection without project enablement, an integration mismatch, and a missing permission at any scope.
+An unknown integration is also refused at apply.
+An exclusive connection permits one binding in a target, including read bindings.
+A target lock and a unique index serialize concurrent reservations.
+The environment cannot change an assigned target. The operator must delete and recreate it to move it.
+
+The project catalog uses application-qualified instance names to separate equal aliases in different applications.
+A binding also names its package, so applications can bind identical component bytes to different connections.
+The immutable release binding carries its declared mode.
+The HTTP host permits only GET and HEAD through a read binding.
+The object-store host refuses put, delete, and clear through a read binding.
+GCS bindings use the pod identity and carry no credential handle. S3 and HTTP bindings use the org credential generation.
+The local activation path reads the same org connection rows and freezes the selected generation and mode for the candidate.
+
+Connection-only edits do not change the application membership sent to Helm.
+`env show` restores binding names from the system reservation rows.
+With `release = "none"`, apply retains each application's previous declarations and refuses a missing binding.
+A new binding requires a package declaration. Apply refuses an undeclared alias.
+Dry-run analysis reads release package declarations, but it does not pull floor artifacts or write connection rows.
+
+Environment apply and local activation use the provisioning system role for target reservations and binding reads.
+They do not add table grants to the control or administration roles.
+
+### Record provenance
+
+An imported application record carries `external_system_id` and `external_id`.
+The first column references `platform.external_system.id`. The pair has a unique constraint.
+These columns identify the source system and its record, independently of the connection that imported it.
+The REST consumer fixture records this pair alongside its local key and name.
+
+Package verification supplies an empty relation with the public provenance key.
+It reads no registry. Introspection permits this UUID reference outside the package schemas and still refuses other external table references.
+Package migration grants schema access and REFERENCES only while the owner creates this foreign key, then removes those temporary grants.

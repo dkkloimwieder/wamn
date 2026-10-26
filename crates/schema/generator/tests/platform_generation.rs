@@ -278,7 +278,7 @@ fn a_package_with_no_sql_generates_without_a_model() {
             "errors": ["invalid_input", "permission_denied", "internal_error"],
             "error_details": {}
         }},
-        "connections": [],
+        "connections": {},
         "components": {"device": {"connections": []}}
     });
     let empty = CatalogIr::new(Vec::new());
@@ -288,7 +288,7 @@ fn a_package_with_no_sql_generates_without_a_model() {
     assert_eq!(access["schemas"], json!([]));
     assert_eq!(access["relations"], json!([]));
 
-    manifest["connections"] = json!(["postgres"]);
+    manifest["connections"] = json!({});
     manifest["components"]["device"]["connections"] = json!(["postgres"]);
     let error = fixture::try_generate_with_sql(&empty, &manifest, &[])
         .expect_err("a package with a connection and no model generated");

@@ -43,6 +43,41 @@ async fn bind(tx: &tokio_postgres::Transaction<'_>) {
 }
 
 #[tokio::test]
+async fn write_connection_refuses_an_unread_http_key() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated')").await.unwrap();
+    let tx = client.transaction().await.unwrap();
+    bind(&tx).await;
+    let mut drops = AuthDrops::default();
+    let mut http = connection("http", "erp");
+    http.parameters["headers"] = json!("unused");
+    assert_eq!(
+        connections::write_connection(&tx, "acme", &http, &mut drops)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "invalid_input: parameters"
+    );
+    assert!(drops.is_empty());
+    assert_eq!(
+        tx.query_one(
+            "SELECT count(*) FROM registry.connection WHERE org = 'acme'",
+            &[]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        0
+    );
+    http.parameters.as_object_mut().unwrap().remove("headers");
+    connections::write_connection(&tx, "acme", &http, &mut drops)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn fresh_connections_keep_principals_generations_and_enabled_projections() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();

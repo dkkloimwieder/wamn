@@ -236,6 +236,22 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     use wamn_platform_identity::{
         assign_project_role, create_or_reuse_user, grant_project_env_membership,
     };
+    async fn assert_application_role(url: &str, user: &str) {
+        let (project, task) = connect(url).await.ok().expect("application connection");
+        let count: i64 = project
+            .query_one(
+                "SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'",
+                &[&user],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            count, 1,
+            "reconciliation projects the developer's admin grant"
+        );
+        task.abort();
+    }
     wamn_test_postgres::require_prerequisites(&["RESEND_API_KEY", "RESEND_FROM"]);
     let mut postgres = wamn_test_postgres::start(&[]).expect("start owned PostgreSQL");
     let system = postgres
@@ -311,6 +327,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("project the user into the application");
+    assert_application_role(&environment.route.database_url, user.as_str()).await;
     let (mut password_admin, connection) =
         tokio_postgres::connect(system.url(), tokio_postgres::NoTls)
             .await
@@ -388,6 +405,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("restore application membership after recreation");
+    assert_application_role(&environment.route.database_url, user.as_str()).await;
     let second = login()
         .send()
         .await

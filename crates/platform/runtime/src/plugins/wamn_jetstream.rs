@@ -1444,6 +1444,7 @@ mod tests {
                 [(
                     "catalog".to_owned(),
                     wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
                         packages: ["cat".to_owned()].into(),
                     },
                 )]

@@ -409,6 +409,8 @@ pub enum CredentialType {
     Session,
     /// A service identity pinned by trusted queue admission.
     QueuedService,
+    /// A signature verified with an enabled external connection credential.
+    Connection,
 }
 
 impl std::fmt::Debug for AuthenticatedCaller {
@@ -1685,6 +1687,7 @@ mod tests {
                             [(
                                 "catalog".to_owned(),
                                 wamn_catalog::ApplicationDefinition {
+                                    connections: std::collections::BTreeMap::new(),
                                     packages: ["cat".to_owned()].into(),
                                 },
                             )]

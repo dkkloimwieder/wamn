@@ -399,7 +399,7 @@ mod tests {
     fn only_expand_can_introduce_a_synchronization_pair() {
         let mut manifest = PackageManifest::from_slice(br#"{
             "package":{"id":"fixture","version":"2.0.0","predecessor_version":"1.0.0"},
-            "models":{},"components":{},"connections":["main"],
+            "models":{},"components":{"fixture":{"connections":["postgres"]}},"connections":{},
             "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
             "upgrade_stage":{"phase":"expand","preconditions":{"ready":"SELECT true"},"postconditions":{"done":"SELECT true"}}
         }"#).unwrap();

@@ -102,7 +102,7 @@ impl PlatformPackage {
                 "relations": [{"schema": "inventory", "table": "widget", "select_fields": ["id"], "insert_fields": [], "update_fields": [], "lock": false, "constraints": []}],
                 "statements": {"list": {"path": "query/widget.sql", "fetch": "bounded_list", "parameters": [], "row": [{"name": "id", "type": "uuid", "nullable": false}]}}
             }},
-            "connections": ["postgres"], "components": {"fixture": {"connections": ["postgres"]}}
+            "connections": {}, "components": {"fixture": {"connections": ["postgres"]}}
         });
         fs::write(
             package.join("wamn.json"),

@@ -7,7 +7,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ComponentConnectionRequirement, ConnectionTypeDescriptor, RequirementType};
 use wamn_control::environment::analyse::resolve_connections;
 use wamn_control::environment::document::EnvironmentDocument;
-use wamn_control::environment::expand::materialize_connections;
+use wamn_control::environment::expand::{ConnectionTarget, materialize_connections};
 use wamn_control::org_connection::{self, DeclareConnectionRequest, ResolvedConnection};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{
@@ -31,9 +31,8 @@ fn document(project: &str) -> EnvironmentDocument {
     EnvironmentDocument::from_json(
         json!({
             "org": "acme", "project": project, "env": "dev", "release": "none",
-            "route_host": "app.acme.example", "policy": "dev",
-            "applications": {"erp": {"packages": ["org_fixture"]}},
-            "connections": {"erp": {"org": "shared_erp"}}
+            "target": "cloud", "route_host": "app.acme.example", "policy": "dev",
+            "applications": {"erp": {"packages": ["org_fixture"], "connections": {"erp": "shared_erp"}}}
         })
         .to_string()
         .as_bytes(),
@@ -45,7 +44,7 @@ fn definition(host: &str) -> Value {
     json!({"primary-authority": format!("https://{host}/"), "tls-verification": "verify-authority"})
 }
 
-async fn seed(client: &Client, tenant: &str) -> Vec<(String, String, String)> {
+async fn seed(client: &Client, tenant: &str) -> Vec<ConnectionTarget> {
     client
         .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
             wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
@@ -102,15 +101,23 @@ async fn seed(client: &Client, tenant: &str) -> Vec<(String, String, String)> {
     }
     COMPONENTS
         .iter()
-        .map(|component| (digest.clone(), (*component).to_owned(), "erp".to_owned()))
+        .enumerate()
+        .map(|(index, component)| ConnectionTarget {
+            instance_id: "erp/erp".into(),
+            manifest_digest: digest.clone(),
+            component_digest: (*component).to_owned(),
+            store_alias: "erp".into(),
+            package_id: "org_fixture".into(),
+            mode: if index == 0 {
+                wamn_schema_generator::ConnectionMode::Read
+            } else {
+                wamn_schema_generator::ConnectionMode::Write
+            },
+        })
         .collect()
 }
 
-async fn selected(
-    url: &str,
-    tenant: &str,
-    target: &(String, String, String),
-) -> ConnectionEffectSnapshot {
+async fn selected(url: &str, tenant: &str, target: &ConnectionTarget) -> ConnectionEffectSnapshot {
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(url.to_owned())),
         guest_pool_max_size: 1,
@@ -132,15 +139,15 @@ async fn selected(
                     wiring: None,
                 },
                 origin_package_id: "org_fixture",
-                origin_component_digest: &target.1,
+                origin_component_digest: &target.component_digest,
                 origin_component: "http-call",
                 origin_interface_version: "0.1.0",
                 origin_operation: "call",
                 package_id: "org_fixture",
                 operation: "call",
-                manifest_digest: &target.0,
+                manifest_digest: &target.manifest_digest,
                 environment: "dev",
-                component_digest: &target.1,
+                component_digest: &target.component_digest,
                 store_alias: "erp",
                 candidate_binding: None,
             },
@@ -167,7 +174,7 @@ async fn apply(
     url: &str,
     document: &EnvironmentDocument,
     inputs: &BTreeMap<String, ResolvedConnection>,
-    targets: &[(String, String, String)],
+    targets: &[ConnectionTarget],
 ) {
     materialize_connections(url, document, inputs, targets)
         .await
@@ -296,7 +303,7 @@ async fn org_connection_materializes_once_per_environment() {
     let inputs_b = resolve_connections(&doc_b, &original).unwrap();
     // A retry after the first binding committed must retain the first generation.
     let mut partial = targets_a.clone();
-    partial[1].1 = format!("sha256:{}", "9".repeat(64));
+    partial[1].component_digest = format!("sha256:{}", "9".repeat(64));
     assert!(
         materialize_connections(database_a.url(), &doc_a, &inputs_a, &partial)
             .await
@@ -307,6 +314,16 @@ async fn org_connection_materializes_once_per_environment() {
     apply(database_b.url(), &doc_b, &inputs_b, &targets_b).await;
     assert_eq!(counts(&a).await, (1, 2));
     assert_eq!(counts(&b).await, (1, 2));
+    for client in [&a, &b] {
+        let rows = client.query("SELECT mode, package_id, instance_id FROM catalog.connection_bindings ORDER BY component_digest", &[]).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].get::<_, String>(0), "read");
+        assert_eq!(rows[1].get::<_, String>(0), "write");
+        for row in rows {
+            assert_eq!(row.get::<_, String>(1), "org_fixture");
+            assert_eq!(row.get::<_, String>(2), "erp/erp");
+        }
+    }
 
     let vault = WamnCredentials::from_database(
         std::sync::Arc::new(connect(control_database.url()).await),

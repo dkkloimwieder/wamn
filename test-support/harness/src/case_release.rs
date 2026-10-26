@@ -676,6 +676,7 @@ pub async fn install_candidate(
         events: None,
     };
     let document = EnvironmentDocument {
+        target: "cloud".into(),
         org: triple.org.clone(),
         project: triple.project.clone(),
         env: triple.env.as_str().to_owned(),
@@ -687,6 +688,7 @@ pub async fn install_candidate(
         applications: [(
             application.to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connections: std::collections::BTreeMap::new(),
                 packages: manifest
                     .release
                     .packages
@@ -696,7 +698,6 @@ pub async fn install_candidate(
             },
         )]
         .into(),
-        connections: std::collections::BTreeMap::new(),
         floors: std::collections::BTreeMap::new(),
     };
     stage::stage(

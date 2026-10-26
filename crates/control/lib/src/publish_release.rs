@@ -1887,7 +1887,7 @@ mod tests {
         assert_eq!(published.manifest.components.len(), 2);
         let document = crate::environment::document::EnvironmentDocument::from_json(
             serde_json::json!({"org":"acme", "project":"erp", "env":"dev", "release":published.digest.as_str(),
-                "route_host":"erp.acme.example", "policy":"dev",
+                "target": "cloud", "route_host":"erp.acme.example", "policy":"dev",
                 "applications": {"erp": {"packages": ["consumer", "integration"]}}}).to_string().as_bytes()
         ).unwrap();
         let authorities = Authorities {
@@ -2371,6 +2371,7 @@ mod tests {
         let applications = [(
             "orders".into(),
             wamn_catalog::ApplicationDefinition {
+                connections: std::collections::BTreeMap::new(),
                 packages: ["base".into(), "overlay".into()].into(),
             },
         )]

@@ -365,6 +365,6 @@ manifest.Package {
             }
         }
     }
-    connections = ["postgres"]
+    connections = {}
     components = {receiving = {connections = ["postgres"]}}
 }

@@ -1851,7 +1851,19 @@ fn map_constraints(
                         "foreign key has no referenced table",
                     ));
                 };
-                if !tables.contains_key(&(referenced_schema.clone(), referenced_table.clone())) {
+                let provenance = referenced_schema == "platform"
+                    && referenced_table == "external_system"
+                    && row.referenced_columns.len() == 1
+                    && attributes
+                        .get(&(
+                            referenced_schema.clone(),
+                            referenced_table.clone(),
+                            row.referenced_columns[0],
+                        ))
+                        .is_some_and(|name| name == "id");
+                if !provenance
+                    && !tables.contains_key(&(referenced_schema.clone(), referenced_table.clone()))
+                {
                     return Err(refusal(
                         PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
@@ -2091,7 +2103,11 @@ pub async fn read_catalog_with_synchronizations(
         .into_iter()
         .filter(|column| !relation_is_excluded(excluded_relations, &column.schema, &column.table))
         .collect::<Vec<_>>();
-    let attributes = map_columns(&columns, &mut tables)?;
+    let mut attributes = map_columns(&columns, &mut tables)?;
+    // The platform provenance key is the one public reference outside application schemas.
+    for row in client.query("SELECT a.attnum FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'platform' AND c.relname = 'external_system' AND c.relkind = 'r' AND a.attname = 'id' AND a.atttypid = 'uuid'::regtype AND NOT a.attisdropped", &[]).await.map_err(|error| database_error("read the provenance key", error))? {
+        attributes.insert(("platform".into(), "external_system".into(), row.get(0)), "id".into());
+    }
     let sequences = load_sequences(client, &schemas)
         .await?
         .into_iter()

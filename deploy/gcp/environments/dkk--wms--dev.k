@@ -1,6 +1,7 @@
 import environment
 
 environment.Environment {
+    target = "cloud"
     org = "dkk"
     project = "wms"
     env = "dev"
@@ -8,10 +9,8 @@ environment.Environment {
     route_host = "wms.wamn.dev"
     policy = "dev"
     applications = {
-        "wamn_wms" = {packages = ["wamn_wms"]}
-    }
-    connections = {
-        "labels" = {type = "blobstore", definition = {"provider": "gcs", "container": "wamn-dev-labels", "prefix": "wms/"}}
+        "wamn_wms" = {packages = ["wamn_wms"], connections = {labels = "wms-labels"}}
+        rest = {packages = ["rest_connector", "rest_consumer_fixture", "wamn_integration"], connections = {upstream = "rest-fixture"}}
     }
     floors = {
     }

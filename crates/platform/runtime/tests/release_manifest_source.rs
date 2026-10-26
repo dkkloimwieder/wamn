@@ -111,6 +111,7 @@ fn scope(canonical: &[u8]) -> wamn_engine::release_manifest::ReleaseScope {
         [(
             "catalog".to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connections: std::collections::BTreeMap::new(),
                 packages: manifest
                     .release
                     .packages

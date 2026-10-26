@@ -25,9 +25,7 @@
       }
     }
   },
-  "connections": [
-    "postgres"
-  ],
+  "connections": {},
   "components": {
     "source_fixture": {
       "connections": [

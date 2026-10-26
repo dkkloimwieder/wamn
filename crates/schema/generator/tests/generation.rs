@@ -180,8 +180,8 @@ fn a_component_with_no_operation_refuses_over_base_sql() {
         "package": "wamn_integration", "version": "0.1.0",
         "digest": format!("sha256:{}", "a".repeat(64)), "operations": ["setting.read"]
     }});
-    adapter["connections"] = json!(["postgres", "reporting"]);
-    adapter["components"]["reporting"] = json!({"connections": ["reporting"]});
+    adapter["connections"] = json!({"reporting": {"integration": "http", "mode": "read"}});
+    adapter["components"]["reporting"] = json!({"connections": ["postgres", "reporting"]});
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&adapter))
             .unwrap_err()
@@ -246,8 +246,8 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     );
 
     let mut distinct = manifest();
-    distinct["connections"] = json!(["postgres", "reporting"]);
-    distinct["components"]["reporting"] = json!({"connections": ["reporting"]});
+    distinct["connections"] = json!({"reporting": {"integration": "http", "mode": "read"}});
+    distinct["components"]["reporting"] = json!({"connections": ["postgres", "reporting"]});
     distinct["models"]["gadget"]["operations"]["query"]["component"] = json!("reporting");
     let error = validate_operation_vocabulary(&parsed_manifest(&distinct))
         .expect_err("a multi-component manifest omitted explicit operation grouping");
@@ -1530,7 +1530,7 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                 }
             }
         },
-        "connections": ["postgres"],
+        "connections": {},
         "components": {"inventory": {"connections": ["postgres"]}}
     });
     (CatalogIr::new(vec![model]), manifest)

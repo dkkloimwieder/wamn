@@ -13,7 +13,7 @@ manifest.Package {
         consumer = {
             package = "rest_consumer_fixture"
             version = "0.1.0"
-            digest = "sha256:2b1a37f131831233c51c708fd3b3d329cc0fa11fed80e97f255d74b7002f23b9"
+            digest = "sha256:ecaf9bddbb6930cea16f211640d79419169d709b8236bbc8163700c5f99f0ec7"
             operations = ["item.record"]
         }
     }
@@ -39,6 +39,6 @@ manifest.Package {
             errors = ["invalid_input", "retry", "timeout", "internal_error"]
         }
     }
-    connections = ["postgres"]
+    connections = {upstream = {integration = "http", mode = "write"}}
     components = {rest_connector = {connections = ["postgres"]}}
 }

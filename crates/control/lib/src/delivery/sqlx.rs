@@ -85,7 +85,7 @@ mod tests {
             "required_platform_policy_contract": {"id": "fixture_access", "state": "unsatisfied"},
             "models": {"widget": {"schema": "inventory", "table": "widget", "owner": "sqlx_fixture",
                 "operations": {"get": {"permission": "widget.get", "result": "one"}}}},
-            "connections": ["postgres"], "components": {"fixture": {"connections": ["postgres"]}}
+            "connections": {}, "components": {"fixture": {"connections": ["postgres"]}}
         }))
         .unwrap()
     }

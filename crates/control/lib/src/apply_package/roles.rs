@@ -65,6 +65,21 @@ pub(super) async fn execute_migration(
         foreign_key_tables(&serde_json::to_value(raw)?, &mut references);
         let role = package_owner_role(owner);
         let mut granted = Vec::new();
+        let provenance_usage = references.contains("\"platform\".\"external_system\"")
+            && !tx
+                .query_one(
+                    "SELECT has_schema_privilege($1::text, 'platform', 'USAGE')",
+                    &[&role],
+                )
+                .await?
+                .get::<_, bool>(0);
+        if provenance_usage {
+            tx.batch_execute(&format!(
+                "GRANT USAGE ON SCHEMA platform TO {}",
+                wamn_pg_core::quote_ident(&role)
+            ))
+            .await?;
+        }
         for table in references {
             let allowed: bool = tx.query_one(
                 "SELECT CASE WHEN to_regclass($2::text) IS NULL THEN true ELSE has_table_privilege($1::text, $2::text, 'REFERENCES') END",
@@ -90,6 +105,13 @@ pub(super) async fn execute_migration(
             .await
             .with_context(|| format!("apply {} as package {owner}", statement.summary))?;
         reset_host_role(tx).await?;
+        if provenance_usage {
+            tx.batch_execute(&format!(
+                "REVOKE USAGE ON SCHEMA platform FROM {}",
+                wamn_pg_core::quote_ident(&role)
+            ))
+            .await?;
+        }
         for table in granted {
             tx.batch_execute(&format!(
                 "REVOKE REFERENCES ON TABLE {table} FROM {}",

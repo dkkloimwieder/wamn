@@ -193,7 +193,7 @@ manifest.Package {
             }
         }
     }
-    connections = ["postgres"]
+    connections = {}
     components = {client_acme_receiving = {connections = ["postgres"]}}
     routes = {path_prefix = "/acme", id_prefix = "client-acme-receiving"}
 }

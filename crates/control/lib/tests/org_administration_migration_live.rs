@@ -244,7 +244,7 @@ async fn the_migration_creates_the_org_tables_and_grants_the_provisioned_surface
     // inserts a principal.
     client
         .batch_execute(&format!(
-            "{control} {issuer} DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); \
+            "{control} {issuer} DROP TABLE registry.environment_connection_binding; DROP TRIGGER environment_target_immutable ON registry.project_envs; DROP FUNCTION registry.keep_environment_target(); ALTER TABLE registry.project_envs DROP COLUMN target_id; DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); \
              DROP TABLE identity.org_roles, identity.org_memberships; \
              ALTER TABLE registry.project_envs DROP COLUMN status; \
              CREATE TABLE provisioning.sagas (saga_id text PRIMARY KEY, type text NOT NULL, \

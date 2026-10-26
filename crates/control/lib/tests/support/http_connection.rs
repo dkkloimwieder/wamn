@@ -347,6 +347,17 @@ pub fn release(
         .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
         .collect();
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
+    manifest
+        .release
+        .packages
+        .retain(|package| package.package_id() != "label_fixture");
+    manifest
+        .release
+        .packages
+        .insert(wamn_catalog::PackageCoordinate::new(
+            "http_fixture",
+            "1.0.0",
+        )?);
     for (descriptor, fact) in components.into_iter().zip(&facts) {
         manifest
             .components
@@ -438,7 +449,7 @@ pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, diges
             let find = |table: &str| {
                 rows[table]
                     .as_array()
-                    .and_then(|rows| rows.iter().find(|row| row["instance_id"] == *handle))
+                    .and_then(|rows| rows.iter().find(|row| row["instance_id"] == format!("{PACKAGE}/{handle}")))
             };
             let (Some(instance), Some(generation)) = (find("instances"), find("generations"))
             else {
@@ -448,13 +459,13 @@ pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, diges
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter(|row| row["instance_id"] == *handle)
+                .filter(|row| row["instance_id"] == format!("{PACKAGE}/{handle}"))
                 .collect();
             instance["requirement_type"] == "http"
                 && instance["active_generation"] == 1
                 && generation["definition_json"]
-                    == json!(document.connections[*handle])["definition"]
-                && generation["credential_set_handle"] == *handle
+                    == json!({"primary-authority":format!("{}/{}", ORIGIN, if *handle == OAUTH2_HANDLE {"oauth/"} else {""}),"tls-verification":"disabled"})
+                && generation["credential_set_handle"].as_str().is_some_and(|value| value.starts_with(&format!("org:{ORG}:{}@", document.applications[PACKAGE].connections[*handle])))
                 && bindings.len() == if *handle == "upstream" { 2 } else { 1 }
                 && bindings.iter().all(|binding| {
                     binding["manifest_digest"] == digest

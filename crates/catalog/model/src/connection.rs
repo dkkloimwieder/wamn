@@ -386,7 +386,10 @@ mod tests {
         let error = RequirementType::Http
             .check_definition(&serde_json::json!({"tls-verification": "verify-authority"}))
             .expect_err("primary-authority is read at resolve time");
-        assert!(error.contains("lacks primary-authority"), "{error}");
+        assert_eq!(
+            error,
+            "the generation definition lacks primary-authority; Http reads it at resolve time"
+        );
     }
 
     #[test]
@@ -394,18 +397,28 @@ mod tests {
         let error = RequirementType::Http
             .check_definition(&serde_json::json!({"primary-authority": "https://erp.example"}))
             .expect_err("tls-verification is read at resolve time");
-        assert!(error.contains("lacks tls-verification"), "{error}");
+        assert_eq!(
+            error,
+            "the generation definition lacks tls-verification; Http reads it at resolve time"
+        );
     }
 
     #[test]
     fn an_extra_http_coordinate_is_refused_by_name() {
-        let error = RequirementType::Http
-            .check_definition(&serde_json::json!({
-                "primary-authority": "https://erp.example", "tls-verification": "verify-authority",
-                "provider": "s3"
-            }))
-            .expect_err("HTTP never reads provider");
-        assert!(error.contains("carries provider"), "{error}");
+        for key in ["provider", "endpoint", "headers"] {
+            let mut definition = serde_json::json!({
+                "primary-authority": "https://erp.example", "tls-verification": "verify-authority"
+            });
+            definition[key] = serde_json::json!("unused");
+            assert_eq!(
+                RequirementType::Http
+                    .check_definition(&definition)
+                    .unwrap_err(),
+                format!(
+                    "the generation definition carries {key}, which Http never reads; a coordinate nobody reads is a coordinate nobody validates"
+                )
+            );
+        }
     }
 
     #[test]
@@ -418,8 +431,55 @@ mod tests {
             let error = RequirementType::Http
                 .check_definition(&definition)
                 .expect_err("the plugin needs a nonempty coordinate");
-            assert!(error.contains(&format!("{coordinate} is empty")), "{error}");
+            assert_eq!(
+                error,
+                format!("the generation definition's {coordinate} is empty; Http needs it")
+            );
         }
+    }
+
+    #[test]
+    fn a_nonstring_http_coordinate_is_refused_by_name() {
+        for coordinate in ["primary-authority", "tls-verification"] {
+            let mut definition = serde_json::json!({
+                "primary-authority": "https://erp.example", "tls-verification": "verify-authority"
+            });
+            definition[coordinate] = serde_json::json!(42);
+            assert_eq!(
+                RequirementType::Http
+                    .check_definition(&definition)
+                    .unwrap_err(),
+                format!(
+                    "the generation definition's {coordinate} must be a string; Http reads it as one"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_a_connection_definition_its_type_refuses() {
+        for requirement in [RequirementType::Http, RequirementType::Blobstore] {
+            assert_eq!(
+                requirement
+                    .check_definition(&serde_json::json!("not an object"))
+                    .unwrap_err(),
+                "the generation definition must be a JSON object"
+            );
+        }
+    }
+
+    #[test]
+    fn reads_an_http_connection_and_refuses_an_unknown_type() {
+        assert_eq!(
+            serde_json::from_value::<RequirementType>(serde_json::json!("http")).unwrap(),
+            RequirementType::Http
+        );
+        assert_eq!(
+            serde_json::from_value::<RequirementType>(serde_json::json!("ftp"))
+                .unwrap_err()
+                .to_string(),
+            "unknown variant `ftp`, expected `blobstore` or `http`"
+        );
     }
 
     #[test]

@@ -42,11 +42,27 @@ pub struct PackageManifest {
     pub internal_relations: BTreeMap<String, InternalRelationDeclaration>,
     #[serde(default)]
     pub custom_operations: BTreeMap<String, CustomOperationDeclaration>,
-    pub connections: BTreeSet<String>,
+    pub connections: BTreeMap<String, ConnectionDeclaration>,
     pub components: BTreeMap<String, ComponentDeclaration>,
     /// The route entries generation writes for the generated operations.
     #[serde(default, skip_serializing_if = "RoutesDeclaration::is_default")]
     pub routes: RoutesDeclaration,
+}
+
+/// An external connection required by a package, without deployment values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionDeclaration {
+    pub integration: String,
+    pub mode: ConnectionMode,
+}
+
+/// The operations that a connection binding permits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionMode {
+    Read,
+    Write,
 }
 
 /// One strict package-local operation backed only by declared static SQL.
@@ -654,6 +670,16 @@ impl PackageManifest {
                 "package predecessor version must differ from the package version",
             ));
         }
+        for (name, connection) in &manifest.connections {
+            validate_identifier(&name.replace('-', "_"), "connection")?;
+            validate_identifier(&connection.integration, "integration")?;
+            if name == "postgres" {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidConnection,
+                    "postgres is a host capability, not a connection binding",
+                ));
+            }
+        }
         crate::upgrade_stage::validate_package_upgrade_stage(&manifest)?;
         Ok(manifest)
     }
@@ -664,7 +690,10 @@ impl PackageManifest {
     pub fn declares_no_sql(&self) -> bool {
         self.models.is_empty()
             && self.internal_relations.is_empty()
-            && self.connections.is_empty()
+            && !self
+                .components
+                .values()
+                .any(|component| component.connections.iter().any(|name| name == "postgres"))
             && self.base_dependencies.is_empty()
             && self
                 .custom_operations
@@ -1044,7 +1073,7 @@ fn validate_component_groups(
             ));
         }
         for connection in &requirements {
-            if !manifest.connections.contains(*connection) {
+            if *connection != "postgres" && !manifest.connections.contains_key(*connection) {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidComponent,
                     format!("{name} references unknown connection {connection}"),
@@ -1847,7 +1876,7 @@ fn validate_static_sql_declarations(
         .as_deref()
         .expect("complete local SQL shape has a connection");
     validate_identifier(connection, "custom-operation connection")?;
-    if !manifest.connections.contains(connection) {
+    if connection != "postgres" && !manifest.connections.contains_key(connection) {
         return Err(GenerateError::new(
             GenerateErrorType::InvalidOperation,
             format!("{operation_name} references unknown connection {connection}"),
