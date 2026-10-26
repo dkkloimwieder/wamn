@@ -2682,7 +2682,8 @@ fn a_logged_list_read_gets_its_change_feed() {
             .as_object_mut()
             .unwrap()
             .remove("authored_sql");
-        run(&all_stamps_catalog(), &manifest, &[]).expect("a generated list read generates")
+        run(&feed_catalog(&all_stamps_catalog()), &manifest, &[])
+            .expect("a generated list read generates")
     };
     let pruned = generated("P30D");
     let changes = std::str::from_utf8(
@@ -3266,7 +3267,7 @@ fn generated_update_counts_a_numeric_scale_only_change() {
 
 #[test]
 fn integer_keys_reach_contracts_routes_and_feed_bindings() {
-    let base = all_stamps_catalog();
+    let base = feed_catalog(&all_stamps_catalog());
     let model = table(&base, "gadget");
     for (ty, rust, wit, json_type) in [
         (ColumnType::Int32, "i32", "s32", "integer"),
@@ -3372,6 +3373,31 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
     }
 }
 
+fn feed_catalog(base: &CatalogIr) -> CatalogIr {
+    let model = table(base, "gadget");
+    let columns = model
+        .columns()
+        .iter()
+        .map(|column| {
+            if column.name() == "row_version" {
+                Column::new(
+                    "row_version",
+                    ColumnType::Int32,
+                    false,
+                    Some(ColumnDefault::int32(1)),
+                    None,
+                )
+            } else {
+                column.clone()
+            }
+        })
+        .collect();
+    replacing_table(
+        base,
+        rebuilt_table(model, columns, model.constraints().to_vec()),
+    )
+}
+
 fn feed_manifest() -> Value {
     let mut value = manifest();
     let model = &mut value["models"]["gadget"];
@@ -3382,6 +3408,19 @@ fn feed_manifest() -> Value {
         .unwrap()
         .remove("authored_sql");
     value
+}
+
+#[test]
+fn a_feed_refuses_an_int64_revision_and_accepts_opt_out() {
+    let mut value = feed_manifest();
+    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
+    assert_eq!(
+        refusal.context(),
+        "gadget feed needs an int32 revision field: use an int32 revision field or feed = false"
+    );
+    value["models"]["gadget"]["feed"] = json!(false);
+    run(&catalog(false), &value, &[]).unwrap();
 }
 
 #[test]
@@ -3499,11 +3538,14 @@ fn an_explicit_feed_refuses_a_missing_list_read() {
 #[test]
 fn feed_false_removes_feed_emission() {
     let mut value = feed_manifest();
-    let default = run(&catalog(false), &value, &[]).unwrap();
+    let default = run(&feed_catalog(&catalog(false)), &value, &[]).unwrap();
     value["models"]["gadget"]["feed"] = json!(true);
-    assert_eq!(default, run(&catalog(false), &value, &[]).unwrap());
+    assert_eq!(
+        default,
+        run(&feed_catalog(&catalog(false)), &value, &[]).unwrap()
+    );
     value["models"]["gadget"]["feed"] = json!(false);
-    let disabled = run(&catalog(false), &value, &[]).unwrap();
+    let disabled = run(&feed_catalog(&catalog(false)), &value, &[]).unwrap();
     for (package, enabled) in [(&default, true), (&disabled, false)] {
         assert_eq!(
             package.file("generated/sql/gadget/changes.sql").is_some(),

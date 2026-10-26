@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRoot, createSignal, flush } from "solid-js";
 import { applyChanges } from "@wfe/sync/internal";
 import { fakeFeed, makeRows, randomChanges, seeded } from "../src/fake.js";
-import { packagingCollection, type PackagingRow } from "../src/packaging-feed.js";
+import { packagingCollection, type PackagingRow } from "../src/generated/wamn_wms/packaging.js";
 import type { StatusFilter } from "../src/order.js";
 import { shapeA } from "../src/shape-a.js";
 import { shapeB } from "../src/shape-b.js";

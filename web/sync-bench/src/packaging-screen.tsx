@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, createUniqueId, latest, onCleanup, untrack } from "solid-js";
 import { liveRows, outboxStatus, syncCurrentAt, syncStatus, type Outbox, type OutboxEntry, type ShellResult } from "@wfe/sync";
-import type { packagingCollection } from "./packaging-feed.js";
+import type { packagingCollection } from "./generated/wamn_wms/packaging.js";
 import { orderedIds, type StatusFilter } from "./order.js";
 import { packagingWrites, type PackagingDraft } from "./packaging-writes.js";
 import { shapeA } from "./shape-a.js";

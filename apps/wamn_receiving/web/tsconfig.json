@@ -22,7 +22,6 @@
       "solid-js": ["./node_modules/solid-js"],
       "@solidjs/web": ["./node_modules/@solidjs/web"],
       "@solidjs/web/*": ["./node_modules/@solidjs/web/*"],
-      "@wamn/receiving-client/*": ["../../target/wamn/wamn_receiving/client-ts/*"],
       "@wamn/platform-ui": ["../../platform_ui/src/index.ts"],
       "@wfe/components": ["../../../web/wfe/packages/components/src/index.ts"],
       "@wfe/components/*": ["../../../web/wfe/packages/components/src/*"],

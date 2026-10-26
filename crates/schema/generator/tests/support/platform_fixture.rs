@@ -132,7 +132,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
                         "type": "array",
                         "items": {"type": "object", "required": ["id", "expected_edit_version", "request_id"], "properties": {
                             "id": {"type": "string", "format": "uuid"},
-                            "expected_edit_version": {"type": "string"},
+                            "expected_edit_version": {"type": "integer"},
                             "request_id": {"type": "string"},
                             "change": {
                             "type": "object", "properties": {"maker_id": {
@@ -313,9 +313,9 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
             Column::new("maker_id", ColumnType::Uuid, true, None, None),
             Column::new(
                 "edit_version",
-                ColumnType::Int64,
+                ColumnType::Int32,
                 false,
-                Some(ColumnDefault::int64(1)),
+                Some(ColumnDefault::int32(1)),
                 None,
             ),
             Column::new(
@@ -470,9 +470,9 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
             Column::new("label", ColumnType::Text, false, None, None),
             Column::new(
                 "edit_version",
-                ColumnType::Int64,
+                ColumnType::Int32,
                 false,
-                Some(ColumnDefault::int64(1)),
+                Some(ColumnDefault::int32(1)),
                 None,
             ),
             Column::new(

@@ -6,7 +6,6 @@ import { applicationConfig } from "../../../web/shell/vite";
 export default defineConfig(({ command, mode }) => {
   const application = applicationConfig({
     root: import.meta.url,
-    client: { name: "@wamn/receiving-client", path: "../../target/wamn/wamn_receiving/client-ts" },
     outDir: "../../target/wamn/wamn_receiving/web",
     port: 5182,
     command: mode === "test" ? "build" : command,

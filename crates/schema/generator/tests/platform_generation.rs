@@ -620,7 +620,7 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
         source_map["native_rows"][0]["fields"],
         json!([
             {"name": "id", "type": "uuid::Uuid"},
-            {"name": "edit_version", "type": "i64"},
+            {"name": "edit_version", "type": "i32"},
             {"name": "note", "type": "Option<String>"}
         ])
     );
@@ -628,7 +628,7 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
         source_map["wamn_rows"][0]["fields"],
         json!([
             {"name": "id", "type": "wamn_postgres_statements::Uuid"},
-            {"name": "edit_version", "type": "i64"},
+            {"name": "edit_version", "type": "i32"},
             {"name": "note", "type": "Option<String>"}
         ])
     );

@@ -66,7 +66,7 @@ pub fn decode(encoded: &str, model: &str) -> Result<Cursor, Invalid> {
 #[derive(Debug)]
 pub struct Change<Row> {
     pub id: String,
-    pub row_version: i64,
+    pub row_version: i32,
     pub data: Option<Row>,
 }
 

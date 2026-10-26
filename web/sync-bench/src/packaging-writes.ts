@@ -1,7 +1,7 @@
-import { recordWrite, type OperationCall, type Outbox, type OutboxEntry } from "@wfe/sync";
+import { type OperationCall, type Outbox, type OutboxEntry } from "@wfe/sync";
 import { createCall, requestHash } from "@wamn/web-runtime";
-import { PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import type { packagingCollection } from "./packaging-feed.js";
+import { PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "./generated/wamn_wms/packaging.js";
+import { packagingWrite, type packagingCollection } from "./generated/wamn_wms/packaging.js";
 
 export type PackagingDraft = Omit<PackagingCreateRequest, "id" | "idempotencyKey" | "requestId">;
 
@@ -15,7 +15,7 @@ export function packagingAddress(path: string): { aud: string; application: stri
 
 /** Create through the optimistic store, and keep the same id when correcting a refused request. */
 export function packagingWrites(c: ReturnType<typeof packagingCollection>, o: Outbox) {
-  const record = recordWrite(c, o, { model: "packaging" });
+  const record = packagingWrite(c, o);
 
   function save(call: OperationCall): Promise<void> {
     // The watch sees the committed entry. The write itself still waits for the feed.

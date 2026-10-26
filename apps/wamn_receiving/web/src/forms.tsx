@@ -5,15 +5,15 @@ import { DashboardPanel } from "@wfe/components/layout";
 import { FieldError } from "@wfe/components";
 import { filledValues, type ScreenProps } from "@wamn/platform-ui";
 import { newIdempotencyKey, newRequestId, occurredAt, uuidv7 } from "@wamn/web-runtime";
-import * as purchase from "@wamn/receiving-client/purchase_order.js";
-import * as supplier from "@wamn/receiving-client/supplier.js";
-import * as receiving from "@wamn/receiving-client/receiving.js";
-import { PurchaseOrderUpdateForm } from "@wamn/receiving-client/components/purchase_order.js";
-import { SupplierCreateForm } from "@wamn/receiving-client/components/supplier.js";
+import * as purchase from "./generated/wamn_receiving/purchase_order.js";
+import * as supplier from "./generated/wamn_receiving/supplier.js";
+import * as receiving from "./generated/wamn_receiving/receiving.js";
+import { PurchaseOrderUpdateForm } from "./generated/wamn_receiving/components/purchase_order.js";
+import { SupplierCreateForm } from "./generated/wamn_receiving/components/supplier.js";
 import {
   ReceivingRecordReceiptForm,
   type ReceivingRecordReceiptFormValues,
-} from "@wamn/receiving-client/components/receiving.js";
+} from "./generated/wamn_receiving/components/receiving.js";
 import { Selector } from "./selector";
 import { invoke, Refusal, type RecordValue } from "./data";
 

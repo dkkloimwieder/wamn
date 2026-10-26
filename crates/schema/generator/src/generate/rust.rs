@@ -586,7 +586,7 @@ fn feed_rows(
                 ),
                 member("change_transaction", ColumnType::Int64),
                 member("present", ColumnType::Boolean),
-                member("deleted_version", ColumnType::Int64),
+                member("deleted_version", ColumnType::Int32),
             ]
             .into_iter()
             .chain(model_members)

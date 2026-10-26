@@ -38,7 +38,7 @@ pub struct Batch {
 pub async fn archive(
     transaction: &mut Transaction,
     id: &str,
-    expected_edit_version: i64,
+    expected_edit_version: i32,
 ) -> Result<ArchiveRow, AccessError> {
     let id = scalar::uuid("id", id)?;
     let statement = |error: StatementError| AccessError::from_statement(&error, Constraints::NONE);
@@ -47,8 +47,8 @@ pub async fn archive(
         .map_err(statement)?;
     if row.edit_version != expected_edit_version {
         return Err(AccessError::conflict(
-            expected_edit_version,
-            row.edit_version,
+            i64::from(expected_edit_version),
+            i64::from(row.edit_version),
         ));
     }
     Ok(row)

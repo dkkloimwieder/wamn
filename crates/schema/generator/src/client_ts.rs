@@ -424,6 +424,21 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
         emit_operation(&mut body, model, operation, &function, &mut used)?;
     }
 
+    // Integer ids await the wfe key accessor in wamn-qvj78.
+    let sync = operations.iter().find(|operation| {
+        operation.paging.as_ref().is_some_and(|paging| paging.feed)
+            && operation.route.as_ref().is_some_and(|route| {
+                route
+                    .response
+                    .fields
+                    .iter()
+                    .any(|field| field.path == "id" && field.type_name == "uuid")
+            })
+    });
+    if let Some(operation) = sync {
+        write_sync(&mut body, model, operation)?;
+    }
+
     let mut source = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
     writeln!(
         source,
@@ -454,6 +469,14 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
             .expect("writing to a String cannot fail");
         }
     }
+    if sync.is_some() {
+        writeln!(
+            source,
+            "import {{ collectionKey }} from \"{RUNTIME_PACKAGE}\";"
+        )
+        .expect("write");
+        source.push_str("import { CursorExpired, collection, recordWrite, type Change, type Feed, type Outbox, type Persistence } from \"@wfe/sync\";\n");
+    }
     writeln!(
         source,
         "\n/** The saved row shape of this model. */\nexport const {}_SHAPE_DIGEST = {:?};",
@@ -463,6 +486,51 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     .expect("writing to a String cannot fail");
     source.push_str(&body);
     Ok(source)
+}
+
+/// Emit the feed, collection and write helper beside a model's bindings.
+fn write_sync(
+    source: &mut String,
+    model: &ModelIr,
+    operation: &OperationIr,
+) -> Result<(), ClientTsError> {
+    let prefix = ts_name(&model.name)?;
+    let row = type_stem(&model.name, "");
+    let query = ts_name(&operation.name)?;
+    let stem = type_stem(&model.name, &operation.name);
+    let fields = &operation
+        .route
+        .as_ref()
+        .expect("a sync feed has a route")
+        .response
+        .fields;
+    let revision = feed_revision(fields);
+    let template = include_str!("client_ts_sync.ts");
+    source.push_str(
+        &template
+            .replace("$PREFIX", &prefix)
+            .replace("$ROW", &row)
+            .replace("$STEM", &stem)
+            .replace("$REVISION", &revision)
+            .replace("$QUERY", &query)
+            .replace("$MODEL", &model.name)
+            .replace(
+                "$DIGEST",
+                &format!("{}_SHAPE_DIGEST", model.name.to_uppercase()),
+            ),
+    );
+    Ok(())
+}
+
+/// Read the revision marker derived from the model's declared revision field.
+fn feed_revision(fields: &[FieldIr]) -> String {
+    to_camel(
+        &fields
+            .iter()
+            .find(|field| field.revision.is_revision())
+            .expect("a feed row carries its declared revision")
+            .path,
+    )
 }
 
 fn emit_operation(
@@ -689,9 +757,10 @@ fn write_changes(
         used.insert(id_type);
     }
     let stem = route_const.trim_end_matches("_ROUTE");
+    let revision = feed_revision(fields);
     writeln!(
         source,
-        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: {id_type};\n  readonly rowVersion: number;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"rowVersion\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
+        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: {id_type};\n  readonly {revision}: number;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"{revision}\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
     )
     .expect("write");
     write_map_members(source, fields, 5)?;

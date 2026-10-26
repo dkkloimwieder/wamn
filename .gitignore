@@ -37,3 +37,7 @@ node_modules/
 # Local agent logs and scratch files.
 scratchpad/
 .beads/interactions.jsonl
+
+# Generated clients inside their consuming package
+/web/sync-bench/src/generated/
+/apps/wamn_receiving/web/src/generated/

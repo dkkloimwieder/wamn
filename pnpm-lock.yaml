@@ -250,6 +250,9 @@ importers:
       '@solidjs/web':
         specifier: 2.0.0-rc.18
         version: 2.0.0-rc.18(solid-js@2.0.0-rc.18)
+      '@wamn/web-runtime':
+        specifier: workspace:*
+        version: link:../../../web/runtime
       '@wfe/components':
         specifier: workspace:*
         version: link:../../../web/wfe/packages/components
@@ -259,6 +262,9 @@ importers:
       '@wfe/generator':
         specifier: workspace:*
         version: link:../../../web/wfe/packages/generator
+      '@wfe/sync':
+        specifier: workspace:*
+        version: link:../../../web/wfe/packages/sync
       solid-js:
         specifier: 2.0.0-rc.18
         version: 2.0.0-rc.18
@@ -330,6 +336,9 @@ importers:
       '@tanstack/db':
         specifier: 0.15.2
         version: 0.15.2(typescript@6.0.3)
+      '@wamn/web-runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@wfe/components':
         specifier: workspace:*
         version: link:../wfe/packages/components

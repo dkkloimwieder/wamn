@@ -32,7 +32,7 @@ fn typed_wit_and_codec_follow_package_and_envelope_declarations() {
         assert!(wit.contains("input: result<archive-request, invalid-input-detail>"));
         let codec = source(&package, "generated/wit/widget_archive_codec.rs");
         for expected in [
-            "edit_version.to_string()",
+            "\"edit_version\": value.edit_version",
             "map_err(|_| invalid(\"input\"))",
             "ArchiveError::AlreadyArchived",
             "const MINIMUM: usize = 2;",
@@ -162,15 +162,15 @@ fn every_int64_leaves_the_codec_as_a_json_string() {
     // reached the wire as a JSON number while the binding called it a string.
     // wamn-wpvg.
     let package = fixture::generate_fixture();
-    // widget.list serves edit_version with no revision flag, and widget.update
-    // serves the same column as its revision.
+    // A feed revision is int32, so the int64 is counter's id: counter.query
+    // serves it in a row, and counter.update in its result.
     for path in [
-        "generated/wit/widget_list_codec.rs",
-        "generated/wit/widget_update_codec.rs",
+        "generated/wit/counter_query_codec.rs",
+        "generated/wit/counter_update_codec.rs",
     ] {
         let codec = source(&package, path);
         assert!(
-            codec.contains("edit_version.to_string()"),
+            codec.contains("id.to_string()"),
             "{path} writes its int64 as a JSON string"
         );
     }

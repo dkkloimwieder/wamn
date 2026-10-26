@@ -12,6 +12,7 @@ chrono = { workspace = true, features = ["alloc"] }
 hex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+serde_yaml.workspace = true
 sha2.workspace = true
 # `Executor::describe` is behind `sqlx-core/offline`, which only `macros` turns on.
 sqlx = { workspace = true, features = ["macros", "postgres", "runtime-tokio"] }

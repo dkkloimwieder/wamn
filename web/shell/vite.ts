@@ -57,8 +57,6 @@ export interface ApplicationConfig {
 export interface ApplicationOptions {
   /** `import.meta.url` of the application's `vite.config.ts`. */
   readonly root: string;
-  /** The generated client: its package name and its directory, relative to the root. */
-  readonly client: { readonly name: string; readonly path: string };
   /** The directory of the built files, `target/wamn/<package>/web`, relative to the root. */
   readonly outDir: string;
   /** The port of the dev server. */
@@ -135,7 +133,6 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
     resolve: {
       alias: [
         { find: "@wamn/web-runtime", replacement: `${web}runtime/src/index.ts` },
-        { find: options.client.name, replacement: at(options.client.path) },
         { find: /^@wamn\/control-client$/, replacement: `${control}index.ts` },
         { find: /^@wamn\/control-org-client$/, replacement: `${controlOrg}index.ts` },
       ],
@@ -145,7 +142,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
       port: options.port,
       ...(dev === undefined ? {} : { proxy: proxy(dev) }),
       // Allow shared sources and pnpm packages outside the application.
-      fs: { allow: [at("."), web, at(options.client.path), control, controlOrg, store] },
+      fs: { allow: [at("."), web, control, controlOrg, store] },
     },
     build: { outDir: at(options.outDir), emptyOutDir: true },
   };

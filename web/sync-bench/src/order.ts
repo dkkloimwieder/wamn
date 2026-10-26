@@ -1,4 +1,4 @@
-import type { PackagingRow } from "./packaging-feed.js";
+import type { PackagingRow } from "./generated/wamn_wms/packaging.js";
 
 /** Which rows the screen shows: every row, or one status. */
 export type StatusFilter = "all" | PackagingRow["status"];

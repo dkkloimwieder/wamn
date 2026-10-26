@@ -29,7 +29,7 @@ use crate::{
     manifest::CONTROL_OWNED_RELATION_TABLES,
 };
 
-pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.10";
+pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.11";
 pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
 
 #[derive(Debug)]
@@ -777,6 +777,76 @@ fn materialize_host_route_set(
     write_build_output(&output.join("client-ts"), &expected)
 }
 
+/// Copy an application's generated client into its declared workspace consumers.
+///
+/// Consumers receive source files only. Their own packages supply dependencies.
+///
+/// # Errors
+///
+/// Names the consumer and application when the requested client is unavailable.
+pub fn materialize_client_consumers(package_root: &Path, app: &str, source: &Path) -> Result<()> {
+    #[derive(serde::Deserialize)]
+    struct Workspace {
+        packages: Vec<PathBuf>,
+    }
+    #[derive(Default, serde::Deserialize)]
+    struct Clients {
+        #[serde(default)]
+        clients: Vec<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Consumer {
+        name: String,
+        #[serde(default)]
+        wamn: Clients,
+    }
+
+    let package_root = std::path::absolute(package_root)?;
+    let Some(repository) = package_root
+        .ancestors()
+        .find(|path| path.join("pnpm-workspace.yaml").is_file())
+    else {
+        return Ok(());
+    };
+    let workspace: Workspace =
+        serde_yaml::from_slice(&fs::read(repository.join("pnpm-workspace.yaml"))?)
+            .context("read the workspace packages")?;
+    for relative in workspace.packages {
+        let directory = repository.join(relative);
+        let manifest = directory.join("package.json");
+        let consumer: Consumer = serde_json::from_slice(
+            &fs::read(&manifest).with_context(|| format!("read {}", manifest.display()))?,
+        )
+        .with_context(|| format!("read {}", manifest.display()))?;
+        if !consumer.wamn.clients.iter().any(|client| client == app) {
+            continue;
+        }
+        let copy = || -> Result<()> {
+            ensure!(
+                source.join("index.ts").is_file(),
+                "the generated client is unavailable"
+            );
+            let files = existing_files(source)?
+                .into_iter()
+                .filter(|path| path != Path::new("package.json"))
+                .map(|path| Ok((path.clone(), fs::read(source.join(path))?)))
+                .collect::<Result<BTreeMap<_, _>>>()?;
+            let expected = files
+                .iter()
+                .map(|(path, bytes)| (path.clone(), bytes.as_slice()))
+                .collect();
+            write_build_output(&directory.join("src/generated").join(app), &expected)
+        };
+        copy().with_context(|| {
+            format!(
+                "cannot produce client {app} for consuming package {}",
+                consumer.name
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// Write `expected` below `directory` and remove every other file there.
 ///
 /// Each web package writes the host route clients before it reads them, and
@@ -1012,6 +1082,72 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.scratch).expect("remove test package");
         }
+    }
+
+    fn consumer(package: &TestPackage) -> PathBuf {
+        fs::write(
+            package.scratch.join("pnpm-workspace.yaml"),
+            "packages:\n  - web/consumer\n",
+        )
+        .unwrap();
+        let directory = package.scratch.join("web/consumer");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("package.json"),
+            br#"{
+            "name": "@test/consumer", "wamn": {"clients": ["test_package"]}
+        }"#,
+        )
+        .unwrap();
+        directory
+    }
+
+    #[test]
+    fn consumer_gets_plain_sources_and_removes_stale_files() {
+        let package = TestPackage::new("consumer-source");
+        let consumer = consumer(&package);
+        let source = package.scratch.join("client-ts");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("index.ts"), "export const value = 1;\n").unwrap();
+        fs::write(source.join("package.json"), "{}").unwrap();
+        let output = consumer.join("src/generated/test_package");
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("obsolete.ts"), "old").unwrap();
+        fs::write(output.join("package.json"), "{}").unwrap();
+        materialize_client_consumers(&package.root, "test_package", &source).unwrap();
+        assert_eq!(
+            fs::read(output.join("index.ts")).unwrap(),
+            fs::read(source.join("index.ts")).unwrap()
+        );
+        assert!(!output.join("package.json").exists());
+        assert!(!output.join("obsolete.ts").exists());
+        let modified = fs::metadata(output.join("index.ts"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        materialize_client_consumers(&package.root, "test_package", &source).unwrap();
+        assert_eq!(
+            fs::metadata(output.join("index.ts"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            modified
+        );
+    }
+
+    #[test]
+    fn unavailable_client_names_the_consumer_and_application() {
+        let package = TestPackage::new("consumer-missing");
+        consumer(&package);
+        let error = materialize_client_consumers(
+            &package.root,
+            "test_package",
+            &package.scratch.join("missing"),
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("@test/consumer"), "{message}");
+        assert!(message.contains("test_package"), "{message}");
     }
 
     fn catalog() -> CatalogIr {

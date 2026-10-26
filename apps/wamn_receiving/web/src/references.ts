@@ -1,6 +1,6 @@
 import type { OperationRoute, Transport } from "@wamn/web-runtime";
-import * as client from "@wamn/receiving-client/index.js";
-import type { ReferencePresentation } from "@wamn/receiving-client/components/index.js";
+import * as client from "./generated/wamn_receiving/index.js";
+import type { ReferencePresentation } from "./generated/wamn_receiving/components/index.js";
 import { invoke, rowsOf, type RecordValue, type Rows } from "./data";
 
 const routes = Object.values(client).flatMap((model) =>

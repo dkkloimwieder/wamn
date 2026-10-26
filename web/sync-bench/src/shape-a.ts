@@ -1,7 +1,7 @@
 import { createMemo, onCleanup, type Accessor } from "solid-js";
 import { count, createLiveQueryCollection, sum } from "@tanstack/db";
 import { liveRows, syncStatus } from "@wfe/sync";
-import type { packagingCollection } from "./packaging-feed.js";
+import type { packagingCollection } from "./generated/wamn_wms/packaging.js";
 import { orderedIds, type StatusFilter } from "./order.js";
 import type { ViewSource } from "./view.js";
 

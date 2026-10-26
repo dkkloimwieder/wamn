@@ -9,7 +9,10 @@
     "check": "node ../../../web/host-route-clients.mjs && tsc --project tsconfig.json",
     "test": "node ../../../web/host-route-clients.mjs && vitest run"
   },
+  "wamn": { "clients": ["wamn_receiving"] },
   "dependencies": {
+    "@wamn/web-runtime": "workspace:*",
+    "@wfe/sync": "workspace:*",
     "@wfe/components": "workspace:*",
     "@wfe/form": "workspace:*",
     "@wfe/generator": "workspace:*",

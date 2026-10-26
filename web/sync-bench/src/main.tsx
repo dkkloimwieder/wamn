@@ -5,7 +5,7 @@ import "@wfe/components/styles.css";
 import { applyChanges } from "@wfe/sync/internal";
 import type { Change, Feed } from "@wfe/sync";
 import { fakeFeed, makeRows, randomChanges, seeded } from "./fake.js";
-import { packagingCollection, type PackagingRow, type PackagingScope } from "./packaging-feed.js";
+import { packagingCollection, type PackagingRow, type PackagingScope } from "./generated/wamn_wms/packaging.js";
 import type { StatusFilter } from "./order.js";
 import { shapeA } from "./shape-a.js";
 import { shapeB } from "./shape-b.js";

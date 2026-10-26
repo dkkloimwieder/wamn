@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { CursorExpired } from "@wfe/sync";
 import type { Transport, WireRequest } from "@wamn/web-runtime";
-import { locationFeed } from "../src/location-feed.js";
+import { locationFeed } from "../src/generated/wamn_wms/location.js";
 
 it("reads all 20,002 locations in 201 requests and keeps the first feed cursor", async () => {
   const seen: WireRequest[] = [];
@@ -17,7 +17,7 @@ it("reads all 20,002 locations in 201 requests and keeps the first feed cursor",
       cursor: `feed-${seen.length}`,
     } };
   } } as Transport;
-  const page = await locationFeed(transport).list({});
+  const page = await locationFeed(transport, Infinity).list({});
   expect(page.rows).toHaveLength(20_002);
   expect(page.cursor).toBe("feed-1");
   expect(page.complete).toBe(true);

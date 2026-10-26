@@ -135,13 +135,13 @@ manifest.Package {
         "widget.archive" = manifest.Command("widget.archive") {
             input.fields = [
                 {path = "id", type = "uuid", references = {model = "widget"}}
-                {path = "expected_edit_version", type = "int64", revision = "id"}
+                {path = "expected_edit_version", type = "int32", revision = "id"}
             ]
             result = {
                 class = "one"
                 fields = [
                     {path = "id", type = "uuid"}
-                    {path = "edit_version", type = "int64", revision = True}
+                    {path = "edit_version", type = "int32", revision = True}
                     {path = "note", type = "text", nullable = True}
                 ]
             }
@@ -153,7 +153,7 @@ manifest.Package {
                 archive = manifest.Statement("command/widget", "archive") {
                     fetch = "one"
                     parameters = [manifest.uuid("id")]
-                    row = [manifest.uuid("id"), manifest.int64("edit_version"), manifest.nullable(manifest.text("note"))]
+                    row = [manifest.uuid("id"), manifest.int32("edit_version"), manifest.nullable(manifest.text("note"))]
                 }
             }
             # No claim: the expected edit version guards the widget row.
@@ -169,7 +169,7 @@ manifest.Package {
                 fields = [
                     {path = "id", type = "uuid"}
                     {path = "code", type = "text"}
-                    {path = "edit_version", type = "int64", revision = True}
+                    {path = "edit_version", type = "int32", revision = True}
                     {path = "attributes", type = "json", label = "Attributes", description = "Every key the widget carries, as the release stored it."}
                 ]
             }
@@ -178,7 +178,7 @@ manifest.Package {
                 list = manifest.Statement("query", "widget_list") {
                     fetch = "bounded_list"
                     parameters = []
-                    row = [manifest.uuid("id"), manifest.text("code"), manifest.int64("edit_version"), manifest.Value {name = "attributes", type = "json", nullable = False}]
+                    row = [manifest.uuid("id"), manifest.text("code"), manifest.int32("edit_version"), manifest.Value {name = "attributes", type = "json", nullable = False}]
                 }
             }
             lists = {model = "widget", key_field = "id", display_field = "code"}

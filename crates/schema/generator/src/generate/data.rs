@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 
 use super::wit::access_error_literal;
 use super::{
-    AccessOperationErrorLiteral, AccessorBind, Column, ColumnType, CrudAction, GenerateError,
+    AccessOperationErrorLiteral, AccessorBind, ColumnType, CrudAction, GenerateError,
     ModelDeclaration, OperationDeclaration, PackageManifest, Table, WamnApi, column, insert_bytes,
     query_variants, rust_identifier, rust_type_identifier, sql,
 };
@@ -739,11 +739,7 @@ fn emit_feed(
             }
         })
         .collect::<String>();
-    // The contract carries the revision as an int64; an int32 column widens.
-    let version = match column(table, revision).map(Column::column_type) {
-        Some(ColumnType::Int64) => format!("data.{}", field_name(revision)),
-        _ => format!("i64::from(data.{})", field_name(revision)),
-    };
+    let version = format!("data.{}", field_name(revision));
     let comma = if arguments.is_empty() { "" } else { "," };
     writeln!(
         source,

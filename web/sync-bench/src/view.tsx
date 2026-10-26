@@ -1,10 +1,10 @@
 import { For, createMemo, untrack } from "solid-js";
 import { Table, TableRow, createTable } from "@wfe/components/table";
 import { VirtualRows, createTableVirtualizer } from "@wfe/components/virtual";
-import { PackagingQueryTable } from "@wamn/wms-client/components/packaging.js";
-import { PACKAGING_QUERY_RESULT_FIELDS } from "@wamn/wms-client/packaging.js";
+import { PackagingQueryTable } from "./generated/wamn_wms/components/packaging.js";
+import { PACKAGING_QUERY_RESULT_FIELDS } from "./generated/wamn_wms/packaging.js";
 import type { NestedFields } from "@wamn/web-runtime";
-import type { PackagingRow } from "./packaging-feed.js";
+import type { PackagingRow } from "./generated/wamn_wms/packaging.js";
 import { roundHalfAwayFromZero } from "./totals.js";
 
 /** One group of the screen: packaging by status and type. */

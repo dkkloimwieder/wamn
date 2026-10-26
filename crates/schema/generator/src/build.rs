@@ -103,6 +103,11 @@ pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
 /// When [`generate_package`] or [`build_components`] refuses.
 pub async fn build_package(request: &BuildRequest) -> Result<BuildReceipt> {
     if let Some(receipt) = current_build(request)? {
+        crate::materialize::materialize_client_consumers(
+            &request.package_root,
+            &receipt.package.id,
+            &package_output(&request.output_root, &receipt.package.id).join("client-ts"),
+        )?;
         eprintln!("{} is current", receipt.package.id);
         return Ok(receipt);
     }
@@ -206,6 +211,11 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
 
     let package_output = package_output(&request.output_root, &provisional.package.id);
     let mut outputs = write_outputs(&package_output, &canonical, &files)?;
+    crate::materialize::materialize_client_consumers(
+        package_root,
+        &provisional.package.id,
+        &package_output.join("client-ts"),
+    )?;
     outputs.web = build_web(package_root, &package_output).await?;
     let receipt = BuildReceipt {
         schema: RECEIPT_SCHEMA.to_owned(),

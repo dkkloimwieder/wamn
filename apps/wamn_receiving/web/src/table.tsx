@@ -5,7 +5,7 @@ import { createTable } from "@wfe/components/table";
 import { TableView, type CustomCellProps, type TableDescription } from "@wfe/generator";
 import type { OperationRoute } from "@wamn/web-runtime";
 import { RecordLink, type ScreenProps } from "@wamn/platform-ui";
-import type { ScreenPresentation } from "@wamn/receiving-client/components/index.js";
+import type { ScreenPresentation } from "./generated/wamn_receiving/components/index.js";
 import { invoke, rowsOf, type RecordValue, type Rows } from "./data";
 import { displayRecord, referenceLabels } from "./references";
 

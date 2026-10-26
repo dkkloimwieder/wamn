@@ -12,7 +12,7 @@ CREATE TABLE inventory.widget (
     maker_id uuid
         CONSTRAINT widget_maker_id_fkey
         REFERENCES inventory.widget_maker (id),
-    edit_version int8 NOT NULL DEFAULT 1,
+    edit_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT widget_code_check
         CHECK (code IN ('priority', 'standard'))

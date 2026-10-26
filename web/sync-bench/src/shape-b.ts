@@ -1,6 +1,6 @@
 import { createMemo, createSignal, createStore, type Accessor } from "solid-js";
 import type { Change, Feed } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./packaging-feed.js";
+import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
 import { orderedIds, type StatusFilter } from "./order.js";
 import { exactSum } from "./totals.js";
 import type { GroupRow, ViewSource } from "./view.js";

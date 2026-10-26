@@ -7,7 +7,7 @@
 //! cargo run --locked --offline -p wamn-schema-generator --example check_client_ts
 //! ```
 //!
-//! It emits the fixture bindings into a temporary directory, writes a strict
+//! It emits fixture bindings under sync-bench source, writes a strict
 //! `tsconfig.json` beside them, and runs `tsc` from `PATH`. The emitted
 //! modules import the hand-written runtime, so the configuration maps that
 //! specifier to `web/runtime` in this checkout. Pass a directory to keep the
@@ -58,7 +58,7 @@ const TSCONFIG: &str = r#"{
 fn main() -> Result<()> {
     let root = match std::env::args().nth(1) {
         Some(path) => PathBuf::from(path),
-        None => std::env::temp_dir().join(format!("wamn-check-client-ts-{}", std::process::id())),
+        None => repository_root()?.join("web/sync-bench/src/generated/check-client-ts"),
     };
     let version = tsc_version()?;
     let files = emit_ts_client(&fixture::client_release())

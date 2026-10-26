@@ -5,8 +5,8 @@ import { cleanup, fireEvent, render, waitFor, within } from "@solidjs/testing-li
 import { Loading, flush } from "solid-js";
 import { outbox, shell, type Change, type OperationCall, type Reply } from "@wfe/sync";
 import { createCall, createSend, createTransport, outboxDatabase, requestHash, rowsPersistence } from "@wamn/web-runtime";
-import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import { packagingCollection, packagingKey, type PackagingRow } from "../src/packaging-feed.js";
+import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "../src/generated/wamn_wms/packaging.js";
+import { packagingCollection, packagingKey, type PackagingRow } from "../src/generated/wamn_wms/packaging.js";
 import { packagingAddress } from "../src/packaging-writes.js";
 import { PackagingScreen } from "../src/packaging-screen.js";
 import { makeRows } from "../src/fake.js";

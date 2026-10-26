@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { InvokeOptions, JsonValue, Transport, WireRequest } from "@wamn/web-runtime";
 import { CursorExpired } from "@wfe/sync";
-import { PACKAGING_SHAPE_DIGEST } from "@wamn/wms-client/packaging.js";
-import { canonicalJson, packagingFeed, packagingKey } from "../src/packaging-feed.js";
+import { PACKAGING_SHAPE_DIGEST } from "../src/generated/wamn_wms/packaging.js";
+import { canonicalJson, packagingFeed, packagingKey } from "../src/generated/wamn_wms/packaging.js";
 
 const wireRow = {
   created_at: "2026-01-01T00:00:00Z",

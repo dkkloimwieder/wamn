@@ -782,3 +782,38 @@ fn integer_record_ids_follow_the_wire_type_in_requests_rows_and_changes() {
         );
     }
 }
+
+#[test]
+fn feed_opt_out_emits_no_sync_helpers() {
+    let mut manifest = fixture::manifest();
+    manifest["models"]["widget"]["feed"] = false.into();
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+    let files = emit_ts_client(&fixture::client_release_of(&package)).unwrap();
+    let text = widget(&files);
+    for name in ["widgetFeed", "widgetCollection", "widgetWrite", "@wfe/sync"] {
+        assert!(!text.contains(name), "feed opt-out emitted {name}");
+    }
+}
+
+#[test]
+fn integer_feed_ids_emit_no_sync_helpers() {
+    for ty in ["int32", "int64"] {
+        let mut ir = release();
+        let widget = &mut ir.models[fixture::widget_index(&release())];
+        for operation in &mut widget.operations {
+            if let Some(route) = &mut operation.route {
+                for field in &mut route.response.fields {
+                    if field.path == "id" {
+                        ty.clone_into(&mut field.type_name);
+                    }
+                }
+            }
+        }
+        let files = emit_ts_client(&ir).unwrap();
+        let text = source(&files, "generated/client-ts/widget.ts");
+        assert!(text.contains("export async function changes("));
+        for name in ["widgetFeed", "widgetCollection", "widgetWrite", "@wfe/sync"] {
+            assert!(!text.contains(name), "{ty} emitted {name}");
+        }
+    }
+}

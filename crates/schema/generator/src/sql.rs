@@ -319,7 +319,7 @@ LEFT JOIN LATERAL (
         SELECT
             (entry.row_key->>'id')::{key_cast} AS change_id,
             max(entry.transaction_id) AS change_transaction,
-            max((entry.before->>'{revision}')::int8) FILTER (WHERE entry.type = 'delete') AS deleted_version
+            max((entry.before->>'{revision}')::int4) FILTER (WHERE entry.type = 'delete') AS deleted_version
         FROM {history} AS entry
         WHERE entry.transaction_id >= ${transaction}::int8
           AND (entry.transaction_id < bound.feed_end

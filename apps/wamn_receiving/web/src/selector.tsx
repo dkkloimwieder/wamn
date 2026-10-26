@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Button, Combobox } from "@wfe/components";
 import type { CustomFieldProps } from "@wfe/generator";
 import type { Transport } from "@wamn/web-runtime";
-import type { ReferencePresentation } from "@wamn/receiving-client/components/index.js";
+import type { ReferencePresentation } from "./generated/wamn_receiving/components/index.js";
 import { invoke, rowsOf, type RecordValue, type Rows } from "./data";
 import { referenceLabels, referenceRoute } from "./references";
 

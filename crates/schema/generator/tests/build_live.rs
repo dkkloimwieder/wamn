@@ -247,8 +247,8 @@ async fn statement_types_are_derived_and_nullability_only_widens() {
         "row = [manifest.Value {name = \"widget_id\"}]",
     );
     accepted.edit_manifest(
-        "manifest.int64(\"edit_version\"), manifest.nullable",
-        "manifest.nullable(manifest.int64(\"edit_version\")), manifest.nullable",
+        "manifest.int32(\"edit_version\"), manifest.nullable",
+        "manifest.nullable(manifest.int32(\"edit_version\")), manifest.nullable",
     );
     let manifest = build(
         &accepted.package(),
@@ -261,7 +261,7 @@ async fn statement_types_are_derived_and_nullability_only_widens() {
     assert_eq!(record_batch["row"][0]["type"], "uuid");
     let archive = statement(&manifest, "widget.archive", "archive");
     assert_eq!(archive["row"][1]["name"], "edit_version");
-    assert_eq!(archive["row"][1]["type"], "int64");
+    assert_eq!(archive["row"][1]["type"], "int32");
     assert_eq!(archive["row"][1]["nullable"], true);
 
     let refused = Workspace::new("refused");

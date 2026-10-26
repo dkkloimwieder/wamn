@@ -90,8 +90,9 @@ pub use manifest::{
 };
 pub use materialize::{
     classify_statements_with_existing_grants_in_transaction, introspect_package,
-    materialize_host_route_client, materialize_package, materialize_package_from_catalog,
-    materialize_package_verified, materialize_package_verified_with_catalog,
+    materialize_client_consumers, materialize_host_route_client, materialize_package,
+    materialize_package_from_catalog, materialize_package_verified,
+    materialize_package_verified_with_catalog,
 };
 pub use output::{host_route_client_output_root, output_root};
 pub use package_catalog::project_package_catalog;

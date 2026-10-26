@@ -2,10 +2,10 @@ import "fake-indexeddb/auto";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Feed, Persistence } from "@wfe/sync";
 import { rowsPersistence } from "@wamn/web-runtime";
-import { PACKAGING_SHAPE_DIGEST } from "@wamn/wms-client/packaging.js";
-import { LOCATION_SHAPE_DIGEST } from "@wamn/wms-client/location.js";
-import { packagingKey, type PackagingRow, type PackagingScope } from "../src/packaging-feed.js";
-import { locationKey, type LocationRow } from "../src/location-feed.js";
+import { PACKAGING_SHAPE_DIGEST } from "../src/generated/wamn_wms/packaging.js";
+import { LOCATION_SHAPE_DIGEST } from "../src/generated/wamn_wms/location.js";
+import { packagingKey, type PackagingRow, type PackagingScope } from "../src/generated/wamn_wms/packaging.js";
+import { locationKey, type LocationRow } from "../src/generated/wamn_wms/location.js";
 import { collectionBytes, needsConnection, packagingOffline, packagingScope, requireStorage } from "../src/packaging-offline.js";
 import { makeRows } from "../src/fake.js";
 
@@ -56,7 +56,7 @@ it("fills the filter scope and the whole location model, then follows both feeds
   expect(h.packaging.list).toHaveBeenLastCalledWith(scope);
   expect(h.location.list).toHaveBeenCalledExactlyOnceWith({});
   expect(h.saved.get(packagingKey(scope))?.rows).toEqual([h.rows[0]]);
-  expect(h.saved.get(locationKey)?.rows).toHaveLength(1);
+  expect(h.saved.get(locationKey({}))?.rows).toHaveLength(1);
   expect(result.needed).toBe(Math.ceil((result.packaging.bytes + result.location.bytes) * 1.2));
   await model.packaging.c.utils.pull();
   await model.location!.c.utils.pull();
@@ -76,7 +76,7 @@ it("refuses before filling when free space lacks 20% headroom and reports needed
   expect(h.estimate).toHaveBeenCalledOnce();
   expect(refill).not.toHaveBeenCalled();
   expect(model.location).toBeUndefined();
-  expect(h.saved.has(locationKey)).toBe(false);
+  expect(h.saved.has(locationKey({}))).toBe(false);
 });
 
 it("refills locations through row_version without deleting the saved entry", async () => {
@@ -145,10 +145,10 @@ it("keeps both generated shapes when the rows store reopens", async () => {
   const digests = [PACKAGING_SHAPE_DIGEST, LOCATION_SHAPE_DIGEST];
   const persistence = rowsPersistence(database, digests);
   await persistence.save(packagingKey({}), makeRows(1), "p");
-  await persistence.save(locationKey, [], "l");
+  await persistence.save(locationKey({}), [], "l");
   const reopened = rowsPersistence(database, digests);
   expect((await reopened.load(packagingKey({})))?.rows).toHaveLength(1);
-  expect((await reopened.load(locationKey))?.rows).toEqual([]);
+  expect((await reopened.load(locationKey({})))?.rows).toEqual([]);
 });
 
 it("counts UTF-8 bytes including the entry key, cursor and as-of time", () => {

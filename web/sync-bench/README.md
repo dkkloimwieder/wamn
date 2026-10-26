@@ -2,7 +2,7 @@
 
 This package renders the WMS packaging screen from a `@wfe/sync` collection and measures two read shapes.
 
-[`src/packaging-feed.ts`](src/packaging-feed.ts) is the feed and the collection of the `packaging` model.
+`src/generated/wamn_wms/packaging.ts` supplies the generated feed, collection, and write helper for the `packaging` model.
 `list` reads every page of the generated `query` read, up to 1000 rows, and returns the feed cursor of the first page.
 `changes` calls the generated `changes` binding: the same read with its feed part.
 A `cursor_expired` refusal throws `CursorExpired`, so the collection lists again.

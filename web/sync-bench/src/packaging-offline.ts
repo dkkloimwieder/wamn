@@ -1,7 +1,7 @@
 import { collection, type Feed, type Persistence, type Row } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./packaging-feed.js";
-import { packagingKey } from "./packaging-feed.js";
-import { locationKey, type LocationRow } from "./location-feed.js";
+import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
+import { packagingKey } from "./generated/wamn_wms/packaging.js";
+import { locationKey, type LocationRow } from "./generated/wamn_wms/location.js";
 import type { StatusFilter } from "./order.js";
 
 export function packagingScope(filter: StatusFilter): PackagingScope {
@@ -131,8 +131,8 @@ export function packagingOffline(options: {
   type Locations = ReturnType<typeof storedCollection<LocationRow, Record<string, never>>>;
   let location: Locations | undefined;
   let closed = false;
-  const restored = persistence.load(locationKey).then((entry) => {
-    if (entry && !closed) location = storedCollection(options.location, {}, locationKey, persistence, pollMs, online);
+  const restored = persistence.load(locationKey({})).then((entry) => {
+    if (entry && !closed) location = storedCollection(options.location, {}, locationKey({}), persistence, pollMs, online);
   }).catch(() => undefined);
   return {
     packaging,
@@ -148,13 +148,13 @@ export function packagingOffline(options: {
       if (p.complete === false || l.complete === false) throw new Error("The chosen set is incomplete.");
       const asOf = new Date().toISOString();
       const packagingBytes = collectionBytes(key, p.rows, p.cursor, asOf);
-      const locationBytes = collectionBytes(locationKey, l.rows, l.cursor, asOf);
+      const locationBytes = collectionBytes(locationKey({}), l.rows, l.cursor, asOf);
       const estimate = await (options.estimate ?? (() => navigator.storage.estimate()))();
       const needed = requireStorage(packagingBytes + locationBytes, estimate);
       if (closed) throw new Error("The screen closed before fill.");
       await packaging.fill(p);
       if (closed) throw new Error("The screen closed before fill.");
-      location ??= storedCollection(options.location, {}, locationKey, persistence, pollMs, online, l);
+      location ??= storedCollection(options.location, {}, locationKey({}), persistence, pollMs, online, l);
       await location.fill(l);
       return {
         packaging: { count: packaging.c.size, bytes: packagingBytes, asOf: packaging.currentAt()! },

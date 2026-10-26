@@ -7,8 +7,8 @@ import { outbox, type Persistence } from "@wfe/sync";
 import { packagingOffline, packagingScope } from "../src/packaging-offline.js";
 import { PackagingScreen } from "../src/packaging-screen.js";
 import { fakeFeed, makeRows } from "../src/fake.js";
-import { locationKey, type LocationRow } from "../src/location-feed.js";
-import { packagingKey } from "../src/packaging-feed.js";
+import { locationKey, type LocationRow } from "../src/generated/wamn_wms/location.js";
+import { packagingKey } from "../src/generated/wamn_wms/packaging.js";
 
 const close: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -89,7 +89,7 @@ it.each([false, true])("renders an offline reopen and update notice with a store
   const persistence: Persistence = {
     async load(key) {
       await loaded;
-      return { rows: key === locationKey ? [location] : [row], cursor: "saved", saved_at: "2026-01-01T00:00:00Z" };
+      return { rows: key === locationKey({}) ? [location] : [row], cursor: "saved", saved_at: "2026-01-01T00:00:00Z" };
     },
     save: async () => {}, remove: async () => {},
   };
@@ -145,7 +145,7 @@ it.each([true, false])("records the selected local location when online=%s", asy
   ];
   const persistence: Persistence = {
     async load(key) {
-      const rows = key === locationKey ? locations : key === packagingKey(packagingScope("held"))
+      const rows = key === locationKey({}) ? locations : key === packagingKey(packagingScope("held"))
         ? makeRows(1).map((row) => ({ ...row, status: "held" })) : undefined;
       return rows && { rows, cursor: "saved", saved_at: "2026-01-01T00:00:00Z" };
     },

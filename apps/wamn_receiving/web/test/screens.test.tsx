@@ -3,13 +3,13 @@ import { flush } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue, Transport } from "@wamn/web-runtime";
 import type { ScreenProps } from "@wamn/platform-ui";
-import { RECEIVING_RECORD_RECEIPT_ROUTE } from "@wamn/receiving-client/receiving.js";
+import { RECEIVING_RECORD_RECEIPT_ROUTE } from "../src/generated/wamn_receiving/receiving.js";
 import {
   PURCHASE_ORDER_GET_ROUTE,
   PURCHASE_ORDER_QUERY_ROUTE,
   PURCHASE_ORDER_UPDATE_ROUTE,
-} from "@wamn/receiving-client/purchase_order.js";
-import { SUPPLIER_CREATE_ROUTE, SUPPLIER_QUERY_ROUTE } from "@wamn/receiving-client/supplier.js";
+} from "../src/generated/wamn_receiving/purchase_order.js";
+import { SUPPLIER_CREATE_ROUTE, SUPPLIER_QUERY_ROUTE } from "../src/generated/wamn_receiving/supplier.js";
 import {
   PurchaseOrderQueryTable,
   PurchaseOrderGetDetail,
@@ -18,12 +18,12 @@ import {
   LocationListTable,
   PurchaseOrderUpdateForm,
   SupplierCreateForm,
-} from "@wamn/receiving-client/components/index.js";
+} from "../src/generated/wamn_receiving/components/index.js";
 import { Records } from "../src/table";
 import { SECTIONS } from "../src/routes";
 import { Selector } from "../src/selector";
-import { ReceiptQueryTable, ReceivingRecordReceiptForm } from "@wamn/receiving-client/components/index.js";
-import { RECEIPT_GET_ROUTE, RECEIPT_QUERY_ROUTE } from "@wamn/receiving-client/receipt.js";
+import { ReceiptQueryTable, ReceivingRecordReceiptForm } from "../src/generated/wamn_receiving/components/index.js";
+import { RECEIPT_GET_ROUTE, RECEIPT_QUERY_ROUTE } from "../src/generated/wamn_receiving/receipt.js";
 import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "../src/forms";
 
 beforeEach(() => {

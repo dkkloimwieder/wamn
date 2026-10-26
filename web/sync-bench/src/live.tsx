@@ -4,10 +4,10 @@ import { Theme } from "@wfe/components";
 import { outbox, outboxStatus, shell, type ShellResult } from "@wfe/sync";
 import "@wfe/components/styles.css";
 import { createSend, createTransport, keepSession, outboxDatabase, renew, rowsDatabase, rowsPersistence, type SessionState } from "@wamn/web-runtime";
-import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import { packagingFeed } from "./packaging-feed.js";
-import { LOCATION_SHAPE_DIGEST } from "@wamn/wms-client/location.js";
-import { locationFeed } from "./location-feed.js";
+import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "./generated/wamn_wms/packaging.js";
+import { packagingFeed } from "./generated/wamn_wms/packaging.js";
+import { LOCATION_SHAPE_DIGEST } from "./generated/wamn_wms/location.js";
+import { locationFeed } from "./generated/wamn_wms/location.js";
 import { packagingOffline, packagingScope } from "./packaging-offline.js";
 import type { StatusFilter } from "./order.js";
 import { packagingAddress } from "./packaging-writes.js";
@@ -63,7 +63,7 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
     const scope = props.filter;
     const offline = packagingOffline({
       packaging: packagingFeed(transport, Infinity),
-      location: locationFeed(transport),
+      location: locationFeed(transport, Infinity),
       scope: packagingScope(scope), persistence, pollMs,
     });
     onCleanup(() => queueMicrotask(() => void offline.close()));

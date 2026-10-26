@@ -10,7 +10,9 @@
     "test": "vitest run",
     "bench": "vite build && node bench/run.mjs"
   },
+  "wamn": { "clients": ["wamn_wms"] },
   "dependencies": {
+    "@wamn/web-runtime": "workspace:*",
     "@tanstack/db": "0.15.2",
     "@wfe/components": "workspace:*",
     "@wfe/generator": "workspace:*",

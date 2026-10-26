@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createTransport } from "@wamn/web-runtime";
-import { packagingFeed } from "../src/packaging-feed.js";
+import { packagingFeed } from "../src/generated/wamn_wms/packaging.js";
 import { packagingRead, trackListReads } from "../bench/reads.js";
 
 afterEach(() => {

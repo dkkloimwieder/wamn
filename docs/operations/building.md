@@ -374,6 +374,10 @@ A row value stated `nullable = False`, where SQLx says that the column can be nu
 If SQLx cannot tell, the stated `nullable = False` stands.
 The refusal names the operation, the statement, and the value.
 
+A consuming workspace package lists application clients in its `package.json` field `"wamn": { "clients": ["wamn_wms"] }`.
+`wamn build` writes each named client as plain source under that consumer's `src/generated/<app>/`, without a `package.json`.
+If the build cannot produce a requested client, it fails and names the consuming package and application.
+
 The build writes each package to `<output root>/<package id>/`.
 The default output root is `apps/target/wamn` for an application, and `--output-root` changes it.
 Below it, the layout keeps the logical `generated/` paths that contracts and releases name, without the `generated/` prefix, plus `build.json`.
