@@ -94,7 +94,7 @@ fn package_apply_takes_one_exact_artifact_and_no_destructive_override() {
 fn replica_identity_repair_is_an_explicit_one_shot_operator_surface() {
     let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "reconcile-replica-identity");
     assert!(
-        output.contains("per-model REPLICA IDENTITY drift"),
+        output.contains("Detect or repair REPLICA IDENTITY drift on captured models"),
         "operator help must state the command's drift-repair purpose"
     );
     for flag in ["--admin-database-url", "--package", "--dry-run"] {

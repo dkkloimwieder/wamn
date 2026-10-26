@@ -279,6 +279,11 @@ pub(super) async fn create_history_tables(
     tx: &Transaction<'_>,
     manifest: &PackageManifest,
 ) -> anyhow::Result<bool> {
+    // Take the retention lock before CREATE INDEX takes a history-table lock,
+    // even when the index already exists. Pruning takes these locks in this order.
+    tx.query_one(AUDIT_RETENTION_LOCK_SQL, &[])
+        .await
+        .context("lock the audit retention source")?;
     let mut changed = false;
     for model in manifest
         .models
@@ -327,17 +332,14 @@ pub(super) async fn create_history_tables(
 /// old column list until the next apply. The platform relations keep the shared
 /// `wamn_history.stamp_row` and `wamn_history.log_row_change`.
 ///
-/// The step takes the audit retention lock first, so a retention run never
-/// sees a retention change between its read and its delete. It ends with the
-/// audit retention grants, which follow the installed log triggers.
+/// `create_history_tables` already holds the audit retention lock, so a
+/// retention run never sees a retention change between its read and its delete.
+/// This step ends with the audit retention grants, which follow the installed log triggers.
 pub(super) async fn reconcile_record_history_triggers(
     tx: &Transaction<'_>,
     manifest: &PackageManifest,
     synchronizations: &[super::synchronization::PlannedSynchronization],
 ) -> anyhow::Result<bool> {
-    tx.query_one(AUDIT_RETENTION_LOCK_SQL, &[])
-        .await
-        .context("lock the audit retention source")?;
     let owned = manifest
         .models
         .iter()
