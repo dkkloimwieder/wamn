@@ -302,14 +302,9 @@ fn emit_create(
         .collect::<Vec<_>>()
         .join(", ");
     let client_id = !crate::key::database_generated(table);
-    let (id_type, parse_id, _, _) = key_request(table);
-    let id_parameter = if client_id {
-        format!("id: {id_type}, ")
-    } else {
-        String::new()
-    };
+    let id_parameter = if client_id { "id: &str, " } else { "" };
     let mut body = if client_id {
-        parse_id.to_owned()
+        "let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n".to_owned()
     } else {
         String::new()
     };

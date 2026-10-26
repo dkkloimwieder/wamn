@@ -520,7 +520,17 @@ mod tests {
                 "public",
                 "key_row",
                 vec![
-                    Column::new("id", ty, false, None, None),
+                    Column::new(
+                        "id",
+                        ty,
+                        false,
+                        None,
+                        (ty != ColumnType::Uuid).then_some(
+                            wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                                mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                            },
+                        ),
+                    ),
                     Column::new("label", ColumnType::Text, false, None, None),
                     Column::new("version", ColumnType::Int64, false, None, None),
                 ],

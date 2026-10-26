@@ -77,7 +77,6 @@ pub(super) fn emit_model_component(
             operation,
             model.feed_revision().is_some(),
             crate::key::key_type(table)?,
-            crate::key::database_generated(table),
         );
         // A change works in the host's operation transaction, so its export
         // takes no state.
@@ -123,7 +122,6 @@ fn handler(
     operation: &OperationDeclaration,
     feed: bool,
     key: crate::key::KeyType,
-    database_generated: bool,
 ) -> (&'static str, String) {
     let id = if key == crate::key::KeyType::Uuid {
         "&request.id"
@@ -147,8 +145,8 @@ fn handler(
             ),
         ),
         CrudAction::Create => {
-            let arguments = std::iter::once(id.to_owned())
-                .filter(|_| !database_generated)
+            let arguments = std::iter::once("&request.id".to_owned())
+                .filter(|_| key == crate::key::KeyType::Uuid)
                 .chain(
                     operation
                         .writable_fields

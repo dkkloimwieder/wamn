@@ -692,6 +692,9 @@ fn integer_record_ids_follow_the_wire_type_in_requests_rows_and_changes() {
         for model in &mut ir.models {
             keys(&mut model.fields, ty);
             for operation in &mut model.operations {
+                if operation.type_ == "create" {
+                    operation.input_fields.retain(|field| field.path != "id");
+                }
                 keys(&mut operation.input_fields, ty);
                 keys(&mut operation.result_fields, ty);
                 if let Some(route) = &mut operation.route {
@@ -701,6 +704,14 @@ fn integer_record_ids_follow_the_wire_type_in_requests_rows_and_changes() {
         }
         let files = emit_ts_client(&ir).unwrap();
         let text = widget(&files);
+        let request = text
+            .split("export interface WidgetCreateRequest {")
+            .nth(1)
+            .unwrap()
+            .split('}')
+            .next()
+            .unwrap();
+        assert!(!request.contains("  id:"), "{request}");
         assert!(text.contains(&format!("readonly id: {ts};")), "{text}");
         assert!(
             text.contains(&format!(

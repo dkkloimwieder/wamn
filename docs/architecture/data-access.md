@@ -219,10 +219,16 @@ Application handlers of custom operations retain business rules, transaction seq
 ## Generated operations
 
 A generated CRUD operation needs no authored Rust, WIT, route entry, or declaration entry.
-Create requires a client id for UUID keys and integer keys without a default.
-For identity or DEFAULT integer keys, create omits the id and returns the database-generated value.
+
+UUID keys require a client id on create.
+Integer keys (`int4` or `int8`) must be `GENERATED AS IDENTITY` or have a sequence `DEFAULT`.
+The build refuses a plain integer key.
+The database generates the integer id, and create returns it.
 A request that supplies a database-generated id is refused.
 Only database-generated keys can appear in `server_owned_fields`.
+
+Offline creates with integer keys replay by the write log’s `request_id`, not by `id`, and the client learns the id from the reply.
+
 Generation writes these files for each package. A path below is a logical path: the file lies at the same path, without `generated/`, in the package's build output `apps/target/wamn/<package>`, which Git does not hold.
 
 1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.

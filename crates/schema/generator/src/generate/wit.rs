@@ -156,12 +156,7 @@ fn emit_crud_interface(
         .expect("writing to a String cannot fail"),
         CrudAction::Create => {
             if !crate::key::database_generated(table) {
-                writeln!(
-                    source,
-                    "    id: {},",
-                    wit_type(model_column(table, "id").column_type())
-                )
-                .expect("writing to a String cannot fail");
+                source.push_str("    id: string,\n");
             }
             source.push_str("    idempotency-key: string,\n");
             emit_writable_fields(source, table, operation);
@@ -870,12 +865,7 @@ fn emit_crud_json_codec(
         CrudAction::Create => {
             source.push_str("struct JsonRequest { ");
             if !crate::key::database_generated(table) {
-                write!(
-                    source,
-                    "id: {}, ",
-                    codec_rust_type(model_column(table, "id").column_type(), false)
-                )
-                .expect("writing to a String cannot fail");
+                source.push_str("id: String, ");
             }
             source.push_str("idempotency_key: String,\n");
             emit_json_columns(&mut source, table, &operation.writable_fields);
@@ -1234,13 +1224,7 @@ fn emit_crud_request_assignments(
         }
         CrudAction::Create => {
             if !crate::key::database_generated(table) {
-                let unwrap = if model_column(table, "id").column_type() == ColumnType::Int64 {
-                    ".0"
-                } else {
-                    ""
-                };
-                writeln!(source, "            id: request.id{unwrap},")
-                    .expect("writing to a String cannot fail");
+                source.push_str("            id: request.id,\n");
             }
             source.push_str("            idempotency_key: request.idempotency_key,\n");
             for field in &operation.writable_fields {

@@ -38,6 +38,18 @@ pub(crate) fn key_type(table: &Table) -> Result<KeyType, GenerateError> {
         .iter()
         .find(|column| column.name() == "id")
         .expect("the primary key references an introspected column");
+    if matches!(column.column_type(), ColumnType::Int32 | ColumnType::Int64)
+        && column.default().is_none()
+        && column.generation().is_none()
+    {
+        return Err(GenerateError::for_object(
+            GenerateErrorType::InvalidModel,
+            format!(
+                "{relation}.id integer key must be GENERATED AS IDENTITY or have a sequence DEFAULT"
+            ),
+            format!("{relation}.id"),
+        ));
+    }
     match column.column_type() {
         ColumnType::Uuid => Ok(KeyType::Uuid),
         ColumnType::Int32 => Ok(KeyType::Int32),
@@ -72,6 +84,5 @@ pub(crate) fn database_generated(table: &Table) -> bool {
     table.columns().iter().any(|column| {
         column.name() == "id"
             && matches!(column.column_type(), ColumnType::Int32 | ColumnType::Int64)
-            && (column.default().is_some() || column.generation().is_some())
     })
 }

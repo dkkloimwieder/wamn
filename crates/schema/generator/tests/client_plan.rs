@@ -1167,44 +1167,25 @@ fn a_revision_names_the_one_selector_whose_row_supplies_it() {
 }
 
 #[test]
-fn integer_create_ids_are_inputs_only_when_client_supplied() {
-    let mut ir = release();
-    for ty in ["int32", "int64"] {
-        operation(&mut ir, "create")
+fn integer_create_ids_are_server_generated() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    let counter = plan
+        .screens()
+        .find(|screen| screen.model == "counter" && screen.name == "create")
+        .unwrap();
+    assert!(
+        !counter
+            .supplied
+            .iter()
+            .any(|field| field.type_ == SuppliedType::Id)
+    );
+    assert!(!counter.inputs.iter().any(|field| field.path == "id"));
+    assert!(
+        !counter
+            .contract
             .input_fields
-            .iter_mut()
-            .find(|field| field.path == "id")
-            .unwrap()
-            .type_name = ty.to_owned();
-        let plan = ClientPlan::from_ir(&ir);
-        assert!(
-            !screen(&plan, "create")
-                .supplied
-                .iter()
-                .any(|field| field.type_ == SuppliedType::Id)
-        );
-        assert!(
-            screen(&plan, "create")
-                .inputs
-                .iter()
-                .any(|field| field.path == "id")
-        );
-        let counter = plan
-            .screens()
-            .find(|screen| screen.model == "counter" && screen.name == "create")
-            .unwrap();
-        assert!(
-            !counter
-                .supplied
-                .iter()
-                .any(|field| field.type_ == SuppliedType::Id)
-        );
-        assert!(
-            !counter
-                .contract
-                .input_fields
-                .iter()
-                .any(|field| field.path == "id")
-        );
-    }
+            .iter()
+            .any(|field| field.path == "id")
+    );
 }

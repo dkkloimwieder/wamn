@@ -476,7 +476,7 @@ Append-only operations (a new record against a static parent) carry the parent's
 
 ### Ids and numbers
 
-- UUID record ids are client-generated UUIDv7 values, made by the binding at enqueue. The host accepts the supplied id. Plain integer keys also require a client id. The database generates identity and DEFAULT integer keys, and create returns the id. A numbered field is never the record id: it is a business key, unique and indexed, beside the id.
+- UUID record ids are client-generated UUIDv7 values, made by the binding at enqueue. The host accepts the supplied id. Integer keys (`int4` or `int8`) must be `GENERATED AS IDENTITY` or have a sequence `DEFAULT`. The build refuses a plain integer key. The database generates the integer id, and create returns it. Offline creates with integer keys replay by the write log’s `request_id`, not by `id`, and the client learns the id from the reply. A numbered field is never the record id: it is a business key, unique and indexed, beside the id.
 - Fields declared `number = "<sequence>"` are host-assigned at commit, as the generator already enforces; the client never supplies them. Numbers are assigned in upload order, not record order; `recorded_at` carries record order.
 - Until the feed echo brings the number, the field renders as a placeholder that cannot be read as a number: `pending·<last 4 hex of the id>`. Any operation that consumes the number (print, export, a typed reference) waits on it: `yield until(() => rows[id]?.number !== undefined)`.
 - For client-supplied keys, references between two offline entries (a line to its header) use the header's id. Both ids exist at enqueue, so nothing is ever remapped.

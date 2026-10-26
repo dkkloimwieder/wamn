@@ -259,9 +259,13 @@ The application and the actor are transaction claims the host sets at `begin-ope
 
 ### Sequence and the record id
 
-A key field never declares `number = "<sequence>"`, and the build refuses it. UUID keys and integer keys without a default require a client id on create.
-The database generates identity and DEFAULT integer keys, and create returns the id.
+A key field never declares `number = "<sequence>"`, and the build refuses it. UUID keys require a client id on create.
+Integer keys (`int4` or `int8`) must be `GENERATED AS IDENTITY` or have a sequence `DEFAULT`.
+The build refuses a plain integer key.
+The database generates the integer id, and create returns it.
 A create request cannot supply a database-generated id.
+
+Offline creates with integer keys replay by the write log’s `request_id`, not by `id`, and the client learns the id from the reply.
 
 A number is a separate host-assigned field, for example a unique `number` column beside the uuid `id`.
 

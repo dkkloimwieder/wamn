@@ -92,6 +92,9 @@ fn main() -> Result<()> {
         for model in &mut release.models {
             integer_ids(&mut model.fields, ty);
             for operation in &mut model.operations {
+                if operation.type_ == "create" {
+                    operation.input_fields.retain(|field| field.path != "id");
+                }
                 integer_ids(&mut operation.input_fields, ty);
                 integer_ids(&mut operation.result_fields, ty);
                 if let Some(route) = &mut operation.route {

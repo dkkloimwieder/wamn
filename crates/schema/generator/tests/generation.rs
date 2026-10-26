@@ -1815,7 +1815,15 @@ fn typed_crud_contracts_follow_a_second_model_declaration() {
             .iter()
             .map(|column| {
                 if column.name() == "id" {
-                    Column::new("id", ty, false, None, None)
+                    Column::new(
+                        "id",
+                        ty,
+                        false,
+                        None,
+                        Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                            mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                        }),
+                    )
                 } else {
                     column.clone()
                 }
@@ -1831,14 +1839,6 @@ fn typed_crud_contracts_follow_a_second_model_declaration() {
 mod integer_codec_tests {
     #[test]
     fn ids_use_the_declared_wire_type() {
-        let valid = r#"[{"request_id":"r","id":ID,"idempotency_key":"k","sku":"BOX"}]"#;
-        assert_eq!(super::create_codec::decode(valid).unwrap().remove(0).input.unwrap().id.to_string(), "DECIMAL");
-        for invalid in [
-            r#"[{"request_id":"r","id":WRONG,"idempotency_key":"k","sku":"BOX"}]"#,
-            r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#,
-        ] {
-            assert!(super::create_codec::decode(invalid).unwrap().remove(0).input.is_err());
-        }
         let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1"}]"#;
         let items = super::delete_codec::decode(valid).unwrap();
         assert_eq!(items.into_iter().next().unwrap().input.unwrap().id.to_string(), "DECIMAL");
@@ -1847,47 +1847,19 @@ mod integer_codec_tests {
         let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1","change":{}}]"#;
         assert_eq!(super::update_codec::decode(valid).unwrap().remove(0).input.unwrap().id.to_string(), "DECIMAL");
     }
+
+    #[test]
+    fn identity_create_refuses_a_client_id() {
+        let valid = r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#;
+        assert!(super::create_codec::decode(valid).unwrap().remove(0).input.is_ok());
+        for id in ["42", "\"9007199254740993\""] {
+            let invalid = format!(r#"[{{"request_id":"r","idempotency_key":"k","sku":"BOX","id":{id}}}]"#);
+            assert!(super::create_codec::decode(&invalid).unwrap().remove(0).input.is_err());
+        }
+    }
 }
 "##.replace("DECIMAL", id.trim_matches('"')).replace("ID", id).replace("WRONG", wrong);
         compile_inventory_item_component(&package, &tests);
-        let columns = model
-            .columns()
-            .iter()
-            .map(|column| {
-                if column.name() == "id" {
-                    Column::new(
-                        "id",
-                        ty,
-                        false,
-                        None,
-                        Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
-                            mode: wamn_schema_introspection::ir::IdentityMode::Always,
-                        }),
-                    )
-                } else {
-                    column.clone()
-                }
-            })
-            .collect();
-        let generated = replacing_table(
-            &catalog,
-            rebuilt_table(model, columns, model.constraints().to_vec()),
-        );
-        let package = run(&generated, &manifest, &[]).unwrap();
-        compile_inventory_item_component(
-            &package,
-            r##"
-#[test]
-fn identity_create_refuses_a_client_id() {
-    let valid = r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#;
-    assert!(create_codec::decode(valid).unwrap().remove(0).input.is_ok());
-    for id in ["42", "\"9007199254740993\""] {
-        let invalid = format!(r#"[{{"request_id":"r","idempotency_key":"k","sku":"BOX","id":{id}}}]"#);
-        assert!(create_codec::decode(&invalid).unwrap().remove(0).input.is_err());
-    }
-}
-"##,
-        );
     }
 }
 
@@ -3127,8 +3099,16 @@ fn generated_operations_require_a_supported_single_column_key() {
             rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
         );
         let result = run(&catalog, &manifest, &QUERY_SOURCES);
-        if matches!(ty, ColumnType::Uuid | ColumnType::Int32 | ColumnType::Int64) {
+        if ty == ColumnType::Uuid {
             result.unwrap();
+        } else if matches!(ty, ColumnType::Int32 | ColumnType::Int64) {
+            let error = result.unwrap_err();
+            assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
+            assert_eq!(error.object(), Some("inventory.gadget.id"));
+            assert_eq!(
+                error.context(),
+                "inventory.gadget.id integer key must be GENERATED AS IDENTITY or have a sequence DEFAULT"
+            );
         } else {
             let error = result.unwrap_err();
             assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
@@ -3294,7 +3274,15 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
             .iter()
             .map(|column| {
                 if column.name() == "id" {
-                    Column::new("id", ty, false, None, None)
+                    Column::new(
+                        "id",
+                        ty,
+                        false,
+                        None,
+                        Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                            mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                        }),
+                    )
                 } else {
                     column.clone()
                 }
@@ -3366,19 +3354,11 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
             .remove("authored_sql");
         let created = run(&catalog, &create, &[]).unwrap();
         let input = artifact_json(&created, "generated/contracts/gadget/create.input.json");
-        assert_eq!(input["id"]["type"], ty.as_str());
-        assert_eq!(input["id"]["required"], true);
-        assert_eq!(input["request"]["over"], "id_and_writable_fields");
+        assert!(input.get("id").is_none());
+        assert_eq!(input["request"]["over"], "writable_fields");
         let sql = generated_create_sql(&created, "create");
-        let cast = if ty == ColumnType::Int32 {
-            "int4"
-        } else {
-            "int8"
-        };
         assert!(
-            sql.starts_with(&format!(
-                "INSERT INTO gadget (id, stock_id)\nVALUES ($1::{cast}, $2::uuid)"
-            )),
+            sql.starts_with("INSERT INTO gadget (stock_id)\nVALUES ($1::uuid)"),
             "{sql}"
         );
         assert_eq!(

@@ -69,7 +69,7 @@ fn stamped_catalog() -> CatalogIr {
     )
 }
 
-/// The gadget catalog with an integer key that has no default.
+/// The gadget catalog with an integer identity key.
 fn integer_key_catalog() -> CatalogIr {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
@@ -78,7 +78,15 @@ fn integer_key_catalog() -> CatalogIr {
         .iter()
         .map(|column| {
             if column.name() == "id" {
-                Column::new("id", ColumnType::Int32, false, None, None)
+                Column::new(
+                    "id",
+                    ColumnType::Int32,
+                    false,
+                    None,
+                    Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                        mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                    }),
+                )
             } else {
                 column.clone()
             }
