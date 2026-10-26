@@ -246,6 +246,7 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
             "catalog.releases|SELECT|table",
+            "catalog.workflows|SELECT|column",
             "platform.\"user\"|SELECT|table",
             "platform.permission|SELECT|table",
             "platform.user_role|SELECT|table",

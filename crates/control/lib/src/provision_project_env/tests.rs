@@ -542,6 +542,14 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
             sql::http_admitter_relations()
                 .map(|(schema, relation)| role_acl("relation", schema, relation, "SELECT")),
         )
+        .chain(sql::HTTP_ADMITTER_WORKFLOW_COLUMNS.iter().map(|column| {
+            role_acl(
+                "column",
+                "catalog",
+                &format!("workflows.{column}"),
+                "SELECT",
+            )
+        }))
         .collect::<Vec<_>>();
     assert!(
         exact.iter().all(|acl| acl.schema_name != "wamn_cache"),
@@ -566,6 +574,12 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
             verify(&widened).expect_err("the HTTP admitter cannot write permission authority");
         }
     }
+    let mut missing = exact.clone();
+    missing.retain(|acl| acl.object_name != "workflows.graph_json");
+    verify(&missing).expect_err("the workflow graph read is missing");
+    let mut widened = exact.clone();
+    widened.push(role_acl("relation", "catalog", "workflows", "SELECT"));
+    verify(&widened).expect_err("the HTTP admitter reads the whole workflows table");
 }
 
 /// Every family publishes a Secret whose name, component label and body are

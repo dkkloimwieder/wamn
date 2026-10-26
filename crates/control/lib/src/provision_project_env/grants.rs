@@ -762,7 +762,18 @@ pub(super) fn verify_http_admitter_grants(
             "SELECT".to_string(),
         )
     });
-    let expected = schemas.chain(relations).collect::<BTreeSet<_>>();
+    let columns = sql::HTTP_ADMITTER_WORKFLOW_COLUMNS.iter().map(|column| {
+        (
+            "column".to_string(),
+            "catalog".to_string(),
+            format!("workflows.{column}"),
+            "SELECT".to_string(),
+        )
+    });
+    let expected = schemas
+        .chain(relations)
+        .chain(columns)
+        .collect::<BTreeSet<_>>();
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact callable-HTTP admission grant set"

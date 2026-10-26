@@ -762,12 +762,16 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     expected.push("relation|platform|user|SELECT".to_owned());
     expected.push("schema|platform|platform|USAGE".to_owned());
     expected.push("schema|catalog|catalog|USAGE".to_owned());
+    for column in sql::HTTP_ADMITTER_WORKFLOW_COLUMNS {
+        expected.push(format!("column|catalog|workflows.{column}|SELECT"));
+    }
     expected.sort();
     assert_eq!(
         load_role_grants(&admin, stable),
         expected,
         "the callable-HTTP admitter's aclexplode grants are not exactly USAGE \
-         on catalog and platform plus the eight SELECTs its host reads"
+         on catalog and platform plus the eight SELECTs and the workflow \
+         columns its host reads"
     );
     // Convergence, same as the executor arm: a run-plane privilege handed to
     // this family out of band is REMOVED by a re-apply, not merely unmentioned.
@@ -840,6 +844,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         "wamn_run.effect_attempts",
         "wamn_run.environment_policies",
         "catalog.packages",
+        "catalog.workflows",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             writeln!(
@@ -850,6 +855,18 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             .expect("writing to a String cannot fail");
         }
     }
+    for column in sql::HTTP_ADMITTER_WORKFLOW_COLUMNS {
+        writeln!(
+            probes,
+            "  ASSERT has_column_privilege(r, 'catalog.workflows', '{column}', 'SELECT'), \
+               'cannot read catalog.workflows.{column}, which its one statement reads'; "
+        )
+        .expect("writing to a String cannot fail");
+    }
+    probes.push_str(
+        "  ASSERT NOT has_column_privilege(r, 'catalog.workflows', 'created_by', 'SELECT'), \
+           'the callable-HTTP admitter reads a workflow column that it does not use'; \n",
+    );
     probes.push_str("END $probe$;\n");
     run_admin(&admin, "the effective-privilege probes", &probes);
 
@@ -857,7 +874,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     //
     // Every probe above is a privilege-catalog question, and the catalog is
     // BLIND TO RLS: `has_table_privilege` answers TRUE for a role whose every
-    // SELECT returns zero rows because no policy matched it. All seven relations
+    // SELECT returns zero rows because no policy matched it. All eight relations
     // carry FORCE RLS with a restrictive tenant floor keyed on the GUEST login
     // pattern, so a non-guest family reads through the permissive
     // `TO wamn_platform` arm or it reads nothing at all — and reading nothing
@@ -907,6 +924,12 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                 validation_hash) \
              VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{digest}', 'upstream', 'prod', 'upstream', \
                      'active', 'valid', '{digest}');\n\
+             INSERT INTO catalog.workflows \
+               (tenant_id, environment, application, workflow_id, version, graph_json, \
+                wiring_hash, trigger, execution_type, execution_role, created_by) \
+             VALUES ('tenant-a', 'prod', 'orders', 'send', 1, '{{}}', '{digest}', \
+                     'manual', 'role', 'widget-reader', \
+                     '00000000-0000-4000-8000-000000000001');\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
              INSERT INTO platform.role (tenant_id, name) \
@@ -945,6 +968,17 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              than into authority"
         );
     }
+    assert_eq!(
+        query(
+            &as_login,
+            "SELECT count(graph_json) FROM catalog.workflows \
+              WHERE tenant_id = 'tenant-a' AND environment = 'prod' \
+                AND application = 'orders' AND workflow_id = 'send' AND version = 1"
+        ),
+        "1",
+        "the callable-HTTP generation cannot read the workflow graph through its \
+         column grant, or the tenant floor admitted nothing"
+    );
     assert_eq!(
         query(
             &as_login,

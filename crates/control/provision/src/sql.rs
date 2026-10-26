@@ -153,7 +153,8 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 0] = [];
 ///
 /// `CONNECTION_EFFECT_SNAPSHOT_SQL` resolves one exact package membership and
 /// joins the requirement, binding, instance, and generation facts, and the
-/// components and wirings that the release manifest carries. Unlike
+/// components that the release manifest carries. It reads the workflow graph
+/// through [`HTTP_ADMITTER_WORKFLOW_COLUMNS`], not through this list. Unlike
 /// management admission, it never consults the environment's mutable
 /// effective-release head.
 pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 5] = [
@@ -162,6 +163,18 @@ pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 5] = [
     "connection_bindings",
     "connection_instances",
     "connection_generations",
+];
+
+/// The `catalog.workflows` columns that callable-HTTP connection authorization
+/// reads: the key of one workflow version and its graph. The admitter gets
+/// these columns only, not the whole table.
+pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 6] = [
+    "tenant_id",
+    "environment",
+    "application",
+    "workflow_id",
+    "version",
+    "graph_json",
 ];
 
 /// The schemas that the callable-HTTP admitter uses.
@@ -493,8 +506,9 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// User permission reads join the active application user to its role grants;
 /// service permission reads continue to read `platform.permission` alone.
 /// A read route's ETag reads the WAL position without a table grant.
-/// `USAGE` on those two schemas plus
-/// eight `SELECT`s is the family's authority.
+/// `USAGE` on those two schemas plus eight `SELECT`s and the column `SELECT`
+/// of [`HTTP_ADMITTER_WORKFLOW_COLUMNS`] on `catalog.workflows` is the
+/// family's authority.
 ///
 /// # What it deliberately does NOT hold
 ///
@@ -535,6 +549,16 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
         )
         .expect("writing to a String cannot fail");
     }
+    let columns = HTTP_ADMITTER_WORKFLOW_COLUMNS
+        .iter()
+        .map(|column| quote_ident(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    write!(
+        sql,
+        " GRANT SELECT ({columns}) ON TABLE catalog.\"workflows\" TO {role};"
+    )
+    .expect("writing to a String cannot fail");
     sql
 }
 
@@ -1248,8 +1272,10 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"permission\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads five catalog relations and three permission relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
+             GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT (\"tenant_id\", \"environment\", \"application\", \"workflow_id\", \
+             \"version\", \"graph_json\") ON TABLE catalog.\"workflows\" TO \"wamn_http_admitter\";",
+            "the callable-HTTP admitter reads five catalog relations, the selected workflow columns and three permission relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
