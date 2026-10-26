@@ -1,9 +1,9 @@
 import { createMemo, createSignal, createStore, type Accessor } from "solid-js";
 import type { Change, Feed } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./packaging-feed";
-import { orderedIds, type StatusFilter } from "./order";
-import { exactSum } from "./totals";
-import type { GroupRow, ViewSource } from "./view";
+import type { PackagingRow, PackagingScope } from "./packaging-feed.js";
+import { orderedIds, type StatusFilter } from "./order.js";
+import { exactSum } from "./totals.js";
+import type { GroupRow, ViewSource } from "./view.js";
 
 /**
  * Shape B: no `@tanstack/db`. A Solid store keyed by id, filled from the same

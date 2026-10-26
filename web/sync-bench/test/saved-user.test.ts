@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { savedUser } from "../src/saved-user";
+import { savedUser } from "../src/saved-user.js";
 
 afterEach(() => {
   localStorage.clear();

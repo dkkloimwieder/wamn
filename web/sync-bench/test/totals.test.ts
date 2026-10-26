@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exactSum, roundHalfAwayFromZero } from "../src/totals";
+import { exactSum, roundHalfAwayFromZero } from "../src/totals.js";
 
 describe("exactSum", () => {
   it("sums decimal text without float error", () => {

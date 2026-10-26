@@ -4,12 +4,12 @@ import { Button, Theme } from "@wfe/components";
 import "@wfe/components/styles.css";
 import { applyChanges } from "@wfe/sync/internal";
 import type { Change, Feed } from "@wfe/sync";
-import { fakeFeed, makeRows, randomChanges, seeded } from "./fake";
-import { packagingCollection, type PackagingRow, type PackagingScope } from "./packaging-feed";
-import type { StatusFilter } from "./order";
-import { shapeA } from "./shape-a";
-import { shapeB } from "./shape-b";
-import { PackagingView } from "./view";
+import { fakeFeed, makeRows, randomChanges, seeded } from "./fake.js";
+import { packagingCollection, type PackagingRow, type PackagingScope } from "./packaging-feed.js";
+import type { StatusFilter } from "./order.js";
+import { shapeA } from "./shape-a.js";
+import { shapeB } from "./shape-b.js";
+import { PackagingView } from "./view.js";
 import "./style.css";
 
 /**

@@ -1,9 +1,9 @@
 import { createMemo, onCleanup, type Accessor } from "solid-js";
 import { count, createLiveQueryCollection, sum } from "@tanstack/db";
 import { liveRows, syncStatus } from "@wfe/sync";
-import type { packagingCollection } from "./packaging-feed";
-import { orderedIds, type StatusFilter } from "./order";
-import type { ViewSource } from "./view";
+import type { packagingCollection } from "./packaging-feed.js";
+import { orderedIds, type StatusFilter } from "./order.js";
+import type { ViewSource } from "./view.js";
 
 /**
  * Shape A: the rows through `liveRows` on the collection, and the groups and

@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { expect, it, vi } from "vitest";
-import { outbox } from "../../wfe/packages/sync/src/outbox.js";
+import { outbox } from "@wfe/sync";
 import { collectionKey, outboxDatabase, rowsDatabase, rowsPersistence } from "../src/sync/index.js";
 
 it("drops obsolete model shapes, keeps unchanged rows and leaves the outbox intact", async () => {

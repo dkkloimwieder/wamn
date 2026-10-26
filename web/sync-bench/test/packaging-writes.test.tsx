@@ -6,10 +6,10 @@ import { Loading, flush } from "solid-js";
 import { outbox, shell, type Change, type OperationCall, type Reply } from "@wfe/sync";
 import { createCall, createSend, createTransport, outboxDatabase, requestHash, rowsPersistence } from "@wamn/web-runtime";
 import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import { packagingCollection, packagingKey, type PackagingRow } from "../src/packaging-feed";
-import { packagingAddress } from "../src/packaging-writes";
-import { PackagingScreen } from "../src/packaging-screen";
-import { makeRows } from "../src/fake";
+import { packagingCollection, packagingKey, type PackagingRow } from "../src/packaging-feed.js";
+import { packagingAddress } from "../src/packaging-writes.js";
+import { PackagingScreen } from "../src/packaging-screen.js";
+import { makeRows } from "../src/fake.js";
 
 const disposals: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -74,7 +74,7 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   const database = `packaging-${crypto.randomUUID()}`;
   if (restored) {
     const previous = outbox({ database, send, probe: async () => false });
-    await previous.enqueue(restored.call);
+    await previous.enqueue(restored.call, restored.call.request);
     await previous.replay();
     previous.close();
   }
@@ -92,12 +92,13 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   await waitFor(() => expect(view.getByRole("form", { name: "Create packaging" })).toBeTruthy());
   const row = (id: string) => view.container.querySelector(`tr[data-row="${id}"]`);
   async function submit(code = "PK-NEW") {
+    const count = o.entries().length;
     fireEvent.input(view.getByLabelText("Packaging code"), { target: { value: code } });
     fireEvent.input(view.getByLabelText("Location id"), { target: { value: makeRows(1)[0]!.locationId } });
     fireEvent.submit(view.getByRole("form", { name: "Create packaging" }));
-    await waitFor(() => expect(o.entries()).toHaveLength(1));
+    await waitFor(() => expect(o.entries()).toHaveLength(count + 1));
     flush();
-    return o.entries()[0]!;
+    return o.entries().at(-1)!;
   }
   return {
     ...view,
@@ -124,6 +125,21 @@ it("takes the project and environment from the application route and the id from
     "wamn-outbox:wms:dev:signed-in-user",
   );
   expect(() => packagingAddress("/live.html")).toThrow("Open /urn:wamn:project-env:");
+});
+
+it("reports Recorded and enables three offline creates before any upload", async () => {
+  const h = await mounted();
+  const reset = vi.spyOn(HTMLFormElement.prototype, "reset");
+  const form = h.getByRole("form", { name: "Create packaging" });
+  for (let count = 1; count <= 3; count++) {
+    const entry = await h.submit(`OFFLINE-${count}`);
+    await waitFor(() => expect(reset).toHaveBeenCalledTimes(count));
+    await waitFor(() => expect(form.querySelector("output")?.textContent).toBe("Recorded"));
+    expect((within(form).getByRole("button", { name: "Create packaging" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(h.row(entry.expect.id)?.textContent).toContain(`OFFLINE-${count} (tentative)`);
+  }
+  expect(h.o.entries().map((entry) => entry.state)).toEqual(["pending", "pending", "pending"]);
+  expect(h.send).not.toHaveBeenCalled();
 });
 
 it("records a UUIDv7 create, keeps it tentative after send, and confirms only on the feed echo", async () => {
@@ -154,9 +170,17 @@ it("records a UUIDv7 create, keeps it tentative after send, and confirms only on
     expect(h.row(id)?.textContent).toContain("PK-NEW");
     expect(h.row(id)?.textContent).not.toContain("tentative");
   });
-  await waitFor(() => expect(h.getByLabelText("Sync status").textContent).toContain(h.c.utils.currentAt()!), {
-    timeout: 2000,
-  });
+  // An empty feed reply updates the time without a row change or a refresh timer.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const at = "2026-10-26T12:00:00.000Z";
+    vi.setSystemTime(new Date(at));
+    await h.c.utils.pull();
+    flush();
+    expect(h.getByLabelText("Sync status").textContent).toContain(at);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("shows a refused request beside the current row and discards it", async () => {
@@ -190,15 +214,23 @@ it("shows a refused request beside the current row and discards it", async () =>
 it("keeps a create tentative when its feed echo arrives before the successful retry", async () => {
   const h = await mounted();
   const entry = await h.submit("LOST-REPLY");
+  h.answer({ ok: false, retriable: true });
+  h.net.up = true;
+  await h.o.replay();
+  expect(h.send).toHaveBeenCalledOnce();
+  await waitFor(() => expect(h.getByRole("form", { name: "Create packaging" }).querySelector("output")?.textContent).toBe("Recorded"));
   const id = entry.expect.id;
   const data = { ...makeRows(1)[0]!, ...(entry.request as object), id };
   h.changes.push({ id, row_version: 1, deleted: false, data });
   await h.c.utils.pull();
   await waitFor(() => expect(h.row(id)?.textContent).toContain("LOST-REPLY (tentative)"));
   expect(h.o.entries()).toHaveLength(1);
-  h.net.up = true;
+  expect(h.o.entries()[0]?.state).toBe("pending");
+  expect(h.send).toHaveBeenCalledOnce();
+  h.answer({ ok: true });
   await h.o.replay();
   await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
+  expect(h.send).toHaveBeenCalledTimes(2);
 });
 
 it("records the edited create with the same id before discarding the refusal, without losing the row", async () => {

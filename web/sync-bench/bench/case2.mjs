@@ -263,7 +263,7 @@ try {
   await step("close and reopen offline with three tentative rows", async () => {
     await named("close offline context", () => context.close());
     await openContext(true);
-    // wfe 5a gap wamn-koypi: packagingWrites still owns the local outbox restore.
+    // recordWrite restores tentative rows from the outbox's stored expected rows.
     for (const id of ids) {
       await row(id).waitFor();
       assert.match(await row(id).textContent(), /tentative/);

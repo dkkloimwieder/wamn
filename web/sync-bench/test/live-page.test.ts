@@ -1,7 +1,7 @@
 // @vitest-environment node
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { expect, it, vi } from "vitest";
-import { livePage } from "../vite.config";
+import { livePage } from "../vite.config.js";
 
 it.each(["live.html", "manifest.webmanifest", "icon.svg"])("serves %s beside the audience page", (file) => {
   for (const audience of ["urn:wamn:project-env:org:project:dev:instance", "urn%3Awamn%3Aproject-env%3Aorg%3Aproject%3Adev%3Ainstance"]) {

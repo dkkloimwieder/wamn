@@ -9,6 +9,7 @@
     "lint": "eslint ."
   },
   "devDependencies": {
+    "@wfe/generator": "workspace:*",
     "@eslint/js": "^10.0.1",
     "eslint": "^10.12.0",
     "eslint-plugin-solid": "^0.18.1",

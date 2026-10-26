@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createTransport } from "@wamn/web-runtime";
-import { packagingFeed } from "../src/packaging-feed";
-import { packagingRead, trackListReads } from "../bench/reads";
+import { packagingFeed } from "../src/packaging-feed.js";
+import { packagingRead, trackListReads } from "../bench/reads.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();

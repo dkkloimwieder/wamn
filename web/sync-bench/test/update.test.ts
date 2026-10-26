@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { canReload } from "../src/update";
+import { canReload } from "../src/update.js";
 
 it.each([
   [1, 0, 0, false],

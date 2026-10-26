@@ -1,5 +1,5 @@
 import type { Change, Feed } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./packaging-feed";
+import type { PackagingRow, PackagingScope } from "./packaging-feed.js";
 
 const statuses = ["available", "consumed", "held"] as const;
 const types = ["bin", "case", "loose", "pallet", "tote"] as const;

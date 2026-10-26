@@ -4,10 +4,10 @@ import type { Feed, Persistence } from "@wfe/sync";
 import { rowsPersistence } from "@wamn/web-runtime";
 import { PACKAGING_SHAPE_DIGEST } from "@wamn/wms-client/packaging.js";
 import { LOCATION_SHAPE_DIGEST } from "@wamn/wms-client/location.js";
-import { packagingKey, type PackagingRow, type PackagingScope } from "../src/packaging-feed";
-import { locationKey, type LocationRow } from "../src/location-feed";
-import { collectionBytes, needsConnection, packagingOffline, packagingScope, requireStorage } from "../src/packaging-offline";
-import { makeRows } from "../src/fake";
+import { packagingKey, type PackagingRow, type PackagingScope } from "../src/packaging-feed.js";
+import { locationKey, type LocationRow } from "../src/location-feed.js";
+import { collectionBytes, needsConnection, packagingOffline, packagingScope, requireStorage } from "../src/packaging-offline.js";
+import { makeRows } from "../src/fake.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

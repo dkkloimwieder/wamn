@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
-import { applicationConfig } from "../shell/vite";
+import { applicationConfig } from "../shell/vite.js";
 
 /** Serve the live page and install assets at the application's audience path. */
 export function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
@@ -66,7 +66,7 @@ export default defineConfig(() => {
       },
     ],
     resolve: {
-      conditions: ["wfe-source", "browser", "development|production"],
+      conditions: ["browser", "development|production"],
       dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals", "@tanstack/db"],
       alias: application.resolve.alias.filter(
         ({ find }) => String(find).includes("wms-client") || find === "@wamn/web-runtime",

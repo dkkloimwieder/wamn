@@ -86,14 +86,14 @@ The browser adapter targets Solid 2.
 
 ### `@wfe/sync` public surface
 
-The surface below comes from wfe commit `9248538bbed3a22f16d9b5b764037c22df71f19f`, pinned by main's `web/wfe` entry.
+The surface below comes from wfe commit `71eb5b444cc3bf82538255fe330db970709291d2`, pinned by the `web/wfe` entry.
 [`index.ts`](../../web/wfe/packages/sync/src/index.ts) exports the main entry.
 [`internal.ts`](../../web/wfe/packages/sync/src/internal.ts) exports `applyChanges`.
 [`worker.ts`](../../web/wfe/packages/sync/src/worker.ts) exports `precache` and `skipWaitingMessage`.
 
 [`package.json`](../../web/wfe/packages/sync/package.json), `exports`, declares these entry conditions:
 
-| Entry | `types` | `wfe-source` | `import` |
+| Entry | `types` | `wfe-source` | `default` |
 | --- | --- | --- | --- |
 | `.` | `./dist/index.d.ts` | `./src/index.ts` | `./dist/index.js` |
 | `./internal` | `./dist/internal.d.ts` | `./src/internal.ts` | `./dist/internal.js` |
@@ -191,10 +191,14 @@ export function syncStatus<T extends object>(
 export function syncComplete<T extends object>(
   c: KeyedCollection<T>,
 ): Accessor<boolean>
+export function syncCurrentAt<T extends object>(
+  c: KeyedCollection<T>,
+): Accessor<string | undefined>
 export function outboxStatus(o: Outbox): Accessor<OutboxCounts>
 export function recordWrite<T extends Row>(
   c: AnyCollection<T>,
   o: Outbox,
+  options?: { model?: string },
 ): {
   rows: Store<Record<string, T>>
   write: (
@@ -218,6 +222,7 @@ export interface Send {
   (entry: OutboxEntry, signal: AbortSignal): Promise<Reply>
 }
 export type OutboxEntry = OperationCall & {
+  expected: unknown
   seq: number
   recorded_at: string
   state: 'pending' | 'sending' | 'refused'
@@ -230,7 +235,7 @@ export type OutboxCounts = {
   lastSentAt: string | undefined
 }
 export interface Outbox {
-  enqueue(op: OperationCall): Promise<OutboxEntry>
+  enqueue(op: OperationCall, expected?: unknown): Promise<OutboxEntry>
   replay(): Promise<void>
   resubmit(seq: number): Promise<void>
   discard(seq: number): Promise<void>
@@ -290,6 +295,7 @@ export function precache(
   manifest: string[],
   options?: {
     buildId?: string
+    bypassPrefixes?: string[]
     apiPrefix?: string
     navigationFallback?: string
   },
@@ -309,17 +315,9 @@ export function precache(
 
 ### Package consumption
 
-The consumption target installs built wfe packages with `dist` types, `solid` and `default` conditions, and NodeNext resolution.
-Consumers must use neither `paths` nor a source condition, because those bypass the installed package surface.
-
-The pinned package exposes `types`, `wfe-source`, and `import`, so the wfe 5b packaging target remains outstanding.
+wamn installs the built wfe packages with NodeNext resolution, without `paths` for wfe packages or a source condition.
 [`pnpm-workspace.yaml`](../../pnpm-workspace.yaml), `packages`, includes the submodule packages.
 [`web/runtime/package.json`](../../web/runtime/package.json), `dependencies`, and [`web/sync-bench/package.json`](../../web/sync-bench/package.json), `dependencies`, use `workspace:*`.
-
-[`web/runtime/tsconfig.json`](../../web/runtime/tsconfig.json), `compilerOptions`, uses NodeNext but maps `@wfe/sync` to `src/outbox.ts` through `paths`.
-[`web/sync-bench/tsconfig.json`](../../web/sync-bench/tsconfig.json), `compilerOptions`, uses Bundler resolution, `wfe-source`, and source aliases.
-Its [`vite.config.ts`](../../web/sync-bench/vite.config.ts), `resolve.conditions`, also selects `wfe-source`.
-Removing these aliases and conditions remains the consumer step after the built exports exist.
 
 The root [`package.json`](../../package.json) owns the web workspace.
 
@@ -502,7 +500,7 @@ Generated packages consume it, and `@wfe/components` does not import it.
 The adapter targets Solid `2.0.0-rc.18` or later.
 Stores come from `solid-js`, and the web runtime comes from `@solidjs/web`.
 The table also covers screen and test primitives around the adapter.
-Only `createStore`, `createProjection`, `createOptimisticStore`, `action`, `until`, `from`, `createMemo`, and `onCleanup` appear in its imports.
+It imports `createStore`, `createProjection`, `createOptimisticStore`, `action`, `until`, `from`, `createMemo`, `runWithOwner`, `onSettled`, and `onCleanup`.
 
 | Primitive | Signature | Use here |
 | --- | --- | --- |
@@ -572,12 +570,12 @@ The wait reads the authoritative collection, never the optimistic overlay.
 [`solid.ts`](../../web/wfe/packages/sync/src/solid.ts), `confirmed`, requires a successful send to remove the entry and the collection to hold its id.
 If `expected` supplies a version, the collection's version must be greater.
 The collection's accessor reads both versions.
-Refusal throws `OutboxRefused`, and discard throws `OutboxDiscarded`.
+Refusal of a new write throws `OutboxRefused`, and discard throws `OutboxDiscarded`.
 Either rejection ends the action and reverts its guess.
+Restored refusals keep their tentative rows until discard or successful resubmission.
 
-The pinned package keeps `expected` in the action, while the durable entry stores only `expect: { model, id }`.
-Persisting the expected row with the entry remains a package gap.
-[`packaging-writes.ts`](../../web/sync-bench/src/packaging-writes.ts), `packagingWrites`, reconstructs pending creates from stored requests after reopen.
+At `71eb5b4`, [`outbox.ts`](../../web/wfe/packages/sync/src/outbox.ts), `OutboxEntry`, stores `expected`, and [`solid.ts`](../../web/wfe/packages/sync/src/solid.ts), `recordWrite`, restores tentative rows from the outbox with `{ model }`.
+Gap: the `restoreEntry` action in `recordWrite` holds the screen's reads while a restored entry is pending. Until wfe fixes it, [`packaging-writes.ts`](../../web/sync-bench/src/packaging-writes.ts), `packagingWrites`, restores the rows itself.
 
 ### Pinned versions
 
@@ -707,8 +705,7 @@ Precached assets use the cache first.
 Other navigations use the network first and fall back only on network failure, not an HTTP error response.
 
 The worker bypasses `/wamn` and `/password` on a path-segment boundary.
-`sw.ts`, `bypass`, filters the manifest and stops those fetch events before the package handler.
-This local filter exists because the pinned `precache` accepts only one `apiPrefix`.
+`precache` receives `bypassPrefixes: ['/wamn', '/password']` and excludes both paths from installation and fetch handling.
 The worker never supplies cached application API or password replies.
 
 The web manifest supplies a name, icon, and standalone display mode.

@@ -4,8 +4,8 @@ import { VirtualRows, createTableVirtualizer } from "@wfe/components/virtual";
 import { PackagingQueryTable } from "@wamn/wms-client/components/packaging.js";
 import { PACKAGING_QUERY_RESULT_FIELDS } from "@wamn/wms-client/packaging.js";
 import type { NestedFields } from "@wamn/web-runtime";
-import type { PackagingRow } from "./packaging-feed";
-import { roundHalfAwayFromZero } from "./totals";
+import type { PackagingRow } from "./packaging-feed.js";
+import { roundHalfAwayFromZero } from "./totals.js";
 
 /** One group of the screen: packaging by status and type. */
 export interface GroupRow {

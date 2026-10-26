@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { CursorExpired } from "@wfe/sync";
 import type { Transport, WireRequest } from "@wamn/web-runtime";
-import { locationFeed } from "../src/location-feed";
+import { locationFeed } from "../src/location-feed.js";
 
 it("reads all 20,002 locations in 201 requests and keeps the first feed cursor", async () => {
   const seen: WireRequest[] = [];

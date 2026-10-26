@@ -5,15 +5,15 @@ import { outbox, outboxStatus, shell, type ShellResult } from "@wfe/sync";
 import "@wfe/components/styles.css";
 import { createSend, createTransport, keepSession, outboxDatabase, renew, rowsDatabase, rowsPersistence, type SessionState } from "@wamn/web-runtime";
 import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import { packagingFeed } from "./packaging-feed";
+import { packagingFeed } from "./packaging-feed.js";
 import { LOCATION_SHAPE_DIGEST } from "@wamn/wms-client/location.js";
-import { locationFeed } from "./location-feed";
-import { packagingOffline, packagingScope } from "./packaging-offline";
-import type { StatusFilter } from "./order";
-import { packagingAddress } from "./packaging-writes";
-import { PackagingScreen } from "./packaging-screen";
-import { savedUser } from "./saved-user";
-import { canReload } from "./update";
+import { locationFeed } from "./location-feed.js";
+import { packagingOffline, packagingScope } from "./packaging-offline.js";
+import type { StatusFilter } from "./order.js";
+import { packagingAddress } from "./packaging-writes.js";
+import { PackagingScreen } from "./packaging-screen.js";
+import { savedUser } from "./saved-user.js";
+import { canReload } from "./update.js";
 import "./style.css";
 
 /** The audience in the route scopes the session and the user-owned outbox. */

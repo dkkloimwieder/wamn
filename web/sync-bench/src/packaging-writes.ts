@@ -2,7 +2,7 @@ import { createMemo, createProjection, from } from "solid-js";
 import { liveRows, recordWrite, type OperationCall, type Outbox, type OutboxEntry } from "@wfe/sync";
 import { createCall, requestHash } from "@wamn/web-runtime";
 import { PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import type { packagingCollection, PackagingRow } from "./packaging-feed";
+import type { packagingCollection, PackagingRow } from "./packaging-feed.js";
 
 export type PackagingDraft = Omit<PackagingCreateRequest, "id" | "idempotencyKey" | "requestId">;
 
@@ -20,7 +20,7 @@ export function packagingWrites(c: ReturnType<typeof packagingCollection>, o: Ou
   const current = liveRows(c);
   const written = new Set<string>();
   const recovered = new Map<number, OutboxEntry>();
-  // wfe gap wamn-koypi: recordWrite does not restore optimistic rows from the outbox.
+  // wfe gap wamn-qz0ck: recordWrite's restore action holds the screen while a restored entry is pending.
   // Keep recovered creates until both their send and their feed echo arrive.
   const entries = createMemo(() => from<OutboxEntry[]>((next) => o.watch(() => {
     const entries = o.entries();

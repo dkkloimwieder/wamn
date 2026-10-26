@@ -1,4 +1,4 @@
-import type { PackagingRow } from "./packaging-feed";
+import type { PackagingRow } from "./packaging-feed.js";
 
 /** Which rows the screen shows: every row, or one status. */
 export type StatusFilter = "all" | PackagingRow["status"];

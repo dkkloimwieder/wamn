@@ -1,12 +1,12 @@
-import { For, Show, createMemo, createSignal, createUniqueId, onCleanup, untrack } from "solid-js";
-import { liveRows, outboxStatus, type Outbox, type OutboxEntry, type ShellResult } from "@wfe/sync";
-import type { packagingCollection } from "./packaging-feed";
-import { orderedIds, type StatusFilter } from "./order";
-import { packagingWrites, type PackagingDraft } from "./packaging-writes";
-import { shapeA } from "./shape-a";
-import { PackagingView } from "./view";
-import { shellStatus } from "./shell-status";
-import { needsConnection, type OfflineResult, type packagingOffline } from "./packaging-offline";
+import { For, Show, createMemo, createSignal, createUniqueId, latest, onCleanup, untrack } from "solid-js";
+import { liveRows, outboxStatus, syncCurrentAt, syncStatus, type Outbox, type OutboxEntry, type ShellResult } from "@wfe/sync";
+import type { packagingCollection } from "./packaging-feed.js";
+import { orderedIds, type StatusFilter } from "./order.js";
+import { packagingWrites, type PackagingDraft } from "./packaging-writes.js";
+import { shapeA } from "./shape-a.js";
+import { PackagingView } from "./view.js";
+import { shellStatus } from "./shell-status.js";
+import { needsConnection, type OfflineResult, type packagingOffline } from "./packaging-offline.js";
 
 /** The live packaging rows, create form, and refused writes. */
 export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean; updateAvailable?: boolean; shellResult?: ShellResult; filter?: StatusFilter; offline?: ReturnType<typeof packagingOffline> }) {
@@ -22,26 +22,32 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
     return o.entries().filter((entry) => entry.state === "refused");
   });
   const ids = createMemo(() => orderedIds(writes.rows, filter()));
-  const [currentAt, setCurrentAt] = createSignal(props.offline?.packaging.currentAt() ?? c.utils.currentAt());
-  const [locationAt, setLocationAt] = createSignal<string>();
-  const [locationCount, setLocationCount] = createSignal(0);
-  const [locations, setLocations] = createSignal(props.offline?.location?.c);
-  const [missing, setMissing] = createSignal(false);
+  const readAt = syncCurrentAt(c);
+  const currentAt = createMemo(() => {
+    source.status();
+    const at = readAt();
+    return props.offline?.packaging.currentAt() ?? at;
+  });
+  const [locations, setLocations] = createSignal(props.offline?.location);
+  void props.offline?.restored.then(() => setLocations(props.offline?.location));
+  const [online, setOnline] = createSignal(navigator.onLine);
+  const connectionChanged = () => setOnline(navigator.onLine);
+  window.addEventListener("online", connectionChanged);
+  window.addEventListener("offline", connectionChanged);
+  onCleanup(() => {
+    window.removeEventListener("online", connectionChanged);
+    window.removeEventListener("offline", connectionChanged);
+  });
+  const missing = createMemo(() => {
+    const status = source.status();
+    currentAt();
+    const local = props.offline ? props.offline.packaging.local()
+      : status === "loading" ? undefined : status === "ready" || Object.keys(current).length > 0;
+    return needsConnection(online(), local);
+  });
   const [busy, setBusy] = createSignal(false);
   const [result, setResult] = createSignal<OfflineResult>();
   const [offlineError, setOfflineError] = createSignal("");
-  function refresh() {
-    setCurrentAt(props.offline?.packaging.currentAt() ?? c.utils.currentAt());
-    setLocationAt(props.offline?.location?.currentAt());
-    setLocationCount(props.offline?.location?.c.size ?? 0);
-    setLocations(props.offline?.location?.c);
-    const local = props.offline ? props.offline.packaging.local()
-      : source.status() === "loading" ? undefined : source.status() === "ready" || Object.keys(current).length > 0;
-    setMissing(needsConnection(navigator.onLine, local));
-  }
-  // wfe gap wamn-q8bkg: currentAt() has no change subscription, including empty feed replies.
-  const timer = setInterval(refresh, 1000);
-  onCleanup(() => clearInterval(timer));
   return (
     <div data-shape="a" class="bench-column">
       <h2>Packaging</h2>
@@ -60,7 +66,7 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
           setOfflineError("");
           try {
             setResult(await props.offline!.takeOffline());
-            refresh();
+            setLocations(props.offline?.location);
           } catch (error) {
             setOfflineError(String(error));
           } finally {
@@ -77,12 +83,10 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
           </>}</Show>
           {offlineError()}
         </p>
-        <Show when={locationAt()}>
-          <p aria-label="Local locations">Location: {locationCount()} rows. Current as of: {locationAt()}.</p>
-        </Show>
+        <Show when={locations()} keyed>{(source) => <LocalLocations source={source} />}</Show>
       </Show>
       <Show when={source.status() === "ready" || currentAt() !== undefined || Object.keys(current).length > 0}>
-        <CreatePackaging create={writes.create} locations={locations()} />
+        <CreatePackaging create={writes.create} locations={locations()?.c} />
         <PackagingView
           label="Packaging"
           source={{ ...source, ids, get: (id) => writes.rows[id] }}
@@ -107,6 +111,20 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
 }
 
 type Locations = NonNullable<ReturnType<typeof packagingOffline>["location"]>["c"];
+
+function LocalLocations(props: { source: NonNullable<ReturnType<typeof packagingOffline>["location"]> }) {
+  const rows = liveRows(props.source.c);
+  const readAt = syncCurrentAt(props.source.c);
+  const status = syncStatus(props.source.c);
+  const currentAt = createMemo(() => {
+    status();
+    const at = readAt();
+    return props.source.currentAt() ?? at;
+  });
+  return <Show when={currentAt()}>
+    <p aria-label="Local locations">Location: {Object.keys(rows).length} rows. Current as of: {currentAt()}.</p>
+  </Show>;
+}
 
 function LocationPicker(props: { collection: Locations }) {
   const id = createUniqueId();
@@ -171,10 +189,11 @@ function CreatePackaging(props: { create: (request: PackagingDraft) => Promise<v
           <option>held</option>
         </select>
       </label>
-      <button type="submit" disabled={busy()}>
+      {/* Recording status must render while recordWrite still waits for upload and the feed. */}
+      <button type="submit" disabled={latest(busy)}>
         Create packaging
       </button>
-      <output>{message()}</output>
+      <output>{latest(message)}</output>
     </form>
   );
 }

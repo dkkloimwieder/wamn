@@ -1,8 +1,8 @@
 import { collection, type Feed, type Persistence, type Row } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./packaging-feed";
-import { packagingKey } from "./packaging-feed";
-import { locationKey, type LocationRow } from "./location-feed";
-import type { StatusFilter } from "./order";
+import type { PackagingRow, PackagingScope } from "./packaging-feed.js";
+import { packagingKey } from "./packaging-feed.js";
+import { locationKey, type LocationRow } from "./location-feed.js";
+import type { StatusFilter } from "./order.js";
 
 export function packagingScope(filter: StatusFilter): PackagingScope {
   return filter === "all" ? {} : { filter: { status: [filter] } };

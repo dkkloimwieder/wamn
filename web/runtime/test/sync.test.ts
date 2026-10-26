@@ -1,8 +1,7 @@
 import "fake-indexeddb/auto";
-import type { OutboxEntry, Reply } from "@wfe/sync";
+import { outbox, type OutboxEntry, type Reply } from "@wfe/sync";
 import { describe, expect, it, vi } from "vitest";
 
-import { outbox } from "../../wfe/packages/sync/src/outbox.js";
 import { createSend, outboxDatabase, requestHash } from "../src/sync/index.js";
 import { createTransport } from "../src/transport.js";
 import {
@@ -79,6 +78,7 @@ function entry(): OutboxEntry {
     request: { id: "row-1", label: "Box" },
     request_hash: "stored-hash",
     expect: { model: "row", id: "row-1" },
+    expected: undefined,
     append_only: false,
     seq: 1,
     recorded_at: "2026-10-25T00:00:00Z",

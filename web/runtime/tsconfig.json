@@ -4,9 +4,6 @@
     "lib": ["ES2022", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "paths": {
-      "@wfe/sync": ["../wfe/packages/sync/src/outbox.ts"]
-    },
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,

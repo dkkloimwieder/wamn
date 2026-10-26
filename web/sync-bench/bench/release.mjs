@@ -106,7 +106,7 @@ try {
     await build({
       root,
       configFile: false,
-      resolve: { conditions: ["wfe-source", "browser", "development|production"], alias: [
+      resolve: { conditions: ["browser", "development|production"], alias: [
         { find: "@wamn/web-runtime", replacement: resolve(root, "../runtime/src/index.ts") },
         { find: "@release/r1", replacement: resolve(scratch, "r1.ts") },
         { find: "@release/r2", replacement: resolve(scratch, "r2.ts") },

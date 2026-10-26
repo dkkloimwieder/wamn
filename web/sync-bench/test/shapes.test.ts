@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createRoot, createSignal, flush } from "solid-js";
 import { applyChanges } from "@wfe/sync/internal";
-import { fakeFeed, makeRows, randomChanges, seeded } from "../src/fake";
-import { packagingCollection, type PackagingRow } from "../src/packaging-feed";
-import type { StatusFilter } from "../src/order";
-import { shapeA } from "../src/shape-a";
-import { shapeB } from "../src/shape-b";
-import { exactSum } from "../src/totals";
-import { shown } from "../src/view";
+import { fakeFeed, makeRows, randomChanges, seeded } from "../src/fake.js";
+import { packagingCollection, type PackagingRow } from "../src/packaging-feed.js";
+import type { StatusFilter } from "../src/order.js";
+import { shapeA } from "../src/shape-a.js";
+import { shapeB } from "../src/shape-b.js";
+import { exactSum } from "../src/totals.js";
+import { shown } from "../src/view.js";
 
 const settle = async () => {
   for (let step = 0; step < 5; step++) {
