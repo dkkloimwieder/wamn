@@ -1,685 +1,955 @@
 # wamn offline and sync
 
-Oct 23, 2026 · @D Kloimwieder
-
 ## Purpose and scope
 
-Operational screens keep working on a spotty or absent network, and every screen loads from a local copy that is kept current by a change feed instead of re-reading pages. Both come from one mechanism: a browser store fed by per-model changes, with writes recorded locally and replayed as ordinary operations.
+The platform handles intermittent network failure lasting seconds to minutes, with the tab open or reopened during the outage.
+A browser store keeps saved rows, follows changes, and records writes locally for replay through ordinary operations.
+Full offline use of an application, or part of one, requires an application design.
+The platform supplies the mechanism, and sync-bench tests it through take-offline.
 
-In scope:
+The platform scope includes:
 
-- a change feed per model, served by the host over the existing read route layer
-- a browser store with live queries, incremental over changes, with a Solid 2 adapter owned by wamn
-- a write outbox: local recording, ordered replay, refusal handling
-- the app shell and local storage rules for Chrome on PC and tablet; graceful degradation elsewhere
-- the generator additions that make all of this generated, not hand-written per screen
+- A generated change feed through each eligible model's list route.
+- Browser collections and live queries, with a Solid 2 adapter in `@wfe/sync`.
+- A durable outbox, ordered replay, and refusal handling.
+- A cached shell and storage support for Chrome on PCs and tablets.
+- Generator emission for application bindings and screen wiring, as specified under Epic 5.
 
-Out of scope: a native app, conflict merging beyond refusal-and-resolve, server-side incremental views, cross-user collaboration on one record, and the local (SQLite) target. Those are listed under Deferred.
+Native applications, automatic conflict merging, server-side incremental views, shared optimistic state, and the local target remain deferred.
 
 ## Terms
 
 | Term | Meaning |
 | --- | --- |
-| change feed | A read, generated per model, that returns the rows changed since a cursor, newest last, plus the next cursor. |
-| cursor | An opaque string a client hands back to continue a change feed. Never a Postgres value. |
-| snapshot | The result of a list read used to fill a collection before the feed takes over. |
-| collection | The browser-side set of rows for one model, keyed by id, held in `@tanstack/db`. |
-| live query | A query over one or more collections whose result updates incrementally per change. |
-| adapter | The wamn-owned Solid 2 code that turns a collection or live query into a store the UI reads. |
-| outbox | The local, durable queue of operation calls recorded while the host could not be reached. |
-| replay | Sending outbox entries to the host in recorded order after the network returns. |
-| refusal | A non-2xx reply to an operation with a code the UI shows; the entry leaves the outbox. |
-| shell | The built app assets (HTML, JS, CSS) a service worker serves without a network. |
-| take offline | An explicit user action that fills collections for a chosen set of records before leaving coverage. |
+| change feed | The list read's mode that returns changed rows and a continuation cursor. |
+| cursor | An opaque string that the client returns unchanged. |
+| snapshot | Rows and a feed cursor from a list statement. |
+| collection | Browser rows for one model and scope, keyed by id in `@tanstack/db`. |
+| live query | A query whose result updates when its input collections change. |
+| adapter | The `@wfe/sync` code that exposes collections as Solid stores. |
+| outbox | The durable local queue of operation calls awaiting upload or resolution. |
+| replay | Sending pending entries in order within each record. |
+| refusal | A final rejection that keeps the entry for correction or discard. |
+| shell | Built application assets that a service worker can serve without a network. |
+| take offline | An application action that saves a chosen data set before an outage. |
+| shape digest | A hash of generated row fields, types, and nullability. |
+| xmin | The snapshot's lower bound for transactions that remain open. |
 
 ## Requirements: the two cases
 
-Two cases, one mechanism. The second adds durability and a bootstrap step; it does not add a second design.
+Both cases use collections, saved rows, an outbox, and a cached shell.
+Only case 1 defines the platform's availability target.
 
-|  | Case 1: spotty network | Case 2: isolated field work |
+| | Case 1: intermittent failure | Case 2: application-defined offline use |
 | --- | --- | --- |
-| Outage length | seconds to minutes | hours |
-| Tab | stays open | may be closed and reopened with no network |
-| Reads | serve the local collection; refresh when the feed resumes | same, over a set the user took offline beforehand |
-| Data shape | any operational screen | a small set of static orders, read-only locally |
-| Writes | any operation; queued and replayed | new records against an order; no edits to the order itself |
-| Conflict rate | low; `row_version` refusals possible | near zero: append-only against a static parent |
-| Needs beyond case 1 | none | service worker for the shell, persistent storage, explicit take-offline, upload status on every screen |
+| Outage length | Seconds to minutes | The application defines its duration |
+| Tab | Open or reopened during the outage | The application defines reopening requirements |
+| Reads | Saved rows first, corrected when the network returns | A chosen local set with application-defined completeness |
+| Data shape | Operational screens with collections | The application selects records and references |
+| Writes | Locally recorded calls, then ordinary replay | The application selects operations that work against its local set |
+| Conflicts | Ordinary revision refusals | The application defines its conflict policy within ordinary host rules |
+| Scope | Platform behavior | Per-application design, tested through take-offline in sync-bench |
 
-Stated requirements:
+A screen with saved rows renders them before the network read resolves.
+The outbox reports a write recorded only after its IndexedDB transaction commits.
+The host deduplicates retries through the request identity.
+Refusals remain visible and do not block other records.
+Within a record, a refusal holds later entries except those marked `append_only`.
 
-- A screen that was open when the network dropped keeps rendering its data and accepts writes.
-- A write made offline is never lost: it is durable before the UI reports it recorded.
-- Replay sends entries in recorded order; an entry is sent at most once effectively (the host dedupes on the request hash).
-- A refusal on replay stops nothing but its own entry; the user sees it and resolves it.
-- Every screen that loads from a collection shows data on first paint when a local copy exists, then updates.
-- Supported devices are Chrome on PC and tablet. Other browsers get the online behavior and a one-line notice; nothing breaks.
-- The frontend never learns backend execution semantics. It sends operations and reads rows; whether a resend is safe is the host's concern.
+Chrome on PCs and tablets supplies the supported browser environment.
+Missing browser capabilities follow the degradation rules below.
+The frontend sends operations and reads rows without learning backend execution behavior.
 
 ## Architecture
 
-The host stays Rust and generated; nothing new runs beside it. The browser gains a store, a feed client and an outbox: the generic engine as `@wfe/sync`, the wamn-specific parts in `web/runtime` and the generated packages (see Ownership).
+The host emits list pages and changes through generated routes.
+The browser runs collections, live queries, and the outbox.
+Screens that use sync read collections and record writes through the outbox.
 
-&#91;embedded content: offline and sync · browser and host parts\]
-
-A screen never calls the host directly: reads come from collections, writes go through the outbox, and both reach the host over the route layer that already exists. Incremental work runs in the browser (`@tanstack/db` live queries); the host only produces changes.
-
-Vendored packages, framework-free, MIT: `@tanstack/db` and `@tanstack/db-ivm`; their only dependency is `@tanstack/store`. TanStack Query is not involved (it is a peer of `@tanstack/query-db-collection` only, which is not vendored), so the standing rule "small store, not TanStack Query" holds. Not vendored: `@tanstack/solid-db` (Solid 1 only), `@tanstack/offline-transactions` (the outbox is @wfe/sync's, see Ownership). Whether `@tanstack/db` stays is decided by Epic 1's measurement against a Solid-only alternative (a store map with memo-derived views); the post-write re-read store from the HTTP-reads work is superseded by the feed echo either way.
+`@tanstack/db` stays as the collection and live-query engine.
+`liveRows` serves table screens, and `liveList` serves small sets.
+The measurement section supplies the evidence for this read-shape rule.
 
 ## Ownership: `@wfe/sync` and wamn
 
-The engine is generic and lives in the wfe repo as a new package, `@wfe/sync`, beside `@wfe/components`, `@wfe/form` and `@wfe/generator`. wamn pins it and supplies everything that names a model, route or operation. The rule for every line of code: if it mentions a wamn model, route, operation, header or database name, it is wamn's; if it takes a `Feed`, a `Collection` or an `OutboxEntry`, it is `@wfe/sync`'s.
+`@wfe/sync` owns the generic collection, Solid adapter, outbox, shell registration, and worker cache behavior.
+wamn owns model names, routes, operations, headers, database names, session handling, and generated bindings.
+The package receives `Feed`, `Send`, `Persistence`, and `probe` implementations without constructing URLs or reading credentials.
 
 ### What `@wfe/sync` is told about its consumer
 
-The consumer is wamn: a Rust host serving generated per-model reads (`list`, `changes`) over GET with ETags and 304s, and operations over POST deduplicated by a request hash the client computes. UUID-keyed rows carry a client-generated UUIDv7 `id` and an integer `row_version`. Supported browsers are Chrome on PC and tablet; other browsers must degrade, never break. Solid 2 (`2.0.0-rc.18` or later) is the framework. That is the whole context; nothing else about wamn is needed to build the package.
+wamn supplies generated reads over GET and writes over POST.
+Reads use ETags and 304 responses.
+Writes carry a request hash for deduplication.
+Rows have ids and integer versions, read through the collection's version accessor.
+The browser adapter targets Solid 2.
 
 ### `@wfe/sync` public surface
 
+The surface below comes from wfe commit `9248538bbed3a22f16d9b5b764037c22df71f19f`, pinned by main's `web/wfe` entry.
+[`index.ts`](../../web/wfe/packages/sync/src/index.ts) exports the main entry.
+[`internal.ts`](../../web/wfe/packages/sync/src/internal.ts) exports `applyChanges`.
+[`worker.ts`](../../web/wfe/packages/sync/src/worker.ts) exports `precache` and `skipWaitingMessage`.
+
+[`package.json`](../../web/wfe/packages/sync/package.json), `exports`, declares these entry conditions:
+
+| Entry | `types` | `wfe-source` | `import` |
+| --- | --- | --- | --- |
+| `.` | `./dist/index.d.ts` | `./src/index.ts` | `./dist/index.js` |
+| `./internal` | `./dist/internal.d.ts` | `./src/internal.ts` | `./dist/internal.js` |
+| `./worker` | `./dist/worker.d.ts` | `./src/worker.ts` | `./dist/worker.js` |
+
+These declarations preserve exported names, fields, optional members, and function signatures.
+Supporting aliases appear separately because the main entry does not re-export them.
+
 ```ts
-export interface Row { id: string; row_version: number }
+// @wfe/sync: types.ts, re-exported by index.ts
+export interface Row {
+  id: string
+  row_version?: number
+}
 
 export type Change<T extends Row> =
   | { id: string; row_version: number; deleted: true }
   | { id: string; row_version: number; deleted: false; data: T }
 
 export interface Feed<T extends Row, S> {
-  list(scope: S, signal?: AbortSignal): Promise<{ rows: T[]; cursor: string }>
-  changes(scope: S, cursor: string, limit?: number, signal?: AbortSignal):
-    Promise<{ rows: Change<T>[]; next_cursor: string; complete: boolean }>
-  moved?(scope: S, since: string, signal?: AbortSignal): Promise<boolean>   // cheap poll; absent means changes runs on the timer
+  list(
+    scope: S,
+    signal?: AbortSignal,
+  ): Promise<{ rows: T[]; cursor: string; complete?: boolean }>
+  changes(
+    scope: S,
+    cursor: string,
+    limit?: number,
+    signal?: AbortSignal,
+  ): Promise<{ rows: Change<T>[]; next_cursor: string; complete: boolean }>
+  moved?(scope: S, since: string, signal?: AbortSignal): Promise<boolean>
 }
 
 export interface Persistence {
-  load(key: string): Promise<{ rows: unknown[]; cursor: string; saved_at: string } | undefined>
+  load(
+    key: string,
+  ): Promise<{ rows: unknown[]; cursor: string; saved_at: string } | undefined>
   save(key: string, rows: unknown[], cursor: string): Promise<void>
   remove(key: string): Promise<void>
 }
 
-export interface Trigger { subscribe(scopeKey: string, fire: () => void): () => void }   // poll now; an event channel later
+export interface Trigger {
+  subscribe(scopeKey: string, fire: () => void): () => void
+}
 
-export function collection<T extends Row, S>(feed: Feed<T, S>, scope: S, options: {
-  key: string                      // (model, scope) encoded by the caller; the persistence key
-  persistence?: Persistence
-  trigger?: Trigger
-  pollMs?: number                  // default 10000
-}): Collection<T>                  // @tanstack/db Collection, filled and followed
+// Supporting declarations, not re-exported by index.ts.
+// types.ts
+export type Version<T extends Row> = (row: T) => number
+export const rowVersion = (row: Row): number => row.row_version as number
 
-export function liveRows<T extends Row>(c: Collection<T>): Store<Record<string, T>>
-export function liveList<T extends Row>(c: Collection<T>): Store<T[]>
-export function syncStatus(c: Collection<unknown>): Accessor<'loading' | 'ready' | 'error'>
+// collection.ts
+type Utils = {
+  refill: () => Promise<void>
+  pull: () => Promise<void>
+  error: () => unknown
+  currentAt: () => string | undefined
+  complete: () => boolean
+}
+export type SyncCollection<T extends Row> = Collection<T, string, Utils, never>
 
+// writer.ts
+export type AnyCollection<T extends Row> = Collection<
+  T,
+  string,
+  UtilsRecord,
+  never
+>
+
+// @wfe/sync: collection.ts, re-exported by index.ts
+export function collection<T extends Row, S>(
+  feed: Feed<T, S>,
+  scope: S,
+  options: {
+    key: string
+    persistence?: Persistence
+    trigger?: Trigger
+    pollMs?: number
+    pageSize?: number
+    version?: Version<T>
+  },
+): SyncCollection<T>
+
+// @wfe/sync: solid.ts, re-exported by index.ts
+export type KeyedCollection<T extends object> = Pick<
+  Collection<T, string | number>,
+  'entries' | 'subscribeChanges' | 'status' | 'on' | 'onFirstReady' | 'toArray'
+>
+export function liveRows<T extends object>(
+  c: KeyedCollection<T>,
+): Store<Record<string, T>>
+export function liveList<T extends object>(c: KeyedCollection<T>): Store<T[]>
+export function syncStatus<T extends object>(
+  c: KeyedCollection<T>,
+): Accessor<'loading' | 'ready' | 'error'>
+export function syncComplete<T extends object>(
+  c: KeyedCollection<T>,
+): Accessor<boolean>
+export function outboxStatus(o: Outbox): Accessor<OutboxCounts>
+export function recordWrite<T extends Row>(
+  c: AnyCollection<T>,
+  o: Outbox,
+): {
+  rows: Store<Record<string, T>>
+  write: (
+    op: OperationCall,
+    expected: Partial<T> & { id: string },
+  ) => Promise<void>
+}
+
+// @wfe/sync: outbox.ts, re-exported by index.ts
 export type OperationCall = {
-  operation: string                // opaque to the package; passed to Send
+  operation: string
   request: unknown
-  request_hash: string             // computed by the caller
+  request_hash: string
   expect: { model: string; id: string }
   append_only: boolean
 }
 export type Reply =
   | { ok: true }
   | { ok: false; retriable: boolean; refusal?: { code: string; text: string } }
-export interface Send { (entry: OutboxEntry, signal: AbortSignal): Promise<Reply> }
-
+export interface Send {
+  (entry: OutboxEntry, signal: AbortSignal): Promise<Reply>
+}
+export type OutboxEntry = OperationCall & {
+  seq: number
+  recorded_at: string
+  state: 'pending' | 'sending' | 'refused'
+  refusal?: { code: string; text: string }
+}
+export type OutboxCounts = {
+  pending: number
+  sending: number
+  refused: number
+  lastSentAt: string | undefined
+}
+export interface Outbox {
+  enqueue(op: OperationCall): Promise<OutboxEntry>
+  replay(): Promise<void>
+  resubmit(seq: number): Promise<void>
+  discard(seq: number): Promise<void>
+  entries(): OutboxEntry[]
+  watch(fn: (counts: OutboxCounts) => void): () => void
+  close(): void
+}
 export function outbox(options: {
-  database: string                 // IndexedDB name, chosen by the caller
+  database: string
   send: Send
-  probe: () => Promise<boolean>    // true when the host answered
-  concurrency?: number             // default 4, across records; 1 within a record
+  probe: () => Promise<boolean>
+  concurrency?: number
 }): Outbox
 
-export function recordWrite<T extends Row>(c: Collection<T>, o: Outbox): {
-  rows: Store<Record<string, T>>
-  write: Action<[OperationCall, Partial<T> & { id: string }]>
+// @wfe/sync: errors.ts, re-exported by index.ts
+export class CursorExpired extends Error {
+  constructor(message?: string, options?: ErrorOptions)
+}
+export class OutboxRefused extends Error {
+  readonly code: string
+  readonly text: string
+  readonly seq: number
+  constructor(
+    seq: number,
+    refusal?: { code: string; text: string },
+    options?: ErrorOptions,
+  )
+}
+export class OutboxDiscarded extends Error {
+  readonly seq: number
+  constructor(seq: number, options?: ErrorOptions)
 }
 
-export function shell(options: {
-  persist?: boolean                // call navigator.storage.persist(); default true
-  onUpdate?: (reload: () => void) => void
-}): Promise<{ worker: boolean; persisted: boolean; quota: { usage: number; quota: number } }>
+// @wfe/sync: shell.ts, re-exported by index.ts
+export interface ShellResult {
+  worker: boolean
+  persisted: boolean
+  quota: { usage: number; quota: number }
+}
+export async function shell(
+  options?: {
+    persist?: boolean
+    onUpdate?: (reload: () => void) => void
+    workerUrl?: string
+  },
+): Promise<ShellResult>
+
+// @wfe/sync/internal: applyChanges.ts
+export function applyChanges<T extends Row>(
+  c: AnyCollection<T>,
+  changes: Change<T>[],
+): void
+
+// @wfe/sync/worker: worker.ts
+export const skipWaitingMessage = 'wfe-sync:skip-waiting'
+export function precache(
+  manifest: string[],
+  options?: {
+    buildId?: string
+    apiPrefix?: string
+    navigationFallback?: string
+  },
+): void
 ```
 
-The package never computes a request hash, never builds a URL, never reads a token and never names a header. Those arrive through `Feed`, `Send` and `probe`.
+`Collection` and `UtilsRecord` come from `@tanstack/db`.
+`Accessor` and `Store` come from Solid.
+`pollMs` defaults to 10000, persistence saves wait 250 ms, and outbox concurrency defaults to four records.
+`version` defaults to `rowVersion`, so generated camel-case rows pass `version: row => row.rowVersion` without copying.
+
+`refill` lists again, and `pull` runs a follow pass.
+`error` exposes the last read failure.
+`currentAt` reports the last successful list or completed changes pass, not the opaque cursor's time.
+`complete` reports the last successful list's completeness and defaults to true.
+`syncComplete` exposes that value reactively.
+
+### Package consumption
+
+The consumption target installs built wfe packages with `dist` types, `solid` and `default` conditions, and NodeNext resolution.
+Consumers must use neither `paths` nor a source condition, because those bypass the installed package surface.
+
+The pinned package exposes `types`, `wfe-source`, and `import`, so the wfe 5b packaging target remains outstanding.
+[`pnpm-workspace.yaml`](../../pnpm-workspace.yaml), `packages`, includes the submodule packages.
+[`web/runtime/package.json`](../../web/runtime/package.json), `dependencies`, and [`web/sync-bench/package.json`](../../web/sync-bench/package.json), `dependencies`, use `workspace:*`.
+
+[`web/runtime/tsconfig.json`](../../web/runtime/tsconfig.json), `compilerOptions`, uses NodeNext but maps `@wfe/sync` to `src/outbox.ts` through `paths`.
+[`web/sync-bench/tsconfig.json`](../../web/sync-bench/tsconfig.json), `compilerOptions`, uses Bundler resolution, `wfe-source`, and source aliases.
+Its [`vite.config.ts`](../../web/sync-bench/vite.config.ts), `resolve.conditions`, also selects `wfe-source`.
+Removing these aliases and conditions remains the consumer step after the built exports exist.
+
+The root [`package.json`](../../package.json) owns the web workspace.
 
 ### What wamn builds on it
 
-- per-model `Feed` from the generated bindings: `receiptFeed = { list, changes, moved }`, with `moved` reading the per-model version
-- the `Send` that posts the operation with the request hash as the idempotency value and the current session token; maps the host's reply to `Reply`
-- the `probe` against `/api/health`
-- `Persistence` over IndexedDB, one database per (application, environment, user)
-- generated `receiptCollection(scope)` and `recordReceipt` calling the package
-- the release digest in `meta` and the reload rule; the take-offline action; the status surface in the app shell
+wamn supplies:
+
+- A `Feed` that reads all list pages up to the table cap and maps the generated changes result.
+- `Send`, which calls generated bindings with the current session and maps host outcomes.
+- `probe`, which calls `HEAD /api/health`.
+- IndexedDB persistence and database names scoped by application, environment, and user.
+- Shape keys, worker build assets, reload control, and the status surface.
+- Generated collection and write helpers under Epic 5.
 
 ### Section ownership
 
 | Section | Owner |
 | --- | --- |
-| Change feed (host) | wamn host |
-| Browser store and live queries | `@wfe/sync`, except `fill`'s page read and the scope encoding, which are wamn's `Feed` |
+| Change feed (host) | wamn host and generator |
+| Browser store and live queries | `@wfe/sync`, with wamn's `Feed`, version accessor, and scope key |
 | Solid 2 adapter | `@wfe/sync` |
-| Writes: outbox, replay, conflicts | `@wfe/sync` for the queue; wamn for `Send`, ids, numbers, the refusal panel |
-| Shell, storage, devices | `@wfe/sync` for `shell()` and the worker; wamn for the manifest, database names, take-offline |
+| Writes | `@wfe/sync` queue, with wamn's send mapping, ids, numbers, and refusal panel |
+| Shell and storage | `@wfe/sync` worker mechanism, with wamn's assets, bypass paths, and database names |
 | Session and authorization | wamn |
-| Release compatibility | wamn |
+| Release compatibility | Ordinary host validation and wamn's shell reload rule |
 | Generator and bindings | wamn |
-
-Two specs, two agents: the `@wfe/sync` spec is this document's `@wfe/sync` sections with the consumer context above; the wamn spec is the rest, building to that surface.
 
 ## Change feed (host)
 
-Every model with a feed gets one generated read, `changes`, that returns rows changed since a cursor. `changes` is the list read with its feed part (`feed: { cursor, limit }`): one operation, one export and one permission row, on the list's GET route. It has the list's authorization, `private, no-cache` and a weak ETag on `next_cursor`. No new service, no replication slot, no push channel in this increment.
+`changes` is a mode of the generated list read, not a separate operation.
+The optional `feed` part selects a `changes` result instead of a `page` result.
+The list keeps one permission row, because every operation is grantable and the access-control list is never written by derivation.
+
+[`manifest.rs`](../../crates/schema/generator/src/manifest.rs), `ModelDeclaration::feed_revision`, requires a generated list read, history, and a revision field.
+It skips models that lack those inputs and skips authored list SQL.
+Epic 5 adds the feed opt-out and build refusal.
 
 ### Contract
 
+[`generate/wit.rs`](../../crates/schema/generator/src/generate/wit.rs), `emit_query_page`, emits `query-result` with `page` and `changes` variants.
+[`generate/component.rs`](../../crates/schema/generator/src/generate/component.rs), `handler`, selects the branch from `request.feed`.
+
+```text
+list(list arguments, feed?: { cursor?: string, limit?: integer })
+  -> page { item, next_cursor, cursor }
+   | changes { rows: [{ id, row_version, data? }], next_cursor, complete }
 ```
-changes(<the same arguments as list>, cursor: string?, limit: int32?) ->
-  { rows: [{ id, row_version, deleted: bool, data: Row? }], next_cursor: string, complete: bool }
-```
 
-- `cursor` absent: the read starts from the current end of history and returns no rows. The client takes a snapshot with `list` first, then opens the feed with the cursor that `list` returns in its outcome (see below).
-- `rows` follow transaction and id order. The server collapses changes to one entry per id with its latest state.
-- `deleted: true` carries `id` and `row_version` only; `data` is absent.
-- `complete: false` means the page stopped below xmin and more rows exist. The client continues with `next_cursor` within the same pass.
-- `limit` defaults to the model's declared page maximum; the platform ceiling applies.
+The generated client maps absent data to `deleted` and exposes a `changes` helper over the same list route.
+[`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `write_changes`, owns that helper.
+Without a feed cursor, the read starts at the current snapshot xmin and returns no history rows.
+Clients obtain their first cursor from a list page.
 
-### Cursor
+### Cursor and snapshot handoff
 
-The cursor is an opaque string that encodes the model name and transaction with URL-safe base64.
-The frontend never parses it.
-All transactions below the snapshot xmin ended before the snapshot.
-A cut page with only rows below xmin carries its last transaction and id.
-A page with any visible row at or above xmin returns xmin without an id and sets `complete` to true.
-An empty page keeps the incoming cursor.
-Postgres internals stay inside the opaque cursor.
+[`feed.rs`](../../apps/platform/data/access/src/feed.rs), `encode` and `decode`, encode the model and transaction as unpadded base64url.
+A snapshot cursor carries xmin.
+A cut page replaces the transaction with its last row's transaction and adds that row's id.
+The browser never parses either form.
 
-### Snapshot handoff
+[`sql.rs`](../../crates/schema/generator/src/sql.rs), `query` and `SNAPSHOT_XMIN`, read rows and `pg_snapshot_xmin(pg_current_snapshot())` in one statement.
+One statement supplies one snapshot, with no shared transaction.
+An outer row supplies the cursor even when the list page contains no rows.
 
-`list` gains a `cursor` field in its outcome: the snapshot xmin of the list statement, encoded as above. A client that stores a `list` result and then calls `changes(cursor)` sees every change committed after that snapshot and none before. This is the only ordering guarantee the feed makes and the only one the browser store needs.
+History `position` is an insert-time identity, so it cannot order commits and cannot serve as the feed cursor.
+[`record-history.sql`](../../deploy/sql/record-history.sql), `wamn_history.create_history_table`, defines that identity.
+A feed can repeat rows visible in the initial snapshot, because xmin also covers transactions whose commit order differs from their allocation order.
 
-Implementation (Epic 2b): the list statement returns the cursor as a column, so the rows and the cursor come from one snapshot. The generator emits both; nothing is hand-written per model.
+### Source and paging
 
-### Source
+[`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`, reads history from the incoming transaction and collapses entries to one per id.
+It joins the current row and applies the list's filters.
+A missing row, or one outside the scope, returns a deletion.
+Rows follow transaction and id order.
 
-The per-relation history tables and their trigger functions already exist on main.
-`changes` reads history entries at or after the cursor transaction.
-One snapshot supplies xmin, xmax, and the visibility test.
-Entries qualify below xmin, or below xmax when `pg_visible_in_snapshot` marks their transaction as visible.
-The statement collapses entries to one row per id and orders them by transaction and id.
-Rows below xmin page as before.
+Rows below the statement's xmin page by `(transaction, id)`.
+When those rows end inside a page, visible rows at or above xmin fill the remaining space up to the limit.
+Such a page is complete and keeps its next cursor at xmin.
+Rows beyond that page wait until xmin advances.
 
-When those rows end inside a page, visible rows at or above xmin fill the remaining space up to `limit`.
-These rows repeat on later calls until xmin passes them, and the client ignores an equal `row_version`.
-Each row joins the live row for `data`.
-A row that is gone, or no longer matches the filters, is marked `deleted`.
-Migration `0021_remove_model_versions.sql` removed the per-model version table, so no cheap poll signal exists.
+[`feed.rs`](../../apps/platform/data/access/src/feed.rs), `Changes::new`, cuts the extra row and chooses the continuation.
+An empty page returns the incoming cursor unchanged.
+Repeated rows are expected, and the browser ignores equal or lower versions on upsert.
 
-### Delivery
+`cursor_expired` applies only under `P<n>D` retention, when the cursor predates the oldest retained entry.
+[`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`, emits that predicate only for bounded retention.
+[`generate/data.rs`](../../crates/schema/generator/src/generate/data.rs), `emit_feed`, turns it into the ordinary refusal.
 
-Increment 1 is polling: the feed client calls `changes` on a timer (10 s) while a screen holding that model is open. The `Feed` has no `moved` (Epic 2b ruling). Cache headers are `private, no-cache` with a weak ETag on `next_cursor`, so an unchanged feed is a 304.
+### Delivery and authorization
 
-The feed client is written as "a trigger fires, then call `changes`". Poll is the first trigger. The second is a platform event channel to the browser (SSE or WebSocket, one connection per client, carrying "model X moved" and other platform events), which is its own design, not part of this document: it serves more than the feed, so it is specified where its other consumers are. When it exists, the feed client registers it as a trigger; the contract, the collection and the outbox do not change. Poll stays as the fallback trigger when the channel is down.
+The package polls changes every `pollMs`, default 10000, and also responds to its trigger.
+wamn has no model-version `moved` read, because no per-model version table exists and unchanged changes cost a 304.
+The optional generic `Feed.moved` member remains part of the package surface.
+The bench's offline wrapper uses it only to suppress network reads while offline.
 
-### Authorization
+[`http-route/src/entry.rs`](../../apps/platform/ingress/http-route/src/entry.rs), `changes_etag`, derives a weak ETag from the returned cursor and route release.
+[`http-route/src/lib.rs`](../../apps/platform/ingress/http-route/src/lib.rs), `feed_cache_control`, preserves the list's cache scope and adds `no-cache`.
+A matching ETag produces 304.
+The list route supplies authentication and authorization for both result variants.
 
-`changes` is a read permission on the model, granted by role like `list`. The feed returns only rows the caller's active role may read; `deleted` entries are returned for any id the role could have read. The route layer already resolves the active role per (user, application).
+[`data_access.rs`](../../crates/schema/generator/src/data_access.rs), `FEED_HISTORY_COLUMNS`, limits feed SELECT grants to `transaction_id`, `row_key`, `type`, and `before`.
+`derive_data_access_overlay_for_manifest` emits those grants for eligible models.
+[`record-history.sql`](../../deploy/sql/record-history.sql), `wamn_history.create_history_table`, adds an index on `transaction_id`.
+
+[`packaging-feed.ts`](../../web/sync-bench/src/packaging-feed.ts), `packagingFeed`, reads every list page up to its cap.
+It keeps the first page's feed cursor, which covers changes between page reads.
+It reports `complete: false` when the cap stops a fill with more pages available.
+The default `RECORD_CAP` is 1000.
+The bench's take-offline path requests the full selected set and the whole location reference collection.
 
 ## Browser store and live queries
 
-One collection per model per application, filled by a snapshot and kept current by the feed. Live queries run over collections and update per change; screens read the query result, never the collection by hand.
-
 ### Collection
 
-```ts
-// @wfe/sync, collection.ts; wamn supplies feed, scope and persistence
-export function modelCollection<T extends { id: string; row_version: number }>(
-  model: ModelBindings<T>,          // generated: list, changes, key, scope
-  scope: Scope,                     // the list arguments this collection covers
-  persistence: Persistence,         // IndexedDB adapter, see Shell
-): Collection<T>
-```
+A collection covers one model, generated shape digest, and canonical scope.
+[`names.ts`](../../web/runtime/src/sync/names.ts), `collectionKey`, encodes those three values.
+[`packaging-feed.ts`](../../web/sync-bench/src/packaging-feed.ts), `canonicalJson` and `packagingKey`, make equal scopes share a key.
+Rows use `id` as their collection key.
 
-- A collection covers one `scope`: the `list` arguments (filter, band) the screen declared. Two screens with the same scope share the collection; different scopes are different collections. The collection key is (model, list arguments) exactly; \`changes\` takes the same arguments as \`list\`, so the host filters the feed by the same scope and a row leaving the scope arrives as \`deleted\`.
-- `getKey` is `row.id`. Every record has an id; there are no keyless records.
-- The collection stores `row_version` on every row. An incoming change with `row_version` lower than the stored one is ignored (stale delivery after a reconnect).
-- The custom sync source is wamn's (`collection.sync` hook of `@tanstack/db`): it runs `fill` then `follow`.
+[`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `shape_digest`, hashes generated row names, contract types, nested fields, and nullability in stable order.
+`emit_model` exports each model's `*_SHAPE_DIGEST`.
+[`materialize.rs`](../../crates/schema/generator/src/materialize.rs), `GENERATOR_ID`, is `wamn-schema-generator/0.1.10` for this emission.
+
+[`persistence.ts`](../../web/runtime/src/sync/persistence.ts), `rowsPersistence`, deletes saved entries with unknown shape digests before its first storage operation.
+It also deletes malformed keys.
+It never opens the outbox database, because a shape change must not discard recorded requests.
 
 ### Fill and follow
 
-```ts
-async function fill(c, model, scope, persistence) {
-  const local = await persistence.load(c.key)             // rows + cursor, if any
-  if (local) { c.begin(); for (const r of local.rows) c.write({ type: 'insert', value: r }); c.commit(); c.markReady() }
-  const page = await model.list(scope)                     // snapshot; may be served from browser cache
-  c.begin(); reconcileSnapshot(c, page.rows); c.commit(); c.markReady()
-  return page.outcome.cursor
-}
+[`collection.ts`](../../web/wfe/packages/sync/src/collection.ts), `collection`, owns startup, polling, refills, and persistence saves.
+Startup loads saved rows first.
+A failed load counts as no saved rows.
+It then calls `Feed.list` once for that collection startup, and the list reconciles saved rows.
+`Feed.list` itself can make multiple host requests to assemble its page set.
 
-async function follow(c, model, cursor, signal) {
-  for await (const batch of changes(model, cursor, signal)) {   // poll driven, see Change feed
-    c.begin()
-    for (const ch of batch.rows) {
-      if (ch.deleted) c.write({ type: 'delete', key: ch.id })
-      else if (newer(ch, c.get(ch.id))) c.write({ type: c.has(ch.id) ? 'update' : 'insert', value: ch.data })
-    }
-    c.commit()
-    await persistence.save(c.key, c.toArray, batch.next_cursor)
-    cursor = batch.next_cursor
-  }
-}
-```
+Saved rows supply first paint before the network read resolves.
+A failed initial list preserves readable saved rows and exposes the error through `utils.error()`.
+After a successful list, follow starts from its cursor.
+If the list fails after saved rows load, follow starts from the saved cursor.
 
-- `reconcileSnapshot` diffs the snapshot against the local rows: rows absent from the snapshot are deleted locally (the scope no longer includes them), rows present are inserted or updated by `row_version`.
-- First paint comes from `persistence.load`, before any network. The snapshot then corrects it. A screen shows data in the time it takes to read IndexedDB.
-- `follow` restarts from the saved cursor on reopen. If the host answers that the cursor is older than retained history (a refusal code `cursor_expired`), the client runs `fill` again.
-- Persistence writes are debounced per collection (250 ms) and are a whole-collection write; collections are bounded by the existing per-table record cap, so a whole write stays small.
+Follow runs on the timer, the trigger, or `utils.pull()`.
+Follow passes and refills never overlap.
+Queued requests coalesce, and a queued refill runs before a queued pull.
+`CursorExpired` causes a fresh list.
+Other feed errors keep rows and expose the error status until a successful pass.
+
+Saves wait 250 ms after a successful list and after each change page.
+Each save writes the current rows and cursor together.
+Cleanup flushes a waiting save, stops the timer, unsubscribes the trigger, and aborts current reads.
+A failed save changes no status.
 
 ### Live queries
 
-Screens declare queries with the `@tanstack/db` query builder: `from`, `where`, `join`, `groupBy`, aggregates, `orderBy`. The IVM engine (`@tanstack/db-ivm`) keeps the result current per change.
+Screens build queries through `from`, `where`, `join`, `groupBy`, aggregates, and `orderBy` in `@tanstack/db`.
+The engine updates results from change batches.
+A query result is also a keyed collection, so both read adapters accept it.
 
-- The advanced table's client operations (sort, refine filters, search, grouping, aggregates, totals) move from recomputation per load to live queries over the collection. The existing numeric rules stay (exact decimal sums, half-away-from-zero rounding); they run inside aggregate functions handed to the query builder.
-- A query over two models (child rows, references) is a `join` over two collections; the reference collection is filled by its own scope (the ids the parent rows name).
-- Query results are collections too; the adapter reads them the same way.
+Table screens use `liveRows`.
+Small sets use `liveList`.
+No custom aggregate can enforce decimal arithmetic inside `@tanstack/db`, because its aggregate surface does not accept custom aggregates.
+A live-query float sum is exact only for int32-range totals.
+The measurement section states the numeric conditions of its evidence.
+Applications keep exact decimal calculations outside that aggregate path.
 
 ### Memory
 
-A collection holds its rows once; a live query holds its result once. Rows are plain objects shared by reference between the collection and query results. The 100,000-row browser ceiling already measured stays the bound; the per-table cap is the per-collection cap.
+Collections and live queries each retain their rows or results.
+The table cap bounds ordinary fills.
+The measurement covers 100,000 rows, but it does not establish a fixed maximum heap for every screen.
+The take-offline bench sizes its full selected set before saving it.
 
 ## Solid 2 adapter
 
-The adapter lives in `@wfe/sync` and is the only place Solid and `@tanstack/db` meet. `@wfe/components` never imports it; wamn's generated packages do. Two read shapes and one write shape.
+The adapter lives in `@wfe/sync`.
+Generated packages consume it, and `@wfe/components` does not import it.
+[`solid.ts`](../../web/wfe/packages/sync/src/solid.ts) owns both read shapes and `recordWrite`.
 
 ### Solid 2 surface the adapter uses
 
-Everything below is `solid-js` at `2.0.0-rc.18` or later (stores are exported from `solid-js`; the web runtime is `@solidjs/web`). The package uses nothing outside this table.
+The adapter targets Solid `2.0.0-rc.18` or later.
+Stores come from `solid-js`, and the web runtime comes from `@solidjs/web`.
+The table also covers screen and test primitives around the adapter.
+Only `createStore`, `createProjection`, `createOptimisticStore`, `action`, `until`, `from`, `createMemo`, and `onCleanup` appear in its imports.
 
 | Primitive | Signature | Use here |
 | --- | --- | --- |
-| `createStore` | `createStore(value)` → `[store, set]`; `set(draft => { ... })` | `liveRows`: the keyed row map; draft-first setter applies a change batch in one write |
-| `createProjection` | `createProjection(fn, seed?, { key })` → read-only derived store; `fn` may return a value, a promise or an async iterable; result reconciled by `key` | `liveList`: ordered rows for small sets |
-| `from` | `from(source)` where `source` is `(next, error, complete) => unsubscribe`, an Observable, or an AsyncIterable → AsyncIterable for a computation; keeps the latest value; closes on re-run or disposal | bridges `subscribeChanges` into `createProjection` |
-| `createOptimisticStore` | `createOptimisticStore(fn, seed?, { key })` → `[store, set]`; writes inside an `action` are tentative and revert or reconcile when the transition settles | `recordWrite`: the tentative row over the authoritative collection |
-| `action` | `action(function* (...args) { ... })`; `yield` a promise or a reactive wait; the transition stays open until the body returns | the write flow: tentative write, enqueue, wait for echo |
-| `until` | `until(() => predicate, { timeout?, signal? })` → promise; yielded in an action it holds the transaction until the predicate settles truthy on authoritative data; rejects when the landing is an error | waits for the feed echo of the written row; rejects on refusal |
-| `refresh` | `refresh(target)` → promise of the next quiescent state; a quiet re-ask, not pending | re-ask a derived store after `cursor_expired` → `fill` |
+| `createStore` | `createStore(value)` → `[store, set]`. `set(draft => { ... })` | `liveRows`: the keyed row map. The draft-first setter applies a change batch in one write |
+| `createProjection` | `createProjection(fn, seed?, { key })` → read-only derived store. `fn` can return a value, a promise or an async iterable. The result reconciles by `key` | `liveList`: ordered rows for small sets |
+| `from` | `from(source)` where `source` is `(next, error, complete) => unsubscribe`, an Observable, or an AsyncIterable → AsyncIterable for a computation. It keeps the latest value. It closes on re-run or disposal | bridges `subscribeChanges` into `createProjection` |
+| `createOptimisticStore` | `createOptimisticStore(fn, seed?, { key })` → `[store, set]`. Writes inside an `action` are tentative and revert or reconcile when the transition settles | `recordWrite`: the tentative row over the authoritative collection |
+| `action` | `action(function* (...args) { ... })`. `yield` a promise or a reactive wait. The transition stays open until the body returns | the write flow: tentative write, enqueue, wait for echo |
+| `until` | `until(() => predicate, { timeout?, signal? })` → promise. The action waits until authoritative data makes the predicate truthy. It rejects when the landing is an error | waits for the feed echo of the written row. It rejects on refusal |
+| `refresh` | `refresh(target)` → promise of the next quiescent state | Screen-level refresh. Collection refills use `utils.refill()` |
 | `affects` | `affects(target, key?)` marks data that in-flight work will change, so it reads pending | optional: mark a row while its entry is `sending` |
-| `isPending` | `isPending(() => expr)` → boolean while a change to `expr` is in flight | "updating" marks; never for outbox state, which is the entry's own |
+| `isPending` | `isPending(() => expr)` → boolean while a change to `expr` is in flight | "updating" marks. Never for outbox state, which is the entry's own |
 | `latest` | `latest(fn)` peeks the in-flight value during a transition | status readers that must not suspend |
-| `<Loading>` | `<Loading fallback={...} on={...}>` initial-readiness boundary; `on` controls re-showing on revalidation | first `fill` of a collection |
+| `<Loading>` | `<Loading fallback={...} on={...}>` initial-readiness boundary. `on` controls re-showing on revalidation | first `fill` of a collection |
 | `<Errored>` | `<Errored fallback={err => ...}>` | feed and `fill` failures |
-| `createEffect` | `createEffect(compute, apply, { defer? })`, apply may return cleanup; `{ effect, error }` bundle form | pushing status to the outbox panel; never to write stores |
-| `createMemo` | `createMemo(fn, { lazy?, unobserved? })`; `lazy` autodisposes at zero subscribers | `syncStatus`; sort/filter views in the Solid-only alternative |
-| `onCleanup`, `onSettled` | cleanup registration in an owned scope; `onSettled` runs after render settles and may return cleanup | unsubscribe from `subscribeChanges`; worker registration |
+| `createEffect` | `createEffect(compute, apply, { defer? })`, apply can return cleanup. `{ effect, error }` bundle form | pushing status to the outbox panel. Never to write stores |
+| `createMemo` | `createMemo(fn, { lazy?, unobserved? })`. `lazy` autodisposes at zero subscribers | `syncStatus`, `syncComplete`, and `outboxStatus` |
+| `onCleanup`, `onSettled` | cleanup registration in an owned scope. `onSettled` runs after render settles and can return cleanup | unsubscribe from `subscribeChanges`. Worker registration |
 | `flush` | `flush()` applies batched writes now | tests only |
-| `snapshot` | `snapshot(store)` → plain value | persisting rows; building a request from a store row |
-| `reconcile` | `reconcile(value, key)` | the Solid-only alternative's bulk replace |
+| `snapshot` | `snapshot(store)` → plain value | persisting rows. Building a request from a store row |
+| `reconcile` | `reconcile(value, key)` | Bulk replacement in the measurement comparison |
 
-Rules the adapter must respect, all enforced by dev diagnostics:
+Rules for adapter and screen code:
 
-- writes are batched by microtask; a setter's value is visible after the flush, so a test that reads right after a write calls `flush()`
-- a write inside a reactive scope throws (`PRIMITIVE_IN_EFFECT_CALLBACK`, owned-scope write); subscription callbacks and event handlers are outside any scope and may write
-- a store proxy written outside its setter is ignored and warned (`STORE_WRITE_OUTSIDE_SETTER`); every row mutation goes through `set(draft => ...)`
-- a top-level reactive read in a component body warns; reads live in JSX, memos or effects
-- `createEffect` has no single-argument form; compute and apply are separate
-- `createResource`, `batch`, `on`, `produce`, `createComputed`, `Suspense`, `Index`, `onMount`, `mergeProps`, `splitProps` do not exist; the table above is the replacement set
+- Solid batches writes by microtask. Tests call `flush()` before immediate assertions.
+- Subscription callbacks and event handlers write through setters outside reactive computations.
+- Every row mutation uses the store setter. Writes to the proxy outside its setter trigger `STORE_WRITE_OUTSIDE_SETTER`.
+- Reactive reads belong in JSX, memos, or effects. Writes inside reactive computations trigger `PRIMITIVE_IN_EFFECT_CALLBACK`.
+- `createEffect` separates computation from application.
+- Solid 2 does not expose `createResource`, `batch`, `on`, `produce`, `createComputed`, `Suspense`, `Index`, `onMount`, `mergeProps`, or `splitProps`. The table supplies their replacements.
 
-### `liveRows`: delta-applied store (tables)
+### `liveRows`: a keyed store for tables
 
-```ts
-import { createStore, onCleanup } from 'solid-js'
-import type { Collection } from '@tanstack/db'
+`liveRows` subscribes before seeding, because subscription can start a lazy query.
+It seeds from collection entries and applies each later batch in one store write.
+Keys come from the collection and convert to strings.
+Rows need neither an id field nor a version field for this read adapter.
 
-export function liveRows<T extends { id: string }>(c: Collection<T>) {
-  const [rows, set] = createStore<Record<string, T>>({})
-  const unsub = c.subscribeChanges(changes => {
-    set(d => {
-      for (const ch of changes) {
-        if (ch.type === 'delete') delete d[ch.key]
-        else d[ch.key] = ch.value
-      }
-    })
-  }, { includeInitialState: true })
-  onCleanup(unsub)
-  return rows
-}
-```
+The screen owns display order.
+The measurement screen sorts packaging codes in a memo.
+The row map does not preserve an ordered array by itself.
 
-- One store write per IVM batch; per-row and per-field tracking for free; no array diff. Cost is O(changes), not O(rows).
-- Solid 2 batches by microtask, so a batch of 500 changes is one render pass.
-- The subscription callback runs outside any reactive scope, so the store setter is allowed there (writes inside a reactive scope throw in dev).
-- Ordering is the live query's job (`orderBy`); the table reads `Object.values(rows)` through a `createMemo` keyed on the query's sort, or the query result collection carries order and the adapter keeps an index array. Measured in the first increment; the choice is recorded there.
+### `liveList`: a projection for small sets
 
-### `liveList`: projection (small sets, pickers, record pages)
-
-```ts
-import { createProjection, from } from 'solid-js'
-
-const subscribe = <T,>(c: Collection<T>) =>
-  (next: (rows: T[]) => void, error: (e: unknown) => void) =>
-    c.subscribeChanges(() => next(c.toArray), { includeInitialState: true })   // returns unsubscribe
-
-export const liveList = <T extends { id: string }>(c: Collection<T>) =>
-  createProjection<T[]>(() => from(subscribe(c)), undefined, { key: 'id' })
-```
-
-- `from(source)` turns a callback subscription into an async iterable for the computation, keeps only the latest value, and closes the source when the computation re-runs or its owner is disposed. No hand-written iterator, no `onCleanup`.
-- Seedless derived form: the derive answers a complete snapshot per yield; `createProjection` reconciles each one by `id`, so surviving rows keep identity and only added or removed rows are created or disposed. Swapped or reordered rows no longer alias slots.
-- `<Loading>` covers the first value; `isPending` reports an in-flight change.
-- O(rows) reconcile per change, so it is for sets under a few hundred rows.
+`liveList` pushes the collection's whole array after each batch.
+It reconciles by the collection's own key, tracked for each row object.
+`from` closes the subscription when the computation ends.
+The cost grows with the row count, so this shape serves sets under a few hundred rows.
 
 ### Readiness and status
 
-```ts
-export function syncStatus(c: Collection<unknown>) {
-  return createMemo(() => c.status)        // 'loading' | 'ready' | 'error' ; c.status is a signal the sync source sets
-}
-```
+`syncStatus` bridges the source's status signal into a memo.
+For other keyed collections, it maps ready and error directly and treats every other status as loading.
+`syncComplete` bridges list completeness.
+`outboxStatus` bridges the counts returned by `watch`.
 
-Every screen shows one line from `syncStatus` and the outbox count (see Writes). The feed's last cursor time is shown as "current as of".
+The screen shows feed status, completeness, pending and refused counts, and the last successful send time.
+Its “current as of” value comes from successful read time or the bench's saved timestamp.
+It does not decode the cursor as a clock.
 
-### Writes: `action`, optimistic store, `until`
+### Writes: action, optimistic store, and until
 
-Solid owns optimistic state; `@tanstack/db`'s own optimistic layer is not used (two overlays on one row would flicker). The write shape:
+`recordWrite` overlays the expected row through a Solid optimistic store, enqueues the call, and waits with `until`.
+Solid owns the optimistic row, because two optimistic layers can disagree about the same row.
+The wait reads the authoritative collection, never the optimistic overlay.
 
-```ts
-import { action, createOptimisticStore, until } from 'solid-js'
+[`solid.ts`](../../web/wfe/packages/sync/src/solid.ts), `confirmed`, requires a successful send to remove the entry and the collection to hold its id.
+If `expected` supplies a version, the collection's version must be greater.
+The collection's accessor reads both versions.
+Refusal throws `OutboxRefused`, and discard throws `OutboxDiscarded`.
+Either rejection ends the action and reverts its guess.
 
-export function recordWrite<T extends { id: string }>(c: Collection<T>, outbox: Outbox) {
-  const [rows, setRows] = createOptimisticStore<Record<string, T>>(() => liveRowsPlain(c), {})
-  const write = action(function* (op: OperationCall, expected: Partial<T> & { id: string }) {
-    setRows(d => { d[expected.id] = { ...d[expected.id], ...expected } })   // tentative
-    const entry = yield outbox.enqueue(op)                                  // durable before this resolves
-    yield until(() => confirmed(c, expected.id, entry))                     // the feed brings the row back
-  })
-  return { rows, write }
-}
-```
-
-- `until` holds the tentative row until the authoritative collection shows the written row (`row_version` at or past the one the operation reply names). The action's own optimistic write can never satisfy it.
-- Offline, `until` waits as long as the outbox entry is pending. The UI shows the row with a "recorded, not uploaded" mark driven by the entry's state, not by `isPending`.
-- A refusal on replay rejects the `until` predicate's source: the action throws at the `yield`, the optimistic row reverts, and the refusal code is shown on the record.
-- `recordWrite` is generated per model beside the bindings; a screen imports it, it does not write it.
+The pinned package keeps `expected` in the action, while the durable entry stores only `expect: { model, id }`.
+Persisting the expected row with the entry remains a package gap.
+[`packaging-writes.ts`](../../web/sync-bench/src/packaging-writes.ts), `packagingWrites`, reconstructs pending creates from stored requests after reopen.
 
 ### Pinned versions
 
-The repo pins Solid 2 in `web/package.json` at `2.0.0-rc.18` or later; the adapter targets the signatures above as of that pin. Three behaviors the adapter depends on landed in rc.16 through rc.18 and are kept as regression tests against the pin:
-
-- `until` over a value derived from an unconfirmed optimistic guess waits for the guess to be confirmed or corrected (the feed echo), and rejects when the landing is an error (the refusal).
-- a keyed optimistic store keeps its guess whole when the source answers differently while the action is open; two overlapping actions on one list do not tear it, and a confirmed row does not remount (an open editor keeps its draft).
-- reconcile by key with rows swapped, reordered or shifted keeps one row per slot.
-
-The tests: delta apply (`liveRows`), projection reconcile by id under a sort change (`liveList`), `until` resolving on feed echo, `until` rejecting on refusal, two overlapping writes on one list.
+[`pnpm-workspace.yaml`](../../pnpm-workspace.yaml), `overrides`, aligns the Solid runtime and compiler at `2.0.0-rc.18`.
+Adapter tests cover delta application, keyed projections, feed confirmation, refusal, and overlapping actions.
+`until` waits for authoritative confirmation or correction and rejects a failed landing.
+Overlapping actions keep their optimistic rows whole while their source changes.
+A feed echo must not remount a row that retains its key.
+Keyed reconciliation preserves row identity through swaps, reordering, and shifts.
 
 ## Writes: outbox, replay, conflicts
 
-Every write is an operation call recorded in a local outbox before it is sent. Online, the entry is sent at once and leaves the outbox on reply. Offline, it waits. The host sees ordinary operations either way.
+Every write enters IndexedDB before the UI reports it recorded.
+Online replay starts immediately.
+Offline entries wait without a session token.
+The host receives ordinary operations in both cases.
 
-### Entry
+### Entry and enqueue
 
-```ts
-type OutboxEntry = {
-  seq: number                    // local, monotonic; replay order
-  operation: string              // package-qualified operation name
-  request: unknown               // the request JSON, exactly as the binding builds it
-  request_hash: string           // the hash the write log dedupes on; computed once, here
-  recorded_at: string            // ISO, browser clock; a display value only
-  state: 'pending' | 'sending' | 'refused'
-  refusal?: { code: string; text: string }
-  expect: { model: string; id: string }   // what `until` watches
-}
-```
+`OutboxEntry` is the exported type above, with no release field.
+[`outbox.ts`](../../web/wfe/packages/sync/src/outbox.ts), `outbox`, assigns `seq` through IndexedDB's monotonic key generator.
+`enqueue` resolves after the storage transaction commits.
+The request, hash, target, and append-only flag stay unchanged during replay.
+Only queue state and refusal details change.
 
-- `request_hash` is computed from the canonical request JSON at enqueue time and carried unchanged. The write log already dedupes on it; a resend after a lost reply is harmless.
-- The entry carries no session token. Replay uses the token current at send time.
-- `seq` is a per-database counter in IndexedDB; two tabs share the outbox through a `BroadcastChannel` lock so only one replays at a time.
-
-### Enqueue
-
-```ts
-async enqueue(op: OperationCall): Promise<OutboxEntry> {
-  const entry = build(op)
-  await db.put('outbox', entry)        // durable before the UI reports recorded
-  this.kick()                           // try to send now; no-op when offline
-  return entry
-}
-```
-
-The UI reports "recorded" when `enqueue` resolves, not when the host replies.
+`request_hash` comes from [`hash.ts`](../../web/runtime/src/sync/hash.ts), `requestHash`, over canonical request JSON.
+The sender carries it as `idempotencyKey` and supplies a fresh transport request id.
+The stored entry contains no credential.
 
 ### Replay
 
-```ts
-async replay() {
-  for (const e of await db.getAll('outbox', 'pending', byScope(seq))) {
-    e.state = 'sending'; await db.put('outbox', e)
-    const reply = await send(e)                       // POST through the generated binding
-    if (reply.ok)              await db.delete('outbox', e.seq)
-    else if (reply.retriable)  { e.state = 'pending'; await db.put('outbox', e); break }   // network, 5xx: stop, wait
-    else                       { e.state = 'refused'; e.refusal = reply.refusal; await db.put('outbox', e) }  // keep going
-  }
-}
-```
+Replay persists `sending` before it calls `Send`.
+On open, it resets stored sending entries to pending under the Web Lock named for the outbox database.
+The same lock protects each replay pass and reloads entries from IndexedDB first.
+Without Web Locks, two tabs can send one entry, and the host deduplicates through `request_hash`.
 
-- Order is `seq` ascending within one target record; entries for different records may send concurrently (bounded to 4). Within a record, a refused entry does not block later entries for that record only when the operation is append-only (declared on the operation, see Generator); otherwise later entries for that record wait as `pending` with the refusal shown on the first.
-- Replay triggers: network returns (health probe succeeds), app open, a new enqueue, and a 30 s timer while anything is pending.
-- `send` passes the entry's `request_hash` as the request's idempotency value `; the host validates the request as any request` (see Release compatibility).
+Entries send in `seq` order within `expect.id`.
+Different records send concurrently, up to four by default.
+A refused entry holds later entries for its record except `append_only` entries.
+A retriable reply returns the entry to pending and stops the pass.
+A successful reply removes the entry.
+
+Replay runs on open, enqueue, a successful probe, and every 30 seconds while entries remain pending.
+The probe runs before replay, on an online event, and every 15 seconds while the last probe fails.
+`close` aborts sends and preserves their entries as pending.
+
+[`send.ts`](../../web/runtime/src/sync/send.ts), `createSend`, forwards the entry's `AbortSignal` to the generated binding.
+[`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `emit_operation`, forwards it through `transport.invoke`.
+[`transport.ts`](../../web/runtime/src/transport.ts), `createTransport`, passes it to fetch.
+
+### Reply mapping
+
+[`send.ts`](../../web/runtime/src/sync/send.ts), `reply`, owns the mapping.
+`createSend` attempts at most one renewal for an unauthenticated reply.
+
+| Host outcome | Outbox reply |
+| --- | --- |
+| `completed` | `{ ok: true }` |
+| `uncertain`, including network failure, 5xx, or unreadable reply | Retriable |
+| `retry`, `timeout` | Retriable |
+| `unauthenticated` after failed renewal or another unauthenticated reply | Retriable |
+| `internal_error` | Refused, with code and text |
+| `partiallyCompleted` | Refused, with code and text `partial` |
+| Missing operation binding | Refused, with code and text `unknown_operation` |
+| Every other refusal | Refused, preserving its code and text |
+
+`internal_error` is refused because retrying a deterministic failure forever blocks the record.
+A thrown `Send` is retriable.
 
 ### Network detection
 
-`navigator.onLine` is advisory only. Online means a `HEAD /api/health` (no-store) returned 2xx within 3 s. The probe runs on `online` events, on replay triggers, and every 15 s while offline.
+`navigator.onLine` is advisory for replay.
+[`transport.ts`](../../web/runtime/src/transport.ts), `createTransport.probe`, requires a successful health reply within three seconds.
+It sends HEAD with `cache: "no-store"` and no credentials.
 
 ### Conflicts
 
-The platform's conflict rule is refusal, not merge. A write carries the `row_version` it was made against (already the revision rule for commands that guard a reference). On replay, a stale `row_version` is refused with the existing code; the entry becomes `refused`, the optimistic row reverts, and the record shows the refusal with the current row beside the recorded request. The user resubmits or discards. Nothing is merged automatically.
+Revision guards produce ordinary refusals when another write changes the row first.
+The panel shows the recorded request, current row, and refusal.
+The user can correct or discard the entry.
+No automatic merge changes the recorded request.
 
-Append-only operations (a new record against a static parent) carry the parent's id, not its `row_version`, and cannot conflict on the parent. Their own id follows the key rules below.
+A correction creates a new immutable request entry with the same record id.
+The client records that entry before discarding the refused one.
+[`packaging-writes.ts`](../../web/sync-bench/src/packaging-writes.ts), `packagingWrites.resubmit`, enforces this order.
+`Outbox.resubmit(seq)` retries unchanged arguments and does not edit an entry.
+
+Append-only operations carry the parent id without a parent revision guard when their application contract allows it.
+They still undergo all ordinary host validation.
 
 ### Ids and numbers
 
-- UUID record ids are client-generated UUIDv7 values, made by the binding at enqueue. The host accepts the supplied id. Integer keys (`int4` or `int8`) must be `GENERATED AS IDENTITY` or have a sequence `DEFAULT`. The build refuses a plain integer key. The database generates the integer id, and create returns it. Offline creates with integer keys replay by the write log’s `request_id`, not by `id`, and the client learns the id from the reply. A numbered field is never the record id: it is a business key, unique and indexed, beside the id.
-- Fields declared `number = "<sequence>"` are host-assigned at commit, as the generator already enforces; the client never supplies them. Numbers are assigned in upload order, not record order; `recorded_at` carries record order.
-- Until the feed echo brings the number, the field renders as a placeholder that cannot be read as a number: `pending·<last 4 hex of the id>`. Any operation that consumes the number (print, export, a typed reference) waits on it: `yield until(() => rows[id]?.number !== undefined)`.
-- For client-supplied keys, references between two offline entries (a line to its header) use the header's id. Both ids exist at enqueue, so nothing is ever remapped.
+A generated create requires a client id, unless the database generates the key.
+[`key.rs`](../../crates/schema/generator/src/key.rs), `database_generated`, names that case: an integer id with an identity or a DEFAULT.
+Integer keys (`int4` or `int8`) must be database-generated, and the build refuses a plain integer key.
+For such a key, create leaves the id out of the insert and returns the generated id.
+An offline create with an integer key replays by the write log's `request_id`, not by `id`, and the client learns the id from the reply.
+[`call.ts`](../../web/runtime/src/sync/call.ts), `createCall`, generates UUIDv7 through [`ids.ts`](../../web/runtime/src/sync/ids.ts), `uuidv7`.
+[`generate/contracts.rs`](../../crates/schema/generator/src/generate/contracts.rs), `input_contract`, requires a client id.
+[`sql.rs`](../../crates/schema/generator/src/sql.rs), `create`, inserts the supplied id.
+
+Only a database-generated id can belong to `server_owned_fields`.
+[`generate/validation.rs`](../../crates/schema/generator/src/generate/validation.rs), `validate_model`, refuses a client id there.
+A key field cannot be numbered.
+[`generate/numbering.rs`](../../crates/schema/generator/src/generate/numbering.rs), `validate_numbered_field`, enforces this rule.
+
+Numbers occupy separate host-assigned fields, because offline records need stable ids before the host assigns numbers.
+[`numbers.ts`](../../web/runtime/src/sync/numbers.ts), `pendingNumber`, renders `pending·<last 4 hex>` until the feed supplies the number.
+`shownNumber` exposes the real number when present.
+Anything that consumes the number waits for `hasNumber`, including print, export, and typed references.
+References between pending records use ids and need no remapping.
 
 ### Status surface
 
-Every screen's shell shows: pending count, refused count, last successful send time. A refused entry is a row in a "not uploaded" panel with its operation, record, refusal text, resubmit and discard. Discard is the only way an entry leaves the outbox without a 2xx.
+The shell shows pending and refused counts and the last successful send time.
+A refusal panel keeps the operation, record, arguments, and refusal text alongside correction and discard actions.
+A successful send or explicit discard removes an entry.
+A refusal alone never removes it.
 
 ## Shell, storage, devices
 
-Supported: Chrome on PC and tablet. Everything below is the Chrome behavior; other browsers get online behavior and one notice.
-
 ### Service worker
 
-One service worker per application, generated into the Vite build (`vite-plugin-pwa` or a 60-line hand-written worker; the first increment picks after measuring the plugin's output size).
+[`vite.config.ts`](../../web/sync-bench/vite.config.ts), `precacheManifest`, supplies the built files to the worker.
+[`sw.ts`](../../web/sync-bench/src/sw.ts), `precache`, caches the built shell and uses `live.html` as the deep-navigation fallback.
+Precached assets use the cache first.
+Other navigations use the network first and fall back only on network failure, not an HTTP error response.
 
-- Precaches the built shell: `index.html`, the JS and CSS chunks, fonts. Nothing else. API responses are never cached by the worker; the browser HTTP cache and the collections hold data.
-- Strategy: cache-first for precached assets; network-only for `/api`. The worker never answers an `/api` request.
-- A new build registers a new worker; the page shows "update available, reload" and does not reload on its own while the outbox is non-empty.
-- The web manifest exists (name, icon, `display: standalone`). Install is optional and never required for any behavior in this document.
+The worker bypasses `/wamn` and `/password` on a path-segment boundary.
+`sw.ts`, `bypass`, filters the manifest and stops those fetch events before the package handler.
+This local filter exists because the pinned `precache` accepts only one `apiPrefix`.
+The worker never supplies cached application API or password replies.
+
+The web manifest supplies a name, icon, and standalone display mode.
+Installation remains optional.
+The page calls `shell` with the worker URL resolved from the Vite base.
 
 ### Storage
 
-- IndexedDB, one database per (application, environment, user): object stores `collections` (key: collection key; value: rows, cursor, saved\_at), `outbox` (key: seq), `meta` (release digest, schema version).
-- `navigator.storage.persist()` is called at startup; the result is logged and shown in the status surface as "storage protected" or not. A denial changes nothing else.
-- Quota: `navigator.storage.estimate()` at startup and before `take offline`; refuse `take offline` when the estimate cannot hold the chosen set with 20 % headroom.
-- No Background Sync dependency. Replay runs while the app is open. Chrome's Background Sync may be registered as an enhancement, never relied on.
+[`names.ts`](../../web/runtime/src/sync/names.ts), `rowsDatabase` and `outboxDatabase`, scope separate databases by application, environment, and user.
+The rows database stores `rows`, `cursor`, and `saved_at` under each collection key.
+The outbox database stores entries by `seq`.
+There is no release metadata store, because row shape keys and ordinary request validation supply the required boundaries.
+
+`shell` requests persistent storage once at startup and reads the storage estimate.
+[`shell-status.ts`](../../web/sync-bench/src/shell-status.ts), `shellStatus`, displays worker, persistence, protection, and quota results.
+A persistence denial changes no other behavior.
+Replay runs while the application is open without a Background Sync dependency.
 
 ### Take offline
 
-An explicit action on a screen whose definition declares `offline: true` (see Generator).
+Take-offline exists in sync-bench as a test of the mechanism.
+It does not promise full offline coverage for generated applications.
+[`packaging-offline.ts`](../../web/sync-bench/src/packaging-offline.ts), `packagingOffline`, saves the selected packaging scope and the whole location reference model.
+[`location-feed.ts`](../../web/sync-bench/src/location-feed.ts), `locationFeed`, reads every reference page in groups of 100.
 
-- The user selects records (orders) by the screen's own filters. The client fills the collections the screen and its child tables need for those ids, then every reference collection those rows name, one level deep.
-- Completion is reported with counts and the cursor time. The set stays current through the feed while online.
-- A screen declared `offline: true` opens from the local copy with no network; a screen without it shows "needs a connection" when the collection is not local.
+The action refuses an incomplete set.
+`collectionBytes` measures serialized rows, cursor, key, and timestamp before IndexedDB overhead.
+`requireStorage` requires an estimate with 20 percent headroom.
+The action awaits durable saves before reporting counts, bytes, and read times.
+The saved sets follow changes while online.
+
+`storedCollection` restores saved empty sets and their timestamps, and reads saved rows without network calls while offline.
+This wrapper exists because the pinned collection ignores empty saved sets and always attempts its initial list.
+It awaits explicit saves because the package's debounced save hides persistence failures.
+A missing local set shows “needs a connection”.
 
 ### Degradation
 
-| Missing | Behavior |
+| Missing capability | Behavior |
 | --- | --- |
-| service worker | app works while the tab lives; "offline shell unavailable" shown once |
-| `persist()` denied | notice on `take offline`; still allowed |
-| IndexedDB unavailable | collections are memory-only; outbox is memory-only; a warning that writes are lost on reload |
-| not Chrome | all of the above may apply; nothing is disabled by browser name |
+| Service worker | The open page works. `shellStatus` reports the worker unavailable. |
+| Persistent storage grant | The page reports storage unprotected. Take-offline remains available if quota permits. |
+| IndexedDB | Collection load failures permit network fills. Durable outbox recording fails rather than claiming that a write is saved. |
+| Storage estimate | Take-offline refuses because it cannot establish headroom. |
+| Web Locks | Replay runs without the lock and relies on host deduplication. |
+| Another browser | Capability results control behavior, not the browser name. |
 
 ## Session and authorization
 
-The session token is short-lived (15 minutes, renewable). Offline work outlasts it. The outbox and the feed are designed so that the token's lifetime never decides whether work is kept.
+The user id comes from `sub` in sign-in and renewal replies.
+[`session.ts`](../../web/runtime/src/session.ts), `times`, maps it to `userId`.
+`keepSession` renews on startup and before expiry.
+The environment comes from the page route through [`packaging-writes.ts`](../../web/sync-bench/src/packaging-writes.ts), `packagingAddress`.
 
-- Outbox entries carry no token. Replay attaches the current token; if renewal fails, replay waits and the status surface shows "sign in to upload". A sign-in page that works from the shell cache is part of the shell.
-- The host checks the user's active role at replay time, not at record time. A role change between recording and upload produces an ordinary 403 refusal on the entry.
-- `recorded_at` is stored by the operation as a field the application declares (`recorded_at: timestamptz` on the record), supplied by the client from its clock. The host's own write time stays the authoritative time. Nothing in the platform reads `recorded_at`.
-- Local data is readable without a token: the collection is on the device already. A locked screen (no valid session, offline) shows a read-only view of local data; writes still enqueue, since the token is not needed to record.
-- The IndexedDB database is keyed by user. Signing out clears nothing by default; "sign out and clear local data" is a separate action, refused while the outbox is non-empty unless the user discards.
+[`saved-user.ts`](../../web/sync-bench/src/saved-user.ts), `savedUser`, keeps the last signed-in id per application and environment in local storage.
+[`live.tsx`](../../web/sync-bench/src/live.tsx), `App`, opens that user's rows and outbox during an offline reopen.
+`SessionPackaging` gates upload on the matching signed-in user and shows “sign in to upload” while upload waits.
+Local recording needs no token.
+
+The host applies the user's active role when it receives replayed operations.
+A role change can produce an ordinary refusal.
+The entry's `recorded_at` is a local display timestamp, not authoritative host time.
+Applications can declare a separate business timestamp without changing queue behavior.
+Signing out does not itself delete saved rows or entries.
 
 ## Release compatibility
 
-A cached shell and a saved outbox can outlive the release that produced them. The host does not special-case this: every request is validated as any request is, and an old entry that no longer decodes or validates is refused with the ordinary code. No release check, no compatibility declaration, no second hash.
+A waiting worker shows “update available, reload”.
+[`live.tsx`](../../web/sync-bench/src/live.tsx), `SessionPackaging`, waits for outbox loading before applying the reload rule.
+[`update.ts`](../../web/sync-bench/src/update.ts), `canReload`, permits reload only when pending and sending counts are zero.
+Refused entries survive reload and do not block it.
 
-- The shell carries the release digest it was built from, in `meta`, for one purpose: when the host's current release differs (read from the health probe), the client shows "update available, reload" and reloads once the outbox is empty. The host never reads it.
-- An outbox entry refused for a request-shape reason after a release is an ordinary `refused` entry: the record page shows the stored arguments through the new binding's request builder; fields the new shape needs are highlighted; the user resubmits or discards.
-- Collections are versioned by the generated schema version in `meta`. A schema change drops the local collections on first open under the new release and runs `fill`. The outbox is never dropped by a schema change.
-- Backup, only if validation-only proves insufficient (a shape that decodes under the new release but means something else): a request-shape hash per operation, emitted by the generator into the bindings, carried on the entry, compared by the host. Not built until a case demands it.
+There is no release digest in the shell, because the router guest cannot read it on the health path and the build has none.
+The waiting worker already signals a newer served shell.
+The host validates old entries like every request.
+A request shape that the host rejects becomes an ordinary refusal, because compatibility does not require a second request taxonomy.
+
+Shape digests select saved row collections independently of request validation.
+Unknown digests cause row cleanup without touching the outbox.
+A refusal panel can present stored arguments for correction under the current binding.
+
+`HEAD /api/health` returns 204 without authentication.
+[`http-route/src/lib.rs`](../../apps/platform/ingress/http-route/src/lib.rs), `try_handle`, answers before route lookup and authentication.
+`HttpResponse::cache_headers` supplies `no-store` for this response.
 
 ## Generator and bindings
 
-Nothing in this document is hand-written per screen. The generator emits the host read, the TypeScript binding, the collection, the adapter calls and the outbox wiring from the model and screen definitions.
+The host generator emits the list feed and client helpers.
+Epic 5 owns the remaining application wiring and manifest fields.
+The bench's handwritten factories demonstrate that emission and do not replace it.
 
 ### Manifest (`wamn.k`)
 
-```
+Epic 5 adds these declarations:
+
+```text
 model receipt {
-  ...
-  feed = true                       // emit `changes`; default true for every model with a list read
+  feed = true
 }
 
 operation receipt.record_line {
-  append_only = true                // no row_version guard; later entries for the same record never wait on a refused one
+  append_only = true
 }
 
 screen receiving.lines {
-  offline = true                    // take-offline action; opens from local copy with no network
-  read = "liveRows"                 // or "liveList"; default by row count: liveRows for table screens
+  offline = true
+  read = "liveRows"
 }
 ```
 
+`feed` defaults true for an eligible list model, with `false` as the explicit opt-out.
+`append_only` declares whether a prior refusal holds later entries for that record.
+`offline` selects application-defined offline wiring without promising whole-application coverage.
+`read` selects `liveRows` or `liveList` under the read-shape rule.
+
 ### Emitted per model
 
-| Artifact | Where | Content |
+| Artifact | Owner | Content |
 | --- | --- | --- |
-| `changes` statement | generated SQL beside `list` | history-table query, collapsed to latest per id, with the live-row join |
-| `changes` route | route emitter | GET, same auth and cache policy as `list`, weak ETag on `next_cursor` |
-| `list` outcome cursor | statement + route emitter | position taken in the same read transaction |
-| TS binding | `web/bindings` | `changes(cursor, limit)` and `list` with `cursor` in the outcome |
-| collection factory | generated components package | `receiptCollection(scope)` calling `modelCollection` with the model's bindings |
-| write helper | generated components package | `recordReceipt` calling `recordWrite` with the model's collection and the outbox |
+| List statement and feed branch | Host generator | One list operation, optional feed part, and page or changes result |
+| Snapshot cursor | List SQL | xmin from the list statement itself |
+| Client binding | `client_ts.rs`, `emit_operation` and `write_changes` | List and changes helpers with signal forwarding |
+| Shape digest | `client_ts.rs`, `shape_digest` and `emit_model` | Stable row shape hash |
+| Collection factory, Epic 5 | Generated components | Feed paging, cap, scope key, version accessor, and persistence |
+| Write helper, Epic 5 | Generated components | Outbox and `recordWrite` wiring for the model |
 
 ### Emitted per screen
 
-- The screen's query over its collections (the table definition already names fields, sort, filters; it gains the query builder form).
-- `offline: true` adds the take-offline action to the screen's toolbar and lists the collections it fills (the screen's own, its child tables', and one level of references).
+Epic 5 emits the query over the screen's collections from its fields, filters, sort, and references.
+An application-selected offline screen declares the collections and references that its action fills.
+The generated action reports completion only after those chosen sets are complete and durable.
 
-### Build checks
+### Build refusal rules
 
-- A model with `feed = true` and no history table is refused at build (history tables are generated per relation; this is a consistency check, not a performance one).
-- An operation with `append_only = true` that declares a `revision` field is refused.
+Epic 5 refuses an enabled feed without its required history and revision inputs.
+A model can opt out through `feed = false`.
+An append-only operation cannot also declare a revision guard.
+Receiving and WMS regenerate from their definitions with no hand edits to generated files.
 
 ## Invariants and tests
 
-Each rule names what a test measures. A rule without a measurable invariant is not in this document.
+Each row names a measurable rule and its test boundary.
 
 | Rule | Invariant | Test |
 | --- | --- | --- |
-| Feed after snapshot sees every later change and none earlier | For any write W committed after `list`'s snapshot, `changes(list.cursor)` returns W's row; for any W before, it does not | host test: list, write, write, changes; assert ids and versions |
-| Feed collapses | A row changed n times since the cursor appears once with its latest `row_version` | host test over the history table |
-| Cursor is opaque | No contract field is named `position` or `transaction_id`; the cursor round-trips unchanged | contract test on the generated bindings |
-| Delete reaches the client | A deleted row leaves the collection within one feed call | runtime test with a fake feed |
-| Stale change ignored | A change with lower `row_version` than stored does not overwrite | runtime unit test |
-| First paint from local | A screen with a saved collection renders rows before any fetch resolves | runtime test with fetch blocked |
-| Recorded means durable | `enqueue` resolves only after the IndexedDB put commits; a reload after resolve finds the entry | runtime test with reload |
-| Replay order | Entries for one record send in `seq` order; no entry sends twice unless its reply was lost | runtime test with a fake host counting requests by hash |
-| Refusal isolates | A refused entry leaves the queue state of other records unchanged | runtime test |
-| Old entry is ordinary | An entry recorded under a prior release is validated like any request; a shape it no longer accepts is an ordinary refusal, never applied | host test: enqueue under R1 bindings, send to R2 |
-| Optimistic row reverts | A refusal makes the optimistic row disappear and the refusal appear on the record | adapter test |
-| `until` resolves on echo | After the feed delivers the written row, the action completes and the row is no longer tentative | adapter test |
-| Shell opens offline | With the network blocked and a registered worker, the app renders its last screen from local data | browser test (Chrome, headless) |
-| Worker never serves `/api` | Any `/api` request with the network blocked fails; none is answered from cache | browser test |
-| Memory bound holds | 100,000 rows in one collection with one live query stay under the measured heap ceiling | measured in the first increment, value recorded in `web/runtime` tests |
-
-Testing budget follows the existing rule: build, clippy, unit per issue; live targets touching merged files per merge; one cluster stage only when a file under that stage changed.
+| One operation | Page and changes use one list permission row | Generated contract and route assertions |
+| Snapshot handoff | Rows and cursor come from one statement. Later commits remain reachable despite transaction allocation order | Host list, overlapping transactions, and feed drain |
+| Feed paging | Below-xmin rows page by transaction and id. Visible rows above xmin fill one complete page | Host and `Changes::new` tests |
+| Feed collapse | Each feed page contains one current result per id | History updates followed by a feed read |
+| Opaque cursor | The cursor round-trips unchanged and rejects another model | `feed::encode` and `feed::decode` tests |
+| Unchanged feed | Empty changes retain the cursor and support a matching weak ETag | Route 304 test |
+| Retention | Only bounded retention can expire an older cursor | Retention and `cursor_expired` cases |
+| Feed privileges | The feed reads only its four granted history columns through an indexed transaction range | Application-role SQL execution |
+| List cap | A capped fill reports incomplete if more pages exist | `packagingFeed` paging test |
+| Saved first paint | Saved rows render before fetch resolves | Adapter test with blocked fetch |
+| Serialized reads | Startup, pull, and refill never overlap | Controlled feed promises |
+| Saved updates | Saves debounce after list and change pages, then flush on cleanup | Persistence timing test |
+| Shape cleanup | Unknown digests remove rows without altering outbox entries | `rowsPersistence` storage test |
+| Version rule | Equal or lower upsert versions do not overwrite a row | Collection batch test |
+| Delete delivery | A deletion removes a stored row | Fake feed test |
+| Durable recording | Enqueue resolves only after the put commits | IndexedDB reload test |
+| Replay recovery | Stored sending entries become pending under the lock | Reopen and shared-database tests |
+| Replay order | One record sends in sequence. Other records can progress after its refusal | Controlled sender test |
+| Confirmation | Both successful send and authoritative row are required, with a greater version when expected | `recordWrite` adapter tests |
+| Refusal and discard | Typed errors reject the action and revert its guess | `OutboxRefused` and `OutboxDiscarded` tests |
+| Immutable correction | A new entry keeps the id and commits before the refused entry disappears | `packagingWrites` correction test |
+| Abort forwarding | Closing an outbox aborts the binding's fetch | Sender, binding, and transport tests |
+| Client identity | Create requires an id. Server-owned and numbered keys refuse at generation | Generator refusal tests |
+| Pending number | Number consumers wait until the feed supplies the host field | Number helper test |
+| Offline reopen | The remembered user opens the same scoped rows and outbox before renewal | Browser reopen test |
+| Shell fallback | Network failure on a deep navigation serves the fallback | Browser worker test |
+| Worker bypass | Exact `/wamn` and `/password` segments never use the worker cache | Worker path-boundary tests |
+| Reload | Pending or sending blocks reload. Refused alone does not | `canReload` test |
+| Old requests | The current host accepts or refuses old arguments through ordinary validation | Old-entry browser test |
+| Health | HEAD returns 204 and no-store before authentication | Route test |
 
 ## Assumptions
 
-| Assumption | How to verify | Invalidated if false |
+| Assumption | Evidence or test | Consequence when it does not hold |
 | --- | --- | --- |
-| False (Epic 2b): the history `position` orders commits. It is an identity value that a write takes at insert time ([`record-history.sql`](../../deploy/sql/record-history.sql)), so a writer that takes a lower position and commits later is missed by a reader that passed it | Read the history table definition | Replaced: the cursor carries the snapshot xmin. `changes` reads entries from the cursor transaction, including visible commits at or above its snapshot xmin. The cursor never advances past those commits. A change can arrive twice, and the client ignores an equal `row_version`. The history table has an index on `transaction_id` |
-| Feed latency under a long-open transaction is one page of commits. Beyond that it waits for xmin | Hold one transaction open and commit 200 others. Read with limit 100, then commit the held transaction and drain the feed | Visible rows beyond one page wait until xmin advances |
-| History retention covers the longest offline period plus one day | Retention exists: `audit_log.retention` (`none`, `unlimited` or `P<n>D`), pruned daily by the retention task ([data access](../architecture/data-access.md)). WMS packaging declares `unlimited`, so its history is unbounded today | `cursor_expired` becomes common; `fill` runs on every reopen. `cursor_expired` answers a cursor older than the oldest entry the retention keeps, only for a `P<n>D` retention |
-| Answered (Epic 2b): `list` and the cursor read share one snapshot | The cursor is a column of the list statement itself, `pg_snapshot_xmin(pg_current_snapshot())`, so one statement reads the rows and the cursor at one snapshot, with no shared transaction. An outer row carries the cursor when the page has no rows | — |
-| A model with no `row_version` cannot be synced | A model with a list read gets a feed only when it also has a history table and a revision field on that read | Epic 2b skips such models, and Epic 5 adds the build refusal and `feed = false` |
-| `@tanstack/db` collections and `db-ivm` live queries handle 100,000 rows in one collection within the measured heap ceiling | The first increment's measurement at 10k and 100k | The per-collection cap drops below the table cap; large screens stay on the page path |
-| `@tanstack/db`'s custom sync source and `subscribeChanges` deliver change batches with `insert`/`update`/`delete` and the row value, as used in the adapter | Read the vendored version's types before the adapter issue | The adapter shape changes; the contract and the outbox do not |
-| Solid 2's `createProjection` accepts a from() subscription as a seedless derive and reconciles by key; `until` inside `action` resolves on authoritative data and never on the action's own optimistic writes | Adapter tests on the pinned release | `liveList` becomes a `createStore` with manual reconcile; `until` is replaced by a resolver keyed on `row_version` |
-| The write log dedupes on the request hash the client computes, so a resend after a lost reply is harmless | Host test: send the same entry twice, assert one effect | The outbox must wait for a reply before any retry; replay slows but stays correct |
-| Chrome on the supported devices grants IndexedDB and does not evict it under normal use | Run the browser tests on the target devices | The take-offline flow must warn on every open; no design change |
-| Answered (Epic 2b): `changes` has the authorization of `list` | `changes` is the list read with its feed part, one operation and one permission row, so the check is the same by construction | — |
+| A long-open transaction permits one page of visible commits before xmin advances | Hold one transaction, commit more than one page, read, then release the held transaction | Later visible rows wait for xmin |
+| A live-query float sum is exact only for int32-range totals | The measurement sums integer `row_version`. `@tanstack/db` accepts no custom aggregates | Decimal or larger totals require a separate exact calculation |
+| Generated list pages accept 1–100 rows | `generate/validation.rs`, `validate_query`, fixes the minimum and maximum | A 20,000-row reference fill takes about 200 requests |
+| Retention covers the expected outage and recovery window | Retention declarations and host retention tests | Expired cursors require a fresh list |
+| A feed needs a generated list, history, and a revision | `ModelDeclaration::feed_revision` | Ineligible models get no feed until Epic 5 supplies explicit refusal and opt-out |
+| The selected read shape fits the screen's memory budget | The 10,000-row and 100,000-row measurement below | The application reduces its local set or uses ordinary pages |
+| Keyed Solid projections preserve row identity | Adapter tests against the pinned runtime | The adapter needs a correction before adoption |
+| Host request identity deduplicates a resend | Send one entry twice and assert one effect | Replay cannot claim effective single application |
+| The browser keeps IndexedDB data during ordinary use | Browser tests on supported devices | The UI must report failed recording or unprotected storage |
 
 ## Deferred
 
-Each item is deferred until a consumer exists; none is rejected.
+Each item waits for a consumer:
 
-- A platform event channel to the browser (SSE or WebSocket) carrying "model moved" and other platform events; the feed registers it as a second trigger, the contract does not change. Its design belongs with its other consumers.
-- Automatic merge for concurrent edits to one record; refusal-and-resolve stays the rule.
-- Server-side incremental views for reporting screens; aggregates there stay authored operations.
-- A native app; the browser shell is the focus.
-- The local (SQLite) target consuming the same feed contract for its projections.
-- Background Sync registration in Chrome as an enhancement to replay.
-- Partial or query-driven sync beyond the scope model (the client asks for a query, the host keeps only those rows flowing).
-- Shared, cross-user optimistic state (presence, live cursors).
+- A platform event channel through SSE or WebSocket as an additional feed trigger.
+- Automatic merge for concurrent edits to one record.
+- Server-side incremental views for reporting screens.
+- A native application.
+- The local target consuming the same feed contract for its projections.
+- Background Sync registration as an enhancement to replay.
+- Query-driven partial sync beyond the current scope model.
+- Shared optimistic state across users, including presence and live cursors.
+- A request-shape hash if ordinary validation cannot distinguish incompatible meanings.
 
 ## Epics
 
-One epic at a time per repo; a wamn epic starts only when its wfe counterpart is on wfe main. Epic 1b is the measurement that decides the adapter's read shape and whether the vendored store stays.
-
 | Epic | Repo | Scope | Done when |
 | --- | --- | --- | --- |
-| 1a. `@wfe/sync` store and adapters | wfe | New package: `collection` with `fill` only (no `follow`), `liveRows`, `liveList`, `syncStatus`; tests for delta apply, projection reconcile by id under a sort change; a gallery page at 10k and 100k rows with a fake `Feed` | Package published on main with the tests green; the gallery renders both read shapes |
-| 1b. First screen and measurement | wamn | Pin `@wfe/sync`; `Feed` from the WMS bindings; one WMS table screen on `liveRows`; the same screen on a Solid-only store map with memo-derived views; measurements at 10k and 100k rows, grouped with totals: time to interactive on reopen, update latency per change, heap | The read shape per screen type and whether `@tanstack/db` stays are ruled from the numbers |
-| 2a. Feed follow | wfe | `follow`, `Trigger`, `Persistence` use, `cursor_expired` handling, `until`-on-echo tests | Tests green against a fake `Feed` that replays a change log |
-| 2b. Change feed | wamn | `changes` statement, route, binding; `list` outcome cursor; `moved` from the per-model version; the WMS screen updates without a re-read after a write | The invariants "feed after snapshot" and "feed collapses" pass on the host |
-| 3a. Outbox and writes | wfe | `outbox`, `recordWrite` with `action` and `until`, refusal states, probe-driven replay; tests: durable before resolve, replay order, refusal isolates, two overlapping writes on one list | Tests green against a fake `Send` |
-| 3b. Writes on the screen | wamn | `Send`, `probe`, ids and numbers (`pending·xxxx`), refusal panel, status surface; case 1 on the WMS screen with the network cut mid-session | Outbox invariants pass end to end |
-| 4a. Shell | wfe | `shell()`: worker registration, `persist()`, quota; the worker that precaches the shell and never serves `/api` | Browser tests: opens offline, worker never serves `/api` |
-| 4b. Take-offline | wamn | Manifest, database names, release digest and reload rule, `offline: true` screens, take-offline action; case 2 end to end | Close the tab, open with no network, record, reconnect, upload; the old-entry invariant passes |
-| 5. Generator | wamn | Manifest fields, per-model and per-screen emission, build checks; Receiving and WMS regenerated with no hand edits | Regenerate and diff shows only generated files; build checks fire on the refusal cases |
+| 5. Generator | wamn | Manifest fields, collection and screen emission, feed opt-out, and build refusal | Receiving and WMS regenerate without hand edits. Refusal cases fail at build. |
 
-## Epic 1b measurements
+## Read-shape measurements
 
-Owner ruling: `@wfe/sync` stays, `liveRows` is the read shape for table screens, and `liveList` is the read shape for small sets.
-
-Measured on 2026-10-24 with [`web/sync-bench`](../../web/sync-bench/README.md) (bead `wamn-hhd77`).
-The ruling on the read shape per screen type, and on whether `@tanstack/db` stays, belongs to the owner.
+`@wfe/sync` and `@tanstack/db` stay.
+Table screens use `liveRows`, and small sets use `liveList`.
+The [`web/sync-bench`](../../web/sync-bench/README.md) measurement supplies evidence for that rule.
 
 | Input | Version |
 | --- | --- |
-| wfe pin | `fdeaacc` (wfe main) |
+| wfe pin | `fdeaacc` |
 | `@tanstack/db` | 0.15.2 |
 | `@tanstack/db-ivm` | 0.2.0 |
 | `solid-js`, `@solidjs/web` | 2.0.0-rc.18 |
-| Browser | Google Chrome 156.0.8078.47, headless, through Playwright 1.63.0 |
+| Browser | Chrome 156.0.8078.47, headless, automation harness 1.63.0 |
 | Machine | 8 cores, shared with other agents |
 
-The screen is the WMS `packaging` table: the generated `PackagingQueryTable` columns over virtual rows, then groups by status and type with count and the sum of `row_version`, and a totals row.
-Shape A reads a `@wfe/sync` collection through `liveRows`, and its groups and totals come from `@tanstack/db` live queries.
-Shape B keeps a Solid store keyed by id, and its sort, filter, groups and totals are memos.
-In both shapes the row order is a memo that sorts by packaging code. The status filter was "all" for every run.
+The screen uses the WMS packaging table and generated `PackagingQueryTable` columns over virtual rows.
+It groups by status and type, with counts, sums of `row_version`, and a totals row.
+Shape A reads a sync collection through `liveRows` and derives groups and totals through `@tanstack/db` queries.
+Shape B keeps a Solid store by id and derives sort, filters, groups, and totals through memos.
+Both shapes sort packaging codes in a memo, with the status filter set to “all”.
 
-Each cell is the median of 5 runs. Each run mounted one shape on a new page of the production build, filled from a fake feed of seeded synthetic rows.
-The shapes alternated their order in each repeat. The other agents held new builds and test runs during the run, from 15:03:20 to 15:05:21 UTC.
+Each cell is the median of five runs.
+Each run mounts one shape on a new production-build page and fills it from a fake feed of seeded synthetic rows.
+The shapes alternate order between repeats.
+Other agents hold new builds and test runs from 15:03:20 to 15:05:21 UTC during the measurement window.
 
-- Fill is the time from `list` resolving to the first painted row (the frame after the first row is in the DOM).
-- Update is the time from applying one batch of 100 changes (70 updates, 20 inserts, 10 deletes) to the next frame. Each run applied 10 batches, so each median covers 50 batches.
-- Heap is `performance.memory.usedJSHeapSize` after a forced garbage collection.
+The measures use these boundaries:
+
+- Fill starts when `list` resolves and ends at the first painted row, on the frame after DOM insertion.
+- Update covers one batch of 70 updates, 20 inserts, and 10 deletes through the next frame. Ten batches per run give 50 batches.
+- Heap uses `performance.memory.usedJSHeapSize` after forced garbage collection.
 
 | Shape | Rows | Fill to first paint (ms) | Update per 100 changes (ms) | Heap after fill (MB) | Heap after 10 batches (MB) | Runs finished | Load average |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -688,15 +958,22 @@ The shapes alternated their order in each repeat. The other agents held new buil
 | A | 100,000 | 3,403.1 | 308.5 | 111.8 | 112.6 | 5/5 | 5.7–7.8 |
 | B | 100,000 | 1,634.6 | 933.0 | 141.9 | 142.6 | 5/5 | 5.7–7.8 |
 
-Single updates ranged from 27.5 to 69.6 ms (A) and 58.4 to 137.8 ms (B) at 10,000 rows, and from 224.8 to 583.4 ms (A) and 668.4 to 1,958.8 ms (B) at 100,000 rows.
-The fake feed returns rows that already carry `row_version`. The real feed copies every row to add `row_version` beside the generated `rowVersion`.
-That copy took a median of 4.9 ms at 10,000 rows and 164.1 ms at 100,000 rows, measured separately at 15:06 UTC with load average 18.6 to 19.1, so it is not part of the fill column.
+At 10,000 rows, individual batch updates range from 27.5–69.6 ms for A and 58.4–137.8 ms for B.
+At 100,000 rows, they range from 224.8–583.4 ms for A and 668.4–1,958.8 ms for B.
 
-Conditions that limit these numbers:
+The fake feed supplies `row_version` directly.
+The measured real-feed conversion copies each row to add `row_version` beside `rowVersion`.
+That separate conversion takes medians of 4.9 ms at 10,000 rows and 164.1 ms at 100,000 rows.
+Its run at 15:06 UTC has load averages of 18.6–19.1.
+It is outside the fill column.
+The version accessor avoids that copy.
 
-- The summed column is `row_version`, a stand-in, because packaging has no other numeric column.
-- Shape A sums with the float `sum` of `@tanstack/db`, which has no custom aggregates. The sum is exact here only because the column is int32 and the total stays below 2^53. Shape B sums with an exact BigInt sum inside its memo.
-- `@wfe/sync` 1a fills only. The feed has no `follow`, so updates come from `applyChanges`, not from a host feed.
-- Shape A reads the live query results through `liveRows` with a cast, and the view uses `Table`, because `ReadOnlyTable` has no body slot for virtual rows.
+These conditions limit the measurement:
 
-The wfe findings from this epic are beads `wamn-7e86p` (row version name), `wamn-b4icu` (`liveRows` on a live query result), `wamn-dhggm` (no custom aggregates) and `wamn-5dcm4` (`ReadOnlyTable` body slot).
+- `row_version` stands in for a numeric business field because packaging has no other numeric column.
+- Shape A uses the float `sum` in `@tanstack/db`, with int32 inputs and an integer total below 2^53. Shape B uses an exact BigInt sum.
+- The measured package fills only. Updates enter through `applyChanges`, without a host follow loop.
+- Shape A casts the live query result for `liveRows` and uses `Table`, because the measured `ReadOnlyTable` has no virtual-row body slot.
+
+The related findings are `wamn-7e86p`, `wamn-b4icu`, `wamn-dhggm`, and `wamn-5dcm4`.
+They cover version naming, live query inputs, custom aggregates, and the table body slot.
