@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -15,6 +15,8 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const scratch = process.env.WAMN_RELEASE_TEST_DIR;
 assert.ok(scratch, "the Rust fixture supplies an owned output directory");
 const outDir = resolve(scratch, "shell");
+// The two bindings import @wfe/sync, so they live inside this package, where it resolves.
+const bindings = resolve(root, "src/generated/release");
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
 const audience = process.env.WAMN_AUD;
 const user = process.env.WAMN_USER_ID;
@@ -92,13 +94,15 @@ try {
     await buildShell("r1");
   } else {
     await mkdir(outDir, { recursive: true });
+    await mkdir(bindings, { recursive: true });
+    for (const name of ["r1.ts", "r2.ts"]) await copyFile(resolve(scratch, name), resolve(bindings, name));
     const tsconfig = resolve(scratch, "tsconfig.json");
     await writeFile(tsconfig, JSON.stringify({
       extends: resolve(root, "tsconfig.json"),
       compilerOptions: { types: [], paths: {
         "@wamn/web-runtime": [resolve(root, "../runtime/src/index.ts")],
-        "@release/r1": [resolve(scratch, "r1.ts")],
-        "@release/r2": [resolve(scratch, "r2.ts")],
+        "@release/r1": [resolve(bindings, "r1.ts")],
+        "@release/r2": [resolve(bindings, "r2.ts")],
       } },
       include: [resolve(root, "bench/old-entry.ts")],
     }));
@@ -108,8 +112,8 @@ try {
       configFile: false,
       resolve: { conditions: ["browser", "development|production"], alias: [
         { find: "@wamn/web-runtime", replacement: resolve(root, "../runtime/src/index.ts") },
-        { find: "@release/r1", replacement: resolve(scratch, "r1.ts") },
-        { find: "@release/r2", replacement: resolve(scratch, "r2.ts") },
+        { find: "@release/r1", replacement: resolve(bindings, "r1.ts") },
+        { find: "@release/r2", replacement: resolve(bindings, "r2.ts") },
       ] },
       build: {
         outDir, emptyOutDir: true,
