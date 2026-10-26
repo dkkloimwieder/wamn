@@ -102,6 +102,15 @@ pub async fn start_workflow(
     };
 
     let (project, task) = connect_owned(environment.project_url).await?;
+    project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:schedule-fixture', false)",
+            &[&wamn_project_state::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
     project.execute(
         "INSERT INTO platform.user_role (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'admin') ON CONFLICT DO NOTHING",
         &[&environment.tenant, &ENABLER],
@@ -131,6 +140,10 @@ pub async fn start_workflow(
                 )
                 .with_class(
                     AuthorityClass::Administration,
+                    environment.project_url.to_owned(),
+                )
+                .with_class(
+                    AuthorityClass::CallableHttp,
                     environment.project_url.to_owned(),
                 ),
         ),

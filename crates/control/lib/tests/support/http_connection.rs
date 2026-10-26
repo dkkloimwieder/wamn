@@ -338,6 +338,11 @@ pub fn release(
             .components
             .insert(ServingComponent::project(fact, descriptor.connections)?);
     }
+    // Every published application release serves the application host
+    // routes, and workflow.start is one of them.
+    manifest
+        .host_routes
+        .insert(wamn_catalog::HostRouteSet::Application);
     let bytes = manifest.canonical_bytes();
     ServingManifest::from_canonical_bytes(&bytes)?;
     Ok(bytes)
