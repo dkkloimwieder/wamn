@@ -27,7 +27,7 @@ manifest.Package {
             owner = "wamn_wms"
             min_lengths = {location_code = 1}
             server_owned_fields = ["row_version"]
-            audit_log = {columns = ["created_at"]}
+            audit_log = {columns = ["created_at"], retention = "unlimited"}
             operations: {
                 get: {result = "one"}
                 query: {display_field = "location_code", filters = [{field = "location_code", match = "contains"}], result = "page"}
@@ -80,7 +80,7 @@ manifest.Package {
             owner = "wamn_wms"
             min_lengths = {product_code = 1}
             server_owned_fields = ["row_version"]
-            audit_log = {columns = ["created_at"]}
+            audit_log = {columns = ["created_at"], retention = "unlimited"}
             operations: {
                 get: {result = "one"}
                 query: {display_field = "product_code", filters = [{field = "product_code", match = "contains"}], result = "page"}
