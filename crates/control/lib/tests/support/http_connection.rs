@@ -258,8 +258,7 @@ pub fn wiring() -> anyhow::Result<WiringDocument> {
                 "operation": "wamn:node/handler@0.1.0", "params": {"pointer": ""}},
             "send": {"component": "http-request", "interface-version": "0.1.0",
                 "operation": "wamn:node/async-handler@0.1.0",
-                "params": {"requirement": "upstream", "method": "POST", "path-and-query": "/reuse"},
-                "terminal": "respond"}
+                "params": {"requirement": "upstream", "method": "POST", "path-and-query": "/reuse"}}
         },
         "edges": [{"from": "input", "to": "send"}]
     }))?)
@@ -309,10 +308,6 @@ pub fn paged_wiring() -> anyhow::Result<WiringDocument> {
 pub fn scheduled_wiring() -> anyhow::Result<WiringDocument> {
     let mut graph = serde_json::to_value(wiring()?)?;
     graph["wiring-id"] = json!(SCHEDULE);
-    graph["nodes"]["send"]
-        .as_object_mut()
-        .unwrap()
-        .remove("terminal");
     graph["nodes"]["send"]["params"]["path-and-query"] = json!("/scheduled");
     Ok(serde_json::from_value(graph)?)
 }
@@ -338,11 +333,6 @@ pub fn release(
             .components
             .insert(ServingComponent::project(fact, descriptor.connections)?);
     }
-    // Every published application release serves the application host
-    // routes, and workflow.start is one of them.
-    manifest
-        .host_routes
-        .insert(wamn_catalog::HostRouteSet::Application);
     let bytes = manifest.canonical_bytes();
     ServingManifest::from_canonical_bytes(&bytes)?;
     Ok(bytes)
@@ -529,14 +519,19 @@ pub async fn assert_triggers(
     // so its execution role holds no permission.
     let document = scheduled_wiring()?;
     super::integration::enable_schedule(environment, PACKAGE, &document, SCHEDULE, &[]).await?;
-    let first_due = super::integration::next_minute(Utc::now());
+    // The fixture grants the role in SQL and drops no auth key, so a host can
+    // keep the workflow user's earlier grants for AUTH_TTL. The checked runs
+    // start after that.
+    let first_due = super::integration::next_minute(
+        Utc::now() + wamn_platform_identity::auth_changes::AUTH_TTL,
+    );
     let result = tokio::time::timeout(
-        Duration::from_secs(150),
+        Duration::from_secs(240),
         scheduled_runs(database, environment.tenant, first_due),
     )
     .await;
     let result = result
-        .context("schedule did not complete two due moments within 150 seconds")
+        .context("schedule did not complete two due moments within 240 seconds")
         .and_then(std::convert::identity);
     run.pass("an enabled schedule workflow starts exactly one run per due key as the workflow user with its role",
         "author and enable the schedule workflow; SELECT schedule runs from wamn_run.runs",
@@ -553,13 +548,14 @@ async fn run_manual(
     key: &str,
 ) -> anyhow::Result<(u16, String)> {
     let id =
-        super::integration::start_workflow(environment, PACKAGE, workflow, &json!({"id":1}), key)
+        super::integration::admit_workflow(environment, PACKAGE, workflow, &json!({"id":1}), key)
             .await?;
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
     loop {
         let row = database
             .query_one(
-                "SELECT status, result_json FROM wamn_run.runs WHERE tenant_id=$1 AND run_id=$2",
+                "SELECT status, result_json, fail_type FROM wamn_run.runs \
+                 WHERE tenant_id=$1 AND run_id=$2",
                 &[&environment.tenant, &id],
             )
             .await?;
@@ -572,7 +568,9 @@ async fn run_manual(
                 status.as_str(),
                 "failed" | "infrastructure-failure" | "effect-uncertain"
             ),
-            "workflow {workflow} failed: {status}"
+            "workflow {workflow} failed: {status}, fail_type {:?}, result {:?}",
+            row.get::<_, Option<String>>(2),
+            row.get::<_, Option<Value>>(1)
         );
         ensure!(
             std::time::Instant::now() < deadline,
@@ -601,7 +599,8 @@ async fn scheduled_runs(
                 'idempotency_key', idempotency_key, 'trigger_source', trigger_source, \
                 'execution_principal_id', execution_principal_id, 'execution_role', execution_role, \
                 'invoked_by', invoked_by, 'input_json', input_json, 'status', status, \
-                'package_id', package_id, 'wiring_id', wiring_id, 'wiring_version', wiring_version) \
+                'package_id', package_id, 'wiring_id', wiring_id, 'wiring_version', wiring_version, \
+                'fail_type', fail_type, 'result_json', result_json) \
                 ORDER BY idempotency_key), '[]'::jsonb) FROM wamn_run.runs \
                 WHERE tenant_id = $1 AND idempotency_key = ANY($2)",
             &[&tenant, &keys.as_slice()],

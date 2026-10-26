@@ -169,12 +169,18 @@ pub async fn assertions(
     }
     project.execute("INSERT INTO rest_consumer_fixture.item (key,name) VALUES ('push-one','Pushed customer')", &[]).await?;
     let pushes = wait(project, "netsuite_push", 1).await?;
+    // An event trigger is a workflow row, so the run names it by its wiring
+    // id and records its CDC delivery as the invoker.
     ensure!(
         pushes[0]["trigger_source"] == "event"
             && pushes[0]["service_principal_id"].is_null()
-            && pushes[0]["registration_id"]
+            && pushes[0]["registration_id"].is_null()
+            && pushes[0]["invoked_by"]
                 .as_str()
-                .is_some_and(|id| !id.is_empty()),
+                .is_some_and(|delivery| delivery.starts_with("event:"))
+            && pushes[0]["execution_principal_id"]
+                == wamn_project_state::workflow_user_id().to_string()
+            && pushes[0]["execution_role"] == "connector-push",
         "wrong push identity: {pushes:?}"
     );
     // A scheduled pull can land again while the push waits, so only the PUTs count.
@@ -200,6 +206,10 @@ pub async fn assertions(
         None,
     )
     .await?;
+    // The role is granted in SQL, which drops no auth key, and the pull and
+    // push runs left the workflow user's grants in the host's memory. Wait
+    // until that memory expires.
+    tokio::time::sleep(wamn_platform_identity::auth_changes::AUTH_TTL).await;
     let replay = super::integration::start_workflow(
         workflows,
         "netsuite",

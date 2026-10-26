@@ -201,6 +201,96 @@ pub async fn start_workflow(
         .with_context(|| format!("workflow.start refused: {body}"))
 }
 
+/// Admit a manual fixture run as `workflow.start` admits it, for a release
+/// that serves no application host routes. The HTTP environment has no
+/// session issuer, so its release cannot serve them. The run records the
+/// served release, so the deployed executor claims it.
+pub async fn admit_workflow(
+    environment: &WorkflowEnvironment<'_>,
+    application: &str,
+    workflow_id: &str,
+    input: &Value,
+    key: &str,
+) -> anyhow::Result<String> {
+    use wamn_runtime::plugins::wamn_postgres::{
+        AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
+        WamnPostgresConfig,
+    };
+
+    let (project, task) = connect_owned(environment.project_url).await?;
+    let bytes: Vec<u8> = project.query_one(
+        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id=$1 AND manifest_digest=$2",
+        &[&environment.tenant, &environment.digest],
+    ).await?.get(0);
+    task.abort();
+    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    let postgres = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::default().with_class(
+            AuthorityClass::ExecutorPlatform,
+            environment.project_url.to_owned(),
+        )),
+        guest_pool_max_size: 2,
+        platform_pool_max_size: 2,
+        wait_timeout_ms: 5_000,
+        statement_timeout_ms: 10_000,
+        row_limit: 10_000,
+    })?;
+    let workflow = postgres
+        .enabled_workflow(
+            "default",
+            environment.tenant,
+            environment.scope.env.as_str(),
+            application,
+            workflow_id,
+        )
+        .await?
+        .context("the workflow is enabled")?;
+    let role = workflow
+        .execution_role
+        .as_deref()
+        .context("the fixture workflow runs with a role")?;
+    let packages = &environment
+        .applications
+        .get(application)
+        .context("the environment declares the application")?
+        .packages;
+    let node_digests: serde_json::Map<String, Value> = wamn_catalog::resolve_workflow_components(
+        environment.tenant,
+        packages,
+        &manifest,
+        &workflow.graph,
+    )
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?
+    .into_iter()
+    .map(|(node, component)| (node, Value::String(component.component_digest)))
+    .collect();
+    let admitted = postgres
+        .admit_manual_run(
+            "default",
+            environment.tenant,
+            &ManualRunAdmission {
+                package_id: application,
+                manifest_digest: environment.digest,
+                environment: environment.scope.env.as_str(),
+                workflow_id,
+                workflow_version: workflow.version,
+                wiring_hash: &workflow.wiring_hash,
+                execution_principal_id: &wamn_project_state::workflow_user_id().to_string(),
+                execution_role: role,
+                invoked_by_user_id: ENABLER,
+                node_digests: &Value::Object(node_digests),
+                idempotency_key: &format!("manual:{ENABLER}:{workflow_id}:{key}"),
+                input,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let ManualRunAdmitted::Queued { run_id } = admitted else {
+        anyhow::bail!("the fixture key {key} admitted no new run");
+    };
+    Ok(run_id)
+}
+
 /// The first minute boundary strictly after `after`.
 pub fn next_minute(after: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp(after.timestamp().div_euclid(60) * 60 + 60, 0)
@@ -1017,6 +1107,10 @@ async fn assert_schema_triggers(
         )
         .await?;
     }
+    // The roles are granted in SQL, which drops no auth key, and the earlier
+    // REST runs left the workflow user's grants in the host's memory. Wait
+    // until that memory expires.
+    tokio::time::sleep(wamn_platform_identity::auth_changes::AUTH_TTL).await;
     let jetstream = async_nats::jetstream::new(
         event_broker::connect(&broker.observer, &events.nats_url).await?,
     );
@@ -1110,7 +1204,8 @@ async fn assert_schema_triggers(
         }
         let rows: Value = project.query_one(
             "SELECT COALESCE(jsonb_agg(jsonb_build_object('workflow', wiring_id, 'delivery', invoked_by, \
-             'status', status, 'trigger', trigger_source) ORDER BY wiring_id), '[]') \
+             'status', status, 'trigger', trigger_source, 'fail_type', fail_type, \
+             'result', result_json) ORDER BY wiring_id), '[]') \
              FROM wamn_run.runs WHERE tenant_id = $1 AND package_id = 'rest_connector' AND wiring_id = ANY($2)",
             &[&workflows.tenant, &&ids[..]],
         ).await?.get(0);
