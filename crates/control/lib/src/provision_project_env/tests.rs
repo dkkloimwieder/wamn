@@ -309,16 +309,17 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         org: "demo",
         project: "billing",
         environment: "dev",
-        tenant: "tenant",
     };
     for family in WorkloadRoleFamily::ALL {
-        let lifecycle = workload_lifecycle(family, identity, "wamn-db-demo--billing--dev");
+        let lifecycle =
+            workload_lifecycle(family, identity, "tenant", "wamn-db-demo--billing--dev");
         assert_eq!(lifecycle.family, family);
         assert_eq!(lifecycle.database(), "wamn-db-demo--billing--dev");
         // The scope grain is the family's own declaration, so a family can
         // never be paired with the wrong one here.
         assert_eq!(lifecycle.scope, {
-            let probe = workload_lifecycle(family, identity, "wamn-db-demo--billing--dev");
+            let probe =
+                workload_lifecycle(family, identity, "tenant", "wamn-db-demo--billing--dev");
             probe.scope
         });
         let a = lifecycle.role(CredentialGeneration::A);
@@ -820,9 +821,13 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
         org: "demo",
         project: "inventory",
         environment: "dev",
-        tenant: "tenant",
     };
-    let lifecycle = workload_lifecycle(WorkloadRoleFamily::ManagementAdmitter, identity, DATABASE);
+    let lifecycle = workload_lifecycle(
+        WorkloadRoleFamily::ManagementAdmitter,
+        identity,
+        "tenant",
+        DATABASE,
+    );
     assert_eq!(lifecycle.family, WorkloadRoleFamily::ManagementAdmitter);
     assert_eq!(lifecycle.database(), DATABASE);
     assert_eq!(lifecycle.label(), "management-admitter");
@@ -864,7 +869,7 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
     // against one another.
     let keys: BTreeSet<String> = WorkloadRoleFamily::ALL
         .into_iter()
-        .map(|family| workload_lifecycle(family, identity, DATABASE).family_lock_key())
+        .map(|family| workload_lifecycle(family, identity, "tenant", DATABASE).family_lock_key())
         .collect();
     assert_eq!(keys.len(), WorkloadRoleFamily::ALL.len());
 

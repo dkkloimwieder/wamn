@@ -28,9 +28,10 @@ pub(super) async fn apply(
     let image = runner_image(directory)?;
     let mut prepared = Vec::new();
     for (path, environment) in super::broker::documents(environments)? {
-        let tenant = format!(
-            "{}--{}--{}",
-            environment.org, environment.project, environment.env
+        let tenant = wamn_control_registry::project_env_tenant(
+            &environment.org,
+            &environment.project,
+            &environment.env,
         );
         let mut request = JobRequest {
             name: format!("platform-release-{tenant}"),
@@ -43,12 +44,6 @@ pub(super) async fn apply(
                 "$(WAMN_PG_ADMIN_URL)".into(),
                 "--control-database-url".into(),
                 "$(WAMN_SYSTEM_ADMIN_URL)".into(),
-                "--org".into(),
-                environment.org.clone(),
-                "--tenant".into(),
-                tenant.clone(),
-                "--environment".into(),
-                environment.env.clone(),
                 "--verified-publisher-principal".into(),
                 format!("wamn-management-author-{tenant}"),
                 "--run-schema".into(),

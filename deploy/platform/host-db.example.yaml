@@ -13,7 +13,7 @@
 # No carrier in this tier spells an sslmode, this one included.
 #
 # SOURCE: run `wamn-ctl provision-project-env` with the normal org/project/env
-# and admin arguments plus `--tenant <tenant>`,
+# and admin arguments plus
 # `--prepare-guest-generation <a|b>`, and `--emit-guest-secret <path>`, then copy
 # the emitted `url` into this stable operator-owned Secret. The demo role below
 # is the exact generation for tenant `demo-tenant` in database `wamn`; substitute

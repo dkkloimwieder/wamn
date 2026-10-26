@@ -97,7 +97,7 @@ fn fixture() -> Fixture {
         database_url: String::new(),
         control_database_url: String::new(),
         org: "rest".into(),
-        tenant: scope.tenant_id.clone(),
+        project: "publication".into(),
         environment: "test".into(),
         verified_publisher_principal: "publisher".into(),
         run_schema: "catalog".into(),
@@ -181,7 +181,7 @@ fn gate_documents(
         .map(|p| p.package_id().to_owned())
         .collect();
     for (_, document) in documents {
-        wamn_catalog::gate_workflow_document(&args.tenant, &packages, manifest, document)?;
+        wamn_catalog::gate_workflow_document(&args.tenant(), &packages, manifest, document)?;
     }
     Ok(())
 }

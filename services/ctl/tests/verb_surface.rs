@@ -188,7 +188,9 @@ fn terminalize_surface_accepts_no_asserted_effect_identity_or_outcome() {
         "terminalize-effect-uncertain",
     );
     for required in [
-        "--tenant",
+        "--org",
+        "--project",
+        "--environment",
         "--run",
         "--basis",
         "--evidence-ref",

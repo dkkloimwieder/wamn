@@ -9,7 +9,6 @@ use tokio_postgres::{Row, Transaction};
 /// evidence digest (docs/plan/platform-deploy.md §10.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StageIdentity {
-    pub tenant_id: String,
     pub package_id: String,
     pub package_version: String,
     pub predecessor_version: String,
@@ -79,6 +78,7 @@ pub(crate) async fn require_no_other_stage(
 /// Create or lock a stage. A completed retry returns the retained final cursor.
 pub(crate) async fn open(
     tx: &Transaction<'_>,
+    tenant: &str,
     identity: &StageIdentity,
     initial_cursor: &Value,
 ) -> anyhow::Result<StageProgress> {
@@ -89,7 +89,7 @@ pub(crate) async fn open(
          VALUES ($1,$2,$3,$4,$5,$6,$7,'in_progress',$8) \
          ON CONFLICT (tenant_id,package_id,package_version) DO NOTHING",
         &[
-            &identity.tenant_id,
+            &tenant,
             &identity.package_id,
             &identity.package_version,
             &identity.predecessor_version,
@@ -101,7 +101,7 @@ pub(crate) async fn open(
     )
     .await
     .context("create package upgrade stage progress")?;
-    let progress = locked(tx, identity).await?;
+    let progress = locked(tx, tenant, identity).await?;
     ensure!(
         progress.status != StageStatus::Abandoned,
         "package upgrade stage {}@{} was abandoned; retained cursor {}",
@@ -115,16 +115,17 @@ pub(crate) async fn open(
 /// Record a committed batch in the same transaction as its application writes.
 pub(crate) async fn advance(
     tx: &Transaction<'_>,
+    tenant: &str,
     identity: &StageIdentity,
     cursor: &Value,
 ) -> anyhow::Result<StageProgress> {
-    let progress = locked(tx, identity).await?;
+    let progress = locked(tx, tenant, identity).await?;
     require_in_progress(identity, &progress)?;
     let row = tx.query_one(
         "UPDATE catalog.package_upgrade_stages SET cursor=$4, completed_batches=completed_batches+1 \
          WHERE tenant_id=$1 AND package_id=$2 AND package_version=$3 \
          RETURNING status,cursor,completed_batches",
-        &[&identity.tenant_id, &identity.package_id, &identity.package_version, cursor],
+        &[&tenant, &identity.package_id, &identity.package_version, cursor],
     ).await.context("record package upgrade batch cursor")?;
     decode(&row)
 }
@@ -133,31 +134,34 @@ pub(crate) async fn advance(
 /// An exact retry returns the existing result without changing the record.
 pub(crate) async fn complete(
     tx: &Transaction<'_>,
+    tenant: &str,
     identity: &StageIdentity,
 ) -> anyhow::Result<StageProgress> {
-    let progress = locked(tx, identity).await?;
+    let progress = locked(tx, tenant, identity).await?;
     if progress.status == StageStatus::Completed {
         return Ok(progress);
     }
     require_in_progress(identity, &progress)?;
-    set_status(tx, identity, "completed").await
+    set_status(tx, tenant, identity, "completed").await
 }
 
 /// Abandon a stage and return its retained cursor without changing installed packages.
 pub(crate) async fn abandon(
     tx: &Transaction<'_>,
+    tenant: &str,
     identity: &StageIdentity,
 ) -> anyhow::Result<StageProgress> {
-    let progress = locked(tx, identity).await?;
+    let progress = locked(tx, tenant, identity).await?;
     if progress.status == StageStatus::Abandoned {
         return Ok(progress);
     }
     require_in_progress(identity, &progress)?;
-    set_status(tx, identity, "abandoned").await
+    set_status(tx, tenant, identity, "abandoned").await
 }
 
 async fn set_status(
     tx: &Transaction<'_>,
+    tenant: &str,
     identity: &StageIdentity,
     status: &str,
 ) -> anyhow::Result<StageProgress> {
@@ -167,7 +171,7 @@ async fn set_status(
          WHERE tenant_id=$1 AND package_id=$2 AND package_version=$3 \
          RETURNING status,cursor,completed_batches",
             &[
-                &identity.tenant_id,
+                &tenant,
                 &identity.package_id,
                 &identity.package_version,
                 &status,
@@ -178,13 +182,17 @@ async fn set_status(
     decode(&row)
 }
 
-async fn locked(tx: &Transaction<'_>, identity: &StageIdentity) -> anyhow::Result<StageProgress> {
+async fn locked(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    identity: &StageIdentity,
+) -> anyhow::Result<StageProgress> {
     let row = tx.query_opt(
         "SELECT predecessor_version,package_artifact_digest,predecessor_release_digest,evidence_digest,\
                 status,cursor,completed_batches \
          FROM catalog.package_upgrade_stages \
          WHERE tenant_id=$1 AND package_id=$2 AND package_version=$3 FOR UPDATE",
-        &[&identity.tenant_id, &identity.package_id, &identity.package_version],
+        &[&tenant, &identity.package_id, &identity.package_version],
     ).await.context("lock package upgrade stage progress")?
         .with_context(|| format!("package upgrade stage {}@{} has no recorded cursor", identity.package_id, identity.package_version))?;
     for (field, expected) in [
@@ -241,7 +249,6 @@ mod tests {
 
     fn identity(version: &str) -> StageIdentity {
         StageIdentity {
-            tenant_id: "stage-test".into(),
             package_id: "fixture".into(),
             package_version: version.into(),
             predecessor_version: "1.0.0".into(),
@@ -284,7 +291,9 @@ mod tests {
         assert_eq!(fresh, migrated);
         let identity = identity("2.0.0");
         let tx = client.transaction().await.unwrap();
-        open(&tx, &identity, &Value::Null).await.unwrap();
+        open(&tx, "stage-test", &identity, &Value::Null)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         for sql in [
             "UPDATE catalog.package_upgrade_stages SET predecessor_version='0.9.0'",
@@ -304,7 +313,7 @@ mod tests {
             tx.rollback().await.unwrap();
         }
         let tx = client.transaction().await.unwrap();
-        complete(&tx, &identity).await.unwrap();
+        complete(&tx, "stage-test", &identity).await.unwrap();
         tx.commit().await.unwrap();
         let tx = client.transaction().await.unwrap();
         let error = tx
@@ -336,21 +345,30 @@ mod tests {
         client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false); INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('stage-test','fixture','1.0.0','sha256:' || repeat('c',64));").await.unwrap();
         let identity = identity("2.0.0");
         let tx = client.transaction().await.unwrap();
-        let initial = open(&tx, &identity, &Value::Null).await.unwrap();
+        let initial = open(&tx, "stage-test", &identity, &Value::Null)
+            .await
+            .unwrap();
         assert_eq!(initial.cursor, Value::Null);
         tx.commit().await.unwrap();
 
         let tx = client.transaction().await.unwrap();
-        open(&tx, &identity, &json!("ignored on resume"))
+        open(&tx, "stage-test", &identity, &json!("ignored on resume"))
             .await
             .unwrap();
         tx.execute("UPDATE retained SET converted=true WHERE id=1", &[])
             .await
             .unwrap();
-        advance(&tx, &identity, &json!({"id":1})).await.unwrap();
+        advance(&tx, "stage-test", &identity, &json!({"id":1}))
+            .await
+            .unwrap();
         tx.rollback().await.unwrap();
         let tx = client.transaction().await.unwrap();
-        assert_eq!(open(&tx, &identity, &Value::Null).await.unwrap(), initial);
+        assert_eq!(
+            open(&tx, "stage-test", &identity, &Value::Null)
+                .await
+                .unwrap(),
+            initial
+        );
         assert!(
             !tx.query_one("SELECT converted FROM retained WHERE id=1", &[])
                 .await
@@ -360,10 +378,17 @@ mod tests {
         tx.execute("UPDATE retained SET converted=true WHERE id=1", &[])
             .await
             .unwrap();
-        let committed = advance(&tx, &identity, &json!({"id":1})).await.unwrap();
+        let committed = advance(&tx, "stage-test", &identity, &json!({"id":1}))
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         let tx = client.transaction().await.unwrap();
-        assert_eq!(open(&tx, &identity, &Value::Null).await.unwrap(), committed);
+        assert_eq!(
+            open(&tx, "stage-test", &identity, &Value::Null)
+                .await
+                .unwrap(),
+            committed
+        );
         assert_eq!(committed.completed_batches, 1);
         tx.commit().await.unwrap();
 
@@ -383,7 +408,7 @@ mod tests {
             }
             let tx = client.transaction().await.unwrap();
             assert!(
-                open(&tx, &changed, &Value::Null)
+                open(&tx, "stage-test", &changed, &Value::Null)
                     .await
                     .unwrap_err()
                     .to_string()
@@ -392,20 +417,27 @@ mod tests {
             tx.rollback().await.unwrap();
         }
         let tx = client.transaction().await.unwrap();
-        let abandoned = abandon(&tx, &identity).await.unwrap();
+        let abandoned = abandon(&tx, "stage-test", &identity).await.unwrap();
         assert_eq!(abandoned.cursor, committed.cursor);
         tx.commit().await.unwrap();
         let tx = client.transaction().await.unwrap();
         assert!(
-            open(&tx, &identity, &Value::Null)
+            open(&tx, "stage-test", &identity, &Value::Null)
                 .await
                 .unwrap_err()
                 .to_string()
                 .contains("retained cursor {\"id\":1}")
         );
-        assert!(advance(&tx, &identity, &json!({"id":2})).await.is_err());
-        assert!(complete(&tx, &identity).await.is_err());
-        assert_eq!(abandon(&tx, &identity).await.unwrap(), abandoned);
+        assert!(
+            advance(&tx, "stage-test", &identity, &json!({"id":2}))
+                .await
+                .is_err()
+        );
+        assert!(complete(&tx, "stage-test", &identity).await.is_err());
+        assert_eq!(
+            abandon(&tx, "stage-test", &identity).await.unwrap(),
+            abandoned
+        );
         assert_eq!(
             tx.query_one(
                 "SELECT package_version FROM catalog.packages WHERE tenant_id='stage-test'",
@@ -420,24 +452,39 @@ mod tests {
 
         let completed_identity = self::identity("3.0.0");
         let tx = client.transaction().await.unwrap();
-        open(&tx, &completed_identity, &Value::Null).await.unwrap();
-        advance(&tx, &completed_identity, &json!({"id":2}))
+        open(&tx, "stage-test", &completed_identity, &Value::Null)
             .await
             .unwrap();
-        let completed = complete(&tx, &completed_identity).await.unwrap();
+        advance(&tx, "stage-test", &completed_identity, &json!({"id":2}))
+            .await
+            .unwrap();
+        let completed = complete(&tx, "stage-test", &completed_identity)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         let tx = client.transaction().await.unwrap();
         assert_eq!(
-            open(&tx, &completed_identity, &Value::Null).await.unwrap(),
+            open(&tx, "stage-test", &completed_identity, &Value::Null)
+                .await
+                .unwrap(),
             completed
         );
-        assert_eq!(complete(&tx, &completed_identity).await.unwrap(), completed);
+        assert_eq!(
+            complete(&tx, "stage-test", &completed_identity)
+                .await
+                .unwrap(),
+            completed
+        );
         assert!(
-            advance(&tx, &completed_identity, &Value::Null)
+            advance(&tx, "stage-test", &completed_identity, &Value::Null)
                 .await
                 .is_err()
         );
-        assert!(abandon(&tx, &completed_identity).await.is_err());
+        assert!(
+            abandon(&tx, "stage-test", &completed_identity)
+                .await
+                .is_err()
+        );
         tx.rollback().await.unwrap();
 
         client

@@ -15,7 +15,7 @@ use super::{
 };
 use crate::apply_package::{self, ApplyPackageRequest};
 
-const TENANT: &str = "effective-release-poc";
+const TENANT: &str = "effective-release-poc--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PUBLISHER: &str = "effective-release-poc-publisher";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
@@ -173,7 +173,9 @@ async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
             package: crate::package_artifact::fixture_package_root(&input.root)
                 .expect("read the fixture package root"),
             database_url: project_url.to_owned(),
-            tenant: TENANT.to_owned(),
+            org: "effective-release-poc".into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
         })
         .await
         .unwrap_or_else(|error| panic!("apply {}@{}: {error:#}", input.id, input.version));
@@ -312,7 +314,8 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     let attachments =
         resolve_route_methods(&authored_attachments, &kinds).expect("resolve the route methods");
     let request = PublishReleaseManifest {
-        tenant_id: TENANT,
+        org: "effective-release-poc",
+        project: "fixture",
         environment: ENVIRONMENT,
         verified_publisher_principal: PUBLISHER,
         packages: &packages,

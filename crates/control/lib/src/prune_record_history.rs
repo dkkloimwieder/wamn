@@ -40,9 +40,16 @@ pub struct PruneRecordHistoryRequest {
     /// generation. The verb refuses any other login.
     pub database_url: String,
 
-    /// The tenant that the mounted audit retention credential was minted for.
-    /// A different tenant refuses before any statement runs.
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+}
+
+impl PruneRecordHistoryRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// The result of pruning one history table.
@@ -63,15 +70,18 @@ pub struct PrunedHistory {
 pub async fn prune_expired_record_history(
     request: PruneRecordHistoryRequest,
 ) -> anyhow::Result<Vec<PrunedHistory>> {
-    if request.tenant.trim().is_empty() {
-        bail!("the tenant must be non-empty (it names the tenant of the retention credential)");
+    if [&request.org, &request.project, &request.environment]
+        .iter()
+        .any(|part| part.trim().is_empty())
+    {
+        bail!("org, project and environment must be non-empty");
     }
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("audit retention credential connect")?;
     let connection_task = tokio::spawn(connection);
     let result = async {
-        verify_audit_retention_identity(&client, &request.tenant).await?;
+        verify_audit_retention_identity(&client, &request.tenant()).await?;
         prune(&mut client).await
     }
     .await;
@@ -83,7 +93,7 @@ pub async fn prune_expired_record_history(
 /// Refuse unless the connected role is one of the two audit retention
 /// generations of this exact `(tenant, database)` pair.
 ///
-/// The verb derives the expected names from `--tenant` and the server's
+/// The verb derives the expected names from the environment coordinate and the server's
 /// `current_database()`. The URL is operator input, so the verb does not read
 /// the database from it.
 async fn verify_audit_retention_identity(client: &Client, tenant: &str) -> anyhow::Result<()> {

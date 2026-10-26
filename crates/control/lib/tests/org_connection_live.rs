@@ -165,11 +165,11 @@ async fn counts(client: &Client) -> (i64, i64) {
 
 async fn apply(
     url: &str,
-    tenant: &str,
+    document: &EnvironmentDocument,
     inputs: &BTreeMap<String, ResolvedConnection>,
     targets: &[(String, String, String)],
 ) {
-    materialize_connections(url, tenant, "dev", inputs, targets)
+    materialize_connections(url, document, inputs, targets)
         .await
         .unwrap();
 }
@@ -263,13 +263,13 @@ async fn org_connection_materializes_once_per_environment() {
     let mut partial = targets_a.clone();
     partial[1].1 = format!("sha256:{}", "9".repeat(64));
     assert!(
-        materialize_connections(database_a.url(), &tenant_a, "dev", &inputs_a, &partial)
+        materialize_connections(database_a.url(), &doc_a, &inputs_a, &partial)
             .await
             .is_err()
     );
     assert_eq!(counts(&a).await, (1, 1));
-    apply(database_a.url(), &tenant_a, &inputs_a, &targets_a).await;
-    apply(database_b.url(), &tenant_b, &inputs_b, &targets_b).await;
+    apply(database_a.url(), &doc_a, &inputs_a, &targets_a).await;
+    apply(database_b.url(), &doc_b, &inputs_b, &targets_b).await;
     assert_eq!(counts(&a).await, (1, 2));
     assert_eq!(counts(&b).await, (1, 2));
 
@@ -302,7 +302,7 @@ async fn org_connection_materializes_once_per_environment() {
         .await
         .unwrap()
         .get(0);
-    apply(database_a.url(), &tenant_a, &inputs_a, &targets_a).await;
+    apply(database_a.url(), &doc_a, &inputs_a, &targets_a).await;
     assert_eq!(counts(&a).await, (1, 2));
     assert_eq!(
         a.query_one("SELECT revision FROM catalog.connection_instances", &[])
@@ -314,7 +314,7 @@ async fn org_connection_materializes_once_per_environment() {
 
     // Repair source metadata without creating another immutable generation.
     a.execute("UPDATE catalog.connection_instances SET org_connection_name = NULL, revision = revision + 1", &[]).await.unwrap();
-    apply(database_a.url(), &tenant_a, &inputs_a, &targets_a).await;
+    apply(database_a.url(), &doc_a, &inputs_a, &targets_a).await;
     assert_eq!(counts(&a).await, (1, 2));
     assert_eq!(
         a.query_one("SELECT revision FROM catalog.connection_instances", &[])
@@ -331,7 +331,7 @@ async fn org_connection_materializes_once_per_environment() {
     org_connection::declare(&declaration).await.unwrap();
     apply(
         database_a.url(),
-        &tenant_a,
+        &doc_a,
         &resolve_connections(
             &doc_a,
             &org_connection::snapshot(&control, "acme").await.unwrap(),
@@ -345,19 +345,19 @@ async fn org_connection_materializes_once_per_environment() {
     declaration.definition = definition("changed.example");
     org_connection::declare(&declaration).await.unwrap();
     // A declaration after a snapshot takes effect only in the next snapshot.
-    apply(database_a.url(), &tenant_a, &inputs_a, &targets_a).await;
+    apply(database_a.url(), &doc_a, &inputs_a, &targets_a).await;
     assert_eq!(counts(&a).await, (1, 2));
     let changed = org_connection::snapshot(&control, "acme").await.unwrap();
     let next_a = resolve_connections(&doc_a, &changed).unwrap();
-    apply(database_a.url(), &tenant_a, &next_a, &targets_a).await;
-    apply(database_a.url(), &tenant_a, &next_a, &targets_a).await;
+    apply(database_a.url(), &doc_a, &next_a, &targets_a).await;
+    apply(database_a.url(), &doc_a, &next_a, &targets_a).await;
     assert_eq!(counts(&a).await, (2, 2));
     assert_eq!(counts(&b).await, (1, 2));
     let previous_b = selected(database_b.url(), &tenant_b, &targets_b[0]).await;
     assert_eq!(previous_b.definition, Some(definition("erp.example")));
     apply(
         database_b.url(),
-        &tenant_b,
+        &doc_b,
         &resolve_connections(&doc_b, &changed).unwrap(),
         &targets_b,
     )
@@ -394,7 +394,8 @@ async fn org_connection_materializes_once_per_environment() {
 async fn binding_refuses_a_handle_from_another_org_before_connecting() {
     let mut instance = wamn_control::bind_connection::ConnectionInstance {
         database_url: "invalid database URL".into(),
-        tenant: "acme--erp--dev".into(),
+        org: "acme".into(),
+        project: "erp".into(),
         environment: "dev".into(),
         instance_id: "erp".into(),
         requirement_type: RequirementType::Http,

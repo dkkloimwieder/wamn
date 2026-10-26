@@ -56,7 +56,8 @@ pub struct WorkflowEnvironment<'a> {
 impl WorkflowEnvironment<'_> {
     fn version<'a>(&'a self, application: &'a str, workflow_id: &'a str) -> WorkflowVersion<'a> {
         WorkflowVersion {
-            tenant_id: self.tenant,
+            org: &self.scope.org,
+            project: &self.scope.project,
             environment: &self.scope.env,
             application,
             workflow_id,
@@ -391,7 +392,8 @@ pub async fn enable_trigger(
         environment.project_url,
         environment.system_url,
         &AuthorWorkflowRequest {
-            tenant_id: tenant,
+            org: &environment.scope.org,
+            project: &environment.scope.project,
             environment: &environment.scope.env,
             application,
             declared: environment.applications,
@@ -887,7 +889,7 @@ async fn publish(
         database_url: String::new(),
         control_database_url: String::new(),
         org: ORG.into(),
-        tenant: tenant.into(),
+        project: PROJECT.into(),
         environment: ENVIRONMENT.into(),
         verified_publisher_principal: "kind-fixture".into(),
         run_schema: "wamn_run".into(),

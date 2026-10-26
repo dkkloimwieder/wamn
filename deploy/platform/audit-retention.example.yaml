@@ -56,7 +56,9 @@ spec:
                 [
                   "--log-level", "error",
                   "prune-record-history",
-                  "--tenant", "poc-f1",
+                  "--org", "<org>",
+                  "--project", "<project>",
+                  "--environment", "<environment>",
                 ]
               env:
                 # The audit retention generation connection, from a Secret

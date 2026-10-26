@@ -53,7 +53,6 @@ pub(crate) fn identity() -> &'static ReleaseIdentity {
             org: "acme".to_owned(),
             project: "wms".to_owned(),
             environment: "dev".to_owned(),
-            tenant: "acme--wms--dev".to_owned(),
             route_host: "wms.localhost".to_owned(),
             packages: match candidate {
                 Some(candidate) => {
@@ -223,7 +222,6 @@ pub async fn prepare_project(
         admin_database_url: route.database_url.clone(),
         org: identity().org.clone(),
         project: identity().project.clone(),
-        tenant: identity().tenant.clone(),
         env: identity().environment.clone(),
         schema: "wamn_run".into(),
         dry_run: false,
@@ -328,7 +326,7 @@ async fn after_install(route: &ProvisionedRoute, package: PathBuf) -> anyhow::Re
         identity().org.as_str(),
         identity().project.as_str(),
         identity().environment.as_str(),
-        identity().tenant.as_str(),
+        identity().tenant().as_str(),
         PLATFORM_DOMAIN,
     )
     .await?;
@@ -381,7 +379,8 @@ pub async fn install(
             );
             bind_connection::bind(&BindConnectionRequest {
                 database_url: route.database_url.clone(),
-                tenant: identity().tenant.clone(),
+                org: identity().org.clone(),
+                project: identity().project.clone(),
                 environment: identity().environment.clone(),
                 instance_id: connection.store_alias.clone(),
                 requirement_type: RequirementType::Blobstore,
@@ -481,7 +480,7 @@ fn component_declaration(
     )?;
     route_schema::merge_operations(&mut source, generated.as_ref())?;
     let scope = ComponentPackageScope::new(
-        identity().tenant.as_str(),
+        identity().tenant().as_str(),
         package.package_id(),
         package.package_version(),
     )?;
@@ -574,13 +573,17 @@ pub async fn publish(
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: installed.clone(),
         database_url: route.database_url.clone(),
-        tenant: identity().tenant.clone(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        environment: identity().environment.clone(),
     })
     .await?;
     shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
         packages: vec![installed],
         database_url: route.database_url.clone(),
-        tenant: identity().tenant.clone(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        environment: identity().environment.clone(),
     })
     .await?;
     after_install(route, package_root()).await?;
@@ -592,7 +595,7 @@ pub async fn publish(
     let blob_declaration = evidence.join("blob-put.declaration.json");
     let jsonata_declaration = evidence.join("jsonata.declaration.json");
     let store_alias = label_store_alias(&root)?;
-    wms_component_declaration(&root, identity().tenant.as_str(), &wms_declaration)?;
+    wms_component_declaration(&root, identity().tenant().as_str(), &wms_declaration)?;
     let label_packages = component_declaration(
         &repository.join("apps/platform/no-std/label-render/declaration.json.in"),
         &label_declaration,
@@ -653,7 +656,7 @@ pub async fn publish(
             database_url: route.database_url.clone(),
             control_database_url: inputs.system_pg_url.clone(),
             org: identity().org.clone(),
-            tenant: identity().tenant.clone(),
+            project: identity().project.clone(),
             environment: identity().environment.clone(),
             verified_publisher_principal: route
                 .management_principal_subject
@@ -718,7 +721,8 @@ pub async fn publish(
     let definition = json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"});
     bind_connection::bind(&BindConnectionRequest {
         database_url: route.database_url.clone(),
-        tenant: identity().tenant.clone(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
         environment: identity().environment.clone(),
         instance_id: store_alias.clone(),
         requirement_type: RequirementType::Blobstore,
@@ -779,7 +783,7 @@ async fn author_event_workflow(
     let digest: String = project
         .query_one(
             "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-            &[&identity().tenant.as_str()],
+            &[&identity().tenant().as_str()],
         )
         .await?
         .get(0);
@@ -799,7 +803,8 @@ async fn author_event_workflow(
             identity().environment.as_str(),
         ),
         &AuthorWorkflowRequest {
-            tenant_id: &identity().tenant,
+            org: &identity().org,
+            project: &identity().project,
             environment: identity().environment.as_str(),
             application: "wamn_wms",
             declared: &declared,

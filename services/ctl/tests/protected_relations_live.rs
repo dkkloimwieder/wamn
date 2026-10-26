@@ -207,7 +207,9 @@ async fn install_project_database(client: &Client, url: &str) {
             ),
         },
         database_url: url.to_string(),
-        tenant: "protected-relation-audit".to_string(),
+        org: "protected-relation-audit".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .expect("apply the package-owned fixture migration stream");

@@ -38,7 +38,7 @@ const PROJECT: &str = "widgets";
 const ENVIRONMENT: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const OTHER_INSTANCE: &str = "p7x2m9k3";
-const TENANT: &str = "t1";
+const TENANT: &str = "sessioncli--widgets--dev";
 
 fn database(instance: &str) -> String {
     project_env_database_name(ORG, PROJECT, ENVIRONMENT, instance)
@@ -77,7 +77,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 async fn cli(
     system_url: &str,
     project_url: &str,
-    tenant: &str,
+    org: &str,
     action: &str,
     generation: &str,
     output_path: Option<&Path>,
@@ -87,13 +87,11 @@ async fn cli(
         .args([
             "provision-project-env",
             "--org",
-            ORG,
+            org,
             "--project",
             PROJECT,
             "--env",
             ENVIRONMENT,
-            "--tenant",
-            tenant,
             "--system-database-url",
             system_url,
             "--target-admin-database-url",
@@ -323,7 +321,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
         &cli(
             system_url,
             &database_url(system_url, &database(OTHER_INSTANCE))?,
-            TENANT,
+            ORG,
             "--prepare-session-role-reader-generation",
             "a",
             Some(&a_path),
@@ -338,7 +336,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
     let output = cli(
         system_url,
         &project_url,
-        TENANT,
+        ORG,
         "--prepare-session-role-reader-generation",
         "a",
         Some(&a_path),
@@ -399,7 +397,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
         &cli(
             system_url,
             &project_url,
-            TENANT,
+            ORG,
             "--prepare-session-role-reader-generation",
             "b",
             Some(&broken),
@@ -417,7 +415,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
         &cli(
             system_url,
             &project_url,
-            TENANT,
+            ORG,
             "--prepare-session-role-reader-generation",
             "b",
             Some(&b_path),
@@ -434,7 +432,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
         &cli(
             system_url,
             &project_url,
-            TENANT,
+            ORG,
             "--retire-session-role-reader-generation",
             "a",
             None,
@@ -455,20 +453,20 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
 }
 
 #[tokio::test]
-async fn compiled_session_reader_refuses_invalid_tenants_before_io() {
+async fn compiled_session_reader_refuses_invalid_coordinates_before_io() {
     let url = "postgres://postgres:session-target-fixture-password@127.0.0.1:1/wamn_system";
-    for tenant in ["bad/tenant", "", &"x".repeat(65)] {
+    for org in ["bad/org", "", &"x".repeat(65)] {
         let output = cli(
             url,
             url,
-            tenant,
+            org,
             "--prepare-session-role-reader-generation",
             "a",
             Some(Path::new("/tmp/session-target-invalid-must-not-exist.json")),
         )
         .await
         .unwrap();
-        refusal(&output, "tenant").unwrap();
+        refusal(&output, "project-env names").unwrap();
         assert!(!String::from_utf8_lossy(&output.stderr).contains("connect"));
     }
 }

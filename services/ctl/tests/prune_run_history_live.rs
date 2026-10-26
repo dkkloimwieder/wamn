@@ -30,10 +30,10 @@ use wamn_test_infrastructure::locked_database;
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const SCHEMA: &str = "wamn_run";
-const TENANT: &str = "run-retention-t";
+const TENANT: &str = "run-retention-t--fixture--dev";
 /// A second tenant with history of its own. Without it the cross-tenant
 /// refusal could not be told from a match of nothing.
-const OTHER_TENANT: &str = "run-retention-other";
+const OTHER_TENANT: &str = "run-retention-other--fixture--dev";
 const PACKAGE_ID: &str = "run_retention_fixture";
 /// The release every seeded run pins: the digest of the bytes `{}`.
 const RELEASE_DIGEST: &str =
@@ -164,15 +164,19 @@ async fn keys(admin: &Client, relation: &str) -> Vec<String> {
         .collect()
 }
 
-fn prune_argv<'a>(url: &'a str, tenant: &'a str) -> [&'a str; 9] {
+fn prune_argv<'a>(url: &'a str, tenant: &'a str) -> [&'a str; 13] {
     [
         "prune-run-history",
         "--database-url",
         url,
         "--schema",
         SCHEMA,
-        "--tenant",
-        tenant,
+        "--org",
+        tenant.split("--").next().expect("fixture org"),
+        "--project",
+        "fixture",
+        "--environment",
+        "dev",
         "--retention-days",
         RETENTION_DAYS,
     ]
@@ -329,8 +333,18 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_tenant() {
     let app_url = replace_role(&url, APP_ROLE, APP_PASSWORD);
 
     // The refusals run first, against the populated store.
-    assert_refused(&credential_url, OTHER_TENANT, "foreign --tenant").await;
-    assert_refused(&credential_url, "no-such-tenant", "unknown --tenant").await;
+    assert_refused(
+        &credential_url,
+        OTHER_TENANT,
+        "foreign environment coordinate",
+    )
+    .await;
+    assert_refused(
+        &credential_url,
+        "no-such-tenant",
+        "unknown environment coordinate",
+    )
+    .await;
     assert_refused(&app_url, TENANT, "wamn_app login").await;
     assert_eq!(
         (keys(&admin, "runs").await, keys(&admin, "run_queue").await),

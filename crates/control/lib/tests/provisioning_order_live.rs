@@ -41,7 +41,7 @@ fn state_sql() -> String {
 const ORG: &str = "pg18order";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-const TENANT: &str = "tenant-order";
+const TENANT: &str = "pg18order--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 
 async fn connect(url: &str) -> Client {
@@ -77,7 +77,6 @@ fn prepare_args(
         org: ORG.to_string(),
         project: PROJECT.to_string(),
         env: ENVIRONMENT.to_string(),
-        tenant: Some(TENANT.to_string()),
         system_database_url: Some(system_url.to_string()),
         namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
         target_admin_database_url: Some(target_admin_url.to_string()),

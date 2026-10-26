@@ -33,7 +33,8 @@ use crate::reconcile_package_data_access::upgrade::{
 #[derive(Debug)]
 pub struct QualifyUpgradeRequest {
     pub database_url: String,
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
     pub environment: String,
     /// Manifest digest of the release the environment serves. It must be a
     /// row of `catalog.releases` and name the installed package versions
@@ -46,6 +47,13 @@ pub struct QualifyUpgradeRequest {
     /// Exact successor base artifact to which affected overlays re-pin.
     pub base_component: Option<PathBuf>,
     pub result: PathBuf,
+}
+
+impl QualifyUpgradeRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// The new immutable result file and its canonical content digest.
@@ -129,8 +137,10 @@ async fn qualify_upgrade_before_publication(
     before_publication: impl FnOnce() + Send,
 ) -> anyhow::Result<UpgradeQualificationOutcome> {
     ensure!(
-        !request.tenant.is_empty(),
-        "upgrade tenant must not be empty"
+        ![&request.org, &request.project, &request.environment]
+            .iter()
+            .any(|part| part.is_empty()),
+        "upgrade org, project and environment must not be empty"
     );
     ensure!(
         !request.environment.is_empty(),
@@ -274,9 +284,9 @@ async fn copy_predecessor(
         carrier_installed,
         "upgrade-schema must install the package qualification carrier before qualification"
     );
-    let predecessor_packages = read_current_packages(&tx, &request.tenant).await?;
+    let predecessor_packages = read_current_packages(&tx, &request.tenant()).await?;
     let manifest_digest = request.predecessor_release.clone();
-    let manifest = read_release_manifest(&tx, &request.tenant, &manifest_digest).await?;
+    let manifest = read_release_manifest(&tx, &request.tenant(), &manifest_digest).await?;
     require_installed_release(
         &manifest_digest,
         manifest
@@ -485,7 +495,7 @@ async fn copy_predecessor(
             PLAIN_FORMAT
         },
         upgrade_stage: candidate.manifest.upgrade_stage.clone(),
-        tenant: request.tenant.clone(),
+        tenant: request.tenant(),
         environment: request.environment.clone(),
         predecessor_manifest_digest: manifest_digest,
         predecessor_package: predecessor.clone(),
@@ -567,11 +577,15 @@ async fn prove_connected_copy(
         .await
         .context("begin copied predecessor verification")?;
     ensure!(
-        read_current_packages(&tx, &request.tenant).await? == evidence.predecessor_packages,
+        read_current_packages(&tx, &request.tenant()).await? == evidence.predecessor_packages,
         "copied package state differs from the source snapshot"
     );
-    let copied_manifest =
-        read_release_manifest(&tx, &request.tenant, &evidence.predecessor_manifest_digest).await?;
+    let copied_manifest = read_release_manifest(
+        &tx,
+        &request.tenant(),
+        &evidence.predecessor_manifest_digest,
+    )
+    .await?;
     ensure!(
         copied_manifest == *manifest,
         "copied release state differs from the source snapshot"
@@ -603,7 +617,7 @@ async fn prove_connected_copy(
             .collect::<Vec<_>>();
         crate::apply_package::apply_qualification_packages(
             database_url,
-            &request.tenant,
+            &request.tenant(),
             &roots,
             &complete_roots,
             manifest,
@@ -615,7 +629,9 @@ async fn prove_connected_copy(
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: candidate.root.clone(),
             database_url: database_url.to_owned(),
-            tenant: request.tenant.clone(),
+            org: request.org.clone(),
+            project: request.project.clone(),
+            environment: request.environment.clone(),
         })
         .await
         .context("apply candidate suffix on the owned predecessor copy")?;
@@ -629,7 +645,9 @@ async fn prove_connected_copy(
             .map(|package| package.root.clone())
             .collect(),
         database_url: database_url.to_owned(),
-        tenant: request.tenant.clone(),
+        org: request.org.clone(),
+        project: request.project.clone(),
+        environment: request.environment.clone(),
     })
     .await
     .context("reconcile the complete candidate root set on scratch")?;
@@ -641,7 +659,7 @@ async fn prove_connected_copy(
         .context("predecessor statements fail under candidate grants")?;
     let tx = client.transaction().await?;
     ensure!(
-        read_current_packages(&tx, &request.tenant).await? == evidence.presented_packages,
+        read_current_packages(&tx, &request.tenant()).await? == evidence.presented_packages,
         "upgraded copy does not match the qualified package leaves and migrations"
     );
     ensure!(

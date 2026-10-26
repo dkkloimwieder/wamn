@@ -35,9 +35,13 @@ pub struct ApplyPackageArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
 
-    /// Tenant stored with the package and migration records.
     #[arg(long)]
-    pub tenant: String,
+    pub org: String,
+    /// Project whose environment owns the package and migration records.
+    #[arg(long)]
+    pub project: String,
+    #[arg(long)]
+    pub environment: String,
 
     /// Exact qualification result for an installed successor migration.
     #[arg(long)]
@@ -78,9 +82,11 @@ pub struct QualifyUpgradeArgs {
     /// Owner connection to the installed predecessor database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
-    /// Tenant that owns the package lineage.
     #[arg(long)]
-    pub tenant: String,
+    pub org: String,
+    /// Project whose environment owns the package lineage.
+    #[arg(long)]
+    pub project: String,
     /// Environment whose selected release currently serves.
     #[arg(long)]
     pub environment: String,
@@ -101,7 +107,8 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
     let predecessors = open_all(&registry, args.predecessor_packages).await?;
     let outcome = qualify_upgrade::qualify_upgrade(QualifyUpgradeRequest {
         database_url: args.database_url,
-        tenant: args.tenant,
+        org: args.org.clone(),
+        project: args.project.clone(),
         environment: args.environment,
         predecessor_release: args.predecessor_release,
         package: package.package_root(),
@@ -249,9 +256,13 @@ pub struct ReconcilePackageDataAccessArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
 
-    /// Tenant owning the already-applied package coordinate.
     #[arg(long)]
-    pub tenant: String,
+    pub org: String,
+    /// Project whose environment owns the already-applied package coordinate.
+    #[arg(long)]
+    pub project: String,
+    #[arg(long)]
+    pub environment: String,
 }
 
 /// Replica identity reconciliation arguments.
@@ -282,7 +293,9 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
         .await?,
         package: opened.package_root(),
         database_url: args.database_url,
-        tenant: args.tenant,
+        org: args.org.clone(),
+        project: args.project.clone(),
+        environment: args.environment.clone(),
     };
     if args.abandon_stage {
         let path = args
@@ -340,7 +353,9 @@ pub async fn reconcile_data_access(args: ReconcilePackageDataAccessArgs) -> anyh
         ReconcilePackageDataAccessRequest {
             packages: roots(&opened),
             database_url: args.database_url,
-            tenant: args.tenant,
+            org: args.org.clone(),
+            project: args.project.clone(),
+            environment: args.environment.clone(),
         },
     )
     .await?;
@@ -420,8 +435,12 @@ mod tests {
             "config.json",
             "--database-url",
             "unused",
-            "--tenant",
+            "--org",
             "fixture",
+            "--project",
+            "fixture",
+            "--environment",
+            "dev",
             "--abandon-stage",
         ];
         assert_eq!(

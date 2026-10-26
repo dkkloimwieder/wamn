@@ -70,8 +70,16 @@ pub struct ApplyPackageRequest {
     /// Owner connection to the target project-environment database.
     pub database_url: String,
 
-    /// Tenant stored with the package and migration records.
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+}
+
+impl ApplyPackageRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// Result of one exact package application.
@@ -182,7 +190,10 @@ pub(crate) async fn apply_qualification_packages(
     complete_roots: &[PackageRoot],
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Vec<ApplyOutcome>> {
-    ensure!(!tenant.is_empty(), "tenant must not be empty");
+    ensure!(
+        !tenant.is_empty(),
+        "org, project and environment must not be empty"
+    );
     ensure!(
         !roots.is_empty(),
         "qualification requires at least one package"
@@ -263,7 +274,7 @@ pub async fn apply_local_package(
 ) -> anyhow::Result<ApplyOutcome> {
     wamn_runtime::local_application::require_local_target(
         &request.database_url,
-        &request.tenant,
+        &request.tenant(),
         environment,
     )
     .await?;
@@ -274,7 +285,12 @@ async fn apply_request(
     request: ApplyPackageRequest,
     mode: ApplicationMode<'_>,
 ) -> anyhow::Result<ApplyOutcome> {
-    ensure!(!request.tenant.is_empty(), "tenant must not be empty");
+    ensure!(
+        ![&request.org, &request.project, &request.environment]
+            .iter()
+            .any(|part| part.is_empty()),
+        "org, project and environment must not be empty"
+    );
     let package = prepare_package(&request.package)?;
     if crate::qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())
         && let ApplicationMode::Production(Some(accepted)) = mode
@@ -292,7 +308,7 @@ async fn apply_request(
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = Box::pin(apply(&mut client, &request.tenant, &package, mode)).await;
+    let result = Box::pin(apply(&mut client, &request.tenant(), &package, mode)).await;
     if let Ok(outcome) = &result {
         request.changes.publish(outcome.drops.clone()).await;
     }

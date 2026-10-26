@@ -248,7 +248,7 @@ run_bootstrap() {
         MOCK_CTL_FAIL_BEFORE_WRITE="${MOCK_CTL_FAIL_BEFORE_WRITE:-0}" \
         MOCK_CTL_FAIL_AFTER_MANAGEMENT="${MOCK_CTL_FAIL_AFTER_MANAGEMENT:-0}" \
         WAMN_CTL_BIN="$test_dir/bin/wamn-ctl" KUBECTL_BIN="$test_dir/bin/kubectl" \
-        "$bootstrap" --org acme --project billing --env dev --tenant tenant-acme \
+        "$bootstrap" --org acme --project billing --env dev \
         --system-database-url 'postgres://admin:URL_SECRET_SENTINEL@sys/db' \
         --emit-secret "$test_dir/db.json" "$@"
 }
@@ -306,7 +306,7 @@ if [[ -n ${WAMN_REAL_CTL_BIN:-} ]]; then
         MOCK_STATE="$test_dir/state" MOCK_LOG="$test_dir/log" \
         MOCK_EXPECT_NAMESPACE=wamn-system \
         WAMN_CTL_BIN="$WAMN_REAL_CTL_BIN" KUBECTL_BIN="$test_dir/bin/kubectl" \
-        "$bootstrap" --org acme --project billing --env dev --tenant tenant-acme \
+        "$bootstrap" --org acme --project billing --env dev \
         --cluster wamn-pg \
         --emit-secret "$test_dir/db.json" 2>&1)
     assert_no_secret_output "$output"

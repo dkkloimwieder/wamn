@@ -112,7 +112,7 @@ pub async fn contract(
             apply_contract(
                 platform,
                 &project_url,
-                &tenant,
+                document,
                 package,
                 version,
                 &current.current,
@@ -138,7 +138,7 @@ pub async fn contract(
 async fn apply_contract(
     platform: &Platform,
     project_url: &str,
-    tenant: &str,
+    document: &EnvironmentDocument,
     package: &str,
     version: &str,
     current: &str,
@@ -165,7 +165,9 @@ async fn apply_contract(
         changes: platform.auth_changes().await?,
         package: opened.package_root(),
         database_url: project_url.to_owned(),
-        tenant: tenant.to_owned(),
+        org: document.org.clone(),
+        project: document.project.clone(),
+        environment: document.env.clone(),
     })
     .await
     .with_context(|| format!("apply the contract of {package}@{version}"))

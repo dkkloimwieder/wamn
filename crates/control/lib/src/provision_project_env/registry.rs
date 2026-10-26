@@ -329,7 +329,7 @@ pub async fn project_tenant_environment(
     let Some(tenant) = tenant else {
         anyhow::ensure!(
             !disposable,
-            "a disposable project-env needs --tenant: the admit path resolves the \
+            "a disposable project-env needs its derived tenant: the admit path resolves the \
              marker by the tenant its component facts are keyed on"
         );
         return Ok(());

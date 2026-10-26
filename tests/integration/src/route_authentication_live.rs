@@ -121,7 +121,6 @@ async fn grant_service_operator(
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        tenant: TENANT.to_owned(),
         user: email,
         role: ITEM_READER.to_owned(),
     };
@@ -207,7 +206,9 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
             ),
         },
         database_url: project_url.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        environment: ENVIRONMENT.to_owned(),
     };
     let before = permission_write_identity(project).await?;
     apply_package::apply_package(args())
@@ -1287,7 +1288,6 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        tenant: TENANT.to_owned(),
         user: user.to_owned(),
         role: role.to_owned(),
     };
@@ -1389,7 +1389,6 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        tenant: TENANT.to_owned(),
     };
     assert!(
         role_permission::create_role_in(&target, "clerk", &AuthChanges::default())

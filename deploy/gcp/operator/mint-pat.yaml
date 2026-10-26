@@ -6,7 +6,7 @@
 # FROM the ctl stage and carries wamn-ctl; build-platform builds no ctl image
 # (wamn-rk9l2, 2026-10-13).
 #
-# Fill __ORG__, __PROJECT__, __ENV__, __TENANT__, __NAMESPACE__ and
+# Fill __ORG__, __PROJECT__, __ENV__, __NAMESPACE__ and
 # __PAT_FLAG__ in a private copy of this file in the scratchpad, at mode 0600,
 # apply the copy and remove it. __PAT_FLAG__ is --emit-operator-pat-secret or
 # --emit-management-author-pat-secret. A run with only a PAT flag reads the
@@ -39,7 +39,7 @@ spec:
             - |
               umask 077
               /usr/local/bin/wamn-ctl provision-project-env \
-                --org __ORG__ --project __PROJECT__ --env __ENV__ --tenant __TENANT__ \
+                --org __ORG__ --project __PROJECT__ --env __ENV__ \
                 --namespace __NAMESPACE__ \
                 __PAT_FLAG__ /out/pat.json
               waited=0

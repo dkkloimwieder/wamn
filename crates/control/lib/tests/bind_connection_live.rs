@@ -36,7 +36,7 @@ use wamn_schema_control::connections::{
     insert_component_connection_requirement_sql,
 };
 
-const TENANT: &str = "bind-connection-tenant";
+const TENANT: &str = "bind-connection-tenant--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PACKAGE: &str = "bind_connection_fixture";
 const PACKAGE_VERSION: &str = "1.0.0";
@@ -203,7 +203,9 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
             ),
         },
         database_url: project_url.to_string(),
-        tenant: TENANT.to_string(),
+        org: "bind-connection-tenant".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .expect("apply the bind-connection package fixture");
@@ -293,7 +295,8 @@ fn args(
 ) -> BindConnectionRequest {
     BindConnectionRequest {
         database_url: project_url.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "bind-connection-tenant".into(),
+        project: "fixture".into(),
         environment: ENVIRONMENT.to_owned(),
         instance_id: "labels-store".to_owned(),
         requirement_type: RequirementType::Blobstore,

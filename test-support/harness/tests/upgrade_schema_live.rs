@@ -249,7 +249,6 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> String {
             admin_database_url: url.clone(),
             org: ORG.into(),
             project: PROJECT.into(),
-            tenant: TENANT.into(),
             env: ENV.into(),
             schema: "wamn_run".into(),
             dry_run: false,

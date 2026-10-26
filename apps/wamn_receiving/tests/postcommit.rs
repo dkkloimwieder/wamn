@@ -315,7 +315,7 @@ async fn assert_replay_and_progress(
     evidence["wiring"] = graph.clone();
     let registration: Value = project.query_one(
         "SELECT to_jsonb(w) FROM catalog.workflows w WHERE tenant_id=$1 AND application='receiving' AND source_package=$2 AND workflow_id='quality_create_inspection' AND enabled",
-        &[&identity().tenant.as_str(), &BASE_PACKAGE_ID],
+        &[&identity().tenant().as_str(), &BASE_PACKAGE_ID],
     ).await?.get(0);
     evidence["registration"] = registration;
     let original = source(&mut events, &materializer.receipt_id).await?;
@@ -538,7 +538,7 @@ async fn assert_replay_and_progress(
     result?;
     let registration_after: Value = project.query_one(
         "SELECT to_jsonb(w) FROM catalog.workflows w WHERE tenant_id=$1 AND application='receiving' AND source_package=$2 AND workflow_id='quality_create_inspection' AND enabled",
-        &[&identity().tenant.as_str(), &BASE_PACKAGE_ID],
+        &[&identity().tenant().as_str(), &BASE_PACKAGE_ID],
     ).await?.get(0);
     ensure!(
         registration_after == evidence["registration"],

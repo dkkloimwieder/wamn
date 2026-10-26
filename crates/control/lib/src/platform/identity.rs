@@ -158,8 +158,6 @@ pub(super) async fn apply(
                 &environment.project,
                 "--env",
                 &environment.env,
-                "--tenant",
-                &tenant,
                 "--namespace",
                 "identity",
                 "--db-host",

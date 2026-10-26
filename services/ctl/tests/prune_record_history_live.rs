@@ -40,7 +40,7 @@ use wamn_test_infrastructure::locked_database;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
-const TENANT: &str = "record-retention-t";
+const TENANT: &str = "record-retention-t--fixture--dev";
 const OTHER_TENANT: &str = "record-retention-other";
 const GENERATION_PASSWORD: &str = "record-retention-test-generation";
 /// The test principal that the fixture writes bind.
@@ -191,7 +191,9 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
             ),
         },
         database_url: url.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "record-retention-t".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
 }
@@ -316,13 +318,17 @@ async fn positions(admin: &Client) -> BTreeMap<String, Vec<i64>> {
     observed
 }
 
-fn prune_argv<'a>(url: &'a str, tenant: &'a str) -> [&'a str; 5] {
+fn prune_argv<'a>(url: &'a str, tenant: &'a str) -> [&'a str; 9] {
     [
         "prune-record-history",
         "--database-url",
         url,
-        "--tenant",
-        tenant,
+        "--org",
+        tenant.split("--").next().expect("fixture org"),
+        "--project",
+        "fixture",
+        "--environment",
+        "dev",
     ]
 }
 
@@ -581,7 +587,12 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
     let run_retention_url = replace_role(&url, &run_retention_role, GENERATION_PASSWORD);
 
     // Spec test 15, against the populated history.
-    assert_refused(&credential_url, OTHER_TENANT, "foreign --tenant").await;
+    assert_refused(
+        &credential_url,
+        OTHER_TENANT,
+        "foreign environment coordinate",
+    )
+    .await;
     assert_refused(&run_retention_url, TENANT, "run retention generation").await;
     assert_refused(&url, TENANT, "superuser login").await;
     assert_eq!(

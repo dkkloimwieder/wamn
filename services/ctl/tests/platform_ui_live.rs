@@ -80,7 +80,6 @@ async fn provision_browser_environment(
         org: ORG.to_owned(),
         project: BROWSER_PROJECT.to_owned(),
         environment: ENVIRONMENT.to_owned(),
-        tenant: wamn_control_registry::project_env_tenant(ORG, BROWSER_PROJECT, ENVIRONMENT),
     };
     install_journey_platform_floor(&target, "example.invalid").await?;
     reconcile_journey_run_plane(&scope, system_url, target_url.as_str()).await?;

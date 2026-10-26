@@ -54,7 +54,7 @@ use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 #[path = "workflow_schedule_live/event_batch.rs"]
 mod event_batch;
 
-const TENANT: &str = "schedule-live";
+const TENANT: &str = "schedule-live--default--dev";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
@@ -437,7 +437,8 @@ impl Fixture {
             &self.url,
             &self.control_url,
             &AuthorWorkflowRequest {
-                tenant_id: TENANT,
+                org: "schedule-live",
+                project: "default",
                 environment: ENVIRONMENT,
                 application: APP,
                 declared,
@@ -458,7 +459,8 @@ impl Fixture {
             &Triple::new("acme", APPLICATION, ENVIRONMENT),
             &mut self.admin,
             &WorkflowVersion {
-                tenant_id: TENANT,
+                org: "schedule-live",
+                project: "default",
                 environment: ENVIRONMENT,
                 application: APP,
                 workflow_id: id,
@@ -478,7 +480,8 @@ impl Fixture {
             &Triple::new("acme", APPLICATION, ENVIRONMENT),
             &mut self.admin,
             &WorkflowVersion {
-                tenant_id: TENANT,
+                org: "schedule-live",
+                project: "default",
                 environment: ENVIRONMENT,
                 application: APP,
                 workflow_id: id,
@@ -926,7 +929,8 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
         &Triple::new("acme", APPLICATION, ENVIRONMENT),
         &mut fixture.admin,
         &WorkflowVersion {
-            tenant_id: TENANT,
+            org: "schedule-live",
+            project: "default",
             environment: ENVIRONMENT,
             application: APP,
             workflow_id: "nightly",

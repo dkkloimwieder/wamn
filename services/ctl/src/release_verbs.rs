@@ -26,12 +26,6 @@ pub struct PublishReleaseArgs {
     /// Owner URL of the control database holding the environment policy.
     #[arg(long)]
     pub control_database_url: String,
-    #[arg(long)]
-    pub org: String,
-    #[arg(long)]
-    pub tenant: String,
-    #[arg(long)]
-    pub environment: String,
     /// Principal already authenticated by the publication boundary.
     #[arg(long)]
     pub verified_publisher_principal: String,
@@ -70,9 +64,13 @@ pub struct TerminalizeEffectUncertainArgs {
     #[arg(long, default_value = "wamn_run")]
     pub schema: String,
 
-    /// Exact tenant owning the run.
     #[arg(long)]
-    pub tenant: String,
+    pub org: String,
+    /// Exact project whose environment owns the run.
+    #[arg(long)]
+    pub project: String,
+    #[arg(long)]
+    pub environment: String,
 
     /// Exact effect-uncertain run.
     #[arg(long)]
@@ -94,15 +92,6 @@ pub struct TerminalizeEffectUncertainArgs {
 /// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     let environment = EnvironmentDocument::compile(&args.file)?;
-    anyhow::ensure!(
-        environment.org == args.org
-            && environment.env == args.environment
-            && format!(
-                "{}--{}--{}",
-                environment.org, environment.project, environment.env
-            ) == args.tenant,
-        "the environment document does not match --org, --tenant and --environment"
-    );
     // The release repository is the one `env apply` pulls from, named once
     // for the platform (`environment::Platform::from_env`).
     let release_artifact_base = std::env::var("WAMN_RELEASE_ARTIFACT_BASE")
@@ -119,9 +108,9 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
             application: args.application,
             database_url: args.database_url,
             control_database_url: args.control_database_url,
-            org: args.org,
-            tenant: args.tenant,
-            environment: args.environment,
+            org: environment.org,
+            project: environment.project,
+            environment: environment.env,
             verified_publisher_principal: args.verified_publisher_principal,
             run_schema: args.run_schema,
             packages: args.packages,
@@ -140,7 +129,9 @@ pub async fn terminalize(args: TerminalizeEffectUncertainArgs) -> anyhow::Result
         TerminalizeEffectUncertainRequest {
             admin_database_url: args.admin_database_url,
             schema: args.schema,
-            tenant: args.tenant,
+            org: args.org.clone(),
+            project: args.project.clone(),
+            environment: args.environment.clone(),
             run: args.run,
             basis: args.basis,
             evidence_ref: args.evidence_ref,
@@ -165,19 +156,13 @@ mod tests {
         args: PublishReleaseArgs,
     }
 
-    const PUBLISH: [&str; 21] = [
+    const PUBLISH: [&str; 15] = [
         "publish-release",
         "environment.k",
         "--database-url",
         "postgres://publish.invalid/env",
         "--control-database-url",
         "postgres://publish.invalid/control",
-        "--org",
-        "acme",
-        "--tenant",
-        "acme--plant--dev",
-        "--environment",
-        "dev",
         "--verified-publisher-principal",
         "publisher",
         "--run-schema",
@@ -206,8 +191,13 @@ mod tests {
             "one application needs no selector"
         );
         assert_eq!(args.file, PathBuf::from("environment.k"));
+        for removed in ["--tenant", "--org", "--environment"] {
+            let mut arguments = PUBLISH.to_vec();
+            arguments.extend([removed, "unexpected"]);
+            assert!(PublishProbe::try_parse_from(arguments).is_err());
+        }
         assert!(
-            PublishProbe::try_parse_from(&PUBLISH[..18]).is_err(),
+            PublishProbe::try_parse_from(&PUBLISH[..12]).is_err(),
             "publish-release parsed with no package artifact base"
         );
         let mut selected = PUBLISH.to_vec();

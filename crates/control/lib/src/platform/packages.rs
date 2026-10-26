@@ -164,9 +164,10 @@ pub(super) async fn apply(
     .context("missing Secret platform/wamn-ctl-auth-nats")?;
     let mut changed = false;
     for (path, environment) in super::broker::documents(environments)? {
-        let tenant = format!(
-            "{}--{}--{}",
-            environment.org, environment.project, environment.env
+        let tenant = wamn_control_registry::project_env_tenant(
+            &environment.org,
+            &environment.project,
+            &environment.env,
         );
         let secrets = credentials(target, &environment).await?;
         let database = url::Url::parse(&secrets[1].value)
@@ -201,8 +202,12 @@ pub(super) async fn apply(
                     registry.artifact_base.clone(),
                     "--registry-auth-file".into(),
                     "/inputs/registry.json".into(),
-                    "--tenant".into(),
-                    tenant.clone(),
+                    "--org".into(),
+                    environment.org.clone(),
+                    "--project".into(),
+                    environment.project.clone(),
+                    "--environment".into(),
+                    environment.env.clone(),
                 ],
                 environment: [
                     (
@@ -269,8 +274,12 @@ pub(super) async fn apply(
                     registry.artifact_base.clone(),
                     "--registry-auth-file".into(),
                     "/inputs/registry.json".into(),
-                    "--tenant".into(),
-                    tenant,
+                    "--org".into(),
+                    environment.org.clone(),
+                    "--project".into(),
+                    environment.project.clone(),
+                    "--environment".into(),
+                    environment.env.clone(),
                 ],
                 ..JobRequest::default()
             };

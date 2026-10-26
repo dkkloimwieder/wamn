@@ -56,7 +56,9 @@ pub(super) async fn install_journey_project(
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: root.clone(),
             database_url: project_url.to_owned(),
-            tenant: identity().tenant.clone(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            environment: identity().environment.clone(),
         })
         .await
         .with_context(|| {
@@ -78,7 +80,9 @@ pub(super) async fn reconcile_journey_data_access(
         ReconcilePackageDataAccessRequest {
             packages: packages.to_vec(),
             database_url: project_url.to_owned(),
-            tenant: identity().tenant.clone(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            environment: identity().environment.clone(),
         },
     )
     .await
@@ -154,7 +158,7 @@ pub(super) fn render_component_declarations(
             }
             let declaration = wamn_control::component_declaration::render_declaration_document(
                 &source,
-                identity().tenant.as_str(),
+                identity().tenant().as_str(),
             )
             .with_context(|| format!("render {}", source.display()))?;
             let destination = output.join(format!("{}.json", package.component));
@@ -406,7 +410,7 @@ pub(super) async fn verify_zero_case_gate_reports(
             .query_one(
                 "SELECT passed, summary FROM wamn_run.gate_reports \
                  WHERE tenant_id = $1 AND wiring_hash = $2",
-                &[&identity().tenant.as_str(), report_id],
+                &[&identity().tenant().as_str(), report_id],
             )
             .await
             .with_context(|| format!("read production Gate report {report_id}"))?;
@@ -498,7 +502,7 @@ pub(super) async fn publish_journey_release(
             database_url: project_url.to_owned(),
             control_database_url: system_url.to_owned(),
             org: identity().org.clone(),
-            tenant: identity().tenant.clone(),
+            project: identity().project.clone(),
             environment: identity().environment.clone(),
             verified_publisher_principal: publisher.to_owned(),
             run_schema: "wamn_run".to_owned(),
@@ -526,7 +530,7 @@ pub(super) async fn publish_journey_release(
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     wamn_control::environment::stage::write_release(
         project_url,
-        identity().tenant.as_str(),
+        identity().tenant().as_str(),
         &digest,
         &manifest,
     )
@@ -640,7 +644,7 @@ pub(super) async fn author_materializer_workflow(
     let digest: String = project
         .query_one(
             "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-            &[&identity().tenant.as_str()],
+            &[&identity().tenant().as_str()],
         )
         .await?
         .get(0);
@@ -663,7 +667,8 @@ pub(super) async fn author_materializer_workflow(
             identity().environment.as_str(),
         ),
         &AuthorWorkflowRequest {
-            tenant_id: &identity().tenant,
+            org: &identity().org,
+            project: &identity().project,
             environment: identity().environment.as_str(),
             application: "receiving",
             declared: &declared,

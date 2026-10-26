@@ -826,7 +826,7 @@ The retention task removes an expired entry on its next daily run, so its schedu
 
 The [`prune-record-history`](../../crates/control/lib/src/prune_record_history.rs) verb of `wamn-ctl-ops` runs the task.
 It connects as a scoped generation of the tenant-scoped audit retention family, whose stable role is `wamn_audit_retention`.
-It refuses any login that is not an audit retention generation for `--tenant` in the connected database.
+It refuses any login that is not an audit retention generation for the derived environment tenant in the connected database.
 The family is not a `wamn_platform` member, because no reader needs the edge.
 `catalog-schema-prefix.sql` creates the stable role under the role bootstrap lock, beside `wamn_platform`.
 The system database schema creates no audit retention role.

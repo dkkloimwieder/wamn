@@ -38,7 +38,7 @@ pub enum WorkflowCommand {
     /// Disable one workflow version. Queued and running runs finish.
     Disable(VersionArgs),
     /// Print the workflow versions of the environment, one JSON object per line.
-    List(WorkflowScope),
+    List(WorkflowTarget),
     /// Start the enabled version of a workflow through the host, and print its run id.
     Start(StartArgs),
     /// Hold a queued run, so no claim takes it.
@@ -49,7 +49,7 @@ pub enum WorkflowCommand {
     Runs(ListArgs),
 }
 
-/// The tenant and environment every workflow verb acts in.
+/// The database and environment every workflow verb acts in.
 #[derive(Debug, Args)]
 pub struct WorkflowScope {
     /// Project-admin PostgreSQL URL for the project database.
@@ -59,9 +59,25 @@ pub struct WorkflowScope {
     #[arg(long, default_value = "wamn_run")]
     pub schema: String,
     #[arg(long)]
-    pub tenant: String,
-    #[arg(long)]
     pub environment: String,
+}
+
+/// The environment of a workflow command without a serving-release coordinate.
+#[derive(Debug, Args)]
+pub struct WorkflowTarget {
+    #[command(flatten)]
+    pub scope: WorkflowScope,
+    #[arg(long)]
+    pub org: String,
+    /// Project whose environment owns the workflow or run.
+    #[arg(long)]
+    pub project: String,
+}
+
+impl WorkflowTarget {
+    fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.scope.environment)
+    }
 }
 
 /// The identity a run executes as.
@@ -146,9 +162,13 @@ pub struct EnableArgs {
 }
 
 impl VersionArgs {
-    fn workflow(&self) -> WorkflowVersion<'_> {
+    fn workflow<'a>(
+        &'a self,
+        coordinate: &'a wamn_control_registry::Triple,
+    ) -> WorkflowVersion<'a> {
         WorkflowVersion {
-            tenant_id: &self.scope.tenant,
+            org: &coordinate.org,
+            project: &coordinate.project,
             environment: &self.scope.environment,
             application: &self.application,
             workflow_id: &self.workflow_id,
@@ -181,7 +201,7 @@ pub struct StartArgs {
 #[derive(Debug, Args)]
 pub struct RunArgs {
     #[command(flatten)]
-    pub scope: WorkflowScope,
+    pub scope: WorkflowTarget,
     #[arg(long)]
     pub run_id: String,
 }
@@ -189,22 +209,22 @@ pub struct RunArgs {
 #[derive(Debug, Args)]
 pub struct ListArgs {
     #[command(flatten)]
-    pub scope: WorkflowScope,
+    pub scope: WorkflowTarget,
     /// The most runs to print.
     #[arg(long, default_value_t = 50)]
     pub limit: u32,
 }
 
-async fn workflows(scope: &WorkflowScope) -> anyhow::Result<PostgresWorkflows> {
-    let (client, connection) = tokio_postgres::connect(&scope.admin_database_url, NoTls)
+async fn workflows(scope: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows> {
+    let (client, connection) = tokio_postgres::connect(&scope.scope.admin_database_url, NoTls)
         .await
         .context("connect to the project database")?;
     tokio::spawn(connection);
     Ok(PostgresWorkflows::new(
         client,
-        &scope.schema,
-        &scope.tenant,
-        &scope.environment,
+        &scope.scope.schema,
+        scope.tenant(),
+        &scope.scope.environment,
     ))
 }
 
@@ -270,7 +290,8 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 &args.scope.admin_database_url,
                 &args.control_database_url,
                 &AuthorWorkflowRequest {
-                    tenant_id: &args.scope.tenant,
+                    org: &triple.org,
+                    project: &triple.project,
                     environment: &args.scope.environment,
                     application: &args.application,
                     declared: &declared,
@@ -302,7 +323,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 &system_database_url,
                 &triple,
                 &mut client,
-                &args.version.workflow(),
+                &args.version.workflow(&triple),
                 &args.principal_id,
                 &digest,
                 &declared,
@@ -322,23 +343,21 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 &platform.system_database_url,
                 &triple,
                 &mut client,
-                &args.workflow(),
+                &args.workflow(&triple),
             )
             .await?;
             println!("disabled {} version {}", args.workflow_id, args.version);
         }
         WorkflowCommand::List(scope) => {
-            let mut client = project(&scope).await?;
+            let mut client = project(&scope.scope).await?;
+            let tenant = scope.tenant();
             let transaction = client.transaction().await?;
             transaction
-                .query_one(
-                    "SELECT set_config('app.tenant', $1, true)",
-                    &[&scope.tenant],
-                )
+                .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
                 .await
                 .context("claim the workflow tenant")?;
             for row in transaction
-                .query(LIST_WORKFLOWS_SQL, &[&scope.tenant, &scope.environment])
+                .query(LIST_WORKFLOWS_SQL, &[&tenant, &scope.scope.environment])
                 .await
                 .context("read the workflow versions")?
             {
@@ -469,8 +488,6 @@ mod tests {
             "workflow",
             "--admin-database-url",
             "postgres://localhost/project",
-            "--tenant",
-            "acme",
             "--environment",
             "dev",
             "--coordinate",

@@ -12,7 +12,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
     PlatformComponent, bind_platform_principal_sql, project_env_database_name, validate_project_env,
 };
-use wamn_control_registry::{Triple, project_env_tenant};
+use wamn_control_registry::Triple;
 use wamn_platform_identity::application;
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 
@@ -30,12 +30,17 @@ pub struct UserRoleRequest {
     pub project: String,
     /// Registry environment.
     pub env: String,
-    /// Tenant of the environment.
-    pub tenant: String,
     /// Email of the user or service in the tenant `user` table.
     pub user: String,
     /// A role that exists in the tenant, such as `admin`.
     pub role: String,
+}
+
+impl UserRoleRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.env)
+    }
 }
 
 /// What a grant or revoke changed.
@@ -81,12 +86,11 @@ async fn change_role(
         org: request.org.clone(),
         project: request.project.clone(),
         env: request.env.clone(),
-        tenant: request.tenant.clone(),
     })
     .await?;
     let result = change_user_role(
         &mut client,
-        &request.tenant,
+        &request.tenant(),
         &request.user,
         &request.role,
         change,
@@ -131,7 +135,7 @@ async fn change_user_role(
     auth: &AuthChanges,
 ) -> anyhow::Result<UserRoleOutcome> {
     anyhow::ensure!(!role.is_empty(), "--role must not be empty");
-    anyhow::ensure!(!tenant.is_empty(), "--tenant must not be empty");
+    anyhow::ensure!(!tenant.is_empty(), "tenant must not be empty");
     anyhow::ensure!(!user.is_empty(), "--user must not be empty");
     let transaction = client
         .transaction()
@@ -204,8 +208,13 @@ pub struct EnvironmentTarget {
     pub project: String,
     /// Registry environment.
     pub env: String,
-    /// Tenant of the environment.
-    pub tenant: String,
+}
+
+impl EnvironmentTarget {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.env)
+    }
 }
 
 /// Connect to the project database and make sure that it is the database the
@@ -219,11 +228,6 @@ pub(crate) async fn connect_target(
     let triple = Triple::new(&request.org, &request.project, request.env.as_str());
     validate_project_env(&request.org, &request.project, &request.env)
         .with_context(|| format!("registry target identity {triple} is invalid"))?;
-    anyhow::ensure!(
-        request.tenant == project_env_tenant(&request.org, &request.project, &request.env),
-        "tenant key {} does not match registry target {triple}",
-        request.tenant
-    );
     let instance = crate::provision_project_env::read_project_env_instance(
         &request.system_database_url,
         &triple,
@@ -265,21 +269,17 @@ mod tests {
     use super::{EnvironmentTarget, connect_target};
 
     #[tokio::test]
-    async fn a_different_environment_key_refuses_before_connecting() {
+    async fn an_invalid_environment_coordinate_refuses_before_connecting() {
         let target = EnvironmentTarget {
             system_database_url: "not-a-database-url".into(),
             admin_database_url: "not-a-database-url".into(),
             org: "acme".into(),
-            project: "shop".into(),
+            project: "bad project".into(),
             env: "dev".into(),
-            tenant: "acme--shop--prod".into(),
         };
         let Err(error) = connect_target(&target).await else {
             panic!("refuse the key");
         };
-        assert!(
-            error.to_string().contains("does not match registry target"),
-            "{error:#}"
-        );
+        assert!(error.to_string().contains("is invalid"), "{error:#}");
     }
 }

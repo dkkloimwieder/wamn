@@ -1018,7 +1018,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     // The tenant is the environment coordinate's (owner ruling of 2026-10-09
     // on `wamn-snz0`): the host derives the same value from its own scope.
     let activation_identity = DevActivationIdentity {
-        tenant: wamn_control_registry::project_env_tenant(&org, &project, &environment),
         catalog,
         environment,
         org,
@@ -1905,7 +1904,7 @@ pub(crate) mod tests {
         )
         .expect("complete config parses");
         assert_eq!(
-            config.activation_identity().tenant,
+            config.activation_identity().tenant(),
             "acme--fixture--fixture-dev"
         );
         assert_eq!(config.host_binary(), Path::new("/opt/wamn/bin/wamn-host"));

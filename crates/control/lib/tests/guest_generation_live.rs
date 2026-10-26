@@ -40,10 +40,7 @@ fn state_sql() -> String {
 const ORG: &str = "pg18guest";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-/// A tenant carrying characters a Kubernetes label value would reject and a
-/// length that would matter if the name embedded it: the digest is what makes
-/// both harmless, so the gate uses a tenant that would expose it otherwise.
-const TENANT: &str = "tenant_live-64-0123456789012345678901234567890123456789012345";
+const TENANT: &str = "pg18guest--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 
 async fn connect(url: &str) -> Client {
@@ -89,7 +86,6 @@ fn action_args(
         org: ORG.to_string(),
         project: PROJECT.to_string(),
         env: ENVIRONMENT.to_string(),
-        tenant: Some(TENANT.to_string()),
         system_database_url: Some(system_url.to_string()),
         namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
         target_admin_database_url: Some(target_admin_url.to_string()),

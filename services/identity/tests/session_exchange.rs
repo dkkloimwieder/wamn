@@ -1113,8 +1113,6 @@ async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process:
                 &triple.project,
                 "--env",
                 triple.env.as_str(),
-                "--tenant",
-                target.tenant_id(),
                 "--retire-session-role-reader-generation",
                 "a",
             ])

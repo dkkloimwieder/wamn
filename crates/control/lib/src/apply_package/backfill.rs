@@ -122,7 +122,6 @@ pub(super) async fn apply(
         };
         let artifact = package.artifact_digest()?.to_owned();
         let identity = StageIdentity {
-            tenant_id: tenant.to_owned(),
             package_id: package_id.clone(),
             package_version: version.clone(),
             predecessor_version: predecessor_version.to_owned(),
@@ -139,7 +138,7 @@ pub(super) async fn apply(
             ),
         };
         progress::require_no_other_stage(&tx, tenant, package_id, version, &artifact).await?;
-        let recorded = progress::open(&tx, &identity, &batch.initial_cursor).await?;
+        let recorded = progress::open(&tx, tenant, &identity, &batch.initial_cursor).await?;
         ensure!(
             recorded.status == StageStatus::InProgress,
             "backfill progress is complete but the package version is absent"
@@ -214,14 +213,14 @@ pub(super) async fn apply(
         );
         let cursor: serde_json::Value = rows[0].try_get("next_cursor")?;
         let complete: bool = rows[0].try_get("complete")?;
-        progress::advance(&tx, &identity, &cursor).await?;
+        progress::advance(&tx, tenant, &identity, &cursor).await?;
         if complete {
             let outcome =
                 apply_prepared(&tx, tenant, package, ApplicationMode::BackfillCompletion).await?;
             if let Some(accepted) = accepted {
                 crate::package_upgrade::persist(&tx, &accepted, &artifact).await?;
             }
-            progress::complete(&tx, &identity).await?;
+            progress::complete(&tx, tenant, &identity).await?;
             tx.commit()
                 .await
                 .context("commit completed backfill and installed version")?;

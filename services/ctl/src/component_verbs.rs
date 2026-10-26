@@ -31,7 +31,10 @@ pub struct BindConnectionArgs {
     pub database_url: String,
 
     #[arg(long)]
-    pub tenant: String,
+    pub org: String,
+    /// Project whose environment owns the connection binding.
+    #[arg(long)]
+    pub project: String,
 
     #[arg(long)]
     pub environment: String,
@@ -71,7 +74,8 @@ pub struct BindConnectionArgs {
 pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
     let request = BindConnectionRequest {
         database_url: args.database_url,
-        tenant: args.tenant,
+        org: args.org.clone(),
+        project: args.project.clone(),
         environment: args.environment,
         instance_id: args.instance_id,
         requirement_type: args.requirement_type.requirement_type(),

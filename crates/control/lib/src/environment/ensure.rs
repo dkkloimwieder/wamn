@@ -66,8 +66,6 @@ pub async fn ensure(
     analysis: &Analysis,
 ) -> anyhow::Result<()> {
     let triple = document.triple();
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
     // The row's policy until step 5 writes the declared one; a first apply
     // creates the row with the declared policy.
     let policy = analysis
@@ -138,7 +136,6 @@ pub async fn ensure(
             admin_database_url: project_url.clone(),
             org: document.org.clone(),
             project: document.project.clone(),
-            tenant: tenant.clone(),
             env: document.env.clone(),
             schema: RUN_SCHEMA.to_owned(),
             dry_run: false,
@@ -173,7 +170,6 @@ pub async fn ensure(
             org: document.org.clone(),
             project: document.project.clone(),
             env: document.env.clone(),
-            tenant: Some(tenant.clone()),
             system_database_url: Some(platform.system_database_url.clone()),
             target_admin_database_url: project_database.then(|| project_url.clone()),
             cluster: Some(cluster.clone()),
@@ -540,8 +536,8 @@ pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow:
 /// `wamn-pat-management-author-<org>--<project>--<env>`.
 pub(super) fn management_author_pat_name(triple: &Triple) -> String {
     format!(
-        "wamn-pat-management-author-{}--{}--{}",
-        triple.org, triple.project, triple.env
+        "wamn-pat-management-author-{}",
+        wamn_control_registry::project_env_tenant(&triple.org, &triple.project, &triple.env)
     )
 }
 

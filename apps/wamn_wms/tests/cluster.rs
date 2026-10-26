@@ -140,7 +140,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             let broker = event_broker::prepare(
                 work.path(),
                 &scope,
-                crate::environment::identity().tenant.as_str(),
+                crate::environment::identity().tenant().as_str(),
                 &source,
                 &advisory,
                 &consumers,
@@ -317,7 +317,6 @@ async fn start_session_issuer(
             org: identity.org.as_str(),
             project: identity.project.as_str(),
             environment: identity.environment.as_str(),
-            tenant: identity.tenant.as_str(),
         },
         manifest_digest,
     )

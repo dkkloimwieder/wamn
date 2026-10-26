@@ -837,7 +837,7 @@ Prepare the session target of each environment in namespace `identity`. [values-
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 for project in receiving wms; do
-  (umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev --tenant dkk--$project--dev \
+  (umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev \
     --namespace identity --target-admin-database-url "$(db_url $project)" --db-host wamn-pg-rw.platform.svc.cluster.local \
     --prepare-session-role-reader-generation a --emit-session-role-reader-secret $W/session-target-$project.json)
   kubectl apply -f $W/session-target-$project.json
@@ -903,9 +903,9 @@ R="--artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGIST
 declare -A V=([receiving]=2.2.7 [wms]=2.1.4)
 for project in receiving wms; do
   $CARGO_TARGET_DIR/debug/wamn-ctl apply-package --package-artifact wamn_$project-${V[$project]} $R \
-    --database-url "$(db_url $project)" --tenant dkk--$project--dev
+    --database-url "$(db_url $project)" --org dkk --project "$project" --environment dev
   $CARGO_TARGET_DIR/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_$project-${V[$project]} $R \
-    --database-url "$(db_url $project)" --tenant dkk--$project--dev
+    --database-url "$(db_url $project)" --org dkk --project "$project" --environment dev
 done
 $CARGO_TARGET_DIR/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url wms)" --package apps/wamn_wms
 ```
@@ -936,7 +936,7 @@ The publication Job mounts that file at `/inputs/environment.k` and compiles it 
 registry_token
 RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url receiving)" \
   deploy/gcp/environments/dkk--receiving--dev.k \
-  --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--receiving--dev --environment dev \
+  --control-database-url "$WAMN_SYSTEM_ADMIN_URL"  \
   --verified-publisher-principal wamn-management-author-dkk--receiving--dev \
   --run-schema wamn_run --package wamn_receiving@2.2.7 \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
@@ -948,10 +948,10 @@ The WMS release has the wiring `inventory_move_and_label`. The authoring gate mu
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 mkdir -m 700 $G
-(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
+(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev \
   --namespace hosts --target-admin-database-url "$(db_url wms)" --db-host 127.0.0.1 --db-port 15432 \
   --prepare-management-admitter-generation a --emit-management-admitter-secret $G/management-admitter.json)
-(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
+(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev \
   --namespace hosts --db-host 127.0.0.1 --db-port 15432 \
   --prepare-control-author-generation a --emit-control-author-secret $G/control-author.json)
 (umask 077; kubectl -n hosts get secret wamn-identity-reader-dkk--wms--dev -o jsonpath='{.data.url}' | base64 -d \
@@ -1013,12 +1013,12 @@ The outcome has `status` `completed`. Record the wiring and publish WMS:
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
 $CARGO_TARGET_DIR/debug/wamn-ctl author-wiring --database-url "$(db_url wms)" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
-  --tenant dkk--wms--dev --package-id wamn_wms --package-version 2.1.4 \
+  --org dkk --project wms --environment dev --package-id wamn_wms --package-version 2.1.4 \
   --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
 RELEASE_wms=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url wms)" \
   deploy/gcp/environments/dkk--wms--dev.k \
-  --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--wms--dev --environment dev \
+  --control-database-url "$WAMN_SYSTEM_ADMIN_URL"  \
   --verified-publisher-principal wamn-management-author-dkk--wms--dev \
   --run-schema wamn_run --package wamn_wms@2.1.4 --wiring "wamn_wms@2.1.4::inventory_move_and_label=2" \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)

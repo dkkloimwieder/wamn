@@ -122,7 +122,9 @@ pub async fn stage(
                 changes: platform.auth_changes().await?,
                 package: opened.package_root(),
                 database_url: project_url.to_owned(),
-                tenant: tenant.clone(),
+                org: document.org.clone(),
+                project: document.project.clone(),
+                environment: document.env.clone(),
             })
             .await
             .with_context(|| format!("apply package {id}@{version}"))?;
@@ -173,7 +175,9 @@ pub async fn stage(
                     .map(|(_, _, opened, _)| opened.package_root())
                     .collect(),
                 database_url: project_url.to_owned(),
-                tenant: tenant.clone(),
+                org: document.org.clone(),
+                project: document.project.clone(),
+                environment: document.env.clone(),
             },
         )
         .await

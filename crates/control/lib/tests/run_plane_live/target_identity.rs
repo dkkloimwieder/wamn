@@ -142,7 +142,6 @@ fn target_guard_args(
         admin_database_url: target_url.to_string(),
         org: CLI_ORG.to_string(),
         project: project.to_string(),
-        tenant: "t1".to_string(),
         env: environment.to_string(),
         schema: SCHEMA.to_string(),
         dry_run,
@@ -385,7 +384,7 @@ async fn reconcile_target_identity_guard_live() {
             &format!(
                 "SELECT expected_environment,durability_class, \
                         source_policy_org,source_policy_hash \
-                   FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"
+                   FROM {SCHEMA}.environment_policies WHERE tenant_id='acme--billing--dev'"
             ),
             &[],
         )
@@ -420,10 +419,16 @@ async fn reconcile_target_identity_guard_live() {
             Some(expected_source_hash.clone()),
         )
     );
-    let replay =
-        project_environment_policy(&system_url, &primary_url, &schema(), CLI_ORG, "t1", CLI_ENV)
-            .await
-            .expect("replay the exact source policy projection");
+    let replay = project_environment_policy(
+        &system_url,
+        &primary_url,
+        &schema(),
+        CLI_ORG,
+        "acme--billing--dev",
+        CLI_ENV,
+    )
+    .await
+    .expect("replay the exact source policy projection");
     assert!(!replay.changed(), "exact projection replay was not a no-op");
     assert_eq!(replay.source_policy_org(), CLI_ORG);
     assert_eq!(replay.environment(), CLI_ENV);
@@ -432,24 +437,38 @@ async fn reconcile_target_identity_guard_live() {
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.environment_policies \
-                    SET source_policy_hash=$1 WHERE tenant_id='t1'"
+                    SET source_policy_hash=$1 WHERE tenant_id='acme--billing--dev'"
             ),
             &[&format!("sha256:{}", "0".repeat(64))],
         )
         .await
         .expect("seed a stale projected policy hash");
     assert!(
-        project_environment_policy(&system_url, &primary_url, &schema(), CLI_ORG, "t1", CLI_ENV,)
-            .await
-            .expect("repair the stale policy projection")
-            .changed(),
+        project_environment_policy(
+            &system_url,
+            &primary_url,
+            &schema(),
+            CLI_ORG,
+            "acme--billing--dev",
+            CLI_ENV,
+        )
+        .await
+        .expect("repair the stale policy projection")
+        .changed(),
         "stale projection was not reported as changed"
     );
     assert!(
-        !project_environment_policy(&system_url, &primary_url, &schema(), CLI_ORG, "t1", CLI_ENV,)
-            .await
-            .expect("replay the repaired policy projection")
-            .changed(),
+        !project_environment_policy(
+            &system_url,
+            &primary_url,
+            &schema(),
+            CLI_ORG,
+            "acme--billing--dev",
+            CLI_ENV,
+        )
+        .await
+        .expect("replay the repaired policy projection")
+        .changed(),
         "repaired projection did not converge"
     );
     let carrier_present: bool = system_su

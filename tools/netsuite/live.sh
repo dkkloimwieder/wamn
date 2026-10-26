@@ -70,7 +70,7 @@ SQL
 jq -n --arg id "$record_id" '{id:$id}' > "$work/record_get.json"
 jq -n --rawfile q "$query_file" '{q:$q}' > "$work/suiteql_query.json"
 for wiring in record_get suiteql_query; do
-  run_id=$("$ctl" workflow start --tenant "$tenant" --environment "$environment" \
+  run_id=$("$ctl" workflow start \
     --release-digest "$digest" --package-id netsuite --wiring-id "$wiring" --wiring-version 1 \
     --service-principal-id "$principal" --idempotency-key "netsuite-live:$(basename "$work"):$wiring" \
     --input "$work/$wiring.json")

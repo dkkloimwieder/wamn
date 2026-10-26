@@ -75,7 +75,7 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
 
 /// One environment's project database on the test server, with the catalog,
 /// the application schema and one platform row, and its administration
-/// login of `tenant` minted by the production prepare. The login goes
+/// login minted by the production prepare. The login goes
 /// into `logins` under the key its control patch names, as the mounted
 /// Secret shows it.
 pub(super) async fn project_database(
@@ -84,7 +84,6 @@ pub(super) async fn project_database(
     system_url: &str,
     project: &str,
     instance: &str,
-    tenant: &str,
     logins: &std::path::Path,
 ) -> anyhow::Result<Client> {
     use wamn_control::provision_project_env::{
@@ -143,7 +142,6 @@ pub(super) async fn project_database(
         org: ORG.to_owned(),
         project: project.to_owned(),
         env: "dev".to_owned(),
-        tenant: Some(tenant.to_owned()),
         system_database_url: Some(system_url.to_owned()),
         target_admin_database_url: Some(target_url.to_string()),
         cluster: None,
@@ -184,25 +182,8 @@ pub(super) async fn environments(
     ));
     let _ = std::fs::remove_dir_all(&logins);
     std::fs::create_dir_all(&logins)?;
-    let billing = project_database(
-        admin,
-        admin_url,
-        admin_url,
-        "billing",
-        "aaaaaaa1",
-        "org-a--billing--dev",
-        &logins,
-    )
-    .await?;
-    let shop = project_database(
-        admin,
-        admin_url,
-        admin_url,
-        "shop",
-        "aaaaaaa2",
-        "org-a--shop--dev",
-        &logins,
-    )
-    .await?;
+    let billing =
+        project_database(admin, admin_url, admin_url, "billing", "aaaaaaa1", &logins).await?;
+    let shop = project_database(admin, admin_url, admin_url, "shop", "aaaaaaa2", &logins).await?;
     Ok((logins, billing, shop))
 }

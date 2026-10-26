@@ -223,7 +223,7 @@ The release takes each package's `wamn.json`, attachments and component descript
 For an overlay, repeat `--package` for the exact selected package set.
 Platform release Jobs mount the selected authored document at `/inputs/environment.k`.
 `publish-release` reads the file argument, compiles it, and takes its `applications` map.
-The document must match `--org`, `--tenant` and `--environment`.
+The document supplies the organization, project, and environment.
 A map with one application needs no `--application` selector.
 For a map with multiple applications, pass the application name through `--application`.
 Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
@@ -232,8 +232,6 @@ Add one `--wiring` argument for each wiring that the release keeps. Receiving ha
 WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
   deploy/gcp/environments/"$TENANT".k \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
-  --org "$ORG" \
-  --tenant "$TENANT" --environment "$ENVIRONMENT" \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
@@ -358,7 +356,7 @@ Both verbs name the environment in the registry, as `env apply` does, and the us
 
 ```bash
 wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-  --org <org> --project <project> --env <env> --tenant <tenant> --user <email> --role admin
+  --org <org> --project <project> --env <env> --user <email> --role admin
 ```
 
 The admin URL must be SUPERUSER or BYPASSRLS.
@@ -379,7 +377,7 @@ Select an operation for an authored role with `wamn-ctl grant-permission`:
 
 ```bash
 wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-  --org <org> --project <project> --env <env> --tenant <tenant> --role <role> \
+  --org <org> --project <project> --env <env> --role <role> \
   --operation <package>:<interface>/<operation>
 ```
 

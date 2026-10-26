@@ -67,7 +67,8 @@ fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
 pub struct PublishReleaseManifest<'a> {
-    pub tenant_id: &'a str,
+    pub org: &'a str,
+    pub project: &'a str,
     pub environment: &'a str,
     pub verified_publisher_principal: &'a str,
     pub packages: &'a BTreeSet<PackageCoordinate>,
@@ -78,6 +79,13 @@ pub struct PublishReleaseManifest<'a> {
     /// the condition is the TARGET and never an operator's say-so. It selects
     /// the dependency rule below and changes nothing else.
     pub environment_is_disposable: bool,
+}
+
+impl PublishReleaseManifest<'_> {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(self.org, self.project, self.environment)
+    }
 }
 
 /// How a release matches a declared dependency to an admitted component fact.
@@ -262,8 +270,7 @@ pub struct PublishReleaseRequest {
     pub control_database_url: String,
     /// Registry organization owning the environment policy.
     pub org: String,
-    /// Tenant owning the release.
-    pub tenant: String,
+    pub project: String,
     /// Environment the release is published for.
     pub environment: String,
     /// Principal already authenticated by the publication boundary.
@@ -272,6 +279,13 @@ pub struct PublishReleaseRequest {
     pub run_schema: String,
     /// Exact package membership.
     pub packages: Vec<PackageCoordinate>,
+}
+
+impl PublishReleaseRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// Parse one exact `PACKAGE_ID@PACKAGE_VERSION` package coordinate.
@@ -284,7 +298,7 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
 
 impl PublishReleaseRequest {
     fn scope(&self) -> ReleaseScope {
-        ReleaseScope::new(self.tenant.as_str(), self.environment.as_str())
+        ReleaseScope::new(self.tenant().as_str(), self.environment.as_str())
     }
 
     fn verified_run_schema(&self) -> anyhow::Result<BareSchemaName> {
@@ -321,17 +335,19 @@ pub async fn publish_local(
 )> {
     wamn_runtime::local_application::require_local_target(
         &args.database_url,
-        &args.tenant,
+        &args.tenant(),
         &args.environment,
     )
     .await?;
     ensure!(
-        read_projected_environment_disposable(&args.control_database_url, &args.tenant).await?,
+        read_projected_environment_disposable(&args.control_database_url, &args.tenant()).await?,
         "local candidates require a provisioned disposable environment"
     );
     let (client, connection) = tokio_postgres::connect(&args.database_url, NoTls).await?;
     let driver = tokio::spawn(connection);
-    client.query_one(CLAIM_TENANT_SQL, &[&args.tenant]).await?;
+    client
+        .query_one(CLAIM_TENANT_SQL, &[&args.tenant()])
+        .await?;
     let assembled = assemble_local_release(&args, package_roots, admissions)?;
     let run_schema = args.verified_run_schema()?;
     let policy = crate::verification_policy::read_authoritative_environment_policy(
@@ -341,7 +357,7 @@ pub async fn publish_local(
         false,
     )
     .await?;
-    let projected = read_projected_environment_policy(&client, &run_schema, &args.tenant).await?;
+    let projected = read_projected_environment_policy(&client, &run_schema, &args.tenant()).await?;
     verify_projected_environment_policy(projected.as_ref(), &policy, &args.scope(), &run_schema)?;
     drop(client);
     driver.abort();
@@ -638,7 +654,8 @@ pub fn assemble_local_release(
         "local candidate repeats a package"
     );
     let request = PublishReleaseManifest {
-        tenant_id: &args.tenant,
+        org: &args.org,
+        project: &args.project,
         environment: &args.environment,
         verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
@@ -657,7 +674,7 @@ pub fn assemble_local_release(
     for admission in admissions {
         let fact = admission.facts();
         ensure!(
-            fact.scope.tenant_id == args.tenant
+            fact.scope.tenant_id == args.tenant()
                 && packages
                     .iter()
                     .any(|package| package.package_id() == fact.scope.package_id
@@ -763,7 +780,7 @@ async fn publish_candidate(
             })?,
         );
     }
-    let release_components = descriptor_components(&args.tenant, &args.packages, &opened)?;
+    let release_components = descriptor_components(&args.tenant(), &args.packages, &opened)?;
     let roots = opened
         .iter()
         .map(|package| package.root().to_owned())
@@ -818,11 +835,12 @@ async fn publish_candidate(
         "publish-release requires one exact package manifest for every release package"
     );
     let environment_is_disposable =
-        read_projected_environment_disposable(&args.control_database_url, &args.tenant)
+        read_projected_environment_disposable(&args.control_database_url, &args.tenant())
             .await
             .context("resolve the release target's disposable marker")?;
     let request = PublishReleaseManifest {
-        tenant_id: &args.tenant,
+        org: &args.org,
+        project: &args.project,
         environment: &args.environment,
         verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
@@ -900,11 +918,11 @@ async fn read_and_push(
     )
     .await?;
     let projected =
-        read_projected_environment_policy(client, run_schema, request.tenant_id).await?;
+        read_projected_environment_policy(client, run_schema, &request.tenant()).await?;
     verify_projected_environment_policy(
         projected.as_ref(),
         source_policy,
-        &ReleaseScope::new(request.tenant_id, request.environment),
+        &ReleaseScope::new(request.tenant(), request.environment),
         run_schema,
     )?;
     let mut published = published;
@@ -1103,7 +1121,7 @@ async fn publish_release_from_sources(
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
     client
-        .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
+        .query_one(CLAIM_TENANT_SQL, &[&request.tenant()])
         .await
         .map_err(|error| storage("claim the release tenant", error))?;
     validate_request(request)?;
@@ -1248,7 +1266,7 @@ async fn validate_release_package_manifests(
             .query_opt(
                 SELECT_APPLIED_PACKAGE_DIGEST_SQL,
                 &[
-                    &request.tenant_id,
+                    &request.tenant(),
                     &package.package_id(),
                     &package.package_version(),
                 ],
@@ -1840,7 +1858,7 @@ mod tests {
                 });
             }
             component.operations.insert(operation.clone(), export);
-            client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('tenant-a',$1,'1.0.0',$2)", &[&package, &component.component_digest]).await.unwrap();
+            client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('tenant-a--fixture--dev',$1,'1.0.0',$2)", &[&package, &component.component_digest]).await.unwrap();
             digests.insert(package.to_owned(), component.component_digest.clone());
             components
                 .insert(component, Vec::new(), BTreeMap::new())
@@ -1851,7 +1869,8 @@ mod tests {
         let published = publish_release_with_package_manifests(
             &client,
             &PublishReleaseManifest {
-                tenant_id: "tenant-a",
+                org: "tenant-a",
+                project: "fixture",
                 environment: "dev",
                 verified_publisher_principal: "publisher",
                 packages: &packages,
@@ -2275,7 +2294,7 @@ mod tests {
         let operation = registered_operation.unwrap_or("run");
         AdmittedComponent {
             scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
+                tenant_id: "tenant-a--fixture--dev".to_owned(),
                 package_id: "base".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },

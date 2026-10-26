@@ -121,7 +121,15 @@ mod tests {
     fn command_preserves_the_public_cli_boundary() {
         let command = ctl_command(
             OsStr::new("/test/wamn-ctl"),
-            ["apply-package", "--tenant", "tenant-a"],
+            [
+                "apply-package",
+                "--org",
+                "org-a",
+                "--project",
+                "project-a",
+                "--environment",
+                "dev",
+            ],
         );
         let command = command.as_std();
         assert_eq!(command.get_program(), "/test/wamn-ctl");
@@ -131,8 +139,12 @@ mod tests {
                 "--log-level",
                 "error",
                 "apply-package",
-                "--tenant",
-                "tenant-a",
+                "--org",
+                "org-a",
+                "--project",
+                "project-a",
+                "--environment",
+                "dev",
             ]
             .map(OsStr::new)
         );
@@ -142,7 +154,15 @@ mod tests {
     fn command_preserves_the_ops_cli_boundary() {
         let command = ctl_command(
             OsStr::new("/test/wamn-ctl-ops"),
-            ["prune-run-history", "--tenant", "tenant-a"],
+            [
+                "prune-run-history",
+                "--org",
+                "org-a",
+                "--project",
+                "project-a",
+                "--environment",
+                "dev",
+            ],
         );
         let command = command.as_std();
         assert_eq!(command.get_program(), "/test/wamn-ctl-ops");
@@ -152,8 +172,12 @@ mod tests {
                 "--log-level",
                 "error",
                 "prune-run-history",
-                "--tenant",
-                "tenant-a",
+                "--org",
+                "org-a",
+                "--project",
+                "project-a",
+                "--environment",
+                "dev",
             ]
             .map(OsStr::new)
         );

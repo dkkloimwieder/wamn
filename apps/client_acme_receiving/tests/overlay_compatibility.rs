@@ -378,7 +378,9 @@ async fn install_fresh(
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: package.clone(),
             database_url: url.clone(),
-            tenant: identity().tenant.clone(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            environment: identity().environment.clone(),
         })
         .await?;
     }
@@ -386,7 +388,9 @@ async fn install_fresh(
         wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
             packages: roots,
             database_url: url.clone(),
-            tenant: identity().tenant.clone(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            environment: identity().environment.clone(),
         },
     )
     .await?;

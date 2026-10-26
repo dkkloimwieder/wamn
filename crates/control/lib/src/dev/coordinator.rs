@@ -401,7 +401,7 @@ impl ProductionDevStageRunner {
             self.config.target_database_url(),
             &run_schema,
             &self.config.activation_identity().org,
-            &self.config.activation_identity().tenant,
+            &self.config.activation_identity().tenant(),
             &self.config.activation_identity().environment,
         )
         .await
@@ -425,7 +425,9 @@ impl ProductionDevStageRunner {
                         artifact_digest: None,
                     },
                     database_url: self.config.target_database_url().to_owned(),
-                    tenant: self.config.activation_identity().tenant.clone(),
+                    org: self.config.activation_identity().org.clone(),
+                    project: self.config.activation_identity().project.clone(),
+                    environment: self.config.activation_identity().environment.clone(),
                 },
                 &self.config.activation_identity().environment,
             )
@@ -450,7 +452,7 @@ impl ProductionDevStageRunner {
             &identity.org,
             &identity.project,
             &identity.environment,
-            &identity.tenant,
+            &identity.tenant(),
             self.config.platform_domain(),
         )
         .await
@@ -617,8 +619,10 @@ impl ProductionDevStageRunner {
             let mut base_digests =
                 authored_base_digests(&package.root).map_err(base_digests_stage_error)?;
             base_digests.extend(self.built_base_digests());
-            let declaration =
-                render_component_declaration(&template, &self.config.activation_identity().tenant)?;
+            let declaration = render_component_declaration(
+                &template,
+                &self.config.activation_identity().tenant(),
+            )?;
             let admission = admit_component(AdmitComponentRequest {
                 package: package.root,
                 component_bytes: artifact.path.clone(),
@@ -642,7 +646,7 @@ impl ProductionDevStageRunner {
             let artifact = palette.artifact;
             let package = self.package_input(&artifact.package_id)?;
             let scope = wamn_catalog::ComponentPackageScope {
-                tenant_id: self.config.activation_identity().tenant.clone(),
+                tenant_id: self.config.activation_identity().tenant(),
                 package_id: artifact.package_id.to_string(),
                 package_version: artifact.package_version.to_string(),
             };
@@ -738,7 +742,7 @@ impl ProductionDevStageRunner {
         reconcile_package_data_access::reconcile_local(
             &prepared.data_access,
             self.config.target_database_url(),
-            &self.config.activation_identity().tenant,
+            &self.config.activation_identity().tenant(),
             &self.config.activation_identity().environment,
             apply,
             &wamn_platform_identity::auth_changes::AuthChanges::new(
@@ -798,7 +802,7 @@ impl ProductionDevStageRunner {
             database_url: self.config.target_database_url().to_owned(),
             control_database_url: self.config.system_database_url().to_owned(),
             org: identity.org.clone(),
-            tenant: identity.tenant.clone(),
+            project: identity.project.clone(),
             environment: identity.environment.clone(),
             verified_publisher_principal: principal,
             run_schema: RUN_SCHEMA.to_owned(),
@@ -849,7 +853,7 @@ impl ProductionDevStageRunner {
         // foreign key needs the release row, which apply's stage writes.
         crate::environment::stage::write_release(
             self.config.target_database_url(),
-            &identity.tenant,
+            &identity.tenant(),
             published.digest.as_str(),
             &published.manifest,
         )
@@ -882,7 +886,7 @@ impl ProductionDevStageRunner {
         wamn_runtime::local_application::validate_local_facts(
             &local_facts,
             &published.manifest,
-            &identity.tenant,
+            &identity.tenant(),
         )
         .map_err(|source| {
             ProductionDevStageError::owner("validate complete local application", source)
@@ -1380,7 +1384,7 @@ impl DevStageRunner for ProductionDevStageRunner {
                         .collect::<Vec<_>>();
                     let reason = apply_package::local_target_recreate_reason(
                         self.config.target_database_url(),
-                        &self.config.activation_identity().tenant,
+                        &self.config.activation_identity().tenant(),
                         &roots,
                     )
                     .await
@@ -1414,7 +1418,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             };
             claim_environment_instance(
                 self.config.system_database_url(),
-                &self.config.activation_identity().tenant,
+                &self.config.activation_identity().tenant(),
                 &instance,
             )
             .await?;
@@ -1595,7 +1599,7 @@ async fn resolve_local_bindings(
 ) -> anyhow::Result<Vec<wamn_runtime::local_application::LocalBindingFacts>> {
     wamn_runtime::local_application::require_local_target(
         config.target_database_url(),
-        &config.activation_identity().tenant,
+        &config.activation_identity().tenant(),
         &config.activation_identity().environment,
     )
     .await?;
@@ -1609,7 +1613,7 @@ async fn resolve_local_bindings(
         client
             .query_one(
                 "SELECT set_config('app.tenant', $1, true)",
-                &[&config.activation_identity().tenant],
+                &[&config.activation_identity().tenant()],
             )
             .await?;
         let mut bindings = Vec::new();
@@ -1617,7 +1621,7 @@ async fn resolve_local_bindings(
             if let Some(input) = &binding.instance {
                 crate::bind_connection::prepare_local_instance(
                     &client,
-                    &config.activation_identity().tenant,
+                    &config.activation_identity().tenant(),
                     &config.activation_identity().environment,
                     &binding.instance_id,
                     input,
@@ -1626,7 +1630,7 @@ async fn resolve_local_bindings(
             }
             let selection = wamn_runtime::local_application::read_local_binding(
                 &client,
-                &config.activation_identity().tenant,
+                &config.activation_identity().tenant(),
                 &config.activation_identity().environment,
                 &binding.requirement,
                 &binding.instance_id,

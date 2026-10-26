@@ -383,7 +383,6 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
             admin_database_url: target_url.to_string(),
             org: "acme".to_string(),
             project: "billing".to_string(),
-            tenant: "t1".to_string(),
             env: "dev".to_string(),
             schema: SCHEMA.to_string(),
             dry_run: false,
@@ -973,14 +972,14 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     ))
     .await
     .expect("build the v1-era queue + outbox era");
-    seed_run_admission_facts(su, "t1", "cat", "dev", "durable").await;
+    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "durable").await;
     // A pre-existing queue row: the ADD COLUMN defaults must land on it.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,package_id, \
               environment) \
-             VALUES ('t1','r-old','f',1,'cat','dev'); \
-         INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r-old');"
+             VALUES ('acme--billing--dev','r-old','f',1,'cat','dev'); \
+         INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('acme--billing--dev', 'r-old');"
     ))
     .await
     .expect("seed a pre-drift queue row");
@@ -1003,13 +1002,13 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     }));
 
     su.batch_execute(&format!(
-        "DELETE FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"
+        "DELETE FROM {SCHEMA}.environment_policies WHERE tenant_id='acme--billing--dev'"
     ))
     .await
     .expect("remove the temporary pre-projection policy");
     let temporary_policy_rows: i64 = su
         .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"),
+            &format!("SELECT count(*) FROM {SCHEMA}.environment_policies WHERE tenant_id='acme--billing--dev'"),
             &[],
         )
         .await
@@ -1027,7 +1026,6 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
         project: "billing".to_string(),
-        tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
         dry_run: false,
@@ -1041,7 +1039,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .query_one(
             &format!(
                 "SELECT durability_class FROM {SCHEMA}.environment_policies \
-                 WHERE tenant_id='t1'"
+                 WHERE tenant_id='acme--billing--dev'"
             ),
             &[],
         )
@@ -1053,7 +1051,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment,durability_class) \
-         VALUES ('t1','r-policy-durable','f',1,'cat','dev','durable')"
+         VALUES ('acme--billing--dev','r-policy-durable','f',1,'cat','dev','durable')"
     ))
     .await
     .expect("seed an explicitly durable run");
@@ -1071,7 +1069,6 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
         project: "billing".to_string(),
-        tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
         dry_run: true,
@@ -1082,7 +1079,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .query_one(
             &format!(
                 "SELECT durability_class FROM {SCHEMA}.environment_policies \
-                 WHERE tenant_id='t1'"
+                 WHERE tenant_id='acme--billing--dev'"
             ),
             &[],
         )
@@ -1096,7 +1093,6 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
         project: "billing".to_string(),
-        tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
         dry_run: false,
@@ -1110,7 +1106,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment,durability_class) \
-         VALUES ('t1','r-policy-standard','f',1,'cat','dev','standard')"
+         VALUES ('acme--billing--dev','r-policy-standard','f',1,'cat','dev','standard')"
     ))
     .await
     .expect("seed an explicitly standard run");
@@ -1152,7 +1148,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .query_one(
             &format!(
                 "SELECT stream_seq, lease_generation FROM {SCHEMA}.run_queue \
-                 WHERE tenant_id = 't1' AND run_id = 'r-old'"
+                 WHERE tenant_id = 'acme--billing--dev' AND run_id = 'r-old'"
             ),
             &[],
         )
@@ -1241,13 +1237,13 @@ async fn queue_missing_leg(su: &Client) {
     assert!(!table_exists(su, SCHEMA, "partition_owner").await);
     assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
     // The FK to runs resolves: a run then its queue row insert cleanly.
-    seed_run_admission_facts(su, "t1", "cat", "dev", "standard").await;
+    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,package_id, \
               environment) \
-             VALUES ('t1','r1','f',1,'cat','dev'); \
-         INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
+             VALUES ('acme--billing--dev','r1','f',1,'cat','dev'); \
+         INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('acme--billing--dev', 'r1');"
     ))
     .await
     .expect("FK insert path");
@@ -1407,15 +1403,15 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // and read 0 where it demanded 1. The login name is DERIVED by the
     // production builder, never spelled, so the digest under test is the digest
     // `provision-project-env` would mint.
-    seed_run_admission_facts(su, "t1", "cat", "dev", "standard").await;
+    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "standard").await;
     seed_run_admission_facts(su, "t2", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,package_id, \
               environment) \
-             VALUES ('t1','r1','f',1,'cat','dev'), \
+             VALUES ('acme--billing--dev','r1','f',1,'cat','dev'), \
                     ('t2','r2','f',1,'cat','dev'); \
-         INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
+         INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('acme--billing--dev', 'r1');"
     ))
     .await
     .expect("seed both tenants' run-plane rows");
@@ -1426,14 +1422,16 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         .get(0);
     assert_eq!(seeded, 2, "both tenants' rows exist before the guest reads");
 
-    let (guest_generation, guest) = mint_guest_generation(su, base_url, "t1").await;
+    let (guest_generation, guest) = mint_guest_generation(su, base_url, "acme--billing--dev").await;
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
                (tenant_id,run_id,flow_id,flow_version,package_id,environment) \
-             VALUES ('t1','r3','f',1,'cat','dev')"
+             VALUES ('acme--billing--dev','r3','f',1,'cat','dev')"
         ),
-        format!("INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1','r3')"),
+        format!(
+            "INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('acme--billing--dev','r3')"
+        ),
     ] {
         let denied = guest
             .batch_execute(&refused)
@@ -1457,7 +1455,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         visible.iter().map(|row| (row.get(0), row.get(1))).collect();
     assert_eq!(
         visible,
-        vec![("t1".to_string(), "r1".to_string())],
+        vec![("acme--billing--dev".to_string(), "r1".to_string())],
         "the guest generation sees exactly its own tenant's row"
     );
     // `runs` is the only run-plane relation the guest role can still read;
@@ -1598,7 +1596,6 @@ async fn registry_durability_column_migration_leg(
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
         project: "billing".to_string(),
-        tenant: "t1".to_string(),
         env: "dev".to_string(),
         schema: SCHEMA.to_string(),
         dry_run,
@@ -1673,7 +1670,7 @@ async fn registry_durability_column_migration_leg(
         .query_one(
             &format!(
                 "SELECT expected_environment, durability_class \
-                   FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"
+                   FROM {SCHEMA}.environment_policies WHERE tenant_id='acme--billing--dev'"
             ),
             &[],
         )
@@ -1699,7 +1696,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.environment_policies \
            (tenant_id, expected_environment, durability_class) \
-         VALUES ('t1', 'dev', 'durable')"
+         VALUES ('acme--billing--dev', 'dev', 'durable')"
     ))
     .await
     .expect("seed projected environment policy");
@@ -1881,7 +1878,7 @@ async fn retired_effect_disposition_cutover_leg(su: &Client) {
              FOREIGN KEY (tenant_id, request_id) \
                REFERENCES {SCHEMA}.effect_disposition_requests (tenant_id, request_id)); \
          INSERT INTO {SCHEMA}.effect_disposition_requests \
-             VALUES ('t1', '00000000-0000-0000-0000-000000000001');"
+             VALUES ('acme--billing--dev', '00000000-0000-0000-0000-000000000001');"
     ))
     .await
     .expect("install populated retired effect-disposition pair");
@@ -2087,7 +2084,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
          GRANT wamn_platform_admin TO wamn_app; \
          GRANT INSERT ON {SCHEMA}.effect_disposition_requests TO wamn_app; \
          SET SESSION AUTHORIZATION wamn_app; \
-         SELECT set_config('app.tenant','t1',false); \
+         SELECT set_config('app.tenant','acme--billing--dev',false); \
          CREATE TEMP TABLE pg_roles \
              (rolname text, rolsuper boolean, rolbypassrls boolean); \
          INSERT INTO pg_temp.pg_roles VALUES ('wamn_app',true,true);"
@@ -2101,7 +2098,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
                    (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
                     attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-                 VALUES ('t1','00000000-0000-0000-0000-000000000509', \
+                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000509', \
                          'forged',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
                          'effect',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0,'not-required', \
                          now(),now()+interval '1 minute','sha256:forged')"
@@ -2114,7 +2111,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
             &format!(
                 "INSERT INTO {SCHEMA}.effect_disposition_requests \
                    (tenant_id,request_id,action,selection_kind,principal,effective_role,correlation_id) \
-                 VALUES ('t1','00000000-0000-0000-0000-000000000510', \
+                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000510', \
                          'park','single','member','project-admin','direct-dml')"
             ),
             &[],
@@ -2148,7 +2145,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
                     "INSERT INTO {SCHEMA}.effect_disposition_requests \
                        (tenant_id,request_id,action,selection_kind,principal,effective_role, \
                         basis,evidence_ref,correlation_id) \
-                     VALUES ('t1','{request_id}','resolve','single','actor','{effective_role}', \
+                     VALUES ('acme--billing--dev','{request_id}','resolve','single','actor','{effective_role}', \
                              'external-evidence','case:role-floor','role-floor')"
                 ),
                 &[],
@@ -2176,11 +2173,11 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
               local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
               attempt_started_at,attempt_deadline_at,attempt_input_ref) \
              VALUES \
-             ('t1','00000000-0000-0000-0000-000000000530', \
+             ('acme--billing--dev','00000000-0000-0000-0000-000000000530', \
                      'audit-run',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
                      'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0,'not-required', \
                      now(),now()+interval '1 minute','sha256:audit'), \
-             ('t1','00000000-0000-0000-0000-000000000540', \
+             ('acme--billing--dev','00000000-0000-0000-0000-000000000540', \
                      'audit-run',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
                      'temporal',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,1,'not-required', \
                      now(),now()+interval '1 minute','sha256:temporal'); \
@@ -2201,20 +2198,20 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
          INSERT INTO {SCHEMA}.effect_disposition_requests \
              (tenant_id,request_id,action,selection_kind,principal,effective_role,correlation_id) \
              VALUES \
-             ('t1','00000000-0000-0000-0000-000000000531','park','single','operator','project-admin','park'), \
-             ('t1','00000000-0000-0000-0000-000000000532','release','single','operator','project-admin','release'); \
+             ('acme--billing--dev','00000000-0000-0000-0000-000000000531','park','single','operator','project-admin','park'), \
+             ('acme--billing--dev','00000000-0000-0000-0000-000000000532','release','single','operator','project-admin','release'); \
          INSERT INTO {SCHEMA}.effect_disposition_requests \
              (tenant_id,request_id,action,selection_kind,principal,effective_role, \
               basis,evidence_ref,correlation_id) \
-             VALUES ('t1','00000000-0000-0000-0000-000000000533','resolve','single', \
+             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533','resolve','single', \
                      'operator','project-admin','external-evidence','case:1','resolve'); \
          INSERT INTO {SCHEMA}.effect_dispositions \
              (tenant_id,request_id,attempt_id,selection_ordinal,action,created_at) \
-             VALUES ('t1','00000000-0000-0000-0000-000000000531', \
+             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000531', \
                      '00000000-0000-0000-0000-000000000530',0,'park','2099-01-01T00:00:00Z'); \
          INSERT INTO {SCHEMA}.effect_dispositions \
              (tenant_id,request_id,attempt_id,selection_ordinal,action,created_at) \
-             VALUES ('t1','00000000-0000-0000-0000-000000000532', \
+             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000532', \
                      '00000000-0000-0000-0000-000000000530',0,'release','2000-01-01T00:00:00Z');"
     ))
     .await
@@ -2309,7 +2306,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
                 "INSERT INTO {SCHEMA}.effect_dispositions \
                    (tenant_id,request_id,attempt_id,selection_ordinal,action, \
                     resolution_status,success_payload,success_port) \
-                 VALUES ('t1','00000000-0000-0000-0000-000000000533', \
+                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533', \
                          '00000000-0000-0000-0000-000000000530',0,'resolve', \
                          NULL,'{{}}'::jsonb,'done')"
             ),
@@ -2326,7 +2323,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
                 "INSERT INTO {SCHEMA}.effect_dispositions \
                    (tenant_id,request_id,attempt_id,selection_ordinal,action, \
                     resolution_status,failure_kind,failure_detail) \
-                 VALUES ('t1','00000000-0000-0000-0000-000000000533', \
+                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533', \
                          '00000000-0000-0000-0000-000000000530',0,'resolve', \
                          'failed','terminal','{{}}'::jsonb)"
             ),
@@ -2342,7 +2339,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
             "INSERT INTO {SCHEMA}.effect_dispositions \
                (tenant_id,request_id,attempt_id,selection_ordinal,action, \
                 resolution_status,failure_kind,failure_detail) \
-             VALUES ('t1','00000000-0000-0000-0000-000000000533', \
+             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533', \
                      '00000000-0000-0000-0000-000000000530',0,'resolve', \
                      'failed','terminal','{{\"message\":\"confirmed\"}}'::jsonb)"
         ),
@@ -2354,7 +2351,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
         &format!(
             "INSERT INTO {SCHEMA}.effect_disposition_requests \
                (tenant_id,request_id,action,selection_kind,principal,effective_role,correlation_id) \
-             VALUES ('t1','00000000-0000-0000-0000-000000000534','park','single', \
+             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000534','park','single', \
                      'operator','project-admin','duplicate-append-order')"
         ),
         &[],
@@ -2367,11 +2364,11 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
                 "INSERT INTO {SCHEMA}.effect_dispositions \
                    (tenant_id,request_id,attempt_id,append_ordinal,selection_ordinal,action) \
                  OVERRIDING SYSTEM VALUE \
-                 SELECT 't1','00000000-0000-0000-0000-000000000534', \
+                 SELECT 'acme--billing--dev','00000000-0000-0000-0000-000000000534', \
                         '00000000-0000-0000-0000-000000000530', \
                         min(append_ordinal),0,'park' \
                    FROM {SCHEMA}.effect_dispositions \
-                  WHERE tenant_id='t1'"
+                  WHERE tenant_id='acme--billing--dev'"
             ),
             &[],
         )
@@ -2389,7 +2386,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
         .query(
             &format!(
                 "SELECT action,append_ordinal FROM {SCHEMA}.effect_dispositions \
-                 WHERE tenant_id='t1' \
+                 WHERE tenant_id='acme--billing--dev' \
                    AND attempt_id='00000000-0000-0000-0000-000000000530' \
                  ORDER BY append_ordinal"
             ),
@@ -2434,9 +2431,11 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     ] {
         for verb in ["UPDATE", "DELETE"] {
             let sql = if verb == "UPDATE" {
-                format!("UPDATE {SCHEMA}.{table} SET tenant_id=tenant_id WHERE tenant_id='t1'")
+                format!(
+                    "UPDATE {SCHEMA}.{table} SET tenant_id=tenant_id WHERE tenant_id='acme--billing--dev'"
+                )
             } else {
-                format!("DELETE FROM {SCHEMA}.{table} WHERE tenant_id='t1'")
+                format!("DELETE FROM {SCHEMA}.{table} WHERE tenant_id='acme--billing--dev'")
             };
             let error = su
                 .execute(&sql, &[])

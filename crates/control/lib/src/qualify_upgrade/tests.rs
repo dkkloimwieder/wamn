@@ -11,7 +11,7 @@ mod stage;
 mod synchronization;
 mod whole_row;
 
-const TENANT: &str = "upgrade-proof";
+const TENANT: &str = "upgrade-proof--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PREDECESSOR_VERSION: &str = "2.1.0";
 const CANDIDATE_VERSION: &str = "2.2.0";
@@ -56,7 +56,9 @@ fn apply_request(database_url: &str, package: &Path) -> ApplyPackageRequest {
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: fixture_root(package),
         database_url: database_url.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "upgrade-proof".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     }
 }
 
@@ -94,7 +96,9 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: vec![fixture_root(&predecessor)],
         database_url: source_database.url().to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "upgrade-proof".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .unwrap();
@@ -229,7 +233,8 @@ fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
     let package = fixture_root(&fixture.root.join("candidate"));
     QualifyUpgradeRequest {
         database_url: fixture.source_database.url().to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "upgrade-proof".into(),
+        project: "fixture".into(),
         environment: ENVIRONMENT.to_owned(),
         predecessor_release: fixture.predecessor_release.clone(),
         package: package.clone(),
@@ -400,7 +405,9 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
         ReconcilePackageDataAccessRequest {
             packages: vec![fixture_root(&candidate)],
             database_url: fixture.source_database.url().to_owned(),
-            tenant: TENANT.to_owned(),
+            org: "upgrade-proof".into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
         },
     )
     .await
@@ -503,7 +510,9 @@ async fn whole_row_failure_is_refused_before_grants_that_would_fix_it() {
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: vec![fixture_root(&package)],
         database_url: scratch.url().to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "upgrade-proof".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .unwrap();

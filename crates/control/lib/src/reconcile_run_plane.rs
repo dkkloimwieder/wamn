@@ -142,9 +142,6 @@ pub struct ReconcileRunPlaneRequest {
     /// Registry project owning the exact provisioned database target.
     pub project: String,
 
-    /// Tenant whose project-local policy row is converged.
-    pub tenant: String,
-
     /// Environment name. The policy is the one the environment row names.
     pub env: String,
 
@@ -157,6 +154,13 @@ pub struct ReconcileRunPlaneRequest {
 
     /// Publishes the user rows the reconciliation wrote or removed.
     pub changes: wamn_platform_identity::auth_changes::AuthChanges,
+}
+
+impl ReconcileRunPlaneRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.env)
+    }
 }
 
 /// Result of one run-plane reconciliation.
@@ -265,7 +269,12 @@ impl StdError for ReconcileTargetError {
 pub async fn reconcile_run_plane(
     args: ReconcileRunPlaneRequest,
 ) -> anyhow::Result<ReconcileRunPlaneOutcome> {
-    anyhow::ensure!(!args.tenant.is_empty(), "--tenant must not be empty");
+    anyhow::ensure!(
+        ![&args.org, &args.project, &args.env]
+            .iter()
+            .any(|part| part.is_empty()),
+        "org, project and environment must not be empty"
+    );
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid --schema {:?}", args.schema))?;
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
@@ -343,7 +352,7 @@ pub async fn reconcile_run_plane(
         let policy_changed = converge_environment_policy(
             &client,
             &schema,
-            &args.tenant,
+            &args.tenant(),
             &args.env,
             &source_policy,
             !args.dry_run,
@@ -360,7 +369,7 @@ pub async fn reconcile_run_plane(
         .await?;
         let tenant_identity = converge_tenant_identity(
             &mut client,
-            &args.tenant,
+            &args.tenant(),
             &identity_source,
             !args.dry_run,
             &args.changes,

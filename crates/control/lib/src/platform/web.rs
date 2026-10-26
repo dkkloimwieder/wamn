@@ -87,9 +87,10 @@ fn request(
         anyhow::bail!("web upload requires a declared release");
     };
     ensure!(!bucket.is_empty(), "web upload requires a bucket");
-    let tenant = format!(
-        "{}--{}--{}",
-        environment.org, environment.project, environment.env
+    let tenant = wamn_control_registry::project_env_tenant(
+        &environment.org,
+        &environment.project,
+        &environment.env,
     );
     Ok(JobRequest {
         name: format!("platform-web-{tenant}"),

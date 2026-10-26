@@ -25,7 +25,7 @@ use wamn_platform_identity::configuration::PlatformConfiguration;
 #[path = "../support/platform_configuration.rs"]
 mod rows;
 
-const TENANT: &str = "t1";
+const TENANT: &str = "acme--billing--dev";
 const ADMINISTRATION_PASSWORD: &str = "administration-generation-configuration-probe";
 
 /// Mint generation a of the environment's administration login through the
@@ -92,7 +92,6 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
         admin_database_url: target_url.clone(),
         org: CLI_ORG.to_string(),
         project: CLI_PROJECT.to_string(),
-        tenant: TENANT.to_string(),
         env: CLI_ENV.to_string(),
         schema: SCHEMA.to_string(),
         dry_run: false,
@@ -227,7 +226,6 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
         admin_database_url: target_url.clone(),
         org: CLI_ORG.to_string(),
         project: CLI_PROJECT.to_string(),
-        tenant: TENANT.to_string(),
         env: CLI_ENV.to_string(),
         schema: SCHEMA.to_string(),
         dry_run: false,

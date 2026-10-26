@@ -46,9 +46,10 @@ pub(super) async fn apply(
         if initial {
             environment.release = DeclaredRelease::None;
         }
-        let tenant = format!(
-            "{}--{}--{}",
-            environment.org, environment.project, environment.env
+        let tenant = wamn_control_registry::project_env_tenant(
+            &environment.org,
+            &environment.project,
+            &environment.env,
         );
         let mut request = JobRequest {
             name: format!(
@@ -230,9 +231,10 @@ async fn release_inputs(
         super::packages::artifact_base(registry, "releases")?,
     );
     chart_files(&directory.join("release-chart"), Path::new(""), request)?;
-    let tenant = format!(
-        "{}--{}--{}",
-        environment.org, environment.project, environment.env
+    let tenant = wamn_control_registry::project_env_tenant(
+        &environment.org,
+        &environment.project,
+        &environment.env,
     );
     let secret: SecretData = kubectl::get(
         &target.kubeconfig,

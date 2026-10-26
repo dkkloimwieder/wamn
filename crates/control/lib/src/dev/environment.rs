@@ -263,7 +263,13 @@ pub struct JourneyScope {
     pub org: String,
     pub project: String,
     pub environment: String,
-    pub tenant: String,
+}
+
+impl JourneyScope {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 impl JourneyScope {
@@ -273,7 +279,6 @@ impl JourneyScope {
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             environment: ENVIRONMENT.to_owned(),
-            tenant: TENANT.to_owned(),
         }
     }
 }
@@ -284,7 +289,6 @@ impl From<&crate::delivery::ReleaseIdentity> for JourneyScope {
             org: identity.org.clone(),
             project: identity.project.clone(),
             environment: identity.environment.clone(),
-            tenant: identity.tenant.clone(),
         }
     }
 }
@@ -355,7 +359,6 @@ pub fn generation_args(
         org: scope.org.clone(),
         project: scope.project.clone(),
         env: scope.environment.clone(),
-        tenant: Some(scope.tenant.clone()),
         system_database_url: Some(system_url.to_owned()),
         target_admin_database_url: target_admin_url.map(str::to_owned),
         cluster: None,
@@ -729,7 +732,6 @@ pub async fn reconcile_journey_run_plane(
         admin_database_url: project_url.to_owned(),
         org: scope.org.clone(),
         project: scope.project.clone(),
-        tenant: scope.tenant.clone(),
         env: scope.environment.clone(),
         schema: "wamn_run".to_owned(),
         dry_run: false,
@@ -968,7 +970,7 @@ pub async fn spawn_journey_management_gate(
         .env("WAMN_MANAGEMENT_ORG", &scope.org)
         .env("WAMN_MANAGEMENT_PROJECT", &scope.project)
         .env("WAMN_MANAGEMENT_ENVIRONMENT", &scope.environment)
-        .env("WAMN_MANAGEMENT_TENANT", &scope.tenant)
+        .env("WAMN_MANAGEMENT_TENANT", scope.tenant())
         // The gate reads component facts from verified package artifacts.
         .env(
             "WAMN_PACKAGE_ARTIFACT_BASE",
@@ -1042,7 +1044,6 @@ pub fn dev_activation_identity(
     };
     let process = std::process::id();
     Ok(DevActivationIdentity {
-        tenant: TENANT.to_owned(),
         catalog: "default".to_owned(),
         environment: ENVIRONMENT.to_owned(),
         org: ORG.to_owned(),
@@ -1145,6 +1146,10 @@ mod tests {
 
     #[test]
     fn the_journey_tenant_is_the_coordinate_tenant() {
+        assert_eq!(
+            JourneyScope::receiving().tenant().as_bytes(),
+            b"acme--receiving--dev"
+        );
         assert_eq!(
             TENANT,
             wamn_control_registry::project_env_tenant(ORG, PROJECT, ENVIRONMENT)

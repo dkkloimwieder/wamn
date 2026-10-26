@@ -17,7 +17,7 @@
 # its password, its `VALID UNTIL` and the Secret are minted together by:
 #
 #   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
-#     --tenant <tenant> --system-database-url <t1-superuser-url> \
+#     --system-database-url <t1-superuser-url> \
 #     --target-admin-database-url <project-env-superuser-url> \
 #     --prepare-retention-generation a \
 #     --emit-retention-secret ./retention-secret.json
@@ -30,7 +30,7 @@
 #
 # THE LOGIN NAME IS NOT COSMETIC. `wamn_run_retention_<40-hex>_<a|b>` carries the
 # 160-bit digest of (tenant, database), and `prune-run-history` REFUSES unless
-# that digest matches the `--tenant` it was given, recomputed against
+# that digest matches the tenant derived from its org, project, and environment, recomputed against
 # `current_database()` read back from the server. Pointing this Secret at another
 # tenant's credential, or at `wamn_app`, does not prune the wrong rows — it
 # refuses before any statement runs. The demo value below is the REAL derived

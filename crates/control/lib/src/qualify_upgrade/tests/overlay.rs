@@ -89,7 +89,9 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: fixture_roots(&[wamn_fixture_package::package_root(), predecessor.clone()]),
         database_url: base.source_database.url().to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "upgrade-proof".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .unwrap();
@@ -443,7 +445,9 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
                 fixture.candidate.clone(),
             ]),
             database_url: fixture.base.source_database.url().to_owned(),
-            tenant: TENANT.to_owned(),
+            org: "upgrade-proof".into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
         },
     )
     .await
@@ -825,7 +829,9 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: original_package_roots.clone(),
         database_url: fixture.base.source_database.url().to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "upgrade-proof".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .unwrap();
@@ -926,7 +932,9 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: successor_package_roots.clone(),
         database_url: generation.url().to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "upgrade-proof".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .unwrap();

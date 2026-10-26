@@ -55,9 +55,6 @@ pub struct MembershipTestArgs {
     /// Exact provisioned environment.
     #[arg(long)]
     pub env: String,
-    /// Tenant already attached to the released route.
-    #[arg(long)]
-    pub tenant: String,
     /// Seed a disposable user benchmark fixture and write its PAT to a new mode-0600 file.
     /// The journey teardown owns these retained facts; this mode runs no HTTP test.
     #[arg(long)]
@@ -76,7 +73,6 @@ impl fmt::Debug for MembershipTestArgs {
 pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     wamn_control_provision::validate_project_env(&args.org, &args.project, &args.env)
         .context("invalid membership test scope")?;
-    ensure!(!args.tenant.is_empty(), "membership test needs a tenant");
     // The benchmark seeds a fresh identity without invoking a host.
     let auth = if args.throughput_pat_file.is_some() {
         AuthChanges::default()
@@ -136,7 +132,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
             cleanup(
                 &mut system,
                 &mut project,
-                &args.tenant,
+                &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
                 user.id(),
                 &role,
                 &auth,
@@ -159,7 +155,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         cleanup(
             &mut system,
             &mut project,
-            &args.tenant,
+            &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
             user.id(),
             &role,
             &auth,
@@ -243,17 +239,29 @@ async fn exercise(
         request(case, 200).await?;
     }
     let user = format!("{role}@example.test");
-    let removed = wamn_control::user_role::revoke_role_on(project, &args.tenant, &user, role, auth)
-        .await
-        .context("remove this user's permission-bearing role")?;
+    let removed = wamn_control::user_role::revoke_role_on(
+        project,
+        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        &user,
+        role,
+        auth,
+    )
+    .await
+    .context("remove this user's permission-bearing role")?;
     ensure!(
         removed.changed,
         "test role assignment was missing before removal"
     );
     request("role_removed", 403).await?;
-    wamn_control::user_role::grant_role_on(project, &args.tenant, &user, role, auth)
-        .await
-        .context("restore this user's tenant role")?;
+    wamn_control::user_role::grant_role_on(
+        project,
+        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        &user,
+        role,
+        auth,
+    )
+    .await
+    .context("restore this user's tenant role")?;
     request("role_restored", 200).await?;
     for case in ["revoked", "repeated_revoke"] {
         membership(args, principal, "revoke-project-env-membership", auth).await?;
@@ -291,15 +299,32 @@ async fn seed_tenant_role(
     .await
     .context("seed the exact platform-issued UUID in the tenant")?;
     let mut drops = AuthDrops::default();
-    application::create_role(&tx, &args.tenant, role, &mut drops)
-        .await
-        .context("seed the dedicated test role")?;
-    application::grant_permission(&tx, &args.tenant, role, &operation_grant()?, &mut drops)
-        .await
-        .context("grant only the canonical purchase-order/get operation to the test role")?;
-    application::grant_user_role(&tx, &args.tenant, principal.as_str(), role, &mut drops)
-        .await
-        .context("link the test user to its tenant role")?;
+    application::create_role(
+        &tx,
+        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        role,
+        &mut drops,
+    )
+    .await
+    .context("seed the dedicated test role")?;
+    application::grant_permission(
+        &tx,
+        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        role,
+        &operation_grant()?,
+        &mut drops,
+    )
+    .await
+    .context("grant only the canonical purchase-order/get operation to the test role")?;
+    application::grant_user_role(
+        &tx,
+        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        principal.as_str(),
+        role,
+        &mut drops,
+    )
+    .await
+    .context("link the test user to its tenant role")?;
     tx.commit().await.context("commit test fixture seed")?;
     auth.publish(drops).await;
     Ok(())
@@ -497,8 +522,6 @@ mod tests {
             "receiving",
             "--env",
             "dev",
-            "--tenant",
-            "fixture",
         ])
         .expect("parse every required test argument");
         let diagnostic = format!("{:?}", command.args);

@@ -228,7 +228,8 @@ pub async fn schedule_run(
         database.url(),
         control.url(),
         &AuthorWorkflowRequest {
-            tenant_id: TENANT,
+            org: "rest",
+            project: "publication",
             environment: "test",
             application,
             declared: &declared,
@@ -245,7 +246,8 @@ pub async fn schedule_run(
         &wamn_control_registry::Triple::new("rest", application, "test"),
         &mut project,
         &WorkflowVersion {
-            tenant_id: TENANT,
+            org: "rest",
+            project: "publication",
             environment: "test",
             application,
             workflow_id: &document.wiring_id,
@@ -336,14 +338,18 @@ pub async fn install(
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: package.clone(),
             database_url: database.url().into(),
-            tenant: TENANT.into(),
+            org: "rest".into(),
+            project: "publication".into(),
+            environment: "test".into(),
         })
         .await?;
     }
     reconcile_package_data_access(ReconcilePackageDataAccessRequest {
         packages,
         database_url: database.url().into(),
-        tenant: TENANT.into(),
+        org: "rest".into(),
+        project: "publication".into(),
+        environment: "test".into(),
     })
     .await?;
     let role = workload_generation_role(

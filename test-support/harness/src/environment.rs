@@ -119,7 +119,9 @@ pub async fn reconcile_package_data_access(
     let again = ReconcilePackageDataAccessRequest {
         packages: args.packages.clone(),
         database_url: args.database_url.clone(),
-        tenant: args.tenant.clone(),
+        org: args.org.clone(),
+        project: args.project.clone(),
+        environment: args.environment.clone(),
     };
     reconcile_package_data_access::reconcile_package_data_access(args)
         .await

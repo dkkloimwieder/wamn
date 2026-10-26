@@ -28,7 +28,7 @@ use wamn_control::workflow_lifecycle::{
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_control_registry::Triple;
 
-const TENANT: &str = "workflow-tenant";
+const TENANT: &str = "workflow-tenant--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
 
@@ -212,7 +212,8 @@ impl Fixture {
             &self.control,
             &transaction,
             &AuthorWorkflowRequest {
-                tenant_id: TENANT,
+                org: "workflow-tenant",
+                project: "fixture",
                 environment: ENVIRONMENT,
                 application: APPLICATION,
                 declared: &declared(),
@@ -281,7 +282,8 @@ fn triple() -> Triple {
 
 fn key(id: &str, version: u32) -> WorkflowVersion<'_> {
     WorkflowVersion {
-        tenant_id: TENANT,
+        org: "workflow-tenant",
+        project: "fixture",
         environment: ENVIRONMENT,
         application: APPLICATION,
         workflow_id: id,

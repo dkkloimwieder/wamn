@@ -65,7 +65,7 @@ pub(crate) async fn apply_coordinated(
     );
     require_prefix(evidence)?;
     ensure!(
-        request.tenant == evidence.tenant,
+        request.tenant() == evidence.tenant,
         "qualified tenant changed"
     );
     require_candidate_root(&request.package, evidence)?;
@@ -106,7 +106,7 @@ pub(crate) async fn apply_coordinated(
         }
         tx.query_one(
             "SELECT set_config('app.tenant', $1, true)",
-            &[&request.tenant],
+            &[&request.tenant()],
         )
         .await?;
         bind_apply_package_principal(&tx).await?;
@@ -115,19 +115,19 @@ pub(crate) async fn apply_coordinated(
         for package in &evidence.presented_packages {
             tx.query_one(
                 crate::apply_package::LOCK_PACKAGE_SQL,
-                &[&request.tenant, &package.package_id],
+                &[&request.tenant(), &package.package_id],
             )
             .await?;
         }
         let base = &ordered[0];
-        let installed = read_current_packages(&tx, &request.tenant).await?;
+        let installed = read_current_packages(&tx, &request.tenant()).await?;
         let leaf = installed
             .iter()
             .find(|package| package.package_id == evidence.candidate_package.package_id)
             .context("qualified base has no installed leaf")?;
         let applied = crate::apply_package::load_applied_package(
             &tx,
-            &request.tenant,
+            &request.tenant(),
             &leaf.package_id,
             &leaf.package_version,
         )
@@ -136,7 +136,7 @@ pub(crate) async fn apply_coordinated(
         let plan = wamn_schema_control::plan_package_migrations(&base.directory, Some(&applied))?;
         let persist = require_application(
             &tx,
-            &request.tenant,
+            &request.tenant(),
             &base.root,
             &base.directory,
             &plan,
@@ -152,23 +152,23 @@ pub(crate) async fn apply_coordinated(
         }
         let mut outcomes = Vec::with_capacity(ordered.len());
         for package in &ordered {
-            outcomes.push(apply_in_transaction(&tx, &request.tenant, package).await?);
+            outcomes.push(apply_in_transaction(&tx, &request.tenant(), package).await?);
         }
         ensure!(
-            read_current_packages(&tx, &request.tenant).await? == evidence.presented_packages,
+            read_current_packages(&tx, &request.tenant()).await? == evidence.presented_packages,
             "atomic application does not match the complete qualified successor state"
         );
         if let Some(accepted) = &persist {
             if whole_row {
                 let manifest = read_release_manifest(
                     &tx,
-                    &request.tenant,
+                    &request.tenant(),
                     &evidence.predecessor_manifest_digest,
                 )
                 .await?;
                 crate::apply_package::finish_whole_row_stage(
                     &mut tx,
-                    &request.tenant,
+                    &request.tenant(),
                     roots,
                     &ordered,
                     &manifest,

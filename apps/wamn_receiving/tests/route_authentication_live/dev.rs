@@ -241,7 +241,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
             "SELECT package_id, package_version, artifact_digest \
              FROM catalog.packages WHERE tenant_id = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"",
-            &[&identity().tenant.as_str()],
+            &[&identity().tenant().as_str()],
         )
         .await
         .context("read product-command target package coordinates")?;
@@ -275,7 +275,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
             "SELECT package_id, package_version, ordinal, relative_path, sha256 \
              FROM catalog.package_migrations WHERE tenant_id = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\", ordinal",
-            &[&identity().tenant.as_str()],
+            &[&identity().tenant().as_str()],
         )
         .await
         .context("read product-command target migration records")?;

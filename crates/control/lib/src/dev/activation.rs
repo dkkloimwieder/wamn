@@ -56,7 +56,6 @@ const HOST_HOME: &str = "/tmp";
 /// Exact deployment identity carried into the local serving process.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevActivationIdentity {
-    pub tenant: String,
     pub catalog: String,
     pub environment: String,
     pub org: String,
@@ -65,6 +64,13 @@ pub struct DevActivationIdentity {
     pub host_group: String,
     pub host_name: String,
     pub runner: String,
+}
+
+impl DevActivationIdentity {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// Inputs produced by earlier stages and deployment-owned config.
@@ -654,7 +660,7 @@ fn materializer_request(
             workload: format!("{}-materializer", identity.project),
             namespace: host_namespace(identity).to_owned(),
             image: digest.to_owned(),
-            tenant: identity.tenant.clone(),
+            tenant: identity.tenant(),
             event: EventIdentity {
                 org: identity.org.clone(),
                 project: identity.project.clone(),
@@ -839,7 +845,6 @@ fn staged_http_reference(request: &DevActivationRequest<'_>) -> Result<String, D
 fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivationError> {
     let identity = request.identity;
     for (field, value) in [
-        ("tenant", identity.tenant.as_str()),
         ("catalog", identity.catalog.as_str()),
         ("environment", identity.environment.as_str()),
         ("org", identity.org.as_str()),
@@ -1123,13 +1128,13 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
 /// `deploy/platform/http-route-workload.example.yaml` is held equal to this
 /// by a test in this module, so the template gaining or losing a claim fails
 /// here rather than in a cluster.
-pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, &str); 5] {
+pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, String); 5] {
     [
-        ("wamn.tenant", identity.tenant.as_str()),
-        ("wamn.catalog", identity.catalog.as_str()),
-        ("wamn.environment", identity.environment.as_str()),
-        ("wamn.project", identity.project.as_str()),
-        ("wamn.schema", identity.schema.as_str()),
+        ("wamn.tenant", identity.tenant()),
+        ("wamn.catalog", identity.catalog.clone()),
+        ("wamn.environment", identity.environment.clone()),
+        ("wamn.project", identity.project.clone()),
+        ("wamn.schema", identity.schema.clone()),
     ]
 }
 
@@ -1142,7 +1147,7 @@ fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartReq
     let identity = request.identity;
     let config = flow_http_identity_claims(identity)
         .into_iter()
-        .map(|(claim, value)| (claim.to_owned(), value.to_owned()))
+        .map(|(claim, value)| (claim.to_owned(), value))
         .collect::<HashMap<_, _>>();
     let local_resources = v2::LocalResources {
         memory_limit_mb: 0,
@@ -1900,7 +1905,6 @@ mod tests {
 
     fn identity() -> DevActivationIdentity {
         DevActivationIdentity {
-            tenant: "example--fixture--fixture-dev".to_owned(),
             catalog: "default".to_owned(),
             environment: "fixture-dev".to_owned(),
             org: "example".to_owned(),
@@ -1956,7 +1960,6 @@ mod tests {
     #[test]
     fn each_identity_claim_carries_its_own_field() {
         let identity = DevActivationIdentity {
-            tenant: "tenant-value".to_owned(),
             catalog: "catalog-value".to_owned(),
             environment: "environment-value".to_owned(),
             org: "org-value".to_owned(),
@@ -1972,7 +1975,11 @@ mod tests {
                 .expect("every claim is namespaced");
             assert_eq!(
                 value,
-                format!("{field}-value"),
+                if field == "tenant" {
+                    "org-value--project-value--environment-value".to_owned()
+                } else {
+                    format!("{field}-value")
+                },
                 "claim {claim} carries the wrong field of the identity"
             );
         }
@@ -2429,6 +2436,22 @@ mod tests {
         };
         prepare_local(&request).expect("Release stages validated workload bytes");
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
+        let staged_http: v2::WorkloadStartRequest =
+            serde_json::from_slice(&staged_workload).unwrap();
+        let claims = staged_http
+            .workload
+            .unwrap()
+            .wit_world
+            .unwrap()
+            .components
+            .remove(0)
+            .local_resources
+            .unwrap()
+            .config;
+        assert_eq!(
+            claims["wamn.tenant"].as_bytes(),
+            b"example--fixture--fixture-dev"
+        );
         let staged_materializer: v2::WorkloadStartRequest =
             serde_json::from_slice(&std::fs::read(directory.join("materializer.json")).unwrap())
                 .unwrap();
@@ -2456,7 +2479,10 @@ mod tests {
             resources.config["wamn.postgres.authority"],
             "event-materializer"
         );
-        assert_eq!(resources.config["wamn.tenant"], identity.tenant);
+        assert_eq!(
+            resources.config["wamn.tenant"].as_bytes(),
+            b"example--fixture--fixture-dev"
+        );
         assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");
         assert_eq!(
             resources.environment["WAMN_MAT_FETCH_MS"],

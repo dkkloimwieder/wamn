@@ -250,13 +250,13 @@ impl<'a> WorkloadLifecycle<'a> {
 pub(super) fn workload_lifecycle<'a>(
     family: WorkloadRoleFamily,
     identity: WorkloadActionIdentity<'a>,
+    tenant: &'a str,
     database: &'a str,
 ) -> WorkloadLifecycle<'a> {
     let WorkloadActionIdentity {
         org,
         project,
         environment,
-        tenant,
     } = identity;
     let scope = match family.scope_kind() {
         // Tenant scope for the guest credential: the digest in the role name IS
@@ -290,28 +290,20 @@ pub(super) struct WorkloadActionIdentity<'a> {
     pub(super) org: &'a str,
     pub(super) project: &'a str,
     pub(super) environment: &'a str,
-    pub(super) tenant: &'a str,
 }
 
-fn workload_action_identity<'a>(
-    args: &'a WorkloadActionRequest,
-    label: &str,
-) -> anyhow::Result<WorkloadActionIdentity<'a>> {
+fn workload_action_identity(
+    args: &WorkloadActionRequest,
+) -> anyhow::Result<WorkloadActionIdentity<'_>> {
     let org = args.org.as_str();
     let project = args.project.as_str();
     let environment = args.env.as_str();
-    let tenant = args
-        .tenant
-        .as_deref()
-        .with_context(|| format!("{label} generation actions require --tenant"))?;
-    anyhow::ensure!(!tenant.is_empty(), "--tenant must not be empty");
     validate_project_env(org, project, environment)
         .map_err(|error| anyhow::anyhow!("project-env names: {error}"))?;
     Ok(WorkloadActionIdentity {
         org,
         project,
         environment,
-        tenant,
     })
 }
 
@@ -476,12 +468,13 @@ pub async fn run_workload_action(
             );
             None
         };
-    let identity = workload_action_identity(args, &label)?;
+    let tenant = wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env);
+    let tenant = tenant.as_str();
+    let identity = workload_action_identity(args)?;
     let WorkloadActionIdentity {
         org,
         project,
         environment,
-        tenant,
     } = identity;
     if family == WorkloadRoleFamily::SessionRoleReader {
         validate_session_tenant_id(tenant)?;
@@ -518,7 +511,7 @@ pub async fn run_workload_action(
         let config = exact_project_database_config(admin_url, &database)?;
         (admin_url, database, config, Some(instance))
     };
-    let lifecycle = workload_lifecycle(family, identity, &database);
+    let lifecycle = workload_lifecycle(family, identity, tenant, &database);
     let passwords =
         GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
             .await?;

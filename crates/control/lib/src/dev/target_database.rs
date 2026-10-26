@@ -35,7 +35,7 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
     let instance = lease.recreate(&config).await?;
     super::coordinator::claim_environment_instance(
         config.system_database_url(),
-        &config.activation_identity().tenant,
+        &config.activation_identity().tenant(),
         &instance,
     )
     .await?;
@@ -194,7 +194,7 @@ pub fn template_fingerprint(
         "org": identity.org,
         "project": identity.project,
         "environment": identity.environment,
-        "tenant": identity.tenant,
+        "tenant": identity.tenant(),
         "catalog": identity.catalog,
         "schema": identity.schema,
     });
@@ -381,7 +381,7 @@ impl TargetLease {
         let identity = config.activation_identity();
         wamn_runtime::local_application::require_local_target(
             config.target_database_url(),
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
         )
         .await
@@ -423,7 +423,7 @@ impl TargetLease {
             replace_database(&self.client, &self.spec, &template, &fingerprint, &acl).await?;
         let identity = config.activation_identity();
         let marker = wamn_runtime::local_application::local_target_marker(
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
             instance
                 .parse()
@@ -754,7 +754,7 @@ mod tests {
         let identity = config.activation_identity();
         wamn_runtime::local_application::require_local_target(
             target_database.url(),
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
         )
         .await?;
@@ -848,7 +848,7 @@ mod tests {
         target.batch_execute("BEGIN").await?;
         crate::bind_connection::prepare_local_instance(
             &target,
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
             "objects-a",
             &prepared_instance,
@@ -856,7 +856,7 @@ mod tests {
         .await?;
         let selected = wamn_runtime::local_application::read_local_binding(
             &target,
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
             &requirement,
             "objects-a",
@@ -866,7 +866,7 @@ mod tests {
         assert!(
             wamn_runtime::local_application::read_local_binding(
                 &target,
-                &identity.tenant,
+                &identity.tenant(),
                 &identity.environment,
                 &requirement,
                 "objects-a"
@@ -880,7 +880,7 @@ mod tests {
         target.batch_execute("BEGIN").await?;
         crate::bind_connection::prepare_local_instance(
             &target,
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
             "objects-a",
             &prepared_instance,
@@ -889,7 +889,7 @@ mod tests {
         target.batch_execute("COMMIT").await?;
         crate::bind_connection::prepare_local_instance(
             &target,
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
             "objects-a",
             &prepared_instance,
@@ -899,7 +899,7 @@ mod tests {
             selected,
             wamn_runtime::local_application::read_local_binding(
                 &target,
-                &identity.tenant,
+                &identity.tenant(),
                 &identity.environment,
                 &requirement,
                 "objects-a"
@@ -911,7 +911,7 @@ mod tests {
         assert!(
             crate::bind_connection::prepare_local_instance(
                 &target,
-                &identity.tenant,
+                &identity.tenant(),
                 &identity.environment,
                 "objects-a",
                 &crate::bind_connection::read_local_instance(&input)?
@@ -923,7 +923,7 @@ mod tests {
             selected,
             wamn_runtime::local_application::read_local_binding(
                 &target,
-                &identity.tenant,
+                &identity.tenant(),
                 &identity.environment,
                 &requirement,
                 "objects-a"
@@ -974,7 +974,7 @@ mod tests {
         target.batch_execute("BEGIN").await?;
         crate::bind_connection::prepare_local_instance(
             &target,
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
             "objects-a",
             &prepared_instance,
@@ -983,7 +983,7 @@ mod tests {
         target.batch_execute("COMMIT").await?;
         wamn_runtime::local_application::read_local_binding(
             &target,
-            &identity.tenant,
+            &identity.tenant(),
             &identity.environment,
             &requirement,
             "objects-a",

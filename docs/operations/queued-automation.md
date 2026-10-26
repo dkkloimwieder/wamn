@@ -6,7 +6,9 @@ The other `workflow` commands call the workflow contract in `wamn-workflow`, and
 The host's queue worker uses its existing database roles to claim and execute the run.
 
 Author and enable the workflow first with `wamn-ctl workflow author` and `wamn-ctl workflow enable`.
-Every `workflow` command except `start` needs `--tenant`, `--environment`, and the project-admin database URL.
+Every `workflow` command except `start` needs `--environment` and the project-admin database URL.
+`author`, `enable`, and `disable` take the organization and project from `--coordinate`.
+`list`, `park`, `release`, and `runs` require `--org` and `--project`.
 Pass the URL with `--admin-database-url` or `WAMN_PG_ADMIN_URL`.
 `--schema` selects the run-plane schema and defaults to `wamn_run`.
 `author` and `enable` also read the platform inputs of `wamn-ctl env`.
@@ -66,13 +68,13 @@ The executing principal owns application writes, while the `wamn:executor` crede
 
 ## Park, release, and list runs
 
-Each command needs `--tenant` and `--environment`. `park` and `release` also need `--run-id`.
+Each command needs `--org`, `--project`, and `--environment`. `park` and `release` also need `--run-id`.
 `runs` takes an optional `--limit`, which defaults to 50.
 
 ```bash
-wamn-ctl workflow park --tenant acme --environment dev --run-id "$RUN_ID"
-wamn-ctl workflow release --tenant acme --environment dev --run-id "$RUN_ID"
-wamn-ctl workflow runs --tenant acme --environment dev --limit 20
+wamn-ctl workflow park --org acme --project orders --environment dev --run-id "$RUN_ID"
+wamn-ctl workflow release --org acme --project orders --environment dev --run-id "$RUN_ID"
+wamn-ctl workflow runs --org acme --project orders --environment dev --limit 20
 ```
 
 A park holds a queued run that no worker holds, so no worker claims it.
@@ -86,7 +88,7 @@ A release returns a parked run to the queue, and a run that is not parked refuse
 Pass the database URL as above, then select the installed release with the required `--release-digest`:
 
 ```bash
-wamn-ctl workflow declared --tenant acme --environment dev --release-digest "$RELEASE_DIGEST"
+wamn-ctl workflow declared --org acme --project orders --environment dev --release-digest "$RELEASE_DIGEST"
 ```
 
 The command prints each declared workflow with its event registration.
@@ -122,9 +124,9 @@ Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project
 
    ```bash
    wamn-ctl create-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-     --org <org> --project <project> --env <env> --tenant <tenant> --role netsuite-pull
+     --org <org> --project <project> --env <env> --role netsuite-pull
    wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-     --org <org> --project <project> --env <env> --tenant <tenant> --role netsuite-pull \
+     --org <org> --project <project> --env <env> --role netsuite-pull \
      --operation <consumer package>:<interface>/<operation>
    ```
 
@@ -133,7 +135,7 @@ Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project
 3. Author the released wiring `apps/netsuite/publication/wirings/netsuite_pull.json` as a schedule workflow of the application `netsuite`:
 
    ```bash
-   wamn-ctl workflow author --tenant <tenant> --environment <env> --coordinate <org>/<project>/<env> \
+   wamn-ctl workflow author --environment <env> --coordinate <org>/<project>/<env> \
      --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --application netsuite \
      --document apps/netsuite/publication/wirings/netsuite_pull.json \
      --execution-type role --execution-role netsuite-pull --schedule '* * * * *' --principal-id "$ADMIN_ID"
@@ -143,7 +145,7 @@ Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project
 4. Enable it:
 
    ```bash
-   wamn-ctl workflow enable --tenant <tenant> --environment <env> --coordinate <org>/<project>/<env> \
+   wamn-ctl workflow enable --environment <env> --coordinate <org>/<project>/<env> \
      --application netsuite --workflow-id netsuite_pull --version 1 --principal-id "$ADMIN_ID"
    ```
 

@@ -270,8 +270,10 @@ mod tests {
             "/run/registry/config.json",
             "--database-url",
             "postgres://project.invalid/project",
-            "--tenant",
-            "acme--plant--dev",
+            "--org",
+            "acme",
+            "--project",
+            "plant",
             "--environment",
             "dev",
             "--result",
@@ -330,8 +332,10 @@ mod tests {
             "park",
             "--admin-database-url",
             "postgres://admin:secret@localhost/project",
-            "--tenant",
+            "--org",
             "acme",
+            "--project",
+            "plant",
             "--environment",
             "dev",
             "--run-id",
@@ -342,9 +346,10 @@ mod tests {
         else {
             panic!("expected workflow park");
         };
-        assert_eq!(args.scope.tenant, "acme");
-        assert_eq!(args.scope.environment, "dev");
-        assert_eq!(args.scope.schema, "wamn_run");
+        assert_eq!(args.scope.org, "acme");
+        assert_eq!(args.scope.project, "plant");
+        assert_eq!(args.scope.scope.environment, "dev");
+        assert_eq!(args.scope.scope.schema, "wamn_run");
         assert_eq!(args.run_id, "run-1");
     }
 
@@ -356,8 +361,6 @@ mod tests {
             "enable",
             "--admin-database-url",
             "postgres://admin:secret@localhost/project",
-            "--tenant",
-            "acme",
             "--environment",
             "dev",
             "--coordinate",

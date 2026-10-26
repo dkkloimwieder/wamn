@@ -72,9 +72,10 @@ fn account() -> Value {
 }
 
 fn tenant(environment: &EnvironmentDocument) -> String {
-    format!(
-        "{}--{}--{}",
-        environment.org, environment.project, environment.env
+    wamn_control_registry::project_env_tenant(
+        &environment.org,
+        &environment.project,
+        &environment.env,
     )
 }
 

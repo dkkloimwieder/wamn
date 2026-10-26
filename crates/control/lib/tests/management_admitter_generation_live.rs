@@ -45,10 +45,8 @@ fn state_sql() -> String {
 const ORG: &str = "pg18admit";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-/// Required by the shared workload-action identity contract and deliberately
-/// NOT an input to this family's scope digest — the derived-pair assertions in
-/// the test body are what keep it that way.
-const TENANT: &str = "tenant-live";
+/// Derived workload identity, not an input to this family's scope digest.
+const TENANT: &str = "pg18admit--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 const RUN_SCHEMA: &str = "wamn_run";
 
@@ -90,7 +88,6 @@ fn action_args(
         org: ORG.to_string(),
         project: PROJECT.to_string(),
         env: ENVIRONMENT.to_string(),
-        tenant: Some(TENANT.to_string()),
         system_database_url: Some(system_url.to_string()),
         namespace: "wamn-system".to_string(),
         target_admin_database_url: Some(target_admin_url.to_string()),

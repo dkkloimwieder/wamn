@@ -252,7 +252,7 @@ pub(crate) async fn reconcile_for_upgrade(
     let packages = super::read_presented_packages(&request.packages)?;
     super::execute_prepared(
         &request.database_url,
-        &request.tenant,
+        &request.tenant(),
         &packages,
         super::ReconcileMode::Qualification,
         true,

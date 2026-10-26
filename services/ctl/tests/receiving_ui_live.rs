@@ -105,7 +105,7 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
         let config: Value = serde_json::from_slice(&std::fs::read(root.join("dev.json"))?)?;
         let target = config["target_database_url"].as_str().context("target database URL")?;
         let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, ENVIRONMENT);
-        reconcile_journey_run_plane(&JourneyScope { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned(), tenant: tenant.clone() }, system.url(), target).await?;
+        reconcile_journey_run_plane(&JourneyScope { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         let (mut business, business_driver) = tokio_postgres::connect(target, tokio_postgres::NoTls).await?;
         let business_driver = tokio::spawn(business_driver);
         wamn_control::user_role::grant_role_on(&mut business, &tenant, DEVELOPER_EMAIL, wamn_project_state::ADMIN_ROLE, &wamn_platform_identity::auth_changes::AuthChanges::default()).await?;

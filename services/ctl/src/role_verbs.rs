@@ -31,10 +31,6 @@ pub struct UserRoleArgs {
     #[arg(long)]
     pub env: String,
 
-    /// Tenant of the environment.
-    #[arg(long)]
-    pub tenant: String,
-
     /// Email of the user or service in the tenant.
     #[arg(long)]
     pub user: String,
@@ -51,7 +47,6 @@ fn request(args: UserRoleArgs) -> UserRoleRequest {
         org: args.org,
         project: args.project,
         env: args.env,
-        tenant: args.tenant,
         user: args.user,
         role: args.role,
     }
@@ -106,10 +101,6 @@ pub struct EnvironmentArgs {
     /// Registry environment.
     #[arg(long)]
     pub env: String,
-
-    /// Tenant of the environment.
-    #[arg(long)]
-    pub tenant: String,
 }
 
 impl EnvironmentArgs {
@@ -120,7 +111,6 @@ impl EnvironmentArgs {
             org: self.org,
             project: self.project,
             env: self.env,
-            tenant: self.tenant,
         }
     }
 }

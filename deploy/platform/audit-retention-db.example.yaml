@@ -12,7 +12,7 @@
 # password, its `VALID UNTIL`, and the Secret together:
 #
 #   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
-#     --tenant <tenant> --system-database-url <t1-superuser-url> \
+#     --system-database-url <t1-superuser-url> \
 #     --target-admin-database-url <project-env-superuser-url> \
 #     --prepare-audit-retention-generation a \
 #     --emit-audit-retention-secret ./audit-retention-secret.json
@@ -24,7 +24,7 @@
 # `--retire-audit-retention-generation` for the old generation.
 #
 # The login name carries the digest of (tenant, database).
-# `prune-record-history` refuses unless that digest matches `--tenant` and the
+# `prune-record-history` refuses unless that digest matches the derived tenant and the
 # `current_database()` of the server. The demo value below is the derived name
 # for tenant `poc-f1` in the `wamn` database. Substitute the prepared password.
 #

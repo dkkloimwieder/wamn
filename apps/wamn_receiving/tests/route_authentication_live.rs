@@ -50,7 +50,7 @@ use environment::{
 use routes::copy_package;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{
-    DevEnvironmentInputs, ENVIRONMENT, JourneyScope, ORG, PROJECT, TENANT, connect,
+    DevEnvironmentInputs, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect,
     install_journey_platform_floor, prepare_journey_credentials, provision_journey_control,
     provision_route, reconcile_journey_run_plane, spawn_journey_management_gate, write_dev_config,
 };
@@ -149,7 +149,6 @@ fn identity() -> &'static ReleaseIdentity {
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             environment: ENVIRONMENT.to_owned(),
-            tenant: TENANT.to_owned(),
             route_host: "receiving.localhost".to_owned(),
             packages: match candidate {
                 Some(candidate) => {

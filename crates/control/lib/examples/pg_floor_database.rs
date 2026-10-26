@@ -56,7 +56,9 @@ async fn main() -> anyhow::Result<()> {
                 artifact_digest: None,
             },
             database_url: url.clone(),
-            tenant: TENANT.to_owned(),
+            org: wamn_control::dev::environment::ORG.to_owned(),
+            project: wamn_control::dev::environment::PROJECT.to_owned(),
+            environment: ENVIRONMENT.to_owned(),
         },
         ENVIRONMENT,
     )

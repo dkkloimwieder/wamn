@@ -62,7 +62,6 @@ pub struct Instance {
 /// What the project database holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectState {
-    pub tenant: String,
     pub installed: BTreeMap<String, Installed>,
     pub instances: BTreeMap<String, Instance>,
     /// `(manifest_digest, component_digest, store_alias, instance_id)`.
@@ -539,7 +538,6 @@ pub(crate) async fn read_project(
     };
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
-        tenant,
         installed,
         instances,
         bindings,
@@ -1188,7 +1186,6 @@ mod tests {
             },
             row: None,
             project: Some(ProjectState {
-                tenant: "acme".to_owned(),
                 installed: BTreeMap::from([(
                     "wamn_wms".to_owned(),
                     Installed {

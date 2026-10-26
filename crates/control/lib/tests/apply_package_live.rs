@@ -12,7 +12,7 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const TENANT: &str = "package-runner-live";
+const TENANT: &str = "package-runner-live--fixture--dev";
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
@@ -411,7 +411,9 @@ async fn apply_as(
             artifact_digest: Some(digest.to_owned()),
         },
         database_url: url.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "package-runner-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
 }
@@ -432,13 +434,15 @@ async fn apply_for_tenant(
             ),
         },
         database_url: url.to_owned(),
-        tenant: tenant.to_owned(),
+        org: tenant.split("--").next().expect("fixture org").to_owned(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
 }
 
 async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
-    const RACE_TENANT: &str = "package-runner-race";
+    const RACE_TENANT: &str = "package-runner-race--fixture--dev";
     let alpha =
         fixture_root().with_file_name(format!("apply-package-race-alpha-{}", std::process::id()));
     let beta =
@@ -2115,7 +2119,9 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
                     artifact_digest: None,
                 },
                 database_url: url.to_string(),
-                tenant: TENANT.to_owned(),
+                org: "package-runner-live".into(),
+                project: "fixture".into(),
+                environment: "dev".into(),
             },
             ENVIRONMENT,
         )

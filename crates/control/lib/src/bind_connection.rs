@@ -68,7 +68,8 @@ pub struct BindConnectionRequest {
     /// The project-environment database holding the catalog schema.
     pub database_url: String,
 
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
 
     pub environment: String,
 
@@ -98,13 +99,21 @@ pub struct BindConnectionRequest {
     pub store_alias: String,
 }
 
+impl BindConnectionRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
+}
+
 /// One environment-owned connection instance with the inputs of its active
 /// generation, with no binding (docs/plan/platform-deploy.md R22 (1)).
 #[derive(Clone, Debug)]
 pub struct ConnectionInstance {
     /// The project-environment database holding the catalog schema.
     pub database_url: String,
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
     pub environment: String,
     pub instance_id: String,
     pub requirement_type: RequirementType,
@@ -114,11 +123,19 @@ pub struct ConnectionInstance {
     pub org_connection_name: Option<String>,
 }
 
+impl ConnectionInstance {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
+}
+
 impl From<&BindConnectionRequest> for ConnectionInstance {
     fn from(request: &BindConnectionRequest) -> Self {
         Self {
             database_url: request.database_url.clone(),
-            tenant: request.tenant.clone(),
+            org: request.org.clone(),
+            project: request.project.clone(),
             environment: request.environment.clone(),
             instance_id: request.instance_id.clone(),
             requirement_type: request.requirement_type,
@@ -147,7 +164,7 @@ pub async fn ensure_instance(instance: &ConnectionInstance) -> anyhow::Result<(O
             .await
             .context("open the connection instance transaction")?;
         transaction
-            .execute(CLAIM_TENANT_SQL, &[&instance.tenant])
+            .execute(CLAIM_TENANT_SQL, &[&instance.tenant()])
             .await
             .context("claim the tenant for the connection instance transaction")?;
         let generations =
@@ -227,7 +244,7 @@ async fn bind_in(
         .await
         .context("open the bind-connection transaction")?;
     transaction
-        .execute(CLAIM_TENANT_SQL, &[&args.tenant])
+        .execute(CLAIM_TENANT_SQL, &[&args.tenant()])
         .await
         .context("claim the tenant for the bind-connection transaction")?;
 
@@ -240,7 +257,7 @@ async fn bind_in(
         .query_opt(
             SELECT_REQUIREMENT_SQL,
             &[
-                &args.tenant,
+                &args.tenant(),
                 &args.component_digest,
                 &args.store_alias,
                 &args.manifest_digest,
@@ -288,7 +305,7 @@ async fn bind_in(
            FROM catalog.connection_bindings WHERE tenant_id = $1 \
             AND manifest_digest = $2 AND component_digest = $3 AND store_alias = $4",
             &[
-                &args.tenant,
+                &args.tenant(),
                 &args.manifest_digest,
                 &args.component_digest,
                 &args.store_alias,
@@ -316,7 +333,7 @@ async fn bind_in(
             .execute(
                 insert_component_connection_binding_sql(),
                 &[
-                    &args.tenant,
+                    &args.tenant(),
                     &args.manifest_digest,
                     &args.component_digest,
                     &args.store_alias,
@@ -356,7 +373,7 @@ async fn bind_generation(
         .execute(
             set_org_connection_source_sql(),
             &[
-                &args.tenant,
+                &args.tenant(),
                 &args.environment,
                 &args.instance_id,
                 &args.org_connection_name,
@@ -385,11 +402,7 @@ fn validate_handle(instance: &ConnectionInstance) -> anyhow::Result<()> {
             let (org, parsed_name) =
                 wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
             ensure!(
-                parsed_name == name
-                    && instance
-                        .tenant
-                        .split_once("--")
-                        .is_some_and(|(tenant_org, _)| tenant_org == org),
+                parsed_name == name && instance.org == org,
                 "org connection source and credential handle differ"
             );
             Ok(())
@@ -404,7 +417,7 @@ async fn bind_generation_inputs(
     definition: &Value,
 ) -> anyhow::Result<(Option<i64>, i64)> {
     let coordinate: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
-        [&args.tenant, &args.environment, &args.instance_id];
+        [&args.tenant(), &args.environment, &args.instance_id];
     let mut current = transaction
         .query_opt(select_connection_instance_sql(), &coordinate)
         .await?;
@@ -418,7 +431,7 @@ async fn bind_generation_inputs(
             .execute(
                 ENABLE_INSTANCE_SQL,
                 &[
-                    &args.tenant,
+                    &args.tenant(),
                     &args.environment,
                     &args.instance_id,
                     &revision,
@@ -437,7 +450,7 @@ async fn bind_generation_inputs(
     let Some(current) = current else {
         insert_instance_generation(
             transaction,
-            &args.tenant,
+            &args.tenant(),
             &args.environment,
             &args.instance_id,
             descriptor,
@@ -466,7 +479,7 @@ async fn bind_generation_inputs(
                 .query_opt(
                     lock_connection_selection_sql(),
                     &[
-                        &args.tenant,
+                        &args.tenant(),
                         &args.environment,
                         &args.instance_id,
                         &previous,
@@ -490,7 +503,7 @@ async fn bind_generation_inputs(
         .execute(
             activate_connection_generation_sql(),
             &[
-                &args.tenant,
+                &args.tenant(),
                 &args.environment,
                 &args.instance_id,
                 &generation,
@@ -508,7 +521,7 @@ async fn bind_generation_inputs(
         .execute(
             insert_connection_generation_sql(),
             &[
-                &args.tenant,
+                &args.tenant(),
                 &args.environment,
                 &args.instance_id,
                 &generation,

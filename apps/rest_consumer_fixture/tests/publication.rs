@@ -13,7 +13,7 @@ fn consumer_publication_requires_admitted_operations() {
         database_url: String::new(),
         control_database_url: String::new(),
         org: "rest".into(),
-        tenant: "rest-publication".into(),
+        project: "publication".into(),
         environment: "test".into(),
         verified_publisher_principal: "publisher".into(),
         run_schema: "catalog".into(),

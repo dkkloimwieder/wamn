@@ -41,7 +41,6 @@ pub struct IssuerCluster<'a> {
     pub org: &'a str,
     pub project: &'a str,
     pub environment: &'a str,
-    pub tenant: &'a str,
 }
 
 /// Supply the real issuer required by the published application's session routes.
@@ -146,7 +145,6 @@ pub async fn prepare(
         org: cluster.org.to_owned(),
         project: cluster.project.to_owned(),
         env: cluster.environment.to_owned(),
-        tenant: Some(cluster.tenant.to_owned()),
         system_database_url: Some(cluster.system_database_url.to_owned()),
         target_admin_database_url: Some(target_url.to_string()),
         cluster: None,

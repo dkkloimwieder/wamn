@@ -127,8 +127,7 @@ pub async fn expand(
     }
     materialize_connections(
         &project_url,
-        &tenant,
-        &document.env,
+        document,
         &analysis.authorities.connections,
         &targets,
     )
@@ -139,16 +138,16 @@ pub async fn expand(
 /// Materialize one apply snapshot through the existing instance and bind paths.
 pub async fn materialize_connections(
     project_url: &str,
-    tenant: &str,
-    environment: &str,
+    document: &EnvironmentDocument,
     connections: &std::collections::BTreeMap<String, crate::org_connection::ResolvedConnection>,
     targets: &[(String, String, String)],
 ) -> anyhow::Result<()> {
     for (instance_id, declared) in connections {
         let instance = ConnectionInstance {
             database_url: project_url.to_owned(),
-            tenant: tenant.to_owned(),
-            environment: environment.to_owned(),
+            org: document.org.clone(),
+            project: document.project.clone(),
+            environment: document.env.clone(),
             instance_id: instance_id.clone(),
             requirement_type: declared.requirement_type,
             definition: declared.definition.clone(),
@@ -168,7 +167,8 @@ pub async fn materialize_connections(
         for (manifest_digest, component_digest, alias) in bound {
             bind(&BindConnectionRequest {
                 database_url: instance.database_url.clone(),
-                tenant: instance.tenant.clone(),
+                org: instance.org.clone(),
+                project: instance.project.clone(),
                 environment: instance.environment.clone(),
                 instance_id: instance.instance_id.clone(),
                 requirement_type: instance.requirement_type,

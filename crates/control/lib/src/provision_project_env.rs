@@ -257,10 +257,6 @@ pub struct WorkloadActionRequest {
     pub project: String,
     pub env: String,
 
-    /// Tenant identity for tenant-scoped workload credential generations.
-    /// It is never inferred from the project or environment.
-    pub tenant: Option<String>,
-
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`).
     pub system_database_url: Option<String>,
 

@@ -109,10 +109,18 @@ pub struct PruneRecordHistoryArgs {
     #[arg(long, env = "WAMN_PG_URL")]
     pub database_url: String,
 
-    /// The tenant that the mounted audit retention credential was minted for.
-    /// A different tenant refuses before any statement runs.
+    /// Organization in the coordinate that the mounted audit retention credential was minted for.
+    /// A different coordinate refuses before any statement runs.
     #[arg(long)]
-    pub tenant: String,
+    pub org: String,
+    /// Project in the coordinate that the mounted audit retention credential was minted for.
+    /// A different coordinate refuses before any statement runs.
+    #[arg(long)]
+    pub project: String,
+    /// Environment in the coordinate that the mounted audit retention credential was minted for.
+    /// A different coordinate refuses before any statement runs.
+    #[arg(long)]
+    pub environment: String,
 }
 
 /// Terminal run history retention arguments.
@@ -133,11 +141,18 @@ pub struct PruneRunHistoryArgs {
     #[arg(long)]
     pub schema: String,
 
-    /// The tenant whose run history to prune. It must be the tenant the mounted
-    /// retention credential was minted for; a mismatch refuses loudly rather
-    /// than pruning nothing and reporting success.
+    /// Organization in the coordinate that the mounted run retention credential was minted for.
+    /// A different coordinate refuses before any statement runs.
     #[arg(long)]
-    pub tenant: String,
+    pub org: String,
+    /// Project in the coordinate that the mounted run retention credential was minted for.
+    /// A different coordinate refuses before any statement runs.
+    #[arg(long)]
+    pub project: String,
+    /// Environment in the coordinate that the mounted run retention credential was minted for.
+    /// A different coordinate refuses before any statement runs.
+    #[arg(long)]
+    pub environment: String,
 
     /// Prune terminal runs whose `created_at` is older than this many days.
     #[arg(long)]
@@ -154,10 +169,15 @@ pub struct PruneRunHistoryArgs {
 pub async fn prune_record_history(args: PruneRecordHistoryArgs) -> anyhow::Result<()> {
     let pruned = prune_expired_record_history(PruneRecordHistoryRequest {
         database_url: args.database_url,
-        tenant: args.tenant.clone(),
+        org: args.org.clone(),
+        project: args.project.clone(),
+        environment: args.environment.clone(),
     })
     .await?;
-    print_pruned_record_history(&pruned, &args.tenant);
+    print_pruned_record_history(
+        &pruned,
+        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.environment),
+    );
     Ok(())
 }
 
@@ -180,7 +200,9 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
     let pruned = prune_terminal_run_history(PruneRunHistoryRequest {
         database_url: args.database_url,
         schema: args.schema.clone(),
-        tenant: args.tenant.clone(),
+        org: args.org.clone(),
+        project: args.project.clone(),
+        environment: args.environment.clone(),
         retention_days: args.retention_days,
         dry_run: args.dry_run,
     })
@@ -190,13 +212,17 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
         println!(
             "prune-run-history (dry-run): {pruned} terminal run(s) older than {} day(s) WOULD be \
              pruned in schema {} (tenant {})",
-            args.retention_days, args.schema, args.tenant
+            args.retention_days,
+            args.schema,
+            wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.environment)
         );
     } else {
         println!(
             "prune-run-history: pruned {pruned} terminal run(s) older than {} day(s) in schema {} \
              (tenant {})",
-            args.retention_days, args.schema, args.tenant
+            args.retention_days,
+            args.schema,
+            wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.environment)
         );
     }
     Ok(())

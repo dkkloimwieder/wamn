@@ -215,7 +215,8 @@ impl<'a> WorkflowTrigger<'a> {
 /// document's own `wiring-id` and `version`.
 #[derive(Clone, Copy, Debug)]
 pub struct AuthorWorkflowRequest<'a> {
-    pub tenant_id: &'a str,
+    pub org: &'a str,
+    pub project: &'a str,
     pub environment: &'a str,
     /// The application of the workflow, by the name the environment declares.
     pub application: &'a str,
@@ -230,6 +231,13 @@ pub struct AuthorWorkflowRequest<'a> {
     pub created_by: &'a str,
     /// The manifest digest of the release the environment serves.
     pub manifest_digest: &'a str,
+}
+
+impl AuthorWorkflowRequest<'_> {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(self.org, self.project, self.environment)
+    }
 }
 
 /// Read the installed release `manifest_digest` and gate `document` against it.
@@ -346,7 +354,7 @@ pub async fn author_workflow(
     request: &AuthorWorkflowRequest<'_>,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
     transaction
-        .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
+        .query_one(CLAIM_TENANT_SQL, &[&request.tenant()])
         .await
         .map_err(|error| storage("claim the authoring tenant", error))?;
     let Some(declared) = request.declared.get(request.application) else {
@@ -371,13 +379,13 @@ pub async fn author_workflow(
     let document = request.document;
     let hash = gate_against_release(
         transaction,
-        request.tenant_id,
+        &request.tenant(),
         &declared.packages,
         request.manifest_digest,
         document,
     )
     .await?;
-    let verdict = read_gate_verdict(control, request.tenant_id, &hash).await?;
+    let verdict = read_gate_verdict(control, &request.tenant(), &hash).await?;
     require_green_report(verdict, document, &hash)?;
 
     let version = i32::try_from(document.version).map_err(|error| {
@@ -411,7 +419,7 @@ pub async fn author_workflow(
         _ => (None, None, None, None),
     };
     let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 16] = [
-        &request.tenant_id,
+        &request.tenant(),
         &request.environment,
         &request.application,
         &document.wiring_id,

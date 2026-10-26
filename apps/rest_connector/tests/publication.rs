@@ -69,7 +69,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         database_url: String::new(),
         control_database_url: String::new(),
         org: "rest".into(),
-        tenant: scope.tenant_id.clone(),
+        project: "publication".into(),
         environment: "test".into(),
         verified_publisher_principal: "publisher".into(),
         run_schema: "catalog".into(),

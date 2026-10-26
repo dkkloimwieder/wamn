@@ -64,8 +64,12 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
     private_directory(&work.join("logs"))?;
     let arguments = &request.arguments;
     let path = work.join("runs").join(format!(
-        "{}--{}--{}.json",
-        arguments.org, arguments.project, arguments.environment
+        "{}.json",
+        wamn_control_registry::project_env_tenant(
+            &arguments.org,
+            &arguments.project,
+            &arguments.environment
+        )
     ));
     let mut record = RunRecord::open(&path, arguments.clone())?;
     let run = Run {
@@ -496,19 +500,25 @@ impl Run {
     }
 
     fn release_files(&self) -> PathBuf {
-        self.work.join("releases").join(format!(
-            "{}--{}--{}",
-            self.arguments.org, self.arguments.project, self.arguments.environment
-        ))
+        self.work
+            .join("releases")
+            .join(wamn_control_registry::project_env_tenant(
+                &self.arguments.org,
+                &self.arguments.project,
+                &self.arguments.environment,
+            ))
     }
 
     /// The credentials of the gate, kept until stage 10 retires the old
     /// generation, then deleted.
     fn secrets(&self) -> PathBuf {
-        self.work.join("secrets").join(format!(
-            "{}--{}--{}",
-            self.arguments.org, self.arguments.project, self.arguments.environment
-        ))
+        self.work
+            .join("secrets")
+            .join(wamn_control_registry::project_env_tenant(
+                &self.arguments.org,
+                &self.arguments.project,
+                &self.arguments.environment,
+            ))
     }
 
     /// The release that stage 7 published, as its manifest digest.
@@ -560,7 +570,9 @@ impl Run {
             changes: auth_changes.clone(),
             package: root.clone(),
             database_url: databases.project_url(),
-            tenant: databases.tenant.clone(),
+            org: self.arguments.org.clone(),
+            project: self.arguments.project.clone(),
+            environment: self.arguments.environment.clone(),
         };
         let package_registry = crate::package_artifact::PackageRegistry {
             artifact_base: format!("{}/packages", environment.registry),
@@ -687,7 +699,8 @@ impl Run {
             crate::qualify_upgrade::qualify_upgrade(
                 crate::qualify_upgrade::QualifyUpgradeRequest {
                     database_url: databases.project_url(),
-                    tenant: databases.tenant.clone(),
+                    org: self.arguments.org.clone(),
+                    project: self.arguments.project.clone(),
                     environment: self.arguments.environment.clone(),
                     predecessor_release,
                     package: roots
@@ -737,7 +750,6 @@ impl Run {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        let tenant = databases.tenant.clone();
         let project_url = databases.project_url();
         let system_url = databases.system_url();
         let mut outputs = BTreeMap::new();
@@ -784,7 +796,9 @@ impl Run {
                     .map(crate::package_artifact::OpenedPackage::package_root)
                     .collect(),
                 database_url: project_url.clone(),
-                tenant: tenant.clone(),
+                org: self.arguments.org.clone(),
+                project: self.arguments.project.clone(),
+                environment: self.arguments.environment.clone(),
             },
         )
         .await?;
@@ -854,11 +868,15 @@ impl Run {
                 database_url: project_url.clone(),
                 control_database_url: system_url.clone(),
                 org: self.arguments.org.clone(),
-                tenant: tenant.clone(),
+                project: self.arguments.project.clone(),
                 environment: self.arguments.environment.clone(),
                 verified_publisher_principal: format!(
-                    "wamn-management-author-{}--{}--{}",
-                    self.arguments.org, self.arguments.project, self.arguments.environment
+                    "wamn-management-author-{}",
+                    wamn_control_registry::project_env_tenant(
+                        &self.arguments.org,
+                        &self.arguments.project,
+                        &self.arguments.environment
+                    )
                 ),
                 run_schema: "wamn_run".to_owned(),
                 packages: packages
@@ -1109,7 +1127,6 @@ impl Run {
                     org: self.arguments.org.clone(),
                     project: self.arguments.project.clone(),
                     env: self.arguments.environment.clone(),
-                    tenant: Some(databases.tenant.clone()),
                     system_database_url: Some(databases.system_url()),
                     target_admin_database_url: target,
                     cluster: None,
@@ -1140,8 +1157,12 @@ impl Run {
             .output(Stage::Packages, "management-author PAT prefix")?
             .to_owned();
         let subject = format!(
-            "wamn-management-author-{}--{}--{}",
-            self.arguments.org, self.arguments.project, self.arguments.environment
+            "wamn-management-author-{}",
+            wamn_control_registry::project_env_tenant(
+                &self.arguments.org,
+                &self.arguments.project,
+                &self.arguments.environment
+            )
         );
         let older: Vec<String> = system
             .query(
@@ -1185,8 +1206,12 @@ impl Run {
             .map(|step| step.started_at.clone())
             .unwrap_or_default();
         let file = self.work.join("runs").join(format!(
-            "{}--{}--{}.json",
-            self.arguments.org, self.arguments.project, self.arguments.environment
+            "{}.json",
+            wamn_control_registry::project_env_tenant(
+                &self.arguments.org,
+                &self.arguments.project,
+                &self.arguments.environment
+            )
         ));
         let outputs = BTreeMap::from([
             ("first step started".to_owned(), first),
@@ -1263,7 +1288,6 @@ impl GateCredentials {
                 org: arguments.org.clone(),
                 project: arguments.project.clone(),
                 env: arguments.environment.clone(),
-                tenant: Some(databases.tenant.clone()),
                 system_database_url: Some(databases.system_url()),
                 target_admin_database_url: target,
                 cluster: None,
@@ -1385,7 +1409,6 @@ async fn mint_pat(
         &template,
         record.output(Stage::Images, "ctl")?,
         arguments,
-        &databases.tenant,
         &databases.secret_namespace,
     )?;
     let previous = kubectl
@@ -1525,7 +1548,6 @@ fn mint_pat_job(
     template: &str,
     ctl_image: &str,
     arguments: &RunArguments,
-    tenant: &str,
     namespace: &str,
 ) -> anyhow::Result<String> {
     let mut images = 0;
@@ -1550,7 +1572,6 @@ fn mint_pat_job(
         .replace("__ORG__", &arguments.org)
         .replace("__PROJECT__", &arguments.project)
         .replace("__ENV__", &arguments.environment)
-        .replace("__TENANT__", tenant)
         .replace("__NAMESPACE__", namespace)
         .replace("__PAT_FLAG__", "--emit-management-author-pat-secret");
     let body: String = job
@@ -1611,7 +1632,14 @@ impl GateService {
             .env("WAMN_MANAGEMENT_ORG", &arguments.org)
             .env("WAMN_MANAGEMENT_PROJECT", &arguments.project)
             .env("WAMN_MANAGEMENT_ENVIRONMENT", &arguments.environment)
-            .env("WAMN_MANAGEMENT_TENANT", &databases.tenant)
+            .env(
+                "WAMN_MANAGEMENT_TENANT",
+                wamn_control_registry::project_env_tenant(
+                    &arguments.org,
+                    &arguments.project,
+                    &arguments.environment,
+                ),
+            )
             .env(
                 "WAMN_PACKAGE_ARTIFACT_BASE",
                 &package_registry.artifact_base,
@@ -1687,7 +1715,7 @@ pub(crate) async fn apply_environment_package_qualification(
     presented.sort_by(|left, right| left.package_id.cmp(&right.package_id));
     let (evidence, _, _) = crate::qualify_upgrade::read_qualification(evidence_path)?;
     ensure!(
-        evidence.tenant == request.tenant
+        evidence.tenant == request.tenant()
             && evidence.environment == environment
             && evidence.presented_packages == presented,
         "retained package qualification differs from this exact environment and complete successor root set"
@@ -2667,13 +2695,13 @@ mod tests {
             fs::read_to_string(checkout.join("deploy/gcp/operator/mint-pat.yaml")).unwrap();
         let arguments = RunArguments::new("dkk", "wms", "dev", &"a".repeat(40)).unwrap();
         let image = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-x@sha256:00";
-        let job = mint_pat_job(&template, image, &arguments, "wms", "hosts").unwrap();
+        let job = mint_pat_job(&template, image, &arguments, "hosts").unwrap();
         let document: serde_yaml::Value = serde_yaml::from_str(&job).unwrap();
         let container = &document["spec"]["template"]["spec"]["containers"][0];
         assert_eq!(container["image"], image);
         let script = container["args"][0].as_str().unwrap();
         assert!(
-            script.contains("--org dkk --project wms --env dev --tenant wms"),
+            script.contains("--org dkk --project wms --env dev"),
             "{script}"
         );
         assert!(script.contains("--namespace hosts"), "{script}");

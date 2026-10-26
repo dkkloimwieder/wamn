@@ -51,10 +51,9 @@ pub struct PruneRunHistoryRequest {
     /// success.
     pub schema: String,
 
-    /// The tenant whose run history to prune. It must be the tenant the mounted
-    /// retention credential was minted for; a mismatch refuses loudly rather
-    /// than pruning nothing and reporting success.
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
+    pub environment: String,
 
     /// Prune terminal runs whose `created_at` is older than this many days.
     pub retention_days: u32,
@@ -62,6 +61,13 @@ pub struct PruneRunHistoryRequest {
     /// Count what WOULD be pruned (a rolled-back delete under the same predicate)
     /// without deleting anything.
     pub dry_run: bool,
+}
+
+impl PruneRunHistoryRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// Prune one tenant's expired terminal run history and return the number of
@@ -74,7 +80,10 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
             request.schema
         );
     }
-    if request.tenant.trim().is_empty() {
+    if [&request.org, &request.project, &request.environment]
+        .iter()
+        .any(|part| part.trim().is_empty())
+    {
         bail!("the tenant must be non-empty (it is the tenant the delete is bound to)");
     }
 
@@ -83,11 +92,11 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         .context("retention credential connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
-        verify_retention_identity(&client, &request.tenant).await?;
+        verify_retention_identity(&client, &request.tenant()).await?;
         prune(
             &mut client,
             &request.schema,
-            &request.tenant,
+            &request.tenant(),
             request.retention_days,
             !request.dry_run,
         )
@@ -115,7 +124,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// What the server DOES supply is an unforgeable identity: the generation login
 /// name carries the 160-bit scope digest of `(tenant, database)` under the
 /// retention family's own domain, and `current_user` cannot be rewritten by a
-/// session. Deriving the expected names from `--tenant` and `current_database()`
+/// session. Deriving the expected names from the environment coordinate and `current_database()`
 /// and comparing turns a free CLI argument into a claim the credential has to
 /// back. A missing, foreign or mismatched tenant therefore ERRORS here, instead
 /// of reaching a predicate that matches nothing and reporting `pruned 0 terminal

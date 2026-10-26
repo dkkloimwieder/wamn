@@ -14,7 +14,7 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const TENANT: &str = "package-data-access-live";
+const TENANT: &str = "package-data-access-live--fixture--dev";
 const PASSWORD: &str = "package-data-access-live-password";
 /// The relation maps apply-package writes beside the application tables.
 const APPLIER_OWNED_RELATIONS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
@@ -58,7 +58,9 @@ fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAcce
             })
             .collect(),
         database_url: url.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     }
 }
 
@@ -222,7 +224,9 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
             ),
         },
         database_url: url.to_string(),
-        tenant: TENANT.to_owned(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .expect("apply the fixture package before policy");
@@ -238,7 +242,9 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
             ),
         },
         database_url: url.to_string(),
-        tenant: TENANT.to_owned(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .expect("apply client overlay package before policy");
@@ -563,7 +569,9 @@ async fn apply(url: &str, package: PathBuf) {
             ),
         },
         database_url: url.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .expect("apply one package coordinate");

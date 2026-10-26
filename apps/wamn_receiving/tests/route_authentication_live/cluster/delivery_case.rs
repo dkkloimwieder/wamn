@@ -96,7 +96,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
     let broker = event_broker::prepare(
         &work,
         &triple,
-        identity().tenant.as_str(),
+        identity().tenant().as_str(),
         &source,
         &advisory,
         &consumers,
@@ -216,7 +216,6 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
             org: identity().org.as_str(),
             project: identity().project.as_str(),
             environment: identity().environment.as_str(),
-            tenant: identity().tenant.as_str(),
         },
         &digest,
     )

@@ -73,7 +73,9 @@ spec:
                   "--log-level", "error",
                   "prune-run-history",
                   "--schema", "poc_f1",
-                  "--tenant", "poc-f1",
+                  "--org", "<org>",
+                  "--project", "<project>",
+                  "--environment", "<environment>",
                   "--retention-days", "30",
                 ]
               env:

@@ -71,7 +71,7 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        tenant: identity.tenant.as_str(),
+        tenant: identity.tenant().as_str(),
         org: identity.org.as_str(),
         project: identity.project.as_str(),
         environment: identity.environment.as_str(),
@@ -106,7 +106,7 @@ async fn recover(
     wiring: &wamn_catalog::WiringDocument,
 ) -> anyhow::Result<()> {
     let identity = super::identity();
-    let tenant = identity.tenant.as_str();
+    let tenant = identity.tenant();
     let (client, task) = super::connect(project_url).await?;
     let (lock, lock_task) = super::connect(project_url).await?;
     let result = async {
@@ -145,7 +145,7 @@ async fn recover(
             system_url, project_url,
             &wamn_control_registry::Triple::new(&identity.org, &identity.project, identity.environment.as_str()),
             &wamn_control::author_workflow::AuthorWorkflowRequest {
-                tenant_id: tenant, environment: &identity.environment,
+                org: &identity.org, project: &identity.project, environment: &identity.environment,
                 application: super::BASE_PACKAGE_ID,
                 declared: &queue.release.scope().applications,
                 document: wiring, trigger: wamn_control::author_workflow::WorkflowTrigger::Manual,

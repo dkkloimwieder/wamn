@@ -60,7 +60,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::BareSchemaName;
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
-const TENANT: &str = "manual-live";
+const TENANT: &str = "manual-live--default--dev";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
@@ -542,7 +542,8 @@ impl Fixture {
             &self.url,
             &self.control_url,
             &AuthorWorkflowRequest {
-                tenant_id: TENANT,
+                org: "manual-live",
+                project: "default",
                 environment: ENVIRONMENT,
                 application: APP,
                 declared: &declared(),
@@ -563,7 +564,8 @@ impl Fixture {
             &Triple::new("acme", APPLICATION, ENVIRONMENT),
             &mut self.admin,
             &WorkflowVersion {
-                tenant_id: TENANT,
+                org: "manual-live",
+                project: "default",
                 environment: ENVIRONMENT,
                 application: APP,
                 workflow_id: WORKFLOW,

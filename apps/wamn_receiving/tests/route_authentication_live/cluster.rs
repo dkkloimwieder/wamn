@@ -93,7 +93,7 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     let broker = event_broker::prepare(
         &cluster.work,
         &scope,
-        identity().tenant.as_str(),
+        identity().tenant().as_str(),
         &source,
         &advisory,
         &consumers,

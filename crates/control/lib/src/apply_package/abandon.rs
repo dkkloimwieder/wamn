@@ -36,15 +36,21 @@ pub async fn abandon_stage(
     request: ApplyPackageRequest,
     evidence_path: &Path,
 ) -> anyhow::Result<AbandonStageOutcome> {
-    ensure!(!request.tenant.is_empty(), "tenant must not be empty");
+    ensure!(
+        ![&request.org, &request.project, &request.environment]
+            .iter()
+            .any(|part| part.is_empty()),
+        "org, project and environment must not be empty"
+    );
     let package = prepare_package(&request.package)?;
     let (evidence, _, digest) = qualify_upgrade::read_qualification(evidence_path)?;
-    require_exact_stage(&request.tenant, &package, &evidence)?;
+    require_exact_stage(&request.tenant(), &package, &evidence)?;
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to project environment for stage abandonment")?;
     let task = tokio::spawn(connection);
-    let result = abandon_existing(&mut client, &request.tenant, &package, &evidence, &digest).await;
+    let result =
+        abandon_existing(&mut client, &request.tenant(), &package, &evidence, &digest).await;
     drop(client);
     if result.is_err() {
         task.abort();
@@ -129,7 +135,6 @@ async fn abandon_existing(
         "abandonment installed predecessor manifest or migrations changed"
     );
     let identity = StageIdentity {
-        tenant_id: tenant.to_owned(),
         package_id: candidate.package_id.clone(),
         package_version: candidate.package_version.clone(),
         predecessor_version: installed_version.clone(),
@@ -139,7 +144,7 @@ async fn abandon_existing(
     };
     // Recheck the supplied snapshot immediately before the only durable mutation.
     require_exact_stage(tenant, package, evidence)?;
-    let progress = progress::abandon(&tx, &identity).await?;
+    let progress = progress::abandon(&tx, tenant, &identity).await?;
     tx.commit().await.context("commit stage abandonment")?;
     Ok(AbandonStageOutcome {
         package_id: candidate.package_id.clone(),
@@ -177,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn abandonment_requires_exact_bytes_and_preserves_installed_data_and_cursor() {
-        const TENANT: &str = "abandon-test";
+        const TENANT: &str = "abandon-test--fixture--dev";
         let files =
             Files(std::env::temp_dir().join(format!("wamn-abandon-stage-{}", std::process::id())));
         std::fs::create_dir(&files.0).unwrap();
@@ -226,7 +231,6 @@ mod tests {
         };
         let (evidence_path, digest) = write_evidence(&files.0, &evidence);
         let identity = StageIdentity {
-            tenant_id: TENANT.into(),
             package_id: candidate.package_id.clone(),
             package_version: candidate.package_version.clone(),
             predecessor_version: predecessor.package_version.clone(),
@@ -259,11 +263,13 @@ mod tests {
         }
         client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false);").await.unwrap();
         let tx = client.transaction().await.unwrap();
-        progress::open(&tx, &identity, &Value::Null).await.unwrap();
+        progress::open(&tx, TENANT, &identity, &Value::Null)
+            .await
+            .unwrap();
         tx.execute("UPDATE retained SET converted=true WHERE id=1", &[])
             .await
             .unwrap();
-        progress::advance(&tx, &identity, &json!({"id":1}))
+        progress::advance(&tx, TENANT, &identity, &json!({"id":1}))
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -272,7 +278,9 @@ mod tests {
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: crate::package_artifact::fixture_package_root(&files.0).unwrap(),
             database_url: database.url().to_owned(),
-            tenant: TENANT.into(),
+            org: "abandon-test".into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
         };
 
         let mut changed_bytes = manifest_bytes.clone();
@@ -298,7 +306,7 @@ mod tests {
         );
         write_evidence(&files.0, &evidence);
         let mut wrong_tenant = request();
-        wrong_tenant.tenant = "other".into();
+        wrong_tenant.org = "other".into();
         assert!(
             abandon_stage(wrong_tenant, &evidence_path)
                 .await
@@ -339,14 +347,14 @@ mod tests {
             vec![predecessor]
         );
         assert!(
-            progress::open(&tx, &identity, &Value::Null)
+            progress::open(&tx, TENANT, &identity, &Value::Null)
                 .await
                 .unwrap_err()
                 .to_string()
                 .contains("retained cursor")
         );
         assert!(
-            progress::advance(&tx, &identity, &json!({"id":2}))
+            progress::advance(&tx, TENANT, &identity, &json!({"id":2}))
                 .await
                 .is_err()
         );

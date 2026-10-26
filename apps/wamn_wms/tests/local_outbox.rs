@@ -63,7 +63,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        tenant: crate::environment::identity().tenant.as_str(),
+        tenant: crate::environment::identity().tenant().as_str(),
         org: crate::environment::identity().org.as_str(),
         project: crate::environment::identity().project.as_str(),
         environment: crate::environment::identity().environment.as_str(),

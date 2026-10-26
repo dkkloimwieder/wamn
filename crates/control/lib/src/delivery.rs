@@ -23,9 +23,15 @@ pub struct ReleaseIdentity {
     pub org: String,
     pub project: String,
     pub environment: String,
-    pub tenant: String,
     pub route_host: String,
     pub packages: BTreeSet<PackageCoordinate>,
+}
+
+impl ReleaseIdentity {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// One published release and the platform it qualifies on: the manifest

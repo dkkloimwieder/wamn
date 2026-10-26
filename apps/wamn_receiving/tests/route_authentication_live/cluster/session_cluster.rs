@@ -21,7 +21,6 @@ fn issuer_cluster(cluster: &ReceivingCluster) -> IssuerCluster<'_> {
         org: identity().org.as_str(),
         project: identity().project.as_str(),
         environment: identity().environment.as_str(),
-        tenant: identity().tenant.as_str(),
     }
 }
 

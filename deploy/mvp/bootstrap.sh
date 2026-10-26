@@ -11,7 +11,6 @@ kubectl_bin=${KUBECTL_BIN:-kubectl}
 org=
 project=
 env_name=
-tenant=
 namespace=${WAMN_NAMESPACE:-wamn-system}
 system_database_url=
 target_admin_database_url=
@@ -27,7 +26,7 @@ require_value() {
 for ((index = 0; index < ${#args[@]}; index++)); do
     argument=${args[index]}
     case "$argument" in
-        --org | --project | --env | --tenant | --namespace | --system-database-url | \
+        --org | --project | --env | --namespace | --system-database-url | \
         --target-admin-database-url)
             require_value "$argument" "$((index + 1))"
             value=${args[index + 1]}
@@ -35,7 +34,6 @@ for ((index = 0; index < ${#args[@]}; index++)); do
                 --org) org=$value ;;
                 --project) project=$value ;;
                 --env) env_name=$value ;;
-                --tenant) tenant=$value ;;
                 --namespace) namespace=$value ;;
                 --system-database-url) system_database_url=$value ;;
                 --target-admin-database-url) target_admin_database_url=$value ;;
@@ -45,7 +43,6 @@ for ((index = 0; index < ${#args[@]}; index++)); do
         --org=*) org=${argument#*=} ;;
         --project=*) project=${argument#*=} ;;
         --env=*) env_name=${argument#*=} ;;
-        --tenant=*) tenant=${argument#*=} ;;
         --namespace=*) namespace=${argument#*=} ;;
         --system-database-url=*) system_database_url=${argument#*=} ;;
         --target-admin-database-url=*) target_admin_database_url=${argument#*=} ;;
@@ -66,7 +63,6 @@ done
 [[ -n $org ]] || { echo "bootstrap: --org is required" >&2; exit 2; }
 [[ -n $project ]] || { echo "bootstrap: --project is required" >&2; exit 2; }
 [[ -n $env_name ]] || { echo "bootstrap: --env is required" >&2; exit 2; }
-[[ -n $tenant ]] || { echo "bootstrap: --tenant is required" >&2; exit 2; }
 if [[ -n $target_admin_database_url ]]; then
     echo "bootstrap: --target-admin-database-url is not a bootstrap input" >&2
     exit 2

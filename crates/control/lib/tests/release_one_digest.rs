@@ -176,7 +176,9 @@ async fn publish_through_publish_release(
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: opened.package_root(),
         database_url: project.to_owned(),
-        tenant: tenant.clone(),
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        environment: environment.to_owned(),
     })
     .await
     .expect("apply the package to the environment");
@@ -203,7 +205,7 @@ async fn publish_through_publish_release(
             database_url: project.to_owned(),
             control_database_url: control.to_owned(),
             org: ORG.to_owned(),
-            tenant,
+            project: PROJECT.to_owned(),
             environment: environment.to_owned(),
             verified_publisher_principal: PUBLISHER.to_owned(),
             run_schema: RUN_SCHEMA.to_owned(),

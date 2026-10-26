@@ -218,7 +218,9 @@ pub(super) async fn assemble(
                 ),
             },
             database_url: input.database_url.to_owned(),
-            tenant: input.tenant.to_owned(),
+            org: input.org.to_owned(),
+            project: input.project.to_owned(),
+            environment: input.environment.to_owned(),
         })
         .await?;
         let declaration_source = package
@@ -271,7 +273,9 @@ pub(super) async fn assemble(
                 })
                 .collect::<anyhow::Result<_>>()?,
             database_url: input.database_url.to_owned(),
-            tenant: input.tenant.to_owned(),
+            org: input.org.to_owned(),
+            project: input.project.to_owned(),
+            environment: input.environment.to_owned(),
         },
     )
     .await?;

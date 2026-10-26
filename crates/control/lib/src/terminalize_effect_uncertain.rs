@@ -20,8 +20,9 @@ pub struct TerminalizeEffectUncertainRequest {
     /// Project run-plane schema.
     pub schema: String,
 
-    /// Exact tenant owning the run.
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
+    pub environment: String,
 
     /// Exact effect-uncertain run.
     pub run: String,
@@ -39,11 +40,20 @@ pub struct TerminalizeEffectUncertainRequest {
 /// One validated terminalization request.
 #[derive(Clone, Debug)]
 pub struct TerminalizeEffectUncertain<'a> {
-    pub tenant: &'a str,
+    pub org: &'a str,
+    pub project: &'a str,
+    pub environment: &'a str,
     pub run: &'a str,
     pub basis: OperatorActionBasis,
     pub evidence_ref: &'a str,
     pub correlation_id: &'a str,
+}
+
+impl TerminalizeEffectUncertain<'_> {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(self.org, self.project, self.environment)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +82,7 @@ async fn lock_prior_actions(
     Ok(transaction
         .query(
             lock_operator_actions_sql(),
-            &[&request.tenant, &request.correlation_id, &request.run],
+            &[&request.tenant(), &request.correlation_id, &request.run],
         )
         .await?
         .into_iter()
@@ -107,7 +117,9 @@ pub async fn terminalize_effect_uncertain(
     let schema = BareSchemaName::new(request.schema.clone())
         .with_context(|| format!("invalid --schema {:?}", request.schema))?;
     let exact = TerminalizeEffectUncertain {
-        tenant: &request.tenant,
+        org: &request.org,
+        project: &request.project,
+        environment: &request.environment,
         run: &request.run,
         basis: request.basis,
         evidence_ref: &request.evidence_ref,
@@ -127,7 +139,9 @@ pub async fn terminalize_effect_uncertain(
 
 fn validate_request(request: &TerminalizeEffectUncertain<'_>) -> anyhow::Result<()> {
     for (name, value) in [
-        ("--tenant", request.tenant),
+        ("--org", request.org),
+        ("--project", request.project),
+        ("--environment", request.environment),
         ("--run", request.run),
         ("--evidence-ref", request.evidence_ref),
         ("--correlation-id", request.correlation_id),
@@ -188,7 +202,7 @@ async fn terminalize_in_transaction(
     transaction
         .query_one(
             "SELECT set_config('search_path', $1, true), set_config('app.tenant', $2, true)",
-            &[&schema.as_str(), &request.tenant],
+            &[&schema.as_str(), &request.tenant()],
         )
         .await?;
     let principal: String = transaction
@@ -202,7 +216,7 @@ async fn terminalize_in_transaction(
     }
 
     let run = transaction
-        .query_opt(lock_operator_run_sql(), &[&request.tenant, &request.run])
+        .query_opt(lock_operator_run_sql(), &[&request.tenant(), &request.run])
         .await?;
 
     // The first identity read cannot gap-lock an absent row at READ COMMITTED.
@@ -222,13 +236,13 @@ async fn terminalize_in_transaction(
     let attempt_rows = transaction
         .query(
             lock_operator_effect_attempts_sql(),
-            &[&request.tenant, &request.run],
+            &[&request.tenant(), &request.run],
         )
         .await?;
     let queue_present = transaction
         .query_opt(
             lock_operator_queue_fact_sql(),
-            &[&request.tenant, &request.run],
+            &[&request.tenant(), &request.run],
         )
         .await?
         .is_some();
@@ -245,7 +259,7 @@ async fn terminalize_in_transaction(
         .query_one(
             insert_operator_action_sql(),
             &[
-                &request.tenant,
+                &request.tenant(),
                 &request.correlation_id,
                 &request.run,
                 &request.basis.as_str(),
@@ -259,7 +273,7 @@ async fn terminalize_in_transaction(
     let updated = transaction
         .execute(
             terminalize_operator_run_sql(),
-            &[&request.tenant, &request.run, &terminalized_at],
+            &[&request.tenant(), &request.run, &terminalized_at],
         )
         .await?;
     if updated != 1 {
@@ -285,22 +299,26 @@ mod tests {
     #[test]
     fn exact_input_rejects_only_empty_opaque_values() {
         let valid = TerminalizeEffectUncertain {
-            tenant: "tenant",
+            org: "org",
+            project: "project",
+            environment: "dev",
             run: "run",
             basis: OperatorActionBasis::OperatorJudgment,
             evidence_ref: " ",
             correlation_id: "correlation",
         };
         assert!(validate_request(&valid).is_ok());
-        for empty_field in 0..4 {
-            let mut fields = ["tenant", "run", "evidence", "correlation"];
+        for empty_field in 0..6 {
+            let mut fields = ["org", "project", "dev", "run", "evidence", "correlation"];
             fields[empty_field] = "";
             let request = TerminalizeEffectUncertain {
-                tenant: fields[0],
-                run: fields[1],
+                org: fields[0],
+                project: fields[1],
+                environment: fields[2],
+                run: fields[3],
                 basis: OperatorActionBasis::ExternalEvidence,
-                evidence_ref: fields[2],
-                correlation_id: fields[3],
+                evidence_ref: fields[4],
+                correlation_id: fields[5],
             };
             assert!(validate_request(&request).is_err());
         }

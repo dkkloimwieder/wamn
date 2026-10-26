@@ -80,8 +80,16 @@ pub struct ReconcilePackageDataAccessRequest {
     /// Owner connection to the target project-environment database.
     pub database_url: String,
 
-    /// Tenant owning the already-applied package coordinate.
-    pub tenant: String,
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+}
+
+impl ReconcilePackageDataAccessRequest {
+    /// The database tenant derived from the environment coordinate.
+    pub fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    }
 }
 
 /// Reconciled coordinates and the effect state forming the reconciliation closing predicate.
@@ -145,11 +153,16 @@ enum ReconcileMode<'a> {
 pub async fn reconcile_package_data_access(
     request: ReconcilePackageDataAccessRequest,
 ) -> anyhow::Result<DataAccessReconcileResult> {
-    ensure!(!request.tenant.is_empty(), "tenant must not be empty");
+    ensure!(
+        ![&request.org, &request.project, &request.environment]
+            .iter()
+            .any(|part| part.is_empty()),
+        "org, project and environment must not be empty"
+    );
     let packages = read_presented_packages(&request.packages)?;
     execute_prepared(
         &request.database_url,
-        &request.tenant,
+        &request.tenant(),
         &packages,
         ReconcileMode::Production,
         true,
@@ -253,7 +266,10 @@ async fn execute_prepared(
     apply: bool,
     changes: &AuthChanges,
 ) -> anyhow::Result<DataAccessReconcileResult> {
-    ensure!(!tenant.is_empty(), "tenant must not be empty");
+    ensure!(
+        !tenant.is_empty(),
+        "org, project and environment must not be empty"
+    );
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to project environment")?;

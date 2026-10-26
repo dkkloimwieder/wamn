@@ -175,7 +175,8 @@ fn render(
     authorization: &mut Authorization,
 ) -> anyhow::Result<Vec<Secret>> {
     let scope = document.triple();
-    let tenant = format!("{}--{}--{}", document.org, document.project, document.env);
+    let tenant =
+        wamn_control_registry::project_env_tenant(&document.org, &document.project, &document.env);
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
     let consumers = wamn_control_provision::events::entity_consumers(

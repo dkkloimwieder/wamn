@@ -107,11 +107,6 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long, required_unless_present = "revoke_pat_prefix")]
     pub env: Option<String>,
 
-    /// Tenant identity for tenant-scoped workload credential generations.
-    /// It is never inferred from the project or environment.
-    #[arg(long)]
-    pub tenant: Option<String>,
-
     /// Mark this environment DISPOSABLE: its admitted component facts may be
     /// REPLACED rather than frozen, so an author's no-op edit does not lock them
     /// out of their own package version (wamn-10yt.38).
@@ -786,7 +781,6 @@ fn workload_action_request(
         env: args.env.expect(
             "clap parser invariant: --env is required unless --revoke-pat-prefix is present",
         ),
-        tenant: args.tenant,
         system_database_url: args.system_database_url,
         target_admin_database_url: args.target_admin_database_url,
         cluster: args.cluster,

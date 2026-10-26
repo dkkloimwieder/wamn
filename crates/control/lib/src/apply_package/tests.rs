@@ -5,7 +5,7 @@ use super::*;
 /// installed migrations create gets the refusal of apply.
 #[tokio::test]
 async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
-    const TENANT: &str = "local-configuration";
+    const TENANT: &str = "local-configuration--fixture--dev";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
     let url = database.url().to_owned();
@@ -28,7 +28,9 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: url.clone(),
-        tenant: TENANT.to_owned(),
+        org: "local-configuration".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .expect("apply the package fixture");
@@ -54,7 +56,9 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&root).unwrap(),
         database_url: url.clone(),
-        tenant: TENANT.to_owned(),
+        org: "local-configuration".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     })
     .await
     .expect_err("apply-package admitted a removed model");
@@ -194,28 +198,38 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     owner_url.set_password(Some("authdrops")).unwrap();
     let (_server, nats) = nats().await;
     let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
-    let changes = watched(&nats, Some("apply-drops"), cache.clone()).await;
-    let ticket = cache.grants("apply-drops", "principal").unwrap_err();
+    let changes = watched(&nats, Some("apply-drops--fixture--dev"), cache.clone()).await;
+    let ticket = cache
+        .grants("apply-drops--fixture--dev", "principal")
+        .unwrap_err();
     cache
         .keep_grants(
-            "apply-drops",
+            "apply-drops--fixture--dev",
             "principal",
             ticket,
             PrincipalGrants::default(),
         )
         .await;
-    assert!(cache.grants("apply-drops", "principal").is_ok());
+    assert!(
+        cache
+            .grants("apply-drops--fixture--dev", "principal")
+            .is_ok()
+    );
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
     apply_package(ApplyPackageRequest {
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),
-        tenant: "apply-drops".to_owned(),
+        org: "apply-drops".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
         changes,
     })
     .await
     .unwrap();
     until("package apply publishes the admin role drop", || {
-        cache.grants("apply-drops", "principal").is_err()
+        cache
+            .grants("apply-drops--fixture--dev", "principal")
+            .is_err()
     })
     .await;
     assert_eq!(
