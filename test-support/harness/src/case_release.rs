@@ -871,6 +871,106 @@ fn case_values(input: &ValuesInput) -> anyhow::Result<Value> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn loopback_copy_uses_plain_http_without_credentials() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let blob = b"{}";
+        let blob_digest = wamn_package_artifact::sha256_digest(blob);
+        let manifest = serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": OCI_IMAGE_MEDIA_TYPE,
+            "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": blob_digest, "size": blob.len()},
+            "layers": [{"mediaType": "application/vnd.wasm.content.layer.v1+wasm", "digest": blob_digest, "size": blob.len()}]
+        }))
+        .unwrap();
+        let digest = wamn_package_artifact::sha256_digest(&manifest);
+        let source = format!("{address}/source@{digest}");
+        let registry = Registry::loopback(&source).unwrap();
+        assert!(registry.auth_file.is_none());
+        assert!(matches!(registry.auth().unwrap(), RegistryAuth::Anonymous));
+        let expected = format!("{address}/copied@{digest}");
+        let server = tokio::spawn(async move {
+            let mut uploads = 0;
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).await.unwrap();
+                    request.push(byte[0]);
+                    if request.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let headers = String::from_utf8(request).unwrap();
+                assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+                let length = headers
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+                    .map_or(0, |(_, value)| value.trim().parse::<usize>().unwrap());
+                let mut body = vec![0; length];
+                stream.read_exact(&mut body).await.unwrap();
+                let mut words = headers.split_whitespace();
+                let method = words.next().unwrap();
+                let path = words.next().unwrap();
+                let done = method == "PUT" && path.starts_with("/v2/copied/manifests/");
+                let (status, content, location) = match (method, path) {
+                    ("GET", "/v2/") => (200, Vec::new(), String::new()),
+                    ("GET", path) if path.starts_with("/v2/source/manifests/") => {
+                        (200, manifest.clone(), String::new())
+                    }
+                    ("GET", path) if path == format!("/v2/source/blobs/{blob_digest}") => {
+                        (200, blob.to_vec(), String::new())
+                    }
+                    ("POST", "/v2/copied/blobs/uploads/") => {
+                        (202, Vec::new(), "/v2/copied/blobs/uploads/1".into())
+                    }
+                    ("PATCH", "/v2/copied/blobs/uploads/1") => {
+                        assert_eq!(body, blob);
+                        uploads += 1;
+                        (202, Vec::new(), "/v2/copied/blobs/uploads/1".into())
+                    }
+                    ("PUT", path) if path.starts_with("/v2/copied/blobs/uploads/1?") => {
+                        (201, Vec::new(), format!("/v2/copied/blobs/{blob_digest}"))
+                    }
+                    ("PUT", _) if done => {
+                        assert_eq!(body, manifest);
+                        assert_eq!(uploads, 2);
+                        (201, Vec::new(), format!("/v2/copied/manifests/{digest}"))
+                    }
+                    _ => panic!("unexpected registry request: {method} {path}"),
+                };
+                let response_digest = if path.contains("/blobs/") {
+                    &blob_digest
+                } else {
+                    &digest
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nContent-Type: {OCI_IMAGE_MEDIA_TYPE}\r\nDocker-Content-Digest: {response_digest}\r\nLocation: {location}\r\nConnection: close\r\n\r\n",
+                    content.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.write_all(&content).await.unwrap();
+                if done {
+                    break;
+                }
+            }
+        });
+        let copied = tokio::time::timeout(
+            Duration::from_secs(10),
+            copy_image(&source, &registry, "copied", &registry),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(copied, expected);
+        server.await.unwrap();
+    }
+
     #[test]
     fn the_host_group_keeps_only_what_the_chart_does_not_derive() {
         let group = host_group(

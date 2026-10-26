@@ -607,31 +607,40 @@ It must leave no HTTPS Job running.
 Both phases retain the PAT, database credential, and unchanged Secret assertions.
 The GCP greenfield covers uploads to a real bucket.
 
-The runner must use the agent identity and a Docker configuration that selects the gcloud credential helper:
+Use the [local train build](building.md#local-train-builds) to prepare the images and stamped chart.
+Keep its `WAMN_RELEASE_CHART` and empty `DOCKER_CONFIG` exports for both cases.
+No GCP credentials, `gcloud`, or GCP cluster document is needed on this path.
+The chart version and all seven images must match this checkout.
+The build also prepares the UI bundle that the fixture reads.
+
+Build the debug test binaries before the cases:
 
 ```bash
-export CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent
-export DOCKER_CONFIG=$(mktemp -d /var/tmp/platform-apply-docker.XXXXXX)
-echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > "$DOCKER_CONFIG/config.json"
-cargo build -p wamn-ctl --bins
-pnpm --filter @wamn/platform-ui build
-cargo test -p wamn-control --test platform_apply_kind -- --ignored --nocapture
+cargo build --locked -p wamn-ctl --bins -p wamn-cdc-reader
 ```
 
-The version in `deploy/platform/release/Chart.yaml` must have its five images and two role components in the registry from `deploy/gcp/cluster.k`.
-For each new platform version, a lane runs this explicit build once before the test, with the agent identity and Docker configuration above.
-The package outputs required by [building](building.md) must exist first.
-Use the `registry` value from `deploy/gcp/cluster.k` for `<registry>` and a new directory for `<dir>`:
+When the owner requests kind tests, run both cases together from the prepared shell:
 
 ```bash
-wamn-ctl build-platform --registry <registry> --out <dir>
+cargo test --locked -p wamn-control --test platform_apply_kind -- --ignored --nocapture &
+platform_pid=$!
+cargo test --locked -p wamn-control --test environment_apply_kind -- --ignored --nocapture &
+environment_pid=$!
+platform_status=0
+wait "$platform_pid" || platform_status=$?
+environment_status=0
+wait "$environment_pid" || environment_status=$?
+test "$platform_status" -eq 0 && test "$environment_status" -eq 0
 ```
 
-Before creating a registry or cluster, the test runs `build-platform --stamp-only` against the GCP registry.
-If this fails, the error names the platform version.
-The fixture then starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
+The environment case also needs the package and OAuth1 fixture inputs described below and in its test source.
+Each case creates its own cluster.
+Without `WAMN_RELEASE_CHART`, the older fallback reads `deploy/gcp/cluster.k` and requires the agent GCP credentials.
+Always supply the chart for local train tests.
+
+The platform fixture starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
 Docker selects a free loopback port, and `cluster.k` names the registry as `localhost:<port>`.
-The fixture copies five images and two role components from GCP, then stamps their local digests.
+The fixture copies five images and two role components from the train registry, then stamps their local digests.
 The environment JSON gets its gates image from this local stamp.
 Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container and stamps the local registry images.
 The test never builds platform images.

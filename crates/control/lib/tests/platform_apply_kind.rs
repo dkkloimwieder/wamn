@@ -2,12 +2,11 @@
 //!
 //! Requires Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, OpenSSL,
 //! package build tools, and debug wamn and wamn-ctl binaries.
-//! The runner exports CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent and
-//! DOCKER_CONFIG pointing to a config.json with the GCP gcloud credential helper.
-//! The fixture reads deploy/gcp/cluster.k and requires its registry to hold all
-//! seven images of Chart.yaml's version. It copies them to its registry:2 container
-//! and stamps them. It never builds images or needs image build tools.
-//! Network access to the GCP registry and public registries is required.
+//! Set WAMN_RELEASE_CHART to the chart from the local train build.
+//! Use an empty DOCKER_CONFIG for anonymous pulls from its loopback registry.
+//! The fixture copies all seven images to its registry:2 container and stamps
+//! them. It never builds platform images. Public registry access is required.
+//! Without WAMN_RELEASE_CHART, the legacy GCP source requires agent credentials.
 //! No external database, bucket or DNS is required. The test keeps its input,
 //! kubeconfig and progress under /var/tmp and removes its cluster and registries.
 //! A TLS artifact registry serves Receiving, WMS, and their unqualified releases.
@@ -83,7 +82,7 @@ const STEP_TITLES: [&str; 12] = [
 ];
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm, kubectl, pnpm, debug CLI binaries, package build tools, agent identity, GCP and public registry access; no image builds"]
+#[ignore = "requires: docker, kind, helm, kubectl, pnpm, debug CLI binaries, package build tools, stamped chart, public registry access; no image builds"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
     let mut suffix = [0u8; 6];
     SystemRandom::new()

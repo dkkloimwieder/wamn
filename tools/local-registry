@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This registry belongs to the train host, not to a kind cluster.
+name=wamn-local-registry
+volume=wamn-local-registry-data
+label=wamn.dev/local-registry
+
+fail() {
+  printf 'local-registry: %s\n' "$*" >&2
+  exit 1
+}
+
+if (($# != 0)); then
+  fail 'usage: tools/local-registry'
+fi
+
+# Serialize starts from separate worktrees on the same host.
+exec 9>"${TMPDIR:-/tmp}/wamn-local-registry.lock"
+flock 9
+docker info >/dev/null
+if ! docker container inspect "$name" >/dev/null 2>&1; then
+  docker create --name "$name" --label "$label=true" \
+    --restart unless-stopped -p 127.0.0.1:0:5000 \
+    -v "$volume:/var/lib/registry" registry:2 >&2
+fi
+owner=$(docker inspect --format '{{index .Config.Labels "wamn.dev/local-registry"}}' "$name")
+[[ "$owner" == true ]] || fail "$name is not owned by this script"
+running=$(docker inspect --format '{{.State.Running}}' "$name")
+if [[ "$running" != true ]]; then
+  docker start "$name" >&2
+fi
+address=$(docker port "$name" 5000/tcp)
+[[ "$address" =~ ^127\.0\.0\.1:[0-9]+$ ]] \
+  || fail "$name has no single loopback port"
+deadline=$((SECONDS + 30))
+until curl --noproxy '*' --fail --silent --max-time 2 "http://$address/v2/" >/dev/null; do
+  ((SECONDS < deadline)) || fail "$address did not become ready in 30 seconds"
+  sleep 1
+done
+printf '%s\n' "$address"

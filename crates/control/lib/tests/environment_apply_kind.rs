@@ -97,8 +97,8 @@
 //! the same taken before Helm's rollback removed its pods.
 //!
 //! The chart supplies the host, HTTP and materializer images. Set
-//! `WAMN_RELEASE_CHART` to a stamped chart, or export `CLOUDSDK_CONFIG` and
-//! `DOCKER_CONFIG` as for `platform_apply_kind` to stamp the cloud registry.
+//! `WAMN_RELEASE_CHART` to the local train chart and use an empty `DOCKER_CONFIG`.
+//! Without a chart, the legacy GCP source requires agent credentials.
 //! The fixture copies the two roles into its TLS registry and loads the host
 //! into its private node. The platform images must match this checkout.
 //! The suite builds its HTTP fixture image and reuses the existing Cargo target.
@@ -416,7 +416,7 @@ impl Run {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, stamped chart or cloud credentials, OAuth1 fixture env; epic closeout only"]
+#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, stamped chart, OAuth1 fixture env; epic closeout only"]
 async fn environment_apply_kind() -> anyhow::Result<()> {
     for name in [
         "WAMN_HTTP_FIXTURE_CONSUMER_KEY",

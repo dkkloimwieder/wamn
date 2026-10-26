@@ -234,17 +234,54 @@ build-platform <role> layer <digest> copy <previous version>
 build-platform <role> layer <digest> differs from <previous version>
 ```
 
-The manifest copy reads the registry credential from the Docker configuration or its credential helper.
+The manifest copy uses no credential for a loopback registry.
+For other registries, it reads the credential from the Docker configuration or its credential helper.
+
+## Local train builds
+
+The train stores its images in a registry on the build host.
+It needs no GCP access or cluster document.
+Input-hash lookups and role copies read this same registry.
+Both kind cases copy from the registry named in the stamped chart.
+The build still pulls public base images unless Docker already holds them.
+
+Prepare the checkout with `tools/lane-start` as described above.
+Then run these commands from the repository root:
+
+```bash
+export TMPDIR=/var/tmp
+export DOCKER_CONFIG=$(mktemp -d /var/tmp/wamn-train-docker.XXXXXX)
+printf '{}\n' > "$DOCKER_CONFIG/config.json"
+registry=$(tools/local-registry)
+train_out=$(mktemp -d /var/tmp/wamn-train.XXXXXX)
+"$CARGO_TARGET_DIR/debug/wamn-ctl" build-platform \
+  --registry "$registry" --out "$train_out/release-chart"
+export WAMN_RELEASE_CHART="$train_out/release-chart"
+```
+
+The empty Docker configuration prevents Docker and wash from calling credential helpers.
+`tools/local-registry` starts or reuses only its labeled `wamn-local-registry` container.
+It prints `127.0.0.1:<port>` after the registry responds over HTTP.
+The container uses `registry:2` and keeps images in the `wamn-local-registry-data` volume.
+It stays outside the kind network because the tests copy images through the host.
+Keep it between train runs so that unchanged images remain available.
+
+A loopback build stays local even when another builder runs.
+Do not pass `--cloud` for a loopback registry.
+Cloud Build cannot reach it, so the command refuses that combination.
+Run the [kind cases](running-tests.md) with the exported chart and Docker configuration.
+Remove the temporary Docker configuration after both cases finish.
+A push to Artifact Registry is a separate deploy step that requires an explicit owner request.
 
 ## Cloud platform builds
 
-Before a Docker build starts, `build-platform` reads the process list.
+For a remote registry, `build-platform` reads the process list before a Docker build starts.
 If another `wamn-ctl build-platform` process builds images, the command uses Google Cloud Build.
 It ignores its own process and processes with `--stamp-only`.
 When no other build runs, it uses the local Docker build path.
 With `--cloud`, it uses Google Cloud Build even when no other build runs, under the same daily cap.
 A `--cloud` build runs no Docker build on this machine, so other builds do not count it as busy.
-If a local build would wait on another build, use the cloud path, so that no build waits on the machine.
+For an authorized deploy to a remote registry, use `--cloud` to avoid waiting for another local build.
 
 The cloud path requires `--cluster <cluster.k>`.
 It reads the project, `buckets.state` and `build_cloud_cap_usd` from that document.
@@ -252,7 +289,8 @@ The cap defaults to USD 3 per UTC day.
 All existing flags keep their meaning, including the destination `--registry`.
 
 ```bash
-wamn-ctl build-platform --cluster deploy/gcp/cluster.k --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out /var/tmp/wamn-release-chart
+# Only for an explicitly requested GCP deploy.
+wamn-ctl build-platform --cloud --cluster deploy/gcp/cluster.k --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out /var/tmp/wamn-release-chart
 ```
 
 The command submits the same Dockerfile targets with `gcloud builds submit` in `us-central1`, on `E2_HIGHCPU_8`.

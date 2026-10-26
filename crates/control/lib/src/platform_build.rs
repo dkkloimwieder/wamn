@@ -162,10 +162,15 @@ enum BuildLocation {
 fn build_location(
     processes: &[(u32, Vec<String>)],
     pid: u32,
+    registry: &str,
     cloud: bool,
     spend_usd: f64,
     cap_usd: f64,
 ) -> BuildLocation {
+    // Cloud Build cannot reach a registry on this machine.
+    if loopback(registry) {
+        return BuildLocation::Local;
+    }
     let busy = cloud
         || processes
             .iter()
@@ -210,6 +215,10 @@ fn builds_platform(args: &[String]) -> bool {
 /// its pushed digest.
 pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
     ensure!(
+        !request.cloud || !loopback(&request.registry),
+        "--cloud cannot reach a loopback registry; omit --cloud for a local build"
+    );
+    ensure!(
         !request.out.exists(),
         "the chart output {} exists",
         request.out.display()
@@ -221,8 +230,14 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         apps_target.display()
     );
     let processes = process_list()?;
-    if build_location(&processes, std::process::id(), request.cloud, 0.0, 3.0)
-        != BuildLocation::Local
+    if build_location(
+        &processes,
+        std::process::id(),
+        &request.registry,
+        request.cloud,
+        0.0,
+        3.0,
+    ) != BuildLocation::Local
     {
         return cloud_build(request, &processes).await;
     }
@@ -369,7 +384,7 @@ fn stamp_chart(
 
 /// A loopback registry is reached over plain HTTP.
 fn loopback(registry: &str) -> bool {
-    let host = registry.split(':').next().unwrap_or_default();
+    let host = registry.split([':', '/']).next().unwrap_or_default();
     matches!(host, "localhost" | "127.0.0.1")
 }
 
@@ -413,6 +428,9 @@ impl OciComponents {
             .with_context(|| format!("parse {reference}"))?;
         let (client, _) =
             crate::component_admission::registry_client(&reference, self.insecure, &[], None)?;
+        if loopback(reference.resolve_registry()) {
+            return Ok((client, reference, RegistryAuth::Anonymous));
+        }
         let auth = match docker_credential::get_credential(reference.resolve_registry()) {
             Ok(DockerCredential::UsernamePassword(user, password)) => {
                 RegistryAuth::Basic(user, password)
@@ -1151,6 +1169,7 @@ async fn cloud_build(
     if let BuildLocation::Refused { spend_usd, cap_usd } = build_location(
         processes,
         std::process::id(),
+        &request.registry,
         request.cloud,
         counter.spend_usd,
         cluster.build_cloud_cap_usd,
@@ -1386,6 +1405,75 @@ mod tests {
     const VERSION: &str = "0.1.7";
 
     #[test]
+    fn loopback_builds_stay_local_when_another_builder_is_busy() {
+        let processes = vec![(11, vec!["wamn-ctl".into(), "build-platform".into()])];
+        for registry in ["localhost:5000", "127.0.0.1:5000/wamn", "localhost/wamn"] {
+            assert!(loopback(registry));
+            assert_eq!(
+                build_location(&processes, 10, registry, false, 3.0, 3.0),
+                BuildLocation::Local
+            );
+        }
+        assert!(!loopback("localhost.example:5000"));
+    }
+
+    #[tokio::test]
+    async fn cloud_build_refuses_a_loopback_destination_before_any_io() {
+        let request = BuildPlatformRequest {
+            repository: PathBuf::from("/missing-repository"),
+            version: VERSION.into(),
+            registry: "127.0.0.1:5000/wamn".into(),
+            out: PathBuf::from("/missing-output"),
+            cluster: None,
+            cloud: true,
+        };
+        assert!(
+            build_platform(&request)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("--cloud cannot reach a loopback registry")
+        );
+    }
+
+    #[test]
+    fn loopback_role_client_ignores_a_broken_credential_helper() {
+        const CHILD: &str = "WAMN_LOOPBACK_AUTH_TEST";
+        if std::env::var_os(CHILD).is_some() {
+            for registry in ["localhost:5000", "127.0.0.1:5000"] {
+                assert!(matches!(
+                    docker_credential::get_credential(registry),
+                    Err(docker_credential::CredentialRetrievalError::HelperCommunicationError)
+                ));
+                let (_, _, auth) = OciComponents { insecure: true }
+                    .client(&format!("{registry}/wamn/http:1.0.0"))
+                    .unwrap();
+                assert!(matches!(auth, oci_client::secrets::RegistryAuth::Anonymous));
+            }
+            return;
+        }
+        let directory =
+            std::env::temp_dir().join(format!("wamn-local-auth-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("config.json"),
+            r#"{"credsStore":"wamn-missing-helper"}"#,
+        )
+        .unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform_build::tests::loopback_role_client_ignores_a_broken_credential_helper",
+            ])
+            .env(CHILD, "1")
+            .env("DOCKER_CONFIG", &directory)
+            .status()
+            .unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+        assert!(result.success());
+    }
+
+    #[test]
     fn build_location_uses_other_builds_and_the_daily_counter() {
         fn process(pid: u32, args: &[&str]) -> (u32, Vec<String>) {
             (pid, args.iter().map(|arg| (*arg).to_owned()).collect())
@@ -1398,16 +1486,16 @@ mod tests {
             process(15, &["wamn-ctl", "build-platform", "--cloud"]),
         ];
         assert_eq!(
-            build_location(&processes, 10, false, 3.0, 3.0),
+            build_location(&processes, 10, "registry.example/wamn", false, 3.0, 3.0),
             BuildLocation::Local
         );
         // --cloud forces Cloud Build under the same cap.
         assert_eq!(
-            build_location(&processes, 10, true, 2.0, 3.0),
+            build_location(&processes, 10, "registry.example/wamn", true, 2.0, 3.0),
             BuildLocation::Cloud
         );
         assert_eq!(
-            build_location(&processes, 10, true, 3.0, 3.0),
+            build_location(&processes, 10, "registry.example/wamn", true, 3.0, 3.0),
             BuildLocation::Refused {
                 spend_usd: 3.0,
                 cap_usd: 3.0
@@ -1418,12 +1506,19 @@ mod tests {
             &["wamn-ctl", "--log-level=info", "build-platform"],
         ));
         assert_eq!(
-            build_location(&processes, 10, false, 2.0, 3.0),
+            build_location(&processes, 10, "registry.example/wamn", false, 2.0, 3.0),
             BuildLocation::Cloud
         );
         for spend_usd in [3.0, 3.1] {
             assert_eq!(
-                build_location(&processes, 10, false, spend_usd, 3.0),
+                build_location(
+                    &processes,
+                    10,
+                    "registry.example/wamn",
+                    false,
+                    spend_usd,
+                    3.0
+                ),
                 BuildLocation::Refused {
                     spend_usd,
                     cap_usd: 3.0
