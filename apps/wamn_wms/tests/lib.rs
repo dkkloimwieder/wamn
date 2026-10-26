@@ -50,3 +50,6 @@ mod local_outbox;
 
 #[cfg(test)]
 mod local_release;
+
+#[cfg(test)]
+mod local_take_offline;

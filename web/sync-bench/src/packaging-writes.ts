@@ -20,7 +20,7 @@ export function packagingWrites(c: ReturnType<typeof packagingCollection>, o: Ou
   const current = liveRows(c);
   const written = new Set<string>();
   const recovered = new Map<number, OutboxEntry>();
-  // wfe gap: recordWrite does not restore optimistic rows from the outbox.
+  // wfe gap wamn-koypi: recordWrite does not restore optimistic rows from the outbox.
   // Keep recovered creates until both their send and their feed echo arrive.
   const entries = createMemo(() => from<OutboxEntry[]>((next) => o.watch(() => {
     const entries = o.entries();

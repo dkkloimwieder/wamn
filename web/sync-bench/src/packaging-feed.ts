@@ -42,14 +42,14 @@ function toChange(change: PackagingQueryChange): Change<PackagingRow> {
  */
 export function packagingFeed(transport: Transport, cap: number = RECORD_CAP): Feed<PackagingRow, PackagingScope> {
   return {
-    async list(scope) {
+    async list(scope, signal) {
       const rows: PackagingRow[] = [];
       let complete = true;
       let cursor: string | undefined;
       let page: string | undefined;
       for (;;) {
         const limit = Math.min(PAGE_MAXIMUM, cap - rows.length);
-        const outcome = await query(transport, [page === undefined ? { ...scope, limit } : { ...scope, limit, cursor: page }]);
+        const outcome = await query(transport, [page === undefined ? { ...scope, limit } : { ...scope, limit, cursor: page }], { signal });
         if (outcome.status !== "completed") throw new Error(`packaging query ${outcome.status}`);
         cursor ??= outcome.value.cursor;
         rows.push(...outcome.value.item);
@@ -61,8 +61,8 @@ export function packagingFeed(transport: Transport, cap: number = RECORD_CAP): F
       if (cursor === undefined) throw new Error("packaging query returned no feed cursor");
       return { rows, cursor, complete };
     },
-    async changes(scope, cursor, limit) {
-      const outcome = await changes(transport, scope, cursor, limit);
+    async changes(scope, cursor, limit, signal) {
+      const outcome = await changes(transport, scope, cursor, limit, { signal });
       if (outcome.status === "refused" && outcome.code === "cursor_expired") throw new CursorExpired();
       if (outcome.status !== "completed") throw new Error(`packaging changes ${outcome.status}`);
       return {

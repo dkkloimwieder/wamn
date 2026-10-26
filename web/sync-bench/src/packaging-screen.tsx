@@ -6,12 +6,13 @@ import { packagingWrites, type PackagingDraft } from "./packaging-writes";
 import { shapeA } from "./shape-a";
 import { PackagingView } from "./view";
 import { shellStatus } from "./shell-status";
+import { needsConnection, type OfflineResult, type packagingOffline } from "./packaging-offline";
 
 /** The live packaging rows, create form, and refused writes. */
-export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean; updateAvailable?: boolean; shellResult?: ShellResult }) {
+export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean; updateAvailable?: boolean; shellResult?: ShellResult; filter?: StatusFilter; offline?: ReturnType<typeof packagingOffline> }) {
   const c = props.collection;
   const o = props.outbox;
-  const [filter] = createSignal<StatusFilter>("all");
+  const filter = () => props.filter ?? "all";
   const source = shapeA(c, filter);
   const writes = packagingWrites(c, o);
   const current = liveRows(c);
@@ -21,9 +22,23 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
     return o.entries().filter((entry) => entry.state === "refused");
   });
   const ids = createMemo(() => orderedIds(writes.rows, filter()));
-  const [currentAt, setCurrentAt] = createSignal(c.utils.currentAt());
-  // wfe gap: currentAt() has no change subscription, including empty feed replies.
-  const timer = setInterval(() => setCurrentAt(c.utils.currentAt()), 1000);
+  const [currentAt, setCurrentAt] = createSignal(props.offline?.packaging.currentAt() ?? c.utils.currentAt());
+  const [locationAt, setLocationAt] = createSignal<string>();
+  const [locationCount, setLocationCount] = createSignal(0);
+  const [missing, setMissing] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
+  const [result, setResult] = createSignal<OfflineResult>();
+  const [offlineError, setOfflineError] = createSignal("");
+  function refresh() {
+    setCurrentAt(props.offline?.packaging.currentAt() ?? c.utils.currentAt());
+    setLocationAt(props.offline?.location?.currentAt());
+    setLocationCount(props.offline?.location?.c.size ?? 0);
+    const local = props.offline ? props.offline.packaging.local()
+      : source.status() === "loading" ? undefined : source.status() === "ready" || Object.keys(current).length > 0;
+    setMissing(needsConnection(navigator.onLine, local));
+  }
+  // wfe gap wamn-q8bkg: currentAt() has no change subscription, including empty feed replies.
+  const timer = setInterval(refresh, 1000);
   onCleanup(() => clearInterval(timer));
   return (
     <div data-shape="a" class="bench-column">
@@ -35,6 +50,35 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
         {counts().pending + counts().sending}. Refused: {counts().refused}. Last sent: {counts().lastSentAt ?? "never"}.
         Current as of: {currentAt() ?? "not yet read"}. {shellStatus(props.shellResult)}
       </p>
+      <Show when={missing()}><p>needs a connection</p></Show>
+      <Show when={props.offline}>
+        <button disabled={busy()} onClick={async () => {
+          setBusy(true);
+          setResult(undefined);
+          setOfflineError("");
+          try {
+            setResult(await props.offline!.takeOffline());
+            refresh();
+          } catch (error) {
+            setOfflineError(String(error));
+          } finally {
+            setBusy(false);
+          }
+        }}>Take offline</button>
+        <Show when={props.shellResult?.persisted === false}><p>Storage is not protected.</p></Show>
+        <p role="status" aria-label="Take offline result">
+          <Show when={busy()}>Preparing local rows.</Show>
+          <Show when={result()}>{(value) => <>
+            Saved. Packaging: {value().packaging.count} rows, {value().packaging.bytes} bytes.
+            Location: {value().location.count} rows, {value().location.bytes} bytes.
+            Current as of: {value().packaging.asOf}. Location as of: {value().location.asOf}.
+          </>}</Show>
+          {offlineError()}
+        </p>
+        <Show when={locationAt()}>
+          <p aria-label="Local locations">Location: {locationCount()} rows. Current as of: {locationAt()}.</p>
+        </Show>
+      </Show>
       <Show when={source.status() === "ready" || currentAt() !== undefined || Object.keys(current).length > 0}>
         <CreatePackaging create={writes.create} />
         <PackagingView

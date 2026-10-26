@@ -107,16 +107,20 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
             "localapp",
         )?;
         crate::business_fixture::seed_fixture(&admin, 1).await?;
+        if scenario == "take-offline" {
+            super::local_take_offline::seed(&admin).await?;
+        }
         let bench = app.join("../../web/sync-bench").canonicalize()?;
         if scenario == "old-entry" {
             super::local_release::bindings(&app, scratch.path())?;
         }
         let driver = match scenario {
             "release" | "old-entry" => "bench/release.mjs",
+            "take-offline" => "bench/take-offline.mjs",
             _ => "bench/outbox.mjs",
         };
         let output = tokio::time::timeout(
-            std::time::Duration::from_secs(180),
+            std::time::Duration::from_secs(if scenario == "take-offline" { 900 } else { 180 }),
             tokio::process::Command::new("node")
                 .arg(driver)
                 .arg(scenario)
@@ -135,7 +139,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
                 .output(),
         )
         .await
-        .context("the screen driver exceeded 180 seconds")??;
+        .context("the screen driver exceeded its time limit")??;
         let stdout = String::from_utf8(output.stdout)?;
         eprintln!("{driver}: {stdout}");
         let last = stdout.lines().last().context("the driver's result")?;
@@ -144,6 +148,12 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
             output.status.success() && outcome["ok"] == serde_json::json!(true),
             "the {scenario} screen case: {outcome}"
         );
+        if scenario == "take-offline" {
+            anyhow::ensure!(outcome["packaging"]["count"] == 1, "one packaging row");
+            anyhow::ensure!(outcome["location"]["count"] == 20002, "all location rows");
+            anyhow::ensure!(outcome["reads"]["location"] == 201, "100-row location pages");
+            return Ok(());
+        }
         let ids: Vec<String> = serde_json::from_value(outcome["ids"].clone())?;
         let expected = if scenario == "offline" { 3 } else { 1 };
         anyhow::ensure!(ids.len() == expected, "created ids: {outcome}");

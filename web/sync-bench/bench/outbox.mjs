@@ -170,7 +170,6 @@ try {
     for (const id of ids) assert.match(await row(id).textContent(), /tentative/);
     assert.equal(creates.length, 0);
     listsPerPage.push(await page.evaluate(() => window.listReads.started));
-    await page.evaluate(() => sessionStorage.setItem("hold-list", "yes"));
     const navigation = await page.reload({ waitUntil: "domcontentloaded" });
     assert.ok(navigation.fromServiceWorker(), "offline navigation must come from the worker");
     await row(firstId).waitFor();
@@ -178,20 +177,17 @@ try {
       await row(id).waitFor();
       assert.match(await row(id).textContent(), /tentative/);
     }
-    await page.waitForFunction(() => typeof window.releaseList === "function");
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     firstPaint = await page.evaluate(() => ({ ...window.listReads, offline: !navigator.onLine }));
-    assert.deepEqual(firstPaint, { started: 1, resolved: 0, offline: true });
+    assert.deepEqual(firstPaint, { started: 0, resolved: 0, offline: true });
     assert.match(await status.textContent(), /Sign in to upload/);
     assert.equal(creates.length, 0);
-    await page.evaluate(() => { sessionStorage.removeItem("hold-list"); window.releaseList(); });
-    await page.waitForFunction(() => window.listReads.resolved === 1);
     await setOffline(false);
     await emptyOutbox();
     for (const id of ids) await confirmed(id);
     assert.equal(creates.length, 3);
     assert.deepEqual([...new Set(creates.map((entry) => entry.id))].sort(), [...ids].sort());
-    assert.equal(reads.list, 1, "the failed offline list must not cause a list after a write");
+    assert.equal(reads.list, 1, "offline open and replay must not cause another list");
   } else if (scenario === "refusal") {
     // WMS trims packaging_code and requires at least one character.
     // Spaces pass the browser's required field and reach host validation.
@@ -233,7 +229,7 @@ try {
   }
 
   listsPerPage.push(await page.evaluate(() => window.listReads.started));
-  assert.deepEqual(listsPerPage, scenario === "offline" ? [1, 1] : [1]);
+  assert.deepEqual(listsPerPage, scenario === "offline" ? [1, 0] : [1]);
   assert.equal(reads.list, 1);
   for (const id of ids) assert.equal(echoes.filter((echo) => echo === id).length, 1, `one feed echo for ${id}`);
   const cached = await page.evaluate(async () => {
