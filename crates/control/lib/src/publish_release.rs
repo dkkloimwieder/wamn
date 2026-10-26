@@ -1143,7 +1143,7 @@ async fn publish_release_from_sources(
         ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
-                "the release does not project a deliverable format-12 manifest",
+                "the release does not project a deliverable format-11 manifest",
                 error,
             )
         })?;
@@ -3205,7 +3205,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":12,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(
@@ -3238,7 +3238,7 @@ mod manifest_push {
         fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
             let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
                 .expect("fixture is UTF-8")
-                .replacen("\"format-version\":12", "\"format-version\":9", 1);
+                .replacen("\"format-version\":11", "\"format-version\":9", 1);
             let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
                 .expect_err("format nine refuses");
             assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));

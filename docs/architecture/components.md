@@ -87,7 +87,7 @@ The ambiguity error names each covering package and component.
 Component size and statement count do not select a member.
 It pushes the entry to the `entries` repository under the component artifact base.
 It records `manifest.composed_entry` before it hashes the release.
-The format 12 record holds the entry reference, route digest, resolved `application`, and embedded `members`.
+The format 11 record holds the entry reference, route digest, resolved `application`, and embedded `members`.
 The `application` field names its package, component, and original digest.
 Runtime binding and chart rendering use that stored identity.
 The members keep their original digests for SQL and dependency authority.

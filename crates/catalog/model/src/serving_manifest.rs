@@ -1,6 +1,6 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 12 closes over exact package membership, component digests, routes,
+//! Format 11 closes over exact package membership, component digests, routes,
 //! the permission and SQL statements of each export, and route attachments.
 //! Each component is its package, its admitted descriptor (the bytes of the
 //! descriptor layer of its package artifact, docs/plan/platform-deploy.md
@@ -36,7 +36,7 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 12;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 11;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -1013,9 +1013,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-12 bytes.
+    /// Parse, validate, and admit only canonical format-11 bytes.
     ///
-    /// The version is classified before the format-12 schema is decoded. This is
+    /// The version is classified before the format-11 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1035,6 +1035,13 @@ impl ServingManifest {
             .as_object_mut()
             .expect("validated manifest object")
             .remove("workflow");
+        if current
+            .get("composed-entry")
+            .and_then(Value::as_object)
+            .is_some_and(|entry| !entry.contains_key("application"))
+        {
+            return invalid("the composed entry is missing composed-entry.application");
+        }
         let manifest = serde_json::from_value::<Self>(current.clone()).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
                 message: format!("serving manifest JSON is invalid: {error}"),
@@ -1682,18 +1689,6 @@ mod tests {
     fn composed_entry_requires_a_named_application_in_its_members() {
         let mut manifest = manifest();
         manifest.composed_entry = Some(entry_for(&manifest));
-        let mut document = serde_json::to_value(&manifest).unwrap();
-        document["composed-entry"]
-            .as_object_mut()
-            .unwrap()
-            .remove("application");
-        assert!(
-            ServingManifest::from_canonical_bytes(&wamn_execution_contract::canonical_json_bytes(
-                &document
-            ))
-            .is_err()
-        );
-
         manifest.composed_entry.as_mut().unwrap().application.digest = COMPONENT_A.into();
         assert!(matches!(
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()),
@@ -1703,13 +1698,27 @@ mod tests {
     }
 
     #[test]
-    fn format_eleven_requires_republication() {
+    fn format_eleven_requires_composed_entry_application() {
         let mut manifest = manifest();
         manifest.format_version = 11;
-        assert!(matches!(
-            ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()),
-            Err(CatalogIdentityError::UnsupportedServingManifestVersion { .. })
-        ));
+        manifest.composed_entry = Some(entry_for(&manifest));
+        ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
+            .expect("format eleven with a named application is admitted");
+        let mut document = serde_json::to_value(&manifest).unwrap();
+        document["composed-entry"]
+            .as_object_mut()
+            .unwrap()
+            .remove("application");
+        let error = ServingManifest::from_canonical_bytes(
+            &wamn_execution_contract::canonical_json_bytes(&document),
+        )
+        .expect_err("composed-entry.application is required in format eleven");
+        assert_eq!(
+            error,
+            CatalogIdentityError::InvalidDefinition {
+                message: "the composed entry is missing composed-entry.application".into(),
+            }
+        );
     }
 
     #[test]
@@ -2161,14 +2170,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format twelve enters the decoder");
+                .expect_err("only format eleven enters the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {
@@ -2289,7 +2298,7 @@ mod tests {
         );
         signed.registered_operation = None;
         let manifest = build(signed).unwrap();
-        assert_eq!(manifest.format_version, 12);
+        assert_eq!(manifest.format_version, 11);
         let (decoded, _) =
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).unwrap();
         assert_eq!(decoded, manifest);
