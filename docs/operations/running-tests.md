@@ -534,6 +534,11 @@ These cases test connection reuse and authority isolation without measuring thro
 
 ### Platform and environment apply on kind
 
+Both cases record failures from independent checks and continue.
+If a later check needs a failed setup step, the case stops.
+The final error names every recorded failure, including any setup error.
+Both cases remove their cluster and registry containers after either outcome.
+
 The platform test needs Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, OpenSSL, and the gcloud credential helper on PATH.
 It needs network access to the GCP registry and public registries.
 It also needs the [package build tools and workspace dependencies](building.md#wamn-build), but no image build tools.

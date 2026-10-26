@@ -607,6 +607,8 @@ pub async fn exercise(
     document.release = DeclaredRelease::Digest(digest.clone());
     super::apply_with_diagnostics(&run.work, &platform, &document, "integration").await?;
     let (project, project_task) = connect(project_url.as_str()).await?;
+    let report_start = run.report.len();
+    let capture_result = async {
     let capture = system
         .query_one(
             "SELECT schema, publication, slot FROM registry.event_readers WHERE org=$1 AND project=$2 AND env=$3",
@@ -614,10 +616,13 @@ pub async fn exercise(
         )
         .await?;
     let captured: Vec<String> = capture.get(0);
+    run.collect("4 integration capture", (|| {
     ensure!(
         captured == [CONSUMER, "wamn_integration"],
         "CDC must capture every installed application schema: {captured:?}"
     );
+    Ok(())
+    })());
     let publication: String = capture.get(1);
     let slot: String = capture.get(2);
     let publications = project
@@ -627,6 +632,7 @@ pub async fn exercise(
         "SELECT slot_name::text FROM pg_replication_slots WHERE database = current_database() AND slot_type = 'logical'",
         &[],
     ).await?;
+    run.collect("4 integration capture", (|| {
     ensure!(
         publications.len() == 1
             && publications[0].get::<_, String>(0) == publication
@@ -634,6 +640,8 @@ pub async fn exercise(
             && slots[0].get::<_, String>(0) == slot,
         "the environment must have exactly its registered publication and logical slot"
     );
+    Ok(())
+    })());
     let schemas: Vec<String> = project
         .query_one(
             "SELECT array_agg(n.nspname::text ORDER BY n.nspname) FROM pg_publication_namespace pn \
@@ -643,10 +651,13 @@ pub async fn exercise(
         )
         .await?
         .get(0);
+    run.collect("4 integration capture", (|| {
     ensure!(
         schemas == captured,
         "publication schemas differ: {schemas:?}"
     );
+    Ok(())
+    })());
     // Capture maps identify application entities. History and control tables
     // in the same schemas are explicitly excluded from entity events.
     let tables: Value = project
@@ -662,6 +673,7 @@ pub async fn exercise(
         )
         .await?
         .get(0);
+    run.collect("4 integration capture", (|| {
     ensure!(
         tables
             == json!([
@@ -671,12 +683,17 @@ pub async fn exercise(
             ]),
         "every captured table must be published with full replica identity: {tables}"
     );
+    Ok(())
+    })());
     run.pass(
         "one environment publication and slot capture both application schemas",
         "SELECT registry.event_readers; SELECT pg_publication, pg_publication_namespace, pg_publication_tables, pg_class, pg_replication_slots",
         json!({"schemas":schemas,"publication":publication,"slot":slot,"tables":tables}),
-        true,
+        run.report[report_start..].iter().all(|row| row["result"] != "fail"),
     );
+    Ok(())
+    }.await;
+    run.collect("4 integration capture", capture_result);
     if connector == "netsuite" {
         super::netsuite::seed(&project).await?;
     }
@@ -761,8 +778,10 @@ pub async fn exercise(
             "CDC reader log: {}",
             std::fs::read_to_string(run.work.join("cdc-reader.log")).unwrap_or_default()
         )
-    })?;
-    run.pass(
+    });
+    match observed {
+        Ok(observed) => {
+            run.pass(
         &format!(
             "{connector} scheduled pull as the workflow user with its role and consumer event push"
         ),
@@ -770,6 +789,12 @@ pub async fn exercise(
         observed,
         true,
     );
+        }
+        Err(error) => run.collect(
+            &format!("4 {connector} scheduled pull and events"),
+            Err(error),
+        ),
+    }
     environment::delete::delete(&platform, &scope, true).await?;
     run.run("docker", &["rm", "-f", &format!("{}-events", run.cluster)])
         .await?;

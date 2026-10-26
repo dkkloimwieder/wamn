@@ -483,36 +483,48 @@ pub async fn assert_triggers(
     let (unsigned_status, unsigned_body) =
         run_manual(database, environment, "http-send", "unsigned").await?;
     let observed = request_log(run).await?;
-    assert_observed_request(unsigned_status, &unsigned_body, &observed)?;
-    let (status, body) = run_manual(database, environment, "http-signed-send", "signed").await?;
-    let observed = request_log(run).await?;
-    let records = request_records(&observed)?;
-    let signed: Vec<_> = records
-        .iter()
-        .filter(|record| {
-            record["head"]
-                .as_str()
-                .is_some_and(|head| head.starts_with("POST /signed HTTP/1.1\r\n"))
-        })
-        .collect();
-    let passed = status == 200
-        && serde_json::from_str::<Value>(&body)? == serde_json::from_str::<Value>(&unsigned_body)?
-        && signed.len() == 1
-        && signed[0]["signature_verified"] == true
-        && signed[0]["body"] == json!(br#"{"id":1}"#.as_slice());
-    run.pass(
-        "HTTP guest sends once with a verified host signature",
-        "POST /http/signed-send; GET /recorded",
-        json!({"status": status, "body": body, "requests": signed}),
-        passed,
+    run.collect(
+        "4 HTTP unsigned request",
+        assert_observed_request(unsigned_status, &unsigned_body, &observed),
     );
-    ensure!(
-        passed,
-        "the fixture did not verify one signed outbound request"
-    );
+    let result = async {
+        let (status, body) =
+            run_manual(database, environment, "http-signed-send", "signed").await?;
+        let observed = request_log(run).await?;
+        let records = request_records(&observed)?;
+        let signed: Vec<_> = records
+            .iter()
+            .filter(|record| {
+                record["head"]
+                    .as_str()
+                    .is_some_and(|head| head.starts_with("POST /signed HTTP/1.1\r\n"))
+            })
+            .collect();
+        let passed = status == 200
+            && serde_json::from_str::<Value>(&body)?
+                == serde_json::from_str::<Value>(&unsigned_body)?
+            && signed.len() == 1
+            && signed[0]["signature_verified"] == true
+            && signed[0]["body"] == json!(br#"{"id":1}"#.as_slice());
+        run.pass(
+            "HTTP guest sends once with a verified host signature",
+            "POST /http/signed-send; GET /recorded",
+            json!({"status": status, "body": body, "requests": signed}),
+            passed,
+        );
+        ensure!(
+            passed,
+            "the fixture did not verify one signed outbound request"
+        );
 
-    assert_oauth(run, database, environment).await?;
-    assert_paged(run, database, environment).await?;
+        Ok(())
+    }
+    .await;
+    run.collect("4 HTTP signed request", result);
+    let result = assert_oauth(run, database, environment).await;
+    run.collect("4 HTTP OAuth", result);
+    let result = assert_paged(run, database, environment).await;
+    run.collect("4 HTTP paging", result);
 
     // The release declares no schedule. The scheduled wiring runs as an
     // environment workflow. Its nodes call no operation that needs a grant,

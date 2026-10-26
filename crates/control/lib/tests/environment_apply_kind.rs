@@ -92,6 +92,10 @@
 //! operation as publish projects it, because a host refuses to preload an
 //! operation that does not carry the admitted one.
 //!
+//! Independent checks record their failures and continue. Required setup stops
+//! the case if a later check needs it. The final error names every failed check.
+//! The case removes its cluster and registry after either outcome.
+//!
 //! A run with a failed check keeps a `diagnostics` row in `report.json`: the
 //! events, the descriptions, the container logs and, for a failed rollout,
 //! the same taken before Helm's rollback removed its pods.
@@ -154,6 +158,7 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::{Template, Triple};
 use wamn_engine::release_manifest::release_label;
+use wamn_gate_harness::Failures;
 
 #[path = "support/http_connection.rs"]
 mod http_connection;
@@ -203,6 +208,7 @@ struct Run {
     cluster: String,
     registry: String,
     report: Vec<Value>,
+    failures: Failures,
 }
 
 impl Run {
@@ -232,7 +238,17 @@ impl Run {
         let mut row = json!({"check": check, "result": result, "command": command});
         row["output"] = observed;
         println!("{}", serde_json::to_string(&row).unwrap_or_default());
+        if result == "fail" {
+            self.failures
+                .record(check, Err(anyhow::anyhow!("{}", row["output"])));
+        }
         self.report.push(row);
+    }
+
+    fn collect(&mut self, step: &str, result: anyhow::Result<()>) {
+        if let Err(error) = result {
+            self.record(step, "", json!({"error": format!("{error:#}")}), "fail");
+        }
     }
 
     fn pass(&mut self, check: &str, command: &str, observed: Value, pass: bool) {
@@ -450,15 +466,19 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
         cluster: format!("wamn-apply-{pid}"),
         registry: format!("wamn-apply-{pid}-registry"),
         report: Vec::new(),
+        failures: Failures::default(),
     };
     let started = Instant::now();
     run.remove().await;
     let result = Box::pin(scenario(&mut run, &repository, &chart)).await;
+    let scenario_error = result.as_ref().err().map(|error| format!("{error:#}"));
+    run.collect("required setup", result);
     let elapsed = started.elapsed().as_secs();
     run.record("duration", "", json!({"seconds": elapsed}), "info");
-    if result.is_err() || run.report.iter().any(|row| row["result"] == "fail") {
+    let report_result = async {
+    if run.report.iter().any(|row| row["result"] == "fail") {
         let mut observed = diagnostics(&run.work.join("kubeconfig")).await;
-        observed["error"] = json!(result.as_ref().err().map(|error| format!("{error:#}")));
+        observed["error"] = json!(scenario_error);
         for entry in std::fs::read_dir(&run.work)?.flatten() {
             let file = entry.file_name().to_string_lossy().into_owned();
             if file.starts_with("rollout-") {
@@ -477,6 +497,9 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
         run.work.join("report.json"),
         serde_json::to_vec_pretty(&run.report)?,
     )?;
+    Ok(())
+    }.await;
+    run.collect("write diagnostics and report", report_result);
     run.remove().await;
     // The key material and credentials go with the cluster; the evidence stays.
     for secret in [
@@ -489,20 +512,17 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
     ] {
         let _ = std::fs::remove_file(run.work.join(secret));
     }
-    let mut kept = std::fs::read_dir(&run.work)?
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    kept.sort();
-    println!("kept in {}: {}", run.work.display(), kept.join(" "));
-    result?;
-    let failed: Vec<&Value> = run
-        .report
-        .iter()
-        .filter(|row| row["result"] == "fail")
-        .collect();
-    ensure!(failed.is_empty(), "failed checks: {failed:?}");
-    Ok(())
+    let kept_result = (|| {
+        let mut kept = std::fs::read_dir(&run.work)?
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        kept.sort();
+        println!("kept in {}: {}", run.work.display(), kept.join(" "));
+        Ok(())
+    })();
+    run.collect("list retained files", kept_result);
+    run.failures.finish()
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1195,104 +1215,118 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         row.is_some() && first == 1,
     );
 
-    // 17. The environment's administration login writes the platform
-    // configuration rows, as the control host does, and the environment's
-    // wamn_app generation reads them.
-    let suffix = row
-        .as_ref()
-        .and_then(|row| row["instance_suffix"].as_str())
-        .context("the dev row")?;
-    let database = wamn_control_provision::project_env_database_name(ORG, PROJECT, "dev", suffix);
-    let dev_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
-    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
-    let secret = wamn_control_provision::workload_secret_name(
-        WorkloadRoleFamily::Administration,
-        ORG,
-        PROJECT,
-        "dev",
-    );
-    let login = run
-        .run(
-            "kubectl",
-            &[
-                "-n",
-                NAMESPACE,
-                "get",
-                "secret",
-                &secret,
-                "-o",
-                "jsonpath={.data.url}",
-            ],
-        )
-        .await?;
-    let login = url::Url::parse(&String::from_utf8(base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        login.trim(),
-    )?)?)?;
-    let administration_url = format!(
-        "postgresql://{}:{}@127.0.0.1:{port}/{database}",
-        login.username(),
-        login
-            .password()
-            .context("the administration login has a password")?,
-    );
-    let (mut administration, administration_connection) =
-        tokio_postgres::connect(&administration_url, tokio_postgres::NoTls).await?;
-    let administration_task = tokio::spawn(administration_connection);
-    let configuration = platform_configuration::configuration(PROJECT);
-    let written = platform_configuration::write(&mut administration, &configuration).await;
-    drop(administration);
-    administration_task.abort();
-    let written = written?;
-    let app = workload_generation_role(
-        WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: &tenant,
-            database: &database,
-        },
-        CredentialGeneration::A,
-    )?;
-    let (dev_project, dev_task) = connect(&dev_url).await?;
-    let history = platform_configuration::history(dev_project.as_ref()).await?;
-    dev_project
-        .batch_execute(&format!("SET ROLE \"{app}\""))
-        .await?;
-    let read = platform_configuration::read_back(dev_project.as_ref()).await?;
-    dev_task.abort();
-    let expected = platform_configuration::expected(PROJECT);
-    run.pass(
-        "the administration login writes the platform configuration rows",
-        &format!(
-            "kubectl get secret {secret}; one row of each table as {}, binding app.user_id and \
+    let result = async {
+        // 17. The environment's administration login writes the platform
+        // configuration rows, as the control host does, and the environment's
+        // wamn_app generation reads them.
+        let suffix = row
+            .as_ref()
+            .and_then(|row| row["instance_suffix"].as_str())
+            .context("the dev row")?;
+        let database =
+            wamn_control_provision::project_env_database_name(ORG, PROJECT, "dev", suffix);
+        let dev_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
+        let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
+        let secret = wamn_control_provision::workload_secret_name(
+            WorkloadRoleFamily::Administration,
+            ORG,
+            PROJECT,
+            "dev",
+        );
+        let login = run
+            .run(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "secret",
+                    &secret,
+                    "-o",
+                    "jsonpath={.data.url}",
+                ],
+            )
+            .await?;
+        let login = url::Url::parse(&String::from_utf8(base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            login.trim(),
+        )?)?)?;
+        let administration_url = format!(
+            "postgresql://{}:{}@127.0.0.1:{port}/{database}",
+            login.username(),
+            login
+                .password()
+                .context("the administration login has a password")?,
+        );
+        let (mut administration, administration_connection) =
+            tokio_postgres::connect(&administration_url, tokio_postgres::NoTls).await?;
+        let administration_task = tokio::spawn(administration_connection);
+        let configuration = platform_configuration::configuration(PROJECT);
+        let written = platform_configuration::write(&mut administration, &configuration).await;
+        drop(administration);
+        administration_task.abort();
+        let written = written?;
+        let app = workload_generation_role(
+            WorkloadRoleFamily::App,
+            WorkloadRoleScope::Tenant {
+                tenant: &tenant,
+                database: &database,
+            },
+            CredentialGeneration::A,
+        )?;
+        let (dev_project, dev_task) = connect(&dev_url).await?;
+        let history = platform_configuration::history(dev_project.as_ref()).await?;
+        dev_project
+            .batch_execute(&format!("SET ROLE \"{app}\""))
+            .await?;
+        let read = platform_configuration::read_back(dev_project.as_ref()).await?;
+        dev_task.abort();
+        let expected = platform_configuration::expected(PROJECT);
+        run.pass(
+            "the administration login writes the platform configuration rows",
+            &format!(
+                "kubectl get secret {secret}; one row of each table as {}, binding app.user_id and \
              app.operation; SELECT FROM platform.<table>_history; SET ROLE {app}; \
              SELECT to_jsonb(t) FROM platform.<table> AS t",
-            login.username()
-        ),
-        json!({"written": written, "history": history, "read": read, "expected": expected}),
-        written == 6 && history.len() == 6 && read == expected,
-    );
+                login.username()
+            ),
+            json!({"written": written, "history": history, "read": read, "expected": expected}),
+            written == 6 && history.len() == 6 && read == expected,
+        );
 
-    // 14. A1: the heartbeat carries the host group and the release.
-    let label = release_label(&digest).context("label the fixture digest")?;
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let mut hosts = run.hosts(&name).await?;
-    while hosts.len() != 1 && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        hosts = run.hosts(&name).await?;
+        Ok(())
     }
-    let labels: Vec<Value> = hosts
-        .iter()
-        .map(|host| host["metadata"]["labels"].clone())
-        .collect();
-    run.pass(
-        "A1 heartbeat labels",
-        &format!("kubectl -n {NAMESPACE} get hosts -l hostgroup={name} -o json"),
-        json!({"expected": {"hostgroup": name, "wamn.release": label}, "labels": labels}),
-        labels.len() == 1
-            && labels[0]["hostgroup"] == name.as_str()
-            && labels[0]["wamn.release"] == label.as_str(),
-    );
+    .await;
+    run.collect("17 administration configuration", result);
 
+    let label = release_label(&digest).context("label the fixture digest")?;
+    let result = async {
+        // 14. A1: the heartbeat carries the host group and the release.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut hosts = run.hosts(&name).await?;
+        while hosts.len() != 1 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            hosts = run.hosts(&name).await?;
+        }
+        let labels: Vec<Value> = hosts
+            .iter()
+            .map(|host| host["metadata"]["labels"].clone())
+            .collect();
+        run.pass(
+            "A1 heartbeat labels",
+            &format!("kubectl -n {NAMESPACE} get hosts -l hostgroup={name} -o json"),
+            json!({"expected": {"hostgroup": name, "wamn.release": label}, "labels": labels}),
+            labels.len() == 1
+                && labels[0]["hostgroup"] == name.as_str()
+                && labels[0]["wamn.release"] == label.as_str(),
+        );
+
+        Ok(())
+    }
+    .await;
+    run.collect("14 / A1 heartbeat labels", result);
+
+    let result = async {
     // 15. A WorkloadDeployment that selects another release is not placed.
     let probe = format!("{name}-probe-wrong");
     let mut wrong = label.clone();
@@ -1337,15 +1371,25 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     )
     .await?;
 
-    // 2. The same document again writes no revision.
-    apply(&dev, "dev-again").await?;
-    let again = run.revisions(&name).await?;
-    run.pass(
-        "second apply writes no Helm revision",
-        &format!("helm -n {NAMESPACE} history {name}"),
-        json!({"before": first, "after": again}),
-        again == first,
-    );
+    Ok(())
+    }.await;
+    run.collect("15 wrong release placement", result);
+
+    let result = async {
+        // 2. The same document again writes no revision.
+        apply(&dev, "dev-again").await?;
+        let again = run.revisions(&name).await?;
+        run.pass(
+            "second apply writes no Helm revision",
+            &format!("helm -n {NAMESPACE} history {name}"),
+            json!({"before": first, "after": again}),
+            again == first,
+        );
+
+        Ok(())
+    }
+    .await;
+    run.collect("2 unchanged apply", result);
 
     // 3. A connection-only change writes no revision and moves the generation.
     let generation = async |system: &tokio_postgres::Client| -> anyhow::Result<Option<i64>> {
@@ -1481,6 +1525,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             .await?
             .get(0))
     };
+    let result = async {
     let http_before = http_rows().await?;
     let http_shown = environment::show::show(&platform, &http.triple()).await?;
     run.pass(
@@ -1522,6 +1567,9 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         },
     )
     .await?;
+    Ok(())
+    }.await;
+    run.collect("4 HTTP connections and triggers", result);
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;
@@ -1534,7 +1582,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         &admin_url,
         "rest_connector",
     ))
-    .await?;
+    .await
+    .with_context(|| "4 rest_connector setup or cleanup")?;
     Box::pin(integration::exercise(
         run,
         repository,
@@ -1544,13 +1593,15 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         &admin_url,
         "netsuite",
     ))
-    .await?;
+    .await
+    .with_context(|| "4 netsuite setup or cleanup")?;
     system_task.abort();
 
     // 5. A12: a second environment in the same namespace.
     let qa = document("qa", "qa.orders.example");
     apply(&qa, "qa-first").await?;
     let qa_name = release_name(ORG, PROJECT, "qa")?;
+    let result = async {
     let mut names = std::collections::BTreeMap::<String, Vec<String>>::new();
     for kind in [
         "deployments",
@@ -1629,6 +1680,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         !dev_names.is_empty() && !qa_names.is_empty() && shared.is_empty() && own,
     );
 
+    Ok(())
+    }.await;
+    run.collect("5 / A12 environment isolation", result);
+
     // The checks of wamn-snz0.4: rollback, release none, the host's one
     // shutdown budget, and delete.
     let digest_b = push_manifest_bytes(
@@ -1662,6 +1717,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         Ok((database, url))
     };
 
+    let result = async {
     // 6. R8: apply B, then rollback. The live set is A again, the route host
     // and the connections are unchanged, and no `helm rollback` ran: every
     // revision is an apply's.
@@ -1675,7 +1731,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let mut events_platform = platform.clone();
     events_platform.host_group = Some(work.join("dev-event-host-group.yaml"));
     let rolled =
-        environment::rollback::rollback(&events_platform, &dev_triple, "kind check").await?;
+        Box::pin(environment::rollback::rollback(&events_platform, &dev_triple, "kind check")).await?;
     let after_rollback = run.live_digests(&name).await?;
     let shown_after = environment::show::show(&platform, &dev_triple).await?;
     let history = run
@@ -1709,20 +1765,39 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 .is_some_and(|description| description.starts_with("rollback by")),
     );
 
-    // 7. R8 (3): one retained revision refuses and writes nothing.
-    let qa_before = run.revisions(&qa_name).await?;
-    let refused = environment::rollback::rollback(&platform, &qa_triple, "kind check").await;
-    let qa_after = run.revisions(&qa_name).await?;
-    let message = refused.as_ref().err().map(|error| format!("{error:#}"));
-    run.pass(
-        "rollback with one retained revision refuses",
-        &format!("wamn-ctl env rollback {qa_triple} --reason 'kind check'"),
-        json!({"error": message, "revisions": [qa_before, qa_after]}),
-        message.as_deref().is_some_and(|message| {
-            message.contains(environment::rollback::NO_RETAINED_PRIOR_RELEASE)
-        }) && qa_before == qa_after,
-    );
+    Ok(())
+    }.await;
+    run.collect("6 rollback to previous release", result);
 
+    let result = async {
+        // 7. R8 (3): one retained revision refuses and writes nothing.
+        let qa_before = run.revisions(&qa_name).await?;
+        let refused = Box::pin(environment::rollback::rollback(
+            &platform,
+            &qa_triple,
+            "kind check",
+        ))
+        .await;
+        let qa_after = run.revisions(&qa_name).await?;
+        let message = refused.as_ref().err().map(|error| format!("{error:#}"));
+        run.pass(
+            "rollback with one retained revision refuses",
+            &format!("wamn-ctl env rollback {qa_triple} --reason 'kind check'"),
+            json!({"error": message, "revisions": [qa_before, qa_after]}),
+            message.as_deref().is_some_and(|message| {
+                message.contains(environment::rollback::NO_RETAINED_PRIOR_RELEASE)
+            }) && qa_before == qa_after,
+        );
+
+        Ok(())
+    }
+    .await;
+    run.collect("7 rollback refusal", result);
+
+    let (_, dev_url) = project_database("dev").await?;
+    let (project, project_task) = connect(&dev_url).await?;
+    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
+    let result = async {
     // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
     // it can claim finishes the run and exits with code 0 before its grace
     // period (R20 (2)). The run turns claimable ten seconds after it is
@@ -1777,9 +1852,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         );
         tokio::time::sleep(Duration::from_secs(2)).await;
     };
-    let (_, dev_url) = project_database("dev").await?;
-    let (project, project_task) = connect(&dev_url).await?;
-    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
     project
         .execute(
             "INSERT INTO wamn_run.runs \
@@ -1994,6 +2066,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             && other_queued,
     );
 
+    Ok(())
+    }.await;
+    run.collect("8 host drain", result);
+
     // The run that check 10 finds stranded: pinned to A and never claimable.
     project
         .execute(
@@ -2014,6 +2090,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .await?;
     project_task.abort();
 
+    let result = async {
     // 9. release = none: no host pod remains, the declared instances stay
     // enabled, and the release's bindings are gone.
     let mut qa_none = environment::show::show(&platform, &qa_triple).await?;
@@ -2058,50 +2135,70 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         qa_live.is_empty() && enabled == ["labels"] && bindings == 0,
     );
 
-    // 10. delete refuses on the run pinned to A, which no pod serves now.
-    let refused = environment::delete::delete(&platform, &dev_triple, false).await;
-    let message = refused.as_ref().err().map(|error| format!("{error:#}"));
-    run.pass(
-        "delete refuses on a stranded run",
-        &format!("wamn-ctl env delete {dev_triple}"),
-        json!({"error": message}),
-        message
-            .as_deref()
-            .is_some_and(|message| message.contains("pinned-backlog")),
-    );
+    Ok(())
+    }.await;
+    run.collect("9 release none", result);
 
-    // 11. delete --data drops the database; 12. a plain delete keeps it.
     let (dev_database, _) = project_database("dev").await?;
     let (qa_database, _) = project_database("qa").await?;
-    let dev_lines = environment::delete::delete(&platform, &dev_triple, true).await?;
-    let qa_lines = environment::delete::delete(&platform, &qa_triple, false).await?;
-    let (admin, admin_task) = connect(&admin_url).await?;
-    let exists = async |database: &str| -> anyhow::Result<bool> {
-        Ok(admin
-            .query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&database])
+    let result = async {
+        // 10. delete refuses on the run pinned to A, which no pod serves now.
+        let refused = environment::delete::delete(&platform, &dev_triple, false).await;
+        let message = refused.as_ref().err().map(|error| format!("{error:#}"));
+        run.pass(
+            "delete refuses on a stranded run",
+            &format!("wamn-ctl env delete {dev_triple}"),
+            json!({"error": message}),
+            message
+                .as_deref()
+                .is_some_and(|message| message.contains("pinned-backlog")),
+        );
+
+        Ok(())
+    }
+    .await;
+    run.collect("10 stranded run refusal", result);
+
+    let result = async {
+        // 11. delete --data drops the database; 12. a plain delete keeps it.
+        let dev_result = environment::delete::delete(&platform, &dev_triple, true).await;
+        let dev_lines = dev_result.as_ref().ok().cloned();
+        run.collect("11 delete with data", dev_result.map(|_| ()));
+        let qa_result = environment::delete::delete(&platform, &qa_triple, false).await;
+        let qa_lines = qa_result.as_ref().ok().cloned();
+        run.collect("12 delete without data", qa_result.map(|_| ()));
+        let (admin, admin_task) = connect(&admin_url).await?;
+        let exists = async |database: &str| -> anyhow::Result<bool> {
+            Ok(admin
+                .query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&database])
+                .await?
+                .is_some())
+        };
+        let dev_kept = exists(&dev_database).await?;
+        let qa_kept = exists(&qa_database).await?;
+        admin_task.abort();
+        let (system, system_task) = connect(&system_url).await?;
+        system.batch_execute("SET ROLE wamn_system").await?;
+        let rows: i64 = system
+            .query_one(
+                "SELECT count(*) FROM registry.project_envs WHERE org = $1 AND project = $2",
+                &[&ORG, &PROJECT],
+            )
             .await?
-            .is_some())
-    };
-    let dev_kept = exists(&dev_database).await?;
-    let qa_kept = exists(&qa_database).await?;
-    admin_task.abort();
-    let (system, system_task) = connect(&system_url).await?;
-    system.batch_execute("SET ROLE wamn_system").await?;
-    let rows: i64 = system
-        .query_one(
-            "SELECT count(*) FROM registry.project_envs WHERE org = $1 AND project = $2",
-            &[&ORG, &PROJECT],
-        )
-        .await?
-        .get(0);
-    system_task.abort();
-    run.pass(
-        "delete --data drops the database; a plain delete keeps it",
-        &format!("wamn-ctl env delete {dev_triple} --data; wamn-ctl env delete {qa_triple}"),
-        json!({"dev": dev_lines, "qa": qa_lines, "dev_database_kept": dev_kept,
+            .get(0);
+        system_task.abort();
+        run.pass(
+            "delete --data drops the database; a plain delete keeps it",
+            &format!("wamn-ctl env delete {dev_triple} --data; wamn-ctl env delete {qa_triple}"),
+            json!({"dev": dev_lines, "qa": qa_lines, "dev_database_kept": dev_kept,
             "qa_database_kept": qa_kept, "rows": rows}),
-        !dev_kept && qa_kept && rows == 0,
-    );
+            !dev_kept && qa_kept && rows == 0,
+        );
+
+        Ok(())
+    }
+    .await;
+    run.collect("11 / 12 database and row deletion", result);
 
     run.record(
         "A6 kind half",
@@ -2109,6 +2206,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         json!({"reason": "the fixture release has no staged package upgrade, so no old release serves on an expanded schema between steps 5 and 6"}),
         "not-run",
     );
+    let result = async {
     // 13. A7: each route host reaches only its own environment.
     let digest_h = push_manifest_bytes(
         &manifest_h,
@@ -2153,6 +2251,11 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         own_only,
     );
 
+    Ok(())
+    }.await;
+    run.collect("13 / A7 route isolation", result);
+
+    let result = async {
     // 16. The operator release is untouched.
     let operator_after = run.operator().await?;
     run.pass(
@@ -2161,6 +2264,9 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         json!({"before": operator_before, "after": operator_after}),
         operator_before == operator_after,
     );
+    Ok(())
+    }.await;
+    run.collect("16 operator unchanged", result);
     Ok(())
 }
 

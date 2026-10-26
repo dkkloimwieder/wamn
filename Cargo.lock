@@ -5805,6 +5805,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-fixture-package",
+ "wamn-gate-harness",
  "wamn-identity-client",
  "wamn-package-artifact",
  "wamn-pg-core",

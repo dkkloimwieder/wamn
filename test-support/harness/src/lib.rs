@@ -20,6 +20,31 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+/// Failures from independent checks, retained until the case ends.
+#[derive(Debug, Default)]
+pub struct Failures {
+    errors: Vec<String>,
+}
+
+impl Failures {
+    /// Record an error with its step name and full cause chain.
+    pub fn record(&mut self, step: &str, result: anyhow::Result<()>) {
+        if let Err(error) = result {
+            self.errors.push(format!("{step}: {error:#}"));
+        }
+    }
+
+    /// Fail the case with every recorded error.
+    pub fn finish(self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.errors.is_empty(),
+            "failed checks:\n{}",
+            self.errors.join("\n")
+        );
+        Ok(())
+    }
+}
+
 /// Percentile over an already-sorted sample set (empty-safe).
 pub fn percentile(sorted: &[Duration], p: f64) -> Duration {
     if sorted.is_empty() {
@@ -160,6 +185,30 @@ pub async fn set_active_flow_version(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failures_retain_both_steps_and_error_causes() {
+        let mut failures = Failures::default();
+        failures.record(
+            "4.11",
+            Err(anyhow::anyhow!("first cause").context("first error")),
+        );
+        failures.record("passing check", Ok(()));
+        failures.record("A12", Err(anyhow::anyhow!("second error")));
+        let error = failures.finish().unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "failed checks:\n4.11: first error: first cause\nA12: second error"
+        );
+    }
+
+    #[test]
+    fn failures_accept_an_empty_or_passing_case() {
+        Failures::default().finish().unwrap();
+        let mut failures = Failures::default();
+        failures.record("passing check", Ok(()));
+        failures.finish().unwrap();
+    }
 
     #[test]
     fn percentile_is_empty_safe_and_indexes_the_sorted_tail() {

@@ -13,6 +13,9 @@
 //! WMS publishes through the same release Job as Receiving.
 //! WMS stays unqualified and must refuse. The host qualifies Receiving, then
 //! the test applies only Receiving through HTTPS checks in 4.21 and requires an unchanged rerun.
+//! Independent checks record their failures and continue. Required setup stops
+//! the case if a later check needs it. The final error names every failed check.
+//! The cluster guard removes the cluster and registries after either outcome.
 //! HTTPS Jobs pull the existing pinned curl image from the public registry.
 
 use std::io::Write as _;
@@ -32,6 +35,7 @@ use wamn_control::platform::{install, steps};
 #[path = "support/platform_images.rs"]
 mod platform_images;
 use platform_images::stamp_registry;
+use wamn_gate_harness::Failures;
 use wash_runtime::oci::OciConfig;
 
 struct ClusterGuard {
@@ -84,6 +88,13 @@ const STEP_TITLES: [&str; 12] = [
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires: docker, kind, helm, kubectl, pnpm, debug CLI binaries, package build tools, stamped chart, public registry access; no image builds"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
+    let mut failures = Failures::default();
+    let result = scenario(&mut failures).await;
+    failures.record("required setup", result);
+    failures.finish()
+}
+
+async fn scenario(failures: &mut Failures) -> anyhow::Result<()> {
     let mut suffix = [0u8; 6];
     SystemRandom::new()
         .fill(&mut suffix)
@@ -240,7 +251,10 @@ cluster.Cluster {{
         if installed.is_ok() { "pass" } else { "fail" }
     );
     installed?;
-    require_steps(&first, "done")?;
+    failures.record(
+        "4.3 through 4.14 progress (done)",
+        require_steps(&first, "done"),
+    );
 
     let kubeconfig = work.join(format!("{name}.kubeconfig"));
     let context = format!("kind-{name}");
@@ -299,33 +313,43 @@ cluster.Cluster {{
             "wamn-install-platform-identity-check",
         ),
     ] {
-        let object: Option<Value> =
-            kubectl::get(&kubeconfig, &context, namespace, kind, name).await?;
-        ensure!(object.is_some(), "missing {kind} {namespace}/{name}");
+        let result = async {
+            let object: Option<Value> =
+                kubectl::get(&kubeconfig, &context, namespace, kind, name).await?;
+            ensure!(object.is_some(), "missing {kind} {namespace}/{name}");
+            Ok(())
+        }
+        .await;
+        failures.record("4.4 / 4.7 / 4.11 / 4.12 installed objects", result);
     }
-    // nats-server opens to anonymous clients when its users list is empty.
-    let anonymous = kubectl::kubectl(
-        &kubeconfig,
-        &context,
-        "platform",
-        &[
-            "exec",
-            "-i",
-            "evt-nats-0",
-            "--",
-            "nc",
-            "-w",
-            "2",
-            "127.0.0.1",
-            "4222",
-        ],
-        Some(b"CONNECT {}\r\nPING\r\n"),
-    )
-    .await?;
-    ensure!(
-        anonymous.contains("Authorization Violation") && !anonymous.contains("PONG"),
-        "event NATS accepted an anonymous connection: {anonymous}"
-    );
+    let result = async {
+        // nats-server opens to anonymous clients when its users list is empty.
+        let anonymous = kubectl::kubectl(
+            &kubeconfig,
+            &context,
+            "platform",
+            &[
+                "exec",
+                "-i",
+                "evt-nats-0",
+                "--",
+                "nc",
+                "-w",
+                "2",
+                "127.0.0.1",
+                "4222",
+            ],
+            Some(b"CONNECT {}\r\nPING\r\n"),
+        )
+        .await?;
+        ensure!(
+            anonymous.contains("Authorization Violation") && !anonymous.contains("PONG"),
+            "event NATS accepted an anonymous connection: {anonymous}"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.8 anonymous NATS refusal", result);
     let prefix = format!("{}: release = \"", input.display());
     let digest = first
         .iter()
@@ -335,9 +359,16 @@ cluster.Cluster {{
         })
         .context("publication printed no release line")?
         .to_owned();
-    ensure!(
-        EnvironmentDocument::compile(&input)?.release == DeclaredRelease::None,
-        "platform apply changed the environment file"
+    failures.record(
+        "4.11",
+        async {
+            ensure!(
+                EnvironmentDocument::compile(&input)?.release == DeclaredRelease::None,
+                "platform apply changed the environment file"
+            );
+            Ok(())
+        }
+        .await,
     );
     let wms_prefix = format!("{}: release = \"", wms_input.display());
     let wms_digest = first
@@ -348,119 +379,202 @@ cluster.Cluster {{
         })
         .context("publication printed no release line")?
         .to_owned();
-    ensure!(
-        EnvironmentDocument::compile(&wms_input)?.release == DeclaredRelease::None,
-        "platform apply changed the WMS environment file"
+    failures.record(
+        "4.14",
+        async {
+            ensure!(
+                EnvironmentDocument::compile(&wms_input)?.release == DeclaredRelease::None,
+                "platform apply changed the WMS environment file"
+            );
+            Ok(())
+        }
+        .await,
     );
     let publication_log =
         std::fs::read_to_string(work.join("jobs/platform-release-test--wms--dev.log"))?;
-    ensure!(
-        publication_log.contains(&wms_digest),
-        "release Job log contains no WMS release digest"
+    failures.record(
+        "4.14",
+        async {
+            ensure!(
+                publication_log.contains(&wms_digest),
+                "release Job log contains no WMS release digest"
+            );
+            Ok(())
+        }
+        .await,
     );
-    let completed: Value = kubectl::get(
-        &kubeconfig,
-        &context,
-        "platform",
-        "configmap",
-        "wamn-install-platform-release-test--wms--dev",
-    )
-    .await?
-    .context("publication has no completion record")?;
-    ensure!(
-        completed["data"]["output"].as_str().map(str::trim) == Some(wms_digest.as_str()),
-        "publication retained output other than its digest"
-    );
-    for suffix in ["identity-reader", "control-author", "management-admitter"] {
-        let secret: Option<Value> = kubectl::get(
+    let result = async {
+        let completed: Value = kubectl::get(
             &kubeconfig,
             &context,
-            "identity",
-            "secret",
-            &format!("platform-release-test--wms--dev-{suffix}"),
+            "platform",
+            "configmap",
+            "wamn-install-platform-release-test--wms--dev",
         )
-        .await?;
+        .await?
+        .context("publication has no completion record")?;
         ensure!(
-            secret.is_none(),
-            "publication created a retired gate {suffix} Secret"
+            completed["data"]["output"].as_str().map(str::trim) == Some(wms_digest.as_str()),
+            "publication retained output other than its digest"
         );
+        Ok(())
+    }
+    .await;
+    failures.record("4.14 publication completion", result);
+    for suffix in ["identity-reader", "control-author", "management-admitter"] {
+        let result = async {
+            let secret: Option<Value> = kubectl::get(
+                &kubeconfig,
+                &context,
+                "identity",
+                "secret",
+                &format!("platform-release-test--wms--dev-{suffix}"),
+            )
+            .await?;
+            ensure!(
+                secret.is_none(),
+                "publication created a retired gate {suffix} Secret"
+            );
+            Ok(())
+        }
+        .await;
+        failures.record("4.14 retired gate Secret", result);
     }
     wms_environment.release = DeclaredRelease::Digest(wms_digest.clone());
     std::fs::write(&wms_input, wms_environment.to_kcl())?;
     environment.release = DeclaredRelease::Digest(digest.clone());
     std::fs::write(&input, environment.to_kcl())?;
-    let refused = install::apply(
-        &document,
-        &version,
-        &repository,
-        &environments,
-        &work,
-        &artifacts,
-        |line| {
-            println!("{line}");
-            writeln!(progress, "{line}")?;
-            Ok(())
-        },
-    )
-    .await
-    .expect_err("an unqualified release must refuse");
-    let refusal = format!("{refused:#}");
-    ensure!(
-        refusal.contains(&format!(
-            "release {wms_digest} has no qualification on the chart's image set:"
-        )),
-        "{refusal}"
-    );
-    ensure!(
-        refusal.contains(&format!("qualify-release --release-digest {wms_digest}")),
-        "{refusal}"
-    );
-    writeln!(progress, "{refusal}")?;
-    let secrets = secret_versions(&kubeconfig, &context).await?;
-    require_private_logs(&work, &format!("{}\n{refusal}", first.join("\n")), &secrets)?;
-
-    let mut second = Vec::new();
-    let repeated = install::apply(
-        &document,
-        &version,
-        &repository,
-        &environments,
-        &work,
-        &artifacts,
-        |line| {
-            println!("{line}");
-            writeln!(progress, "{line}")?;
-            second.push(line.to_owned());
-            Ok(())
-        },
-    )
-    .await
-    .expect_err("the unchanged unqualified release still refuses");
-    ensure!(
-        format!("{repeated:#}").contains(&format!("release {wms_digest} has no qualification")),
-        "{repeated:#}"
-    );
-    require_steps(&second, "skipped")?;
-    ensure!(
-        second
-            .iter()
-            .any(|line| line == &format!("{wms_prefix}{wms_digest}\"")),
-        "unchanged publication did not return the same release line"
-    );
-    ensure!(
-        std::fs::read_to_string(work.join("jobs/platform-release-test--wms--dev.log"))?
-            == publication_log,
-        "unchanged publication ran its release Job again"
-    );
-    for ((name, first), (_, second)) in secrets
-        .iter()
-        .zip(secret_versions(&kubeconfig, &context).await?)
-    {
-        ensure!(
-            first["metadata"]["resourceVersion"] == second["metadata"]["resourceVersion"],
-            "unchanged apply rewrote Secret {name}"
+    let result = async {
+        let refused = install::apply(
+            &document,
+            &version,
+            &repository,
+            &environments,
+            &work,
+            &artifacts,
+            |line| {
+                println!("{line}");
+                writeln!(progress, "{line}")?;
+                Ok(())
+            },
+        )
+        .await
+        .err()
+        .context("an unqualified release must refuse")?;
+        let refusal = format!("{refused:#}");
+        failures.record(
+            "4.15",
+            async {
+                ensure!(
+                    refusal.contains(&format!(
+                        "release {wms_digest} has no qualification on the chart's image set:"
+                    )),
+                    "{refusal}"
+                );
+                Ok(())
+            }
+            .await,
         );
+        failures.record(
+            "4.15",
+            async {
+                ensure!(
+                    refusal.contains(&format!("qualify-release --release-digest {wms_digest}")),
+                    "{refusal}"
+                );
+                Ok(())
+            }
+            .await,
+        );
+        writeln!(progress, "{refusal}")?;
+        Ok(refusal)
     }
+    .await;
+    let refusal = result.as_ref().ok().cloned().unwrap_or_default();
+    failures.record("4.15 unqualified release refusal", result.map(|_| ()));
+    let secrets = secret_versions(&kubeconfig, &context).await?;
+    failures.record(
+        "private logs",
+        require_private_logs(&work, &format!("{}\n{refusal}", first.join("\n")), &secrets),
+    );
+    let mut second = Vec::new();
+    let result = async {
+        let repeated = install::apply(
+            &document,
+            &version,
+            &repository,
+            &environments,
+            &work,
+            &artifacts,
+            |line| {
+                println!("{line}");
+                writeln!(progress, "{line}")?;
+                second.push(line.to_owned());
+                Ok(())
+            },
+        )
+        .await
+        .err()
+        .context("the unchanged unqualified release still refuses")?;
+        ensure!(
+            format!("{repeated:#}").contains(&format!("release {wms_digest} has no qualification")),
+            "{repeated:#}"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.15 repeated unqualified release refusal", result);
+    failures.record(
+        "4.3 through 4.14 progress (skipped)",
+        require_steps(&second, "skipped"),
+    );
+    failures.record(
+        "4.14",
+        async {
+            ensure!(
+                second
+                    .iter()
+                    .any(|line| line == &format!("{wms_prefix}{wms_digest}\"")),
+                "unchanged publication did not return the same release line"
+            );
+            Ok(())
+        }
+        .await,
+    );
+    failures.record(
+        "4.14",
+        async {
+            ensure!(
+                std::fs::read_to_string(work.join("jobs/platform-release-test--wms--dev.log"))?
+                    == publication_log,
+                "unchanged publication ran its release Job again"
+            );
+            Ok(())
+        }
+        .await,
+    );
+    let result = async {
+        for ((name, first), (_, second)) in secrets
+            .iter()
+            .zip(secret_versions(&kubeconfig, &context).await?)
+        {
+            failures.record(
+                "4.12",
+                async {
+                    ensure!(
+                        first["metadata"]["resourceVersion"]
+                            == second["metadata"]["resourceVersion"],
+                        "unchanged apply rewrote Secret {name}"
+                    );
+                    Ok(())
+                }
+                .await,
+            );
+        }
+        Ok(())
+    }
+    .await;
+    failures.record("4.12 unchanged Secrets after refusal", result);
     // Qualification stays on the Docker host. Receiving has one required case.
     let mut releases = artifacts.clone();
     releases.artifact_base = artifacts
@@ -532,129 +646,216 @@ cluster.Cluster {{
         "4.19.1 Owner invite",
         "4.20 Rust edge",
     ] {
-        ensure!(
-            applied
-                .iter()
-                .any(|line| line.starts_with(&format!("{title}: done "))),
-            "{title} did not run"
+        failures.record(
+            title,
+            async {
+                ensure!(
+                    applied
+                        .iter()
+                        .any(|line| line.starts_with(&format!("{title}: done "))),
+                    "{title} did not run"
+                );
+                Ok(())
+            }
+            .await,
         );
     }
-    let release = wamn_control::environment::analyse::deployed_release(
-        &wamn_control::release_chart::Target {
-            kubeconfig: kubeconfig.clone(),
-            context: context.clone(),
-            namespace: "hosts".into(),
-        },
-        "test--receiving--dev",
-    )
-    .await?;
-    ensure!(
-        release.as_deref() == Some(digest.as_str()),
-        "Receiving serves another release"
-    );
+    let result = async {
+        let release = wamn_control::environment::analyse::deployed_release(
+            &wamn_control::release_chart::Target {
+                kubeconfig: kubeconfig.clone(),
+                context: context.clone(),
+                namespace: "hosts".into(),
+            },
+            "test--receiving--dev",
+        )
+        .await?;
+        ensure!(
+            release.as_deref() == Some(digest.as_str()),
+            "Receiving serves another release"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.17 deployed release", result);
     // Capture and its reader exist even without an event registration.
     for (kind, name) in [
         ("deployment", "cdc-reader-test--receiving--dev"),
         ("secret", "wamn-cdc-test--receiving--dev"),
     ] {
-        ensure!(
-            kubectl::get::<Value>(&kubeconfig, &context, "hosts", kind, name)
-                .await?
-                .is_some(),
-            "Receiving has no {kind} {name} for application capture"
+        failures.record(
+            "4.18",
+            async {
+                ensure!(
+                    kubectl::get::<Value>(&kubeconfig, &context, "hosts", kind, name)
+                        .await?
+                        .is_some(),
+                    "Receiving has no {kind} {name} for application capture"
+                );
+                Ok(())
+            }
+            .await,
         );
     }
     // Env apply creates the number_sequence row of Receiving's purchase_order
     // sequence with the package's default pattern (wamn-83eth.3).
-    let pattern = number_sequence_pattern(&kubeconfig, &context, "purchase_order").await?;
-    ensure!(
-        pattern == "PO-{seq:po,width=6}",
-        "env apply did not create the purchase_order number_sequence row, found {pattern:?}"
-    );
-    require_web_skip(&applied)?;
-    require_platform_ui_skip(&applied)?;
-    let control: Value = kubectl::get(
-        &kubeconfig,
-        &context,
-        "hosts",
-        "deployment",
-        "hostgroup-c-test",
-    )
-    .await?
-    .context("missing control host Deployment")?;
-    ensure!(
-        control["status"]["observedGeneration"] == control["metadata"]["generation"]
-            && control["status"]["updatedReplicas"] == 1
-            && control["status"]["availableReplicas"] == 1,
-        "control host did not roll out"
-    );
-    require_edge_skip(&applied)?;
+    let result = async {
+        let pattern = number_sequence_pattern(&kubeconfig, &context, "purchase_order").await?;
+        ensure!(
+            pattern == "PO-{seq:po,width=6}",
+            "env apply did not create the purchase_order number_sequence row, found {pattern:?}"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.17 number sequence", result);
+    failures.record("4.19", require_web_skip(&applied));
+    failures.record("4.19.1", require_platform_ui_skip(&applied));
+    let result = async {
+        let control: Value = kubectl::get(
+            &kubeconfig,
+            &context,
+            "hosts",
+            "deployment",
+            "hostgroup-c-test",
+        )
+        .await?
+        .context("missing control host Deployment")?;
+        ensure!(
+            control["status"]["observedGeneration"] == control["metadata"]["generation"]
+                && control["status"]["updatedReplicas"] == 1
+                && control["status"]["availableReplicas"] == 1,
+            "control host did not roll out"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.19.1 control host rollout", result);
+    failures.record("4.20", require_edge_skip(&applied));
     let https_before = https_state(
         &kubeconfig,
         &context,
         &[&serving.route_hosts.control, &environment.route_host],
+        failures,
     )
     .await?;
     let edge: Value = kubectl::get(&kubeconfig, &context, "edge", "deployment", "wamn-edge-web")
         .await?
         .context("missing Rust edge Deployment")?;
-    ensure!(
-        edge["status"]["observedGeneration"] == edge["metadata"]["generation"]
-            && edge["status"]["updatedReplicas"] == 1
-            && edge["status"]["availableReplicas"] == 1,
-        "Rust edge did not roll out"
+    failures.record(
+        "4.20",
+        async {
+            ensure!(
+                edge["status"]["observedGeneration"] == edge["metadata"]["generation"]
+                    && edge["status"]["updatedReplicas"] == 1
+                    && edge["status"]["availableReplicas"] == 1,
+                "Rust edge did not roll out"
+            );
+            Ok(())
+        }
+        .await,
     );
     // The verb installs from the serving chart, whose images the fixture moved.
-    let serving_values: Value =
-        serde_yaml::from_slice(&std::fs::read(work.join("release-chart/values.yaml"))?)?;
-    ensure!(
-        edge["spec"]["template"]["spec"]["containers"][0]["image"]
-            == serving_values["platform"]["edge"]["image"],
-        "Rust edge does not use the stamped image"
-    );
-    ensure!(
-        edge["spec"]["template"]["spec"]["serviceAccountName"] == "wamn-edge-web",
-        "Rust edge has another service account"
-    );
-    let service: Value = kubectl::get(&kubeconfig, &context, "edge", "service", "wamn-edge-web")
-        .await?
-        .context("missing Rust edge Service")?;
-    ensure!(
-        service["spec"]["selector"] == edge["spec"]["template"]["metadata"]["labels"],
-        "Rust edge Service selects another workload"
-    );
-    let access: Value = kubectl::get(&kubeconfig, &context, "hosts", "role", "wamn-edge-web")
-        .await?
-        .context("missing Rust edge Role")?;
-    ensure!(
-        access["rules"][0]["verbs"] == json!(["get"])
-            && access["rules"][0]["resources"] == json!(["configmaps"]),
-        "Rust edge can read beyond the release ConfigMaps"
-    );
-    let control_row: Value = kubectl::get(&kubeconfig, &context, "hosts", "configmap", "c-test")
-        .await?
-        .context("missing chart-owned control release row")?;
-    let control_row: Value = serde_json::from_str(
-        control_row["data"]["release.json"]
-            .as_str()
-            .context("control release JSON")?,
-    )?;
-    ensure!(
-        control_row["platformVersion"] == version
-            && control_row["host"] == document.route_hosts.control,
-        "control release row does not select the installed platform UI"
-    );
+    let result = async {
+        let serving_values: Value =
+            serde_yaml::from_slice(&std::fs::read(work.join("release-chart/values.yaml"))?)?;
+        failures.record(
+            "4.20",
+            async {
+                ensure!(
+                    edge["spec"]["template"]["spec"]["containers"][0]["image"]
+                        == serving_values["platform"]["edge"]["image"],
+                    "Rust edge does not use the stamped image"
+                );
+                Ok(())
+            }
+            .await,
+        );
+        failures.record(
+            "4.20",
+            async {
+                ensure!(
+                    edge["spec"]["template"]["spec"]["serviceAccountName"] == "wamn-edge-web",
+                    "Rust edge has another service account"
+                );
+                Ok(())
+            }
+            .await,
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.20 stamped edge image and service account", result);
+    let result = async {
+        let service: Value =
+            kubectl::get(&kubeconfig, &context, "edge", "service", "wamn-edge-web")
+                .await?
+                .context("missing Rust edge Service")?;
+        ensure!(
+            service["spec"]["selector"] == edge["spec"]["template"]["metadata"]["labels"],
+            "Rust edge Service selects another workload"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.20 edge Service", result);
+    let result = async {
+        let access: Value = kubectl::get(&kubeconfig, &context, "hosts", "role", "wamn-edge-web")
+            .await?
+            .context("missing Rust edge Role")?;
+        ensure!(
+            access["rules"][0]["verbs"] == json!(["get"])
+                && access["rules"][0]["resources"] == json!(["configmaps"]),
+            "Rust edge can read beyond the release ConfigMaps"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.20 edge access refusal", result);
+    let result = async {
+        let control_row: Value =
+            kubectl::get(&kubeconfig, &context, "hosts", "configmap", "c-test")
+                .await?
+                .context("missing chart-owned control release row")?;
+        let control_row: Value = serde_json::from_str(
+            control_row["data"]["release.json"]
+                .as_str()
+                .context("control release JSON")?,
+        )?;
+        ensure!(
+            control_row["platformVersion"] == version
+                && control_row["host"] == document.route_hosts.control,
+            "control release row does not select the installed platform UI"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.19.1 control release row", result);
     let invite_log_path = work.join("jobs/platform-invite-test.log");
     let invite_log = std::fs::read_to_string(&invite_log_path)?;
-    ensure!(
-        invite_log == "owner invitation accepted",
-        "invite Job did not complete"
+    failures.record(
+        "4.19.1",
+        async {
+            ensure!(
+                invite_log == "owner invitation accepted",
+                "invite Job did not complete"
+            );
+            Ok(())
+        }
+        .await,
     );
     let invite_modified = std::fs::metadata(&invite_log_path)?.modified()?;
     let mail = owner_mail(&kubeconfig, &context).await?;
-    ensure!(
-        mail.lines().count() == 1,
-        "the owner did not receive exactly one invitation"
+    failures.record(
+        "4.19.1",
+        async {
+            ensure!(
+                mail.lines().count() == 1,
+                "the owner did not receive exactly one invitation"
+            );
+            Ok(())
+        }
+        .await,
     );
     let mut secrets = secret_versions(&kubeconfig, &context).await?;
     let control_secrets = control_secret_versions(&kubeconfig, &context).await?;
@@ -675,7 +876,10 @@ cluster.Cluster {{
         },
     )
     .await?;
-    require_steps(&repeated, "skipped")?;
+    failures.record(
+        "4.3 through 4.14 progress (skipped)",
+        require_steps(&repeated, "skipped"),
+    );
     for title in [
         "4.17 Apply with the release",
         "4.18 CDC readers",
@@ -684,196 +888,313 @@ cluster.Cluster {{
         "4.19.1 Owner invite",
         "4.20 Rust edge",
     ] {
-        ensure!(
-            repeated
-                .iter()
-                .any(|line| line.starts_with(&format!("{title}: skipped "))),
-            "{title} did not skip"
+        failures.record(
+            title,
+            async {
+                ensure!(
+                    repeated
+                        .iter()
+                        .any(|line| line.starts_with(&format!("{title}: skipped "))),
+                    "{title} did not skip"
+                );
+                Ok(())
+            }
+            .await,
         );
     }
-    require_web_skip(&repeated)?;
-    require_platform_ui_skip(&repeated)?;
-    require_edge_skip(&repeated)?;
-    let https_after = https_state(
-        &kubeconfig,
-        &context,
-        &[&serving.route_hosts.control, &environment.route_host],
-    )
-    .await?;
-    ensure!(
-        https_after == https_before,
-        "unchanged apply rewrote the proxy or reran HTTPS checks"
-    );
-    let edge_after: Value =
-        kubectl::get(&kubeconfig, &context, "edge", "deployment", "wamn-edge-web")
-            .await?
-            .context("Rust edge Deployment disappeared")?;
-    ensure!(
-        edge_after["metadata"]["resourceVersion"] == edge["metadata"]["resourceVersion"],
-        "unchanged apply rewrote the Rust edge Deployment"
-    );
-    let edge_check: Option<Value> = kubectl::get(
-        &kubeconfig,
-        &context,
-        "edge",
-        "configmap",
-        "wamn-install-platform-edge-check",
-    )
-    .await?;
-    ensure!(
-        edge_check.is_none() && !work.join("jobs/platform-edge-check.log").exists(),
-        "kind started a bucket check Job"
-    );
-    let edge_jobs: Value = serde_json::from_str(
-        &kubectl::kubectl(
+    failures.record("4.19", require_web_skip(&repeated));
+    failures.record("4.19.1", require_platform_ui_skip(&repeated));
+    failures.record("4.20", require_edge_skip(&repeated));
+    let result = async {
+        let https_after = https_state(
+            &kubeconfig,
+            &context,
+            &[&serving.route_hosts.control, &environment.route_host],
+            failures,
+        )
+        .await?;
+        ensure!(
+            https_after == https_before,
+            "unchanged apply rewrote the proxy or reran HTTPS checks"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.21 unchanged HTTPS state", result);
+    let result = async {
+        let edge_after: Value =
+            kubectl::get(&kubeconfig, &context, "edge", "deployment", "wamn-edge-web")
+                .await?
+                .context("Rust edge Deployment disappeared")?;
+        ensure!(
+            edge_after["metadata"]["resourceVersion"] == edge["metadata"]["resourceVersion"],
+            "unchanged apply rewrote the Rust edge Deployment"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.20 unchanged edge Deployment", result);
+    let result = async {
+        let edge_check: Option<Value> = kubectl::get(
             &kubeconfig,
             &context,
             "edge",
-            &["get", "jobs", "-o", "json"],
-            None,
+            "configmap",
+            "wamn-install-platform-edge-check",
         )
-        .await?,
-    )?;
-    ensure!(
-        !edge_jobs["items"]
-            .as_array()
-            .context("edge Jobs")?
-            .iter()
-            .any(|job| job["metadata"]["name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("platform-edge-check"))),
-        "kind retains a bucket check Job"
-    );
-    ensure!(
-        std::fs::read_to_string(&invite_log_path)? == invite_log
-            && std::fs::metadata(&invite_log_path)?.modified()? == invite_modified,
-        "unchanged apply reran the invite Job"
-    );
-    ensure!(
-        owner_mail(&kubeconfig, &context).await? == mail,
-        "unchanged apply sent another invitation"
-    );
-    for ((name, before), (_, after)) in control_secrets
-        .iter()
-        .zip(control_secret_versions(&kubeconfig, &context).await?)
-    {
+        .await?;
         ensure!(
-            before["metadata"]["resourceVersion"] == after["metadata"]["resourceVersion"],
-            "unchanged apply rewrote control Secret {name}"
+            edge_check.is_none() && !work.join("jobs/platform-edge-check.log").exists(),
+            "kind started a bucket check Job"
         );
+        Ok(())
     }
+    .await;
+    failures.record("4.20 no bucket completion", result);
+    let result = async {
+        let edge_jobs: Value = serde_json::from_str(
+            &kubectl::kubectl(
+                &kubeconfig,
+                &context,
+                "edge",
+                &["get", "jobs", "-o", "json"],
+                None,
+            )
+            .await?,
+        )?;
+        ensure!(
+            !edge_jobs["items"]
+                .as_array()
+                .context("edge Jobs")?
+                .iter()
+                .any(|job| job["metadata"]["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("platform-edge-check"))),
+            "kind retains a bucket check Job"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.20 no bucket Job", result);
+    failures.record(
+        "4.19.1",
+        async {
+            ensure!(
+                std::fs::read_to_string(&invite_log_path)? == invite_log
+                    && std::fs::metadata(&invite_log_path)?.modified()? == invite_modified,
+                "unchanged apply reran the invite Job"
+            );
+            Ok(())
+        }
+        .await,
+    );
+    failures.record(
+        "4.19.1",
+        async {
+            ensure!(
+                owner_mail(&kubeconfig, &context).await? == mail,
+                "unchanged apply sent another invitation"
+            );
+            Ok(())
+        }
+        .await,
+    );
+    let result = async {
+        for ((name, before), (_, after)) in control_secrets
+            .iter()
+            .zip(control_secret_versions(&kubeconfig, &context).await?)
+        {
+            failures.record(
+                "4.19.1",
+                async {
+                    ensure!(
+                        before["metadata"]["resourceVersion"]
+                            == after["metadata"]["resourceVersion"],
+                        "unchanged apply rewrote control Secret {name}"
+                    );
+                    Ok(())
+                }
+                .await,
+            );
+        }
+        Ok(())
+    }
+    .await;
+    failures.record("4.19.1 unchanged control Secrets", result);
     for name in [
         "platform-control-credentials-test-files",
         "platform-control-operator-test-files",
         "platform-invite-test-files",
         "platform-owner-state-test-files",
     ] {
-        let secret: Option<Value> =
-            kubectl::get(&kubeconfig, &context, "platform", "secret", name).await?;
-        ensure!(
-            secret.is_none(),
-            "the Job-owned Secret {name} remains after deletion"
-        );
+        let result = async {
+            let secret: Option<Value> =
+                kubectl::get(&kubeconfig, &context, "platform", "secret", name).await?;
+            ensure!(
+                secret.is_none(),
+                "the Job-owned Secret {name} remains after deletion"
+            );
+            Ok(())
+        }
+        .await;
+        failures.record("4.19.1 temporary Secret deletion", result);
     }
-    let ui_completion: Option<Value> = kubectl::get(
-        &kubeconfig,
-        &context,
-        "platform",
-        "configmap",
-        "wamn-install-platform-ui-test",
-    )
-    .await?;
-    ensure!(
-        ui_completion.is_none() && !work.join("jobs/platform-ui-test.log").exists(),
-        "kind started a platform UI Job"
-    );
+    let result = async {
+        let ui_completion: Option<Value> = kubectl::get(
+            &kubeconfig,
+            &context,
+            "platform",
+            "configmap",
+            "wamn-install-platform-ui-test",
+        )
+        .await?;
+        ensure!(
+            ui_completion.is_none() && !work.join("jobs/platform-ui-test.log").exists(),
+            "kind started a platform UI Job"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.19.1 no platform UI Job", result);
     for line in [
         "4.15 Qualification: skipped: qualify-release on the build machine",
         "4.16 Record the releases: skipped: owner input",
     ] {
-        ensure!(
-            repeated.iter().any(|reported| reported == line),
-            "missing owner-step skip: {line}"
+        failures.record(
+            line,
+            async {
+                ensure!(
+                    repeated.iter().any(|reported| reported == line),
+                    "missing owner-step skip: {line}"
+                );
+                Ok(())
+            }
+            .await,
         );
     }
-    for ((name, first), (_, second)) in secrets
-        .iter()
-        .zip(secret_versions(&kubeconfig, &context).await?)
-    {
-        ensure!(
-            first["metadata"]["resourceVersion"] == second["metadata"]["resourceVersion"],
-            "unchanged apply rewrote Secret {name}"
-        );
+    let result = async {
+        for ((name, first), (_, second)) in secrets
+            .iter()
+            .zip(secret_versions(&kubeconfig, &context).await?)
+        {
+            failures.record(
+                "4.12",
+                async {
+                    ensure!(
+                        first["metadata"]["resourceVersion"]
+                            == second["metadata"]["resourceVersion"],
+                        "unchanged apply rewrote Secret {name}"
+                    );
+                    Ok(())
+                }
+                .await,
+            );
+        }
+        Ok(())
     }
-    let jobs: Value = serde_json::from_str(
-        &kubectl::kubectl(
+    .await;
+    failures.record("4.12 unchanged Secrets after qualified apply", result);
+    let result = async {
+        let jobs: Value = serde_json::from_str(
+            &kubectl::kubectl(
+                &kubeconfig,
+                &context,
+                "hosts",
+                &["get", "jobs", "-o", "json"],
+                None,
+            )
+            .await?,
+        )?;
+        ensure!(
+            !jobs["items"]
+                .as_array()
+                .context("Jobs have no items")?
+                .iter()
+                .any(|job| job["metadata"]["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("platform-web-"))),
+            "kind started a web Job"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.19 no web Job", result);
+    let result = async {
+        let completion: Option<Value> = kubectl::get(
+            &kubeconfig,
+            &context,
+            "platform",
+            "configmap",
+            "wamn-install-platform-web-test--receiving--dev",
+        )
+        .await?;
+        ensure!(completion.is_none(), "kind completed a web upload Job");
+        Ok(())
+    }
+    .await;
+    failures.record("4.19 no upload completion", result);
+    let result = async {
+        let logs = std::fs::read_to_string(directory.join("progress.log"))?;
+        let registry_secret = kubectl::get(
             &kubeconfig,
             &context,
             "hosts",
-            &["get", "jobs", "-o", "json"],
-            None,
+            "secret",
+            "platform-fixture-registry",
         )
-        .await?,
-    )?;
-    ensure!(
-        !jobs["items"]
-            .as_array()
-            .context("Jobs have no items")?
-            .iter()
-            .any(|job| job["metadata"]["name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("platform-web-"))),
-        "kind started a web Job"
-    );
-    let completion: Option<Value> = kubectl::get(
-        &kubeconfig,
-        &context,
-        "platform",
-        "configmap",
-        "wamn-install-platform-web-test--receiving--dev",
-    )
-    .await?;
-    ensure!(completion.is_none(), "kind completed a web upload Job");
-    let logs = std::fs::read_to_string(directory.join("progress.log"))?;
-    let registry_secret = kubectl::get(
-        &kubeconfig,
-        &context,
-        "hosts",
-        "secret",
-        "platform-fixture-registry",
-    )
-    .await?
-    .context("fixture registry Secret")?;
-    require_private_logs(&work, &logs, &secrets)?;
-    let invitation: Value = serde_json::from_str(mail.trim())
-        .map_err(|_| anyhow::anyhow!("invalid local invitation mail"))?;
-    let invitation_text = invitation["text"]
-        .as_str()
-        .context("invitation has no text")?;
-    let mut all_logs = logs.clone();
-    for entry in std::fs::read_dir(work.join("jobs"))? {
-        all_logs.push_str(&std::fs::read_to_string(entry?.path())?);
+        .await?
+        .context("fixture registry Secret")?;
+        failures.record("private logs", require_private_logs(&work, &logs, &secrets));
+        let invitation: Value = serde_json::from_str(mail.trim())
+            .map_err(|_| anyhow::anyhow!("invalid local invitation mail"))?;
+        let invitation_text = invitation["text"]
+            .as_str()
+            .context("invitation has no text")?;
+        let mut all_logs = logs.clone();
+        for entry in std::fs::read_dir(work.join("jobs"))? {
+            all_logs.push_str(&std::fs::read_to_string(entry?.path())?);
+        }
+        failures.record(
+            "4.19.1",
+            async {
+                ensure!(
+                    !all_logs.contains(invitation_text),
+                    "invitation mail reached a log"
+                );
+                Ok(())
+            }
+            .await,
+        );
+        let code = invitation_text
+            .lines()
+            .find_map(|line| line.strip_prefix("Invitation code: "))
+            .context("local invitation has no code")?;
+        let (_, secret) = code
+            .split_once(':')
+            .context("local invitation has no secret")?;
+        failures.record(
+            "4.19.1",
+            async {
+                ensure!(
+                    !all_logs.contains(code) && !all_logs.contains(secret),
+                    "an invitation code or secret reached a log"
+                );
+                Ok(())
+            }
+            .await,
+        );
+        failures.record(
+            "private logs",
+            require_private_logs(
+                &work,
+                &logs,
+                &[("platform-fixture-registry".into(), registry_secret)],
+            ),
+        );
+        Ok(())
     }
-    ensure!(
-        !all_logs.contains(invitation_text),
-        "invitation mail reached a log"
-    );
-    let code = invitation_text
-        .lines()
-        .find_map(|line| line.strip_prefix("Invitation code: "))
-        .context("local invitation has no code")?;
-    let (_, secret) = code
-        .split_once(':')
-        .context("local invitation has no secret")?;
-    ensure!(
-        !all_logs.contains(code) && !all_logs.contains(secret),
-        "an invitation code or secret reached a log"
-    );
-    require_private_logs(
-        &work,
-        &logs,
-        &[("platform-fixture-registry".into(), registry_secret)],
-    )?;
+    .await;
+    failures.record("4.19.1 private logs", result);
     Ok(())
 }
 
@@ -1265,42 +1586,73 @@ async fn https_state(
     kubeconfig: &Path,
     context: &str,
     hosts: &[&str],
+    failures: &mut Failures,
 ) -> anyhow::Result<Vec<Value>> {
     let proxy: Value = kubectl::get(kubeconfig, context, "edge", "deployment", "wamn-edge")
         .await?
         .context("missing nginx Deployment")?;
-    ensure!(
-        proxy["status"]["observedGeneration"] == proxy["metadata"]["generation"]
-            && proxy["status"]["availableReplicas"] == 1,
-        "nginx did not roll out"
+    failures.record(
+        "4.21 HTTPS",
+        (|| {
+            ensure!(
+                proxy["status"]["observedGeneration"] == proxy["metadata"]["generation"]
+                    && proxy["status"]["availableReplicas"] == 1,
+                "nginx did not roll out"
+            );
+            Ok(())
+        })(),
     );
     let pod = &proxy["spec"]["template"]["spec"];
-    ensure!(
-        pod["volumes"]
-            .as_array()
-            .context("nginx volumes")?
-            .iter()
-            .any(|volume| volume["secret"]["secretName"] == "wamn-edge-tls"),
-        "nginx does not mount its certificate"
+    failures.record(
+        "4.21 HTTPS",
+        (|| {
+            ensure!(
+                pod["volumes"]
+                    .as_array()
+                    .context("nginx volumes")?
+                    .iter()
+                    .any(|volume| volume["secret"]["secretName"] == "wamn-edge-tls"),
+                "nginx does not mount its certificate"
+            );
+            Ok(())
+        })(),
     );
-    ensure!(
-        pod["volumes"]
-            .as_array()
-            .context("nginx volumes")?
-            .iter()
-            .any(|volume| volume["configMap"]["name"] == "identity-ca"),
-        "nginx does not mount the identity CA"
+    failures.record(
+        "4.21 HTTPS",
+        (|| {
+            ensure!(
+                pod["volumes"]
+                    .as_array()
+                    .context("nginx volumes")?
+                    .iter()
+                    .any(|volume| volume["configMap"]["name"] == "identity-ca"),
+                "nginx does not mount the identity CA"
+            );
+            Ok(())
+        })(),
     );
     let service: Value = kubectl::get(kubeconfig, context, "edge", "service", "wamn-edge")
         .await?
         .context("missing nginx Service")?;
-    ensure!(
-        service["metadata"]["annotations"]["cloud.google.com/neg"].is_null(),
-        "kind requests a GCP NEG"
+    failures.record(
+        "4.21 HTTPS",
+        (|| {
+            ensure!(
+                service["metadata"]["annotations"]["cloud.google.com/neg"].is_null(),
+                "kind requests a GCP NEG"
+            );
+            Ok(())
+        })(),
     );
-    ensure!(
-        service["spec"]["ports"][0]["port"] == 443,
-        "nginx Service lacks HTTPS"
+    failures.record(
+        "4.21 HTTPS",
+        (|| {
+            ensure!(
+                service["spec"]["ports"][0]["port"] == 443,
+                "nginx Service lacks HTTPS"
+            );
+            Ok(())
+        })(),
     );
     let secret: Value = kubectl::get(kubeconfig, context, "edge", "secret", "wamn-edge-tls")
         .await?
@@ -1341,19 +1693,31 @@ async fn https_state(
     )
     .await?
     .context("missing HTTPS completion")?;
-    ensure!(
-        completion["data"]["load_balancer"] == "skipped: kind"
-            && completion["data"]["web"] == "skipped: no bucket",
-        "HTTPS completion lacks kind skips"
+    failures.record(
+        "4.21 HTTPS",
+        (|| {
+            ensure!(
+                completion["data"]["load_balancer"] == "skipped: kind"
+                    && completion["data"]["web"] == "skipped: no bucket",
+                "HTTPS completion lacks kind skips"
+            );
+            Ok(())
+        })(),
     );
     let results: Vec<Value> = serde_json::from_str(
         completion["data"]["results"]
             .as_str()
             .context("HTTPS results")?,
     )?;
-    ensure!(
-        results.len() == hosts.len(),
-        "HTTPS completion has another host count"
+    failures.record(
+        "4.21 HTTPS",
+        (|| {
+            ensure!(
+                results.len() == hosts.len(),
+                "HTTPS completion has another host count"
+            );
+            Ok(())
+        })(),
     );
     let mut versions = vec![
         proxy["metadata"]["resourceVersion"].clone(),
@@ -1364,13 +1728,19 @@ async fn https_state(
             .iter()
             .find(|result| result["host"].as_str() == Some(*host))
             .with_context(|| format!("no HTTPS result for {host}"))?;
-        ensure!(
-            result["status"] == 401
-                && result["serial"] == serial
-                && result["path"]
-                    .as_str()
-                    .is_some_and(|path| path.starts_with("/api/")),
-            "HTTPS API or certificate mismatch for {host}"
+        failures.record(
+            "4.21 HTTPS",
+            (|| {
+                ensure!(
+                    result["status"] == 401
+                        && result["serial"] == serial
+                        && result["path"]
+                            .as_str()
+                            .is_some_and(|path| path.starts_with("/api/")),
+                    "HTTPS API or certificate mismatch for {host}"
+                );
+                Ok(())
+            })(),
         );
         let key = wamn_control::platform::job::input_digest(&json!([
             host,
@@ -1390,7 +1760,13 @@ async fn https_state(
         versions.push(record["metadata"]["resourceVersion"].clone());
         let job: Option<Value> =
             kubectl::get(kubeconfig, context, "edge", "job", &job_name).await?;
-        ensure!(job.is_none(), "completed HTTPS Job remains");
+        failures.record(
+            "4.21 HTTPS",
+            (|| {
+                ensure!(job.is_none(), "completed HTTPS Job remains");
+                Ok(())
+            })(),
+        );
     }
     Ok(versions)
 }
