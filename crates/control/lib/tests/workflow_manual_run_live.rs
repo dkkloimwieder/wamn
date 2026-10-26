@@ -4,9 +4,7 @@
 //!
 //! The fixture release carries one application, `orders`, with one read
 //! operation (a WAT component that answers fixed rows and writes nothing) and
-//! the virtualized `jsonata` node. The release also carries one released
-//! wiring that names `jsonata`, the palette rule that brings a platform node
-//! into a release; that wiring is never started.
+//! the virtualized `jsonata` node.
 //!
 //! A workflow `read -> shape` is authored through the code path of
 //! `wamn-ctl workflow author`, enabled with `execution_type = invoker`, and
@@ -201,12 +199,10 @@ fn workflow(version: u32, operation: &str) -> WiringDocument {
 }
 
 /// A release of `orders` serving the application host routes. `read` adds
-/// the read component, and `palette` versions the released wiring, so two
-/// releases with the same components still differ by digest.
+/// the read component.
 fn manifest(
     read: Option<&wamn_catalog::AdmittedComponent>,
     jsonata: &wamn_catalog::AdmittedComponent,
-    _palette_version: u32,
 ) -> ServingManifest {
     let mut components = vec![json!({"package-id": APPLICATION,
         "descriptor": ComponentDescriptor::new(jsonata.clone(), Vec::new()),
@@ -365,7 +361,7 @@ async fn fixture() -> Fixture {
         .unwrap();
     }
 
-    let served = manifest(Some(&read), &jsonata, 1);
+    let served = manifest(Some(&read), &jsonata);
     let release = load(&served);
     let digest = release.release().manifest_digest.as_str().to_owned();
     admin
@@ -940,7 +936,7 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
     assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Gate);
 
     fixture.enabled().await;
-    let without = load(&manifest(None, &fixture.jsonata, 1));
+    let without = load(&manifest(None, &fixture.jsonata));
     let item = fixture
         .start_on(&host(&fixture.postgres, &without), READER, "replaced")
         .await;
@@ -1013,7 +1009,11 @@ async fn a_host_of_another_release_cannot_claim_the_run() {
     fixture.enabled().await;
     let run = fixture.start(READER, "pinned").await;
 
-    let other = load(&manifest(Some(&fixture.read), &fixture.jsonata, 2));
+    let mut other_manifest = manifest(Some(&fixture.read), &fixture.jsonata);
+    // Host routes are release content; environment-authored workflows are not.
+    // Keep the same components so the release digest alone prevents the claim.
+    other_manifest.host_routes.clear();
+    let other = load(&other_manifest);
     assert_ne!(
         other.release().manifest_digest.as_str(),
         fixture.digest,
