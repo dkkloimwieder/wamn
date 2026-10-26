@@ -137,11 +137,17 @@ pub enum PublishManifestErrorType {
     EnvironmentPolicyAbsent,
     EnvironmentPolicyMismatch,
     EnvironmentPolicySourceMismatch,
+    ApplicationSelection,
+    ApplicationCoverage,
+    AmbiguousApplicationMember,
 }
 
 impl PublishManifestErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ApplicationSelection => "application-selection",
+            Self::ApplicationCoverage => "application-coverage",
+            Self::AmbiguousApplicationMember => "ambiguous-application-member",
             Self::Storage => "storage",
             Self::Release => "release",
             Self::PackageManifest => "package-manifest",
@@ -245,6 +251,10 @@ impl From<OperationType> for RouteContract {
 /// Inputs of one effective-release publication.
 #[derive(Debug)]
 pub struct PublishReleaseRequest {
+    /// Application membership from environment.k.
+    pub applications: wamn_catalog::EnvironmentApplications,
+    /// Selects one declared application; omitted for a one-application release.
+    pub application: Option<String>,
     /// Owner connection to the project-environment database the release is published in.
     pub database_url: String,
     /// Owner connection to the control database holding the environment
@@ -356,6 +366,10 @@ impl ComposedApplication {
     pub fn digest(&self) -> &str {
         &self.digest
     }
+
+    pub(crate) fn application(&self) -> &wamn_catalog::ServingEntryMember {
+        &self.application
+    }
 }
 
 /// Build an HTTP application from an admitted member and pinned platform route bytes.
@@ -428,9 +442,7 @@ fn application_digests(
 
 /// Whether one application, with the members it embeds, serves every release route.
 ///
-/// Publish selects the application by this test before it composes, so a
-/// released component that is no HTTP application, such as a workflow node,
-/// is never composed with the route layer.
+/// Publication requires exactly one declared application member to pass this test.
 fn covers_routes(
     published: &PublishedRelease,
     application: &AdmittedComponent,
@@ -478,6 +490,7 @@ pub fn record_composed_entry(
     manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
         reference: reference.to_owned(),
         route_digest: entry.route_digest.clone(),
+        application: entry.application.clone(),
         members,
     });
     let canonical_bytes = manifest.canonical_bytes();
@@ -495,6 +508,8 @@ pub fn compose_release_entry(
     published: &PublishedRelease,
     admissions: &[crate::component_admission::ComponentAdmission],
     route_bytes: &[u8],
+    applications: &wamn_catalog::EnvironmentApplications,
+    application: Option<&str>,
 ) -> anyhow::Result<ComposedApplication> {
     compose_covering_entry(
         published,
@@ -503,14 +518,26 @@ pub fn compose_release_entry(
             .map(|admission| (admission.facts(), admission.bytes()))
             .collect(),
         route_bytes,
+        applications,
+        application,
     )
 }
 
-/// Compose the largest released application that serves every release route
-/// with the pinned route layer. Each candidate carries its verified bytes.
+/// Compose the unique member of the declared application that covers its routes.
 pub fn compose_covering_entry(
     published: &PublishedRelease,
-    mut candidates: Vec<(&AdmittedComponent, &[u8])>,
+    candidates: Vec<(&AdmittedComponent, &[u8])>,
+    route_bytes: &[u8],
+    applications: &wamn_catalog::EnvironmentApplications,
+    application: Option<&str>,
+) -> anyhow::Result<ComposedApplication> {
+    let (member, bytes) = covering_application(published, candidates, applications, application)?;
+    compose_pinned_application(member, bytes, route_bytes)
+}
+
+pub(crate) fn compose_pinned_application(
+    member: &AdmittedComponent,
+    bytes: &[u8],
     route_bytes: &[u8],
 ) -> anyhow::Result<ComposedApplication> {
     let pin = format!(
@@ -520,13 +547,67 @@ pub fn compose_covering_entry(
             .next()
             .expect("route pin exists")
     );
-    candidates.sort_by_key(|(_, bytes)| std::cmp::Reverse(bytes.len()));
-    for (application, bytes) in candidates {
-        if covers_routes(published, application, bytes)? {
-            return compose_verified_application(application, bytes, route_bytes, &pin);
+    compose_verified_application(member, bytes, route_bytes, &pin)
+}
+
+fn covering_application<'a>(
+    published: &PublishedRelease,
+    candidates: Vec<(&'a AdmittedComponent, &'a [u8])>,
+    applications: &wamn_catalog::EnvironmentApplications,
+    application: Option<&str>,
+) -> anyhow::Result<(&'a AdmittedComponent, &'a [u8])> {
+    let selected = match application {
+        Some(name) => applications.get_key_value(name),
+        None if applications.len() == 1 => applications.first_key_value(),
+        None => None,
+    };
+    let (name, definition) = selected.ok_or_else(|| {
+        PublishManifestError::new(
+            PublishManifestErrorType::ApplicationSelection,
+            format!(
+                "select one application from environment.k: {}; requested {:?}",
+                applications.keys().cloned().collect::<Vec<_>>().join(", "),
+                application
+            ),
+        )
+    })?;
+    let mut covering = Vec::new();
+    for (member, bytes) in candidates {
+        if definition
+            .packages
+            .contains(member.scope.package_id.as_str())
+            && published.manifest.components.iter().any(|released| {
+                released.package_id == member.scope.package_id
+                    && released.descriptor.component == member.component
+                    && released.descriptor.component_digest == member.component_digest
+            })
+            && covers_routes(published, member, bytes)?
+        {
+            covering.push((member, bytes));
         }
     }
-    anyhow::bail!("release routes have no composed application covering their members")
+    match covering.as_slice() {
+        [member] => Ok(*member),
+        [] => Err(PublishManifestError::new(
+            PublishManifestErrorType::ApplicationCoverage,
+            format!("application {name:?} has no released member covering every route"),
+        )
+        .into()),
+        members => Err(PublishManifestError::new(
+            PublishManifestErrorType::AmbiguousApplicationMember,
+            format!(
+                "application {name:?} has multiple members covering every route: {}",
+                members
+                    .iter()
+                    .map(|(member, _)| format!("{}::{}", member.scope.package_id, member.component))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .into()),
+    }
 }
 
 /// A local release assembled from its package files and admitted components.
@@ -773,6 +854,7 @@ async fn publish_candidate(
         &source_policy,
         registry,
         release_artifact_base,
+        args,
     )
     .await;
     match published {
@@ -806,6 +888,7 @@ async fn read_and_push(
     source_policy: &AuthoritativeEnvironmentPolicy,
     registry: &PackageRegistry,
     release_artifact_base: &str,
+    args: &PublishReleaseRequest,
 ) -> anyhow::Result<PublishedRelease> {
     let published = publish_release_with_package_manifests(
         client,
@@ -825,7 +908,14 @@ async fn read_and_push(
         run_schema,
     )?;
     let mut published = published;
-    entry_publication::publish(&mut published, components, registry).await?;
+    entry_publication::publish(
+        &mut published,
+        components,
+        registry,
+        &args.applications,
+        args.application.as_deref(),
+    )
+    .await?;
     push_manifest_bytes(
         &published.canonical_bytes,
         release_artifact_base,
@@ -1053,7 +1143,7 @@ async fn publish_release_from_sources(
         ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
-                "the release does not project a deliverable format-11 manifest",
+                "the release does not project a deliverable format-12 manifest",
                 error,
             )
         })?;
@@ -2210,6 +2300,107 @@ mod tests {
         }
     }
 
+    #[test]
+    fn application_membership_requires_one_covering_component() {
+        let bytes = [
+            wat::parse_str("(component)").unwrap(),
+            wat::parse_str("(component (component))").unwrap(),
+            wat::parse_str("(component (component (component)))").unwrap(),
+        ];
+        let facts: Vec<_> = ["base", "overlay", "outer"]
+            .into_iter()
+            .zip(&bytes)
+            .map(|(package, bytes)| {
+                let mut fact = closure_component("entry", None);
+                fact.scope.package_id = package.into();
+                fact.component_digest = wamn_engine::component_admission::component_digest(bytes);
+                fact
+            })
+            .collect();
+        let manifest = ServingManifest::new(
+            ServingRelease {
+                packages: facts
+                    .iter()
+                    .map(|fact| PackageCoordinate::new(&fact.scope.package_id, "1.0.0").unwrap())
+                    .collect(),
+            },
+            facts
+                .iter()
+                .map(|fact| ServingComponent::project(fact, Vec::new()).unwrap())
+                .collect(),
+            facts[..2]
+                .iter()
+                .map(|fact| ServingRoute {
+                    package_id: fact.scope.package_id.clone(),
+                    component: "entry".into(),
+                    operation: "run".into(),
+                    type_: OperationType::Get,
+                    reads: BTreeSet::new(),
+                    revision: None,
+                    idempotency: None,
+                    canonicalization: None,
+                })
+                .collect(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let published = PublishedRelease {
+            digest: manifest.digest(),
+            canonical_bytes: manifest.canonical_bytes(),
+            manifest,
+        };
+        let applications = [(
+            "orders".into(),
+            wamn_catalog::ApplicationDefinition {
+                packages: ["base".into(), "overlay".into()].into(),
+            },
+        )]
+        .into();
+        let candidates = || {
+            facts
+                .iter()
+                .zip(&bytes)
+                .map(|(fact, bytes)| (fact, bytes.as_slice()))
+                .collect::<Vec<_>>()
+        };
+        // No selector is needed for a single application. The larger outer
+        // component is outside its declared packages and cannot become its member.
+        let (member, _) =
+            covering_application(&published, candidates(), &applications, None).unwrap();
+        assert_eq!(member.scope.package_id, "overlay");
+        assert_eq!(
+            covering_application(&published, candidates(), &applications, Some("orders"))
+                .unwrap()
+                .0,
+            member
+        );
+        let error =
+            covering_application(&published, candidates()[..1].to_vec(), &applications, None)
+                .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<PublishManifestError>()
+                .unwrap()
+                .error_type(),
+            PublishManifestErrorType::ApplicationCoverage
+        );
+
+        let mut ambiguous = applications.clone();
+        ambiguous
+            .get_mut("orders")
+            .unwrap()
+            .packages
+            .insert("outer".into());
+        let error = covering_application(&published, candidates(), &ambiguous, None).unwrap_err();
+        let error = error.downcast_ref::<PublishManifestError>().unwrap();
+        assert_eq!(
+            error.error_type(),
+            PublishManifestErrorType::AmbiguousApplicationMember
+        );
+        assert!(error.detail().contains("overlay::entry"));
+        assert!(error.detail().contains("outer::entry"));
+    }
+
     /// A package directory whose `descriptors/` holds the canonical descriptor
     /// of `fact` with one connection, as an unpacked artifact holds it.
     fn unpacked_descriptor(label: &str, fact: &AdmittedComponent) -> (PathBuf, Vec<u8>) {
@@ -3014,7 +3205,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":11,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":12,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[]}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(
@@ -3047,7 +3238,7 @@ mod manifest_push {
         fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
             let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
                 .expect("fixture is UTF-8")
-                .replacen("\"format-version\":11", "\"format-version\":9", 1);
+                .replacen("\"format-version\":12", "\"format-version\":9", 1);
             let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
                 .expect_err("format nine refuses");
             assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));

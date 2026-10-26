@@ -125,7 +125,7 @@ fn scope(canonical: &[u8]) -> wamn_engine::release_manifest::ReleaseScope {
 
 #[test]
 fn pulled_bytes_load_the_release_naming_their_carrier() {
-    let canonical = br#"{"attachments":{},"components":[],"format-version":11,"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"routes":[]}"#;
+    let canonical = br#"{"attachments":{},"components":[],"format-version":12,"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"routes":[]}"#;
 
     let loaded_release =
         LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE, scope(canonical))

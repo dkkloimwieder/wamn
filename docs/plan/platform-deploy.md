@@ -616,7 +616,7 @@ Sources.
 - wasmCloud/wasmCloud at `the rev wamn's Cargo.toml pins`: `runtime-operator workload_controller.go (MatchingLabels(HostSelector))` (Hosts listed by `MatchingLabels(workload.Spec.HostSelector)`), `runtime-operator host_controller.go` (`Host` labels from the heartbeat), `wash-runtime washlet/mod.rs::ClusterHostBuilder::build` (`hostgroup` label), `wash-runtime host/mod.rs::HostBuilder::with_label` (`HostBuilder::with_label`), `charts/runtime-operator/templates/runtime/deployment.yaml` and `values.yaml` (host-group Deployment, `runtime.podLabels`, `--drain-delay`, `terminationGracePeriodSeconds`, `nats/operator/gateway.enabled`)
 - Kubernetes, container lifecycle hooks (`preStop` runs before TERM within the same grace period; fires on eviction and probe failure too) and pods-and-endpoint termination flow
 
-### Serving manifest format 11
+### Serving manifest format 12
 
 Owner ruling, 2026-10-21: publication records the composed HTTP entry in format 11.
 The `composed-entry` record names the entry reference, the pinned route digest, and the application member identities.
@@ -633,4 +633,10 @@ Publication admits and composes the bytes. The host records each start reference
 The binding callback checks that the reference is the release's entry path under a valid component artifact base. It does not hash the entry.
 Local publication names an absolute `file:` reference to its existing digest-named artifact file.
 Local loading retains the file loader's byte verification. Entry binding uses the same reference comparison as deployed binding.
-Every release must be published again. Format 10 releases cannot load on the format 11 host.
+Owner ruling, 2026-10-25: format 12 adds `composed-entry.application`.
+The field names the application by `package-id`, `component`, and `digest`.
+Publish resolves this member from the selected application’s packages in `environment.k`.
+Exactly one member must cover every route. No covering member or multiple covering members cause a typed refusal.
+The named application must belong to `composed-entry.members`.
+Runtime binding and chart rendering use this identity to select the application’s SQL imports.
+Every release must be published again. Format 11 releases cannot load on the format 12 host.

@@ -192,6 +192,14 @@ async fn publish_through_publish_release(
     .expect("project the environment policy");
     publish_release(
         PublishReleaseRequest {
+            applications: [(
+                "device".into(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: [manifest.package.id.clone()].into(),
+                },
+            )]
+            .into(),
+            application: None,
             database_url: project.to_owned(),
             control_database_url: control.to_owned(),
             org: ORG.to_owned(),

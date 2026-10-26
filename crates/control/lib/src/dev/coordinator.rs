@@ -793,6 +793,8 @@ impl ProductionDevStageRunner {
             .collect::<Vec<_>>();
         let identity = self.config.activation_identity();
         let request = PublishReleaseRequest {
+            applications: self.environment.applications.clone(),
+            application: None,
             database_url: self.config.target_database_url().to_owned(),
             control_database_url: self.config.system_database_url().to_owned(),
             org: identity.org.clone(),
@@ -818,6 +820,8 @@ impl ProductionDevStageRunner {
             &fs::read(&local.flow_http_component).map_err(|source| {
                 ProductionDevStageError::owner("read pinned route component", source.into())
             })?,
+            &self.environment.applications,
+            None,
         )
         .map_err(|source| ProductionDevStageError::owner("compose released HTTP entry", source))?;
         fs::create_dir_all(&local.directory).map_err(|source| {

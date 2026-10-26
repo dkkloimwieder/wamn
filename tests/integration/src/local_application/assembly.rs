@@ -293,6 +293,8 @@ pub(super) async fn assemble(
         &published,
         &admissions,
         &std::fs::read(input.flow_http_wasm)?,
+        &environment.applications,
+        None,
     )?;
     let entry_path =
         wamn_engine::artifact_source::local_component_path(input.scratch, entry.digest())?;

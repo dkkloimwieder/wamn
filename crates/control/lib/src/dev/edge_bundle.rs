@@ -32,7 +32,8 @@ use super::coordinator::{NODE_CAPABILITY, PACKAGE_COMPONENTS, POSTGRES_CAPABILIT
 use crate::component_admission::{AdmitComponentRequest, admit_component};
 use crate::component_declaration::{authored_base_digests, render_declaration_document};
 use crate::publish_release::{
-    PublishReleaseRequest, PublishedRelease, assemble_local_release, compose_covering_entry,
+    PublishReleaseRequest, assemble_local_release, compose_pinned_application,
+    compose_release_entry,
 };
 
 /// The environment coordinate of the box: the edge configuration's `[scope]`.
@@ -70,10 +71,17 @@ pub fn write(
         &fs::read(release.join(LOCAL_FACTS_FILE)).context("read the local admission facts")?,
     )
     .context("parse the local admission facts")?;
+    let (manifest, _) = ServingManifest::from_canonical_bytes(&manifest_bytes)?;
+    let application = &manifest
+        .composed_entry
+        .as_ref()
+        .context("local release has no composed entry")?
+        .application;
     write_bundle(
         &manifest_bytes,
         &facts,
         &scope.tenant(),
+        application,
         |digest| {
             fs::read(local_component_path(release, digest)?)
                 .with_context(|| format!("read component {digest}"))
@@ -125,6 +133,14 @@ pub fn write_package(
             .collect(),
     })?;
     let request = PublishReleaseRequest {
+        applications: [(
+            admission.package_id().to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: [admission.package_id().to_owned()].into(),
+            },
+        )]
+        .into(),
+        application: None,
         database_url: String::new(),
         control_database_url: String::new(),
         org: String::new(),
@@ -142,10 +158,18 @@ pub fn write_package(
         &[package.to_owned()],
         std::slice::from_ref(&admission),
     )?;
+    let entry = compose_release_entry(
+        &assembled.published,
+        std::slice::from_ref(&admission),
+        &fs::read(ingress)?,
+        &request.applications,
+        None,
+    )?;
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.facts,
         &tenant,
+        entry.application(),
         |digest| {
             ensure!(
                 digest == admission.component_digest(),
@@ -162,11 +186,12 @@ fn write_bundle(
     manifest_bytes: &[u8],
     facts: &LocalApplicationFacts,
     tenant: &str,
+    application: &wamn_catalog::ServingEntryMember,
     read_component: impl Fn(&str) -> anyhow::Result<Vec<u8>>,
     ingress: &Path,
     out: &Path,
 ) -> anyhow::Result<String> {
-    let (manifest, digest) = ServingManifest::from_canonical_bytes(manifest_bytes)
+    let (manifest, _) = ServingManifest::from_canonical_bytes(manifest_bytes)
         .context("the local release manifest is not canonical")?;
     wamn_runtime::local_application::validate_local_facts(facts, &manifest, tenant)?;
 
@@ -199,22 +224,18 @@ fn write_bundle(
         );
         bodies.push(bytes);
     }
-    let published = PublishedRelease {
-        manifest,
-        digest,
-        canonical_bytes: manifest_bytes.to_vec(),
-    };
-    let entry = compose_covering_entry(
-        &published,
-        facts
-            .components
-            .iter()
-            .zip(&bodies)
-            .map(|(fact, bytes)| (fact, bytes.as_slice()))
-            .collect(),
-        &route,
-    )
-    .context("compose the edge entry")?;
+    let (application, bytes) = facts
+        .components
+        .iter()
+        .zip(&bodies)
+        .find(|(fact, _)| {
+            fact.scope.package_id == application.package_id
+                && fact.component == application.component
+                && fact.component_digest == application.digest
+        })
+        .context("edge release has no named application member")?;
+    let entry =
+        compose_pinned_application(application, bytes, &route).context("compose the edge entry")?;
     let ingress_bytes = entry.bytes();
 
     fs::create_dir(out).with_context(|| format!("create {}", out.display()))?;

@@ -840,6 +840,17 @@ impl Run {
         );
         let digest = crate::publish_release::publish_release(
             crate::publish_release::PublishReleaseRequest {
+                applications: crate::environment::document::EnvironmentDocument::compile(
+                    &EnvironmentFile::path(
+                        &self.checkout,
+                        &self.arguments.org,
+                        &self.arguments.project,
+                        &self.arguments.environment,
+                    )
+                    .with_extension("k"),
+                )?
+                .applications,
+                application: None,
                 database_url: project_url.clone(),
                 control_database_url: system_url.clone(),
                 org: self.arguments.org.clone(),

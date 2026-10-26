@@ -294,7 +294,7 @@ The deployment owner can select reviewed component digests for native warm-insta
 Application manifests cannot grant that trust.
 
 An application is one composed component, and it loads as its own native workload.
-Publication composes the pinned HTTP route guest with the application and records the entry reference in serving manifest format 11.
+Publication composes the pinned HTTP route guest with the application and records the entry reference in serving manifest format 12.
 A deployed entry is recorded as `entries@sha256:<manifest-digest>`, a path relative to the component artifact base.
 The host joins that path with its `WAMN_COMPONENT_ARTIFACT_BASE`, as it does for the members.
 The host records the joined reference by workload id before it calls the runtime's default start handler.

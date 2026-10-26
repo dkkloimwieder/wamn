@@ -16,6 +16,8 @@ pub(super) async fn publish(
     published: &mut PublishedRelease,
     components: &ReleaseComponents,
     registry: &PackageRegistry,
+    applications: &wamn_catalog::EnvironmentApplications,
+    application: Option<&str>,
 ) -> anyhow::Result<()> {
     if !published
         .manifest
@@ -58,6 +60,8 @@ pub(super) async fn publish(
             .map(|(application, bytes)| (*application, bytes.as_slice()))
             .collect(),
         &route,
+        applications,
+        application,
     )?;
     // The entry lives beside the members, under the component artifact base.
     let repository = format!(

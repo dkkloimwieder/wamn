@@ -1,4 +1,4 @@
-//! Digest and closed-shape tests for serving-manifest format 9.
+//! Digest and closed-shape tests for serving-manifest format 12.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,7 +110,7 @@ fn manifest() -> ServingManifest {
             },
         )]),
     )
-    .expect("the format-six fixture is valid")
+    .expect("the format-twelve fixture is valid")
 }
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -125,13 +125,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_eleven_preimage_and_digest_are_pinned() {
+fn the_format_twelve_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
-        .expect("the format-eleven vector is admitted by the reader");
+        .expect("the format-twelve vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), publish_vector::DIGEST);
 

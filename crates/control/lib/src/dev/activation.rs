@@ -2395,7 +2395,7 @@ mod tests {
             "routes": [], "attachments": {},
             "composed-entry": {
                 "reference": format!("file:{}", wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap().display()),
-                "route-digest": digest, "members": [member]
+                "route-digest": digest, "application": member, "members": [member]
             }
         })).unwrap();
         let manifest_bytes = manifest.canonical_bytes();

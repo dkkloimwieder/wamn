@@ -751,6 +751,14 @@ async fn publish(
         }
     }
     let request = PublishReleaseRequest {
+        applications: [(
+            connector.to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: manifests.iter().map(|m| m.package.id.clone()).collect(),
+            },
+        )]
+        .into(),
+        application: None,
         database_url: String::new(),
         control_database_url: String::new(),
         org: ORG.into(),

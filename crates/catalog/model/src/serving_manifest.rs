@@ -1,6 +1,6 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 11 closes over exact package membership, component digests, routes,
+//! Format 12 closes over exact package membership, component digests, routes,
 //! the permission and SQL statements of each export, and route attachments.
 //! Each component is its package, its admitted descriptor (the bytes of the
 //! descriptor layer of its package artifact, docs/plan/platform-deploy.md
@@ -36,7 +36,7 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 11;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 12;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -851,6 +851,8 @@ pub struct ServingComposedEntry {
     /// base that each host resolves members against, or a local absolute `file:`.
     pub reference: String,
     pub route_digest: String,
+    /// The explicitly named application whose bytes compose the entry.
+    pub application: ServingEntryMember,
     pub members: BTreeSet<ServingEntryMember>,
 }
 
@@ -927,13 +929,14 @@ impl ServingManifest {
             .collect()
     }
 
-    /// The member of the composed entry that composes the others. Its
-    /// descriptor binds every nested member through a named SQL import, so it
-    /// is the member with the most statement instances.
+    /// The explicitly named application member of the composed entry.
     pub fn composing_member(&self) -> Option<&ServingComponent> {
-        self.entry_members()
-            .into_iter()
-            .max_by_key(|component| component.statement_instances.len())
+        let application = &self.composed_entry.as_ref()?.application;
+        self.components.iter().find(|component| {
+            component.package_id == application.package_id
+                && component.descriptor.component == application.component
+                && component.descriptor.component_digest == application.digest
+        })
     }
 
     /// The package id of the application that runs `component`: the
@@ -1010,9 +1013,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-11 bytes.
+    /// Parse, validate, and admit only canonical format-12 bytes.
     ///
-    /// The version is classified before the format-11 schema is decoded. This is
+    /// The version is classified before the format-12 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1089,6 +1092,9 @@ impl ServingManifest {
             ArtifactHash::parse(entry.route_digest.clone())?;
             if entry.members.is_empty() {
                 return invalid("a composed entry must name its application members");
+            }
+            if !entry.members.contains(&entry.application) {
+                return invalid("the named application is outside the composed entry members");
             }
             let mut identities = BTreeSet::new();
             for member in &entry.members {
@@ -1529,6 +1535,11 @@ mod tests {
         ServingComposedEntry {
             reference: format!("entries@sha256:{}", "e".repeat(64)),
             route_digest: format!("sha256:{}", "f".repeat(64)),
+            application: ServingEntryMember {
+                package_id: "overlay".into(),
+                component: "transform".into(),
+                digest: COMPONENT_B.into(),
+            },
             members: manifest
                 .components
                 .iter()
@@ -1576,16 +1587,6 @@ mod tests {
             manifest.composing_application(&component_of(&manifest, "base")),
             "base"
         );
-        // The overlay composes base: it binds base's statements through a
-        // named import.
-        let mut overlay = component_of(&manifest, "overlay");
-        overlay.statement_instances = BTreeMap::from([("sql-0".to_owned(), BTreeMap::new())]);
-        manifest.components = manifest
-            .components
-            .into_iter()
-            .filter(|component| component.package_id != "overlay")
-            .chain([overlay])
-            .collect();
         manifest.composed_entry = Some(entry_for(&manifest));
         assert_eq!(
             manifest
@@ -1600,6 +1601,16 @@ mod tests {
                 "{package_id} runs as the composing application"
             );
         }
+        // Naming base changes the application even though both members have
+        // the same number of statement instances.
+        let entry = manifest.composed_entry.as_mut().unwrap();
+        entry.application = entry
+            .members
+            .iter()
+            .find(|member| member.package_id == "base")
+            .unwrap()
+            .clone();
+        assert_eq!(manifest.composing_member().unwrap().package_id, "base");
         // A component outside the entry stays its own application.
         manifest
             .composed_entry
@@ -1668,9 +1679,33 @@ mod tests {
     }
 
     #[test]
-    fn format_ten_requires_republication() {
+    fn composed_entry_requires_a_named_application_in_its_members() {
         let mut manifest = manifest();
-        manifest.format_version = 10;
+        manifest.composed_entry = Some(entry_for(&manifest));
+        let mut document = serde_json::to_value(&manifest).unwrap();
+        document["composed-entry"]
+            .as_object_mut()
+            .unwrap()
+            .remove("application");
+        assert!(
+            ServingManifest::from_canonical_bytes(&wamn_execution_contract::canonical_json_bytes(
+                &document
+            ))
+            .is_err()
+        );
+
+        manifest.composed_entry.as_mut().unwrap().application.digest = COMPONENT_A.into();
+        assert!(matches!(
+            ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()),
+            Err(CatalogIdentityError::InvalidDefinition { message })
+                if message == "the named application is outside the composed entry members"
+        ));
+    }
+
+    #[test]
+    fn format_eleven_requires_republication() {
+        let mut manifest = manifest();
+        manifest.format_version = 11;
         assert!(matches!(
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()),
             Err(CatalogIdentityError::UnsupportedServingManifestVersion { .. })
@@ -2126,14 +2161,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format eleven enters the decoder");
+                .expect_err("only format twelve enters the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {
@@ -2254,7 +2289,7 @@ mod tests {
         );
         signed.registered_operation = None;
         let manifest = build(signed).unwrap();
-        assert_eq!(manifest.format_version, 11);
+        assert_eq!(manifest.format_version, 12);
         let (decoded, _) =
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).unwrap();
         assert_eq!(decoded, manifest);

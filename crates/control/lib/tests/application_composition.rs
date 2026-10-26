@@ -207,6 +207,9 @@ fn publication_records_the_exact_entry_and_members() {
     let recorded = published.manifest.composed_entry.as_ref().unwrap();
     assert_eq!(recorded.reference, reference);
     assert_eq!(recorded.route_digest, pin);
+    assert_eq!(recorded.application.package_id, fact.scope.package_id);
+    assert_eq!(recorded.application.component, fact.component);
+    assert_eq!(recorded.application.digest, fact.component_digest);
     assert_ne!(before, published.digest);
     assert_eq!(
         ServingManifest::from_canonical_bytes(&published.canonical_bytes).unwrap(),
@@ -268,7 +271,14 @@ fn publication_composes_only_the_application_that_covers_the_routes() {
         canonical_bytes: manifest.canonical_bytes(),
         manifest,
     };
-    let entry = compose_release_entry(&published, &[node, app], &route)
+    let applications = [(
+        "fixture".into(),
+        wamn_catalog::ApplicationDefinition {
+            packages: [fact.scope.package_id.clone()].into(),
+        },
+    )]
+    .into();
+    let entry = compose_release_entry(&published, &[node, app], &route, &applications, None)
         .expect("publish selects the covering application");
     assert_eq!(entry.digest(), expected.digest());
 }

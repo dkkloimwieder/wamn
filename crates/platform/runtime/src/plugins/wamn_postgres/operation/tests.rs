@@ -95,6 +95,11 @@ BTreeMap::from([("entry".into(), ServingAttachment {
     manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
         reference: format!("entries@{}", digest('e')),
         route_digest: digest('f'),
+        application: wamn_catalog::ServingEntryMember {
+            package_id: "base".into(),
+            component: "entry".into(),
+            digest: digest('a'),
+        },
         members: BTreeSet::from([wamn_catalog::ServingEntryMember {
             package_id: "base".into(),
             component: "entry".into(),

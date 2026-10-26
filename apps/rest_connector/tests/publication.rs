@@ -64,6 +64,8 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         })
         .collect();
     let args = PublishReleaseRequest {
+        applications: serde_json::from_value(serde_json::json!({"rest": {"packages": ["wamn_integration", "rest_connector", "rest_consumer_fixture"]}})).unwrap(),
+        application: None,
         database_url: String::new(),
         control_database_url: String::new(),
         org: "rest".into(),

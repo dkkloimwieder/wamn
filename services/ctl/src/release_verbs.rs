@@ -15,6 +15,12 @@ use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 /// `push-package` pushed under the tag `<package_id>-<version>`.
 #[derive(Debug, Args)]
 pub struct PublishReleaseArgs {
+    /// Application map compiled from environment.k.
+    #[arg(long, value_parser = parse_applications)]
+    pub applications: wamn_catalog::EnvironmentApplications,
+    /// Application to publish; omitted when the map names one application.
+    #[arg(long)]
+    pub application: Option<String>,
     #[arg(long)]
     pub database_url: String,
     /// Owner URL of the control database holding the environment policy.
@@ -85,6 +91,11 @@ pub struct TerminalizeEffectUncertainArgs {
     pub correlation_id: String,
 }
 
+/// Parse the application map compiled from an environment document.
+pub fn parse_applications(value: &str) -> Result<wamn_catalog::EnvironmentApplications, String> {
+    serde_json::from_str(value).map_err(|error| error.to_string())
+}
+
 /// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     // The release repository is the one `env apply` pulls from, named once
@@ -99,6 +110,8 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     };
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
+            applications: args.applications,
+            application: args.application,
             database_url: args.database_url,
             control_database_url: args.control_database_url,
             org: args.org,
@@ -132,4 +145,80 @@ pub async fn terminalize(args: TerminalizeEffectUncertainArgs) -> anyhow::Result
     .await?;
     println!("{result}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::*;
+
+    /// Host command for the publish argument surface under test.
+    #[derive(Debug, clap::Parser)]
+    struct PublishProbe {
+        #[command(flatten)]
+        args: PublishReleaseArgs,
+    }
+
+    const PUBLISH: [&str; 22] = [
+        "publish-release",
+        "--applications",
+        r#"{"orders":{"packages":["orders"]}}"#,
+        "--database-url",
+        "postgres://publish.invalid/env",
+        "--control-database-url",
+        "postgres://publish.invalid/control",
+        "--org",
+        "acme",
+        "--tenant",
+        "acme--plant--dev",
+        "--environment",
+        "dev",
+        "--verified-publisher-principal",
+        "publisher",
+        "--run-schema",
+        "wamn_run",
+        "--package",
+        "orders@1.0.0",
+        "--artifact-base",
+        "registry.invalid/wamn/packages",
+        "--registry-auth-file=config.json",
+    ];
+
+    /// A package is an id and a version that the registry resolves to its
+    /// artifact by tag, so argv names no package file.
+    #[test]
+    fn publish_release_takes_packages_from_the_registry() {
+        let args = PublishProbe::try_parse_from(PUBLISH)
+            .expect("the registry surface parses")
+            .args;
+        assert_eq!(
+            args.packages,
+            vec![PackageCoordinate::new("orders", "1.0.0").unwrap()]
+        );
+        assert_eq!(args.artifact_base, "registry.invalid/wamn/packages");
+        assert!(
+            args.application.is_none(),
+            "one application needs no selector"
+        );
+        assert_eq!(
+            args.applications["orders"].packages,
+            ["orders".to_owned()].into()
+        );
+        assert!(
+            PublishProbe::try_parse_from(&PUBLISH[..19]).is_err(),
+            "publish-release parsed with no package artifact base"
+        );
+        for retired in [
+            ["--package-manifest", "apps/orders/generated/wamn.json"],
+            ["--attachments", "apps/orders/publication/attachments.json"],
+        ] {
+            let mut retired_argv = PUBLISH.to_vec();
+            retired_argv.extend(retired);
+            assert!(
+                PublishProbe::try_parse_from(retired_argv).is_err(),
+                "accepted {retired:?}"
+            );
+        }
+    }
 }

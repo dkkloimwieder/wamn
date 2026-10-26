@@ -226,23 +226,12 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
                 .as_ref()
                 .map(|entry| entry.reference.clone()),
             statements: manifest
-                .composed_entry
-                .as_ref()
-                .map_or_else(Vec::new, |entry| {
-                    let application = manifest
-                        .components
-                        .iter()
-                        .filter(|component| {
-                            entry.members.iter().any(|member| {
-                                member.digest == component.descriptor.component_digest
-                            })
-                        })
-                        .max_by_key(|component| component.statement_instances.len());
-                    match application {
-                        Some(application) if !application.statement_instances.is_empty() => {
-                            application.statement_instances.keys().cloned().collect()
-                        }
-                        _ => vec!["sql-0".to_owned()],
+                .composing_member()
+                .map_or_else(Vec::new, |application| {
+                    if application.statement_instances.is_empty() {
+                        vec!["sql-0".to_owned()]
+                    } else {
+                        application.statement_instances.keys().cloned().collect()
                     }
                 }),
             config: scope(&[]),
@@ -696,6 +685,8 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -878,6 +869,60 @@ mod tests {
         assert_eq!(
             roles[0].environment.as_ref().unwrap()["WAMN_MAT_STREAM"].as_str(),
             Some(wamn_control_provision::event_stream_name("acme", "orders", "dev").as_str())
+        );
+    }
+
+    #[test]
+    fn the_named_application_supplies_the_http_statement_instances() {
+        let mut manifest: ServingManifest = serde_json::from_value(serde_json::json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": []}, "components": [], "routes": [],
+            "attachments": {"orders-http": {
+                "type": "http", "package-id": "wamn_wms", "component": "wms",
+                "operation": "get", "definition-hash": DIGEST,
+                "definition": {}, "auth-policy": {"modes": ["none"]}
+            }}
+        }))
+        .unwrap();
+
+        let application = wamn_catalog::ServingEntryMember {
+            package_id: "wamn_wms".into(),
+            component: "wms".into(),
+            digest: DIGEST.into(),
+        };
+        for (name, imports) in [
+            ("wms", vec!["sql-application"]),
+            ("base", vec!["sql-0", "sql-1"]),
+        ] {
+            manifest.components.insert(wamn_catalog::ServingComponent {
+                package_id: "wamn_wms".into(),
+                descriptor: wamn_catalog::ComponentDescriptor::named(name, "0.1", DIGEST),
+                operations: BTreeMap::new(),
+                runtime_schema: None,
+                statement_instances: imports
+                    .into_iter()
+                    .map(|name| (name.to_owned(), BTreeMap::new()))
+                    .collect(),
+            });
+        }
+        manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+            reference: format!("entries@{DIGEST}"),
+            route_digest: DIGEST.into(),
+            application: application.clone(),
+            members: [
+                application,
+                wamn_catalog::ServingEntryMember {
+                    package_id: "wamn_wms".into(),
+                    component: "base".into(),
+                    digest: DIGEST.into(),
+                },
+            ]
+            .into(),
+        });
+        assert_eq!(
+            roles(&manifest, "acme", "orders", "dev")[0].statements,
+            ["sql-application"],
+            "the named application owns the imports even when another member has more"
         );
     }
 

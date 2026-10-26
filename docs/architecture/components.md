@@ -79,10 +79,17 @@ An application with one direct statements import receives a named instance of it
 The result's SHA-256 digest covers both inputs, and two compositions of identical inputs produce identical bytes.
 
 Publish composes the entry when the release has an HTTP attachment.
-It composes the largest released application that serves every release route.
+The `applications` map in `environment.k` names the packages of each application.
+Publish uses the selected application, or the sole application when the map contains one.
+Exactly one released component in those packages must cover every route.
+Publish refuses when none covers the routes or when multiple members cover them.
+The ambiguity error names each covering package and component.
+Component size and statement count do not select a member.
 It pushes the entry to the `entries` repository under the component artifact base.
 It records `manifest.composed_entry` before it hashes the release.
-The record holds the entry reference, the route digest, and the member components that the entry embeds.
+The format 12 record holds the entry reference, route digest, resolved `application`, and embedded `members`.
+The `application` field names its package, component, and original digest.
+Runtime binding and chart rendering use that stored identity.
 The members keep their original digests for SQL and dependency authority.
 
 The host pulls the entry that the record names and loads it in place of the member components.

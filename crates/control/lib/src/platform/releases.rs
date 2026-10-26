@@ -54,6 +54,8 @@ pub(super) async fn apply(
                 "wamn_run".into(),
                 "--artifact-base".into(),
                 registry.artifact_base.clone(),
+                "--applications".into(),
+                serde_json::to_string(&environment.applications)?,
             ],
             ..JobRequest::default()
         };

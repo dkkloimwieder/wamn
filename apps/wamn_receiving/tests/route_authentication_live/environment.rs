@@ -488,6 +488,16 @@ pub(super) async fn publish_journey_release(
     let registry = journey_package_registry(inputs)?;
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
+            applications: [(
+                "receiving".into(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: released_journey_packages()
+                        .map(|package| package.id.to_owned())
+                        .collect(),
+                },
+            )]
+            .into(),
+            application: None,
             database_url: project_url.to_owned(),
             control_database_url: system_url.to_owned(),
             org: identity().org.clone(),

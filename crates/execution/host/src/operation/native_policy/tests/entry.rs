@@ -136,6 +136,11 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         Some(ServingComposedEntry {
             reference: format!("file:{}", path.display()),
             route_digest: entry_digest.clone(),
+            application: ServingEntryMember {
+                package_id: member.scope.package_id.clone(),
+                component: member.component.clone(),
+                digest: member.component_digest.clone(),
+            },
             members: BTreeSet::from([ServingEntryMember {
                 package_id: member.scope.package_id.clone(),
                 component: member.component.clone(),

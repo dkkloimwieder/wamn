@@ -926,6 +926,7 @@ The runner saves all container logs before deleting the Job and its owned Secret
 
 Publication skips when the completed input digest matches the package artifact digests, wiring document digests, database path, and Job inputs.
 The manual commands below remain an alternative to `platform apply`.
+They pass the application map declared in each environment document through `--applications`.
 
 `publish-release` prints the digest of the release manifest. Publish Receiving, which has no wiring:
 
@@ -936,6 +937,7 @@ RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--receiving--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--receiving--dev \
   --run-schema wamn_run --package wamn_receiving@2.2.7 \
+  --applications '{"wamn_receiving":{"packages":["wamn_receiving"]}}' \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
 echo "$RELEASE_receiving" > $W/release-receiving
 ```
@@ -1017,6 +1019,7 @@ RELEASE_wms=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--wms--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--wms--dev \
   --run-schema wamn_run --package wamn_wms@2.1.4 --wiring "wamn_wms@2.1.4::inventory_move_and_label=2" \
+  --applications '{"wamn_wms":{"packages":["wamn_wms"]}}' \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
 echo "$RELEASE_wms" > $W/release-wms
 shred -u $G/management-author-pat.json

@@ -645,6 +645,10 @@ pub async fn publish(
     let registry = package_registry(inputs)?;
     let release_digest = publish_release::publish_release(
         PublishReleaseRequest {
+            applications: serde_json::from_value(
+                serde_json::json!({"wamn_wms": {"packages": ["wamn_wms"]}}),
+            )?,
+            application: None,
             database_url: route.database_url.clone(),
             control_database_url: inputs.system_pg_url.clone(),
             org: identity().org.clone(),
