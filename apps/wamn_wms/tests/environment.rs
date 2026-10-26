@@ -365,6 +365,7 @@ pub async fn install(
             identity().project.as_str(),
             identity().environment.as_str(),
         ),
+        "wamn_wms",
     )
     .await?;
     for package in packages {

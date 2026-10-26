@@ -139,6 +139,7 @@ pub(super) async fn install_candidate_release(
             identity().project.as_str(),
             identity().environment.as_str(),
         ),
+        "receiving",
     )
     .await?;
     wamn_control::dev::environment::grant_operator_admin_role(

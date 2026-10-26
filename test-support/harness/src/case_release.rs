@@ -639,7 +639,8 @@ pub async fn open_packages(candidate: &Candidate) -> anyhow::Result<Vec<OpenedPa
 /// Install the candidate's packages in the project database of `triple` as
 /// a fresh install through the package stage of `apply` (§10.2, R17 (2)):
 /// each package from its artifact, then the release cache row, the release's
-/// connection requirements and the packages' data access.
+/// connection requirements and the packages' data access. Every package of
+/// the release belongs to `application`, as in the case's chart values.
 ///
 /// # Errors
 ///
@@ -649,6 +650,7 @@ pub async fn install_candidate(
     system_database_url: &str,
     project_database_url: &str,
     triple: &Triple,
+    application: &str,
 ) -> anyhow::Result<()> {
     let (manifest, digest) = candidate.manifest()?;
     let registry = package_registry(candidate)?;
@@ -681,8 +683,19 @@ pub async fn install_candidate(
         route_host: String::new(),
         client_package: None,
         policy: String::new(),
-        // The package stage reads no application.
-        applications: std::collections::BTreeMap::new(),
+        // The package stage names each package's sequences by its application.
+        applications: [(
+            application.to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: manifest
+                    .release
+                    .packages
+                    .iter()
+                    .map(|package| package.package_id().to_owned())
+                    .collect(),
+            },
+        )]
+        .into(),
         connections: std::collections::BTreeMap::new(),
         floors: std::collections::BTreeMap::new(),
     };
