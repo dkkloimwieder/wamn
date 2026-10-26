@@ -1,21 +1,27 @@
 import { Loading, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { render } from "@solidjs/web";
 import { Theme } from "@wfe/components";
-import { outbox, shell } from "@wfe/sync";
+import { outbox, outboxStatus, shell } from "@wfe/sync";
 import "@wfe/components/styles.css";
 import { createSend, createTransport, keepSession, outboxDatabase, renew, rowsDatabase, rowsPersistence, type SessionState } from "@wamn/web-runtime";
-import { create, PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
+import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
 import { packagingCollection, packagingFeed } from "./packaging-feed";
 import { packagingAddress } from "./packaging-writes";
 import { PackagingScreen } from "./packaging-screen";
 import { savedUser } from "./saved-user";
+import { canReload } from "./update";
 import "./style.css";
 
 /** The audience in the route scopes the session and the user-owned outbox. */
 const address = packagingAddress(location.pathname);
 const pollMs = Number(new URLSearchParams(location.search).get("poll") ?? 10_000);
 const lastUser = savedUser(address.application, address.environment);
-void shell({ workerUrl: `${import.meta.env.BASE_URL}sw.js`, persist: false });
+const [waitingReload, setWaitingReload] = createSignal<(() => void) | undefined>();
+void shell({
+  workerUrl: `${import.meta.env.BASE_URL}sw.js`,
+  persist: false,
+  onUpdate: (reload) => setWaitingReload(() => reload),
+});
 
 function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (next: SessionState) => void }) {
   const userId = props.userId;
@@ -34,20 +40,33 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
     send: (entry, signal) => props.signedIn ? send(entry, signal) : Promise.resolve({ ok: false, retriable: true }),
     probe: async () => props.signedIn && await transport.probe(),
   });
+  const counts = outboxStatus(o);
+  const [outboxReady, setOutboxReady] = createSignal(false);
+  // wfe gap: no ready promise. watch first reports empty memory, then notifies
+  // after loading IndexedDB. Register before yielding to that load.
+  let initialCounts = true;
+  const stopReady = o.watch(() => {
+    if (initialCounts) initialCounts = false;
+    else setOutboxReady(true);
+  });
+  createEffect(() => ({ reload: waitingReload(), ready: outboxReady(), counts: counts() }), ({ reload, ready, counts }) => {
+    if (reload && ready && canReload(counts)) reload();
+  });
   const c = packagingCollection(packagingFeed(transport), {}, {
     pollMs,
-    persistence: rowsPersistence(rowsDatabase(address.application, address.environment, userId)),
+    persistence: rowsPersistence(rowsDatabase(address.application, address.environment, userId), [PACKAGING_SHAPE_DIGEST]),
   });
   createEffect(() => props.signedIn, (signedIn) => {
     if (signedIn) void o.replay().catch(() => undefined);
   });
   onCleanup(() => {
+    stopReady();
     o.close();
     queueMicrotask(() => void c.cleanup());
   });
   return (
     <Loading>
-      <PackagingScreen collection={c} outbox={o} signedIn={props.signedIn} />
+      <PackagingScreen collection={c} outbox={o} signedIn={props.signedIn} updateAvailable={waitingReload() !== undefined} />
     </Loading>
   );
 }

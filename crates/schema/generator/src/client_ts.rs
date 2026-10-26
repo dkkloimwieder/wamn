@@ -337,6 +337,51 @@ pub fn emit_ts_package_json(client_package: &str, version: &str) -> GeneratedFil
     )
 }
 
+/// Hash only row field names, contract types and nullability, in stable order.
+fn shape_digest(model: &ModelIr) -> String {
+    fn fields_shape(fields: &[FieldIr]) -> serde_json::Value {
+        let mut fields: Vec<_> = fields.iter().collect();
+        fields.sort_by(|left, right| left.path.cmp(&right.path));
+        serde_json::Value::Array(
+            fields
+                .into_iter()
+                .map(|field| {
+                    serde_json::json!([
+                        to_camel(&field.path),
+                        field.type_name,
+                        field.nullable,
+                        fields_shape(&field.children)
+                    ])
+                })
+                .collect(),
+        )
+    }
+    // Use the same result fields as the emitted Row interfaces. The model's
+    // descriptor union can widen nullability because of a write's result.
+    let mut shapes = BTreeSet::new();
+    for operation in &model.operations {
+        let (class, fields) = operation.route.as_ref().map_or(
+            (
+                Some(operation.result_class.as_str()),
+                operation.result_fields.as_slice(),
+            ),
+            |route| {
+                (
+                    route.response.result_class.as_deref(),
+                    route.response.fields.as_slice(),
+                )
+            },
+        );
+        if matches!(class, Some("page" | "bounded_list")) {
+            shapes.insert(fields_shape(fields).to_string());
+        }
+    }
+    if shapes.is_empty() {
+        shapes.insert(fields_shape(&model.fields).to_string());
+    }
+    crate::generate::sha256(&serde_json::to_vec(&shapes).expect("row shapes serialize"))
+}
+
 fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     let mut operations: Vec<_> = model
         .operations
@@ -409,6 +454,13 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
             .expect("writing to a String cannot fail");
         }
     }
+    writeln!(
+        source,
+        "\n/** The saved row shape of this model. */\nexport const {}_SHAPE_DIGEST = {:?};",
+        model.name.to_uppercase(),
+        shape_digest(model),
+    )
+    .expect("writing to a String cannot fail");
     source.push_str(&body);
     Ok(source)
 }

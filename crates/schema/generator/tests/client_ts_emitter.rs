@@ -481,6 +481,48 @@ fn the_emitted_bindings_are_byte_stable() {
     );
 }
 
+#[test]
+fn row_shape_digest_tracks_names_types_and_nullability_only() {
+    fn digest(ir: &ClientContractIr) -> String {
+        widget(&emit_ts_client(ir).unwrap())
+            .lines()
+            .find(|line| line.starts_with("export const WIDGET_SHAPE_DIGEST ="))
+            .unwrap()
+            .to_owned()
+    }
+    let original = release();
+    let baseline = digest(&original);
+    let index = fixture::widget_index(&original);
+    let mut reordered = original.clone();
+    reordered.models[index].operations.reverse();
+    for operation in &mut reordered.models[index].operations {
+        operation.result_fields.reverse();
+        if let Some(route) = &mut operation.route {
+            route.response.fields.reverse();
+            for field in &mut route.response.fields {
+                field.label = Some("Another label".into());
+            }
+        }
+    }
+    assert_eq!(baseline, digest(&reordered));
+    for change in 0..3 {
+        let mut changed = original.clone();
+        let operation = changed.models[index]
+            .operations
+            .iter_mut()
+            .find(|operation| operation.name == "query")
+            .unwrap();
+        let fields = &mut operation.route.as_mut().unwrap().response.fields;
+        let field = fields.first_mut().unwrap();
+        match change {
+            0 => field.path = "renamed_field".into(),
+            1 => field.type_name = "boolean".into(),
+            _ => field.nullable = !field.nullable,
+        }
+        assert_ne!(baseline, digest(&changed), "row shape change {change}");
+    }
+}
+
 /// Every name the platform fixture declares must survive the mapping, because
 /// the emitted `fromWire` reverses it at run time.
 #[test]

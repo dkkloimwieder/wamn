@@ -6,7 +6,34 @@ interface SavedRows {
 }
 
 /** IndexedDB storage for the @wfe/sync Persistence interface. */
-export function rowsPersistence(database: string) {
+export function rowsPersistence(database: string, shapeDigests: readonly string[]) {
+  const known = new Set(shapeDigests);
+  let prepared: Promise<unknown> | undefined;
+
+  function current(key: IDBValidKey): boolean {
+    if (typeof key !== "string") return false;
+    try {
+      const parts: unknown = JSON.parse(key);
+      return Array.isArray(parts) && parts.length === 3 && known.has(parts[1]);
+    } catch {
+      // Saved keys from before shape digests need a fresh fill too.
+      return false;
+    }
+  }
+
+  function prepare(): Promise<unknown> {
+    return prepared ??= transact("readwrite", (store) => {
+      const request = store.openKeyCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        if (!current(cursor.key)) store.delete(cursor.primaryKey);
+        cursor.continue();
+      };
+      return request;
+    });
+  }
+
   async function transact<T>(
     mode: IDBTransactionMode,
     run: (store: IDBObjectStore) => IDBRequest<T>,
@@ -31,13 +58,16 @@ export function rowsPersistence(database: string) {
   }
 
   return {
-    load(key: string): Promise<SavedRows | undefined> {
+    async load(key: string): Promise<SavedRows | undefined> {
+      await prepare();
       return transact("readonly", (store) => store.get(key) as IDBRequest<SavedRows | undefined>);
     },
     async save(key: string, rows: unknown[], cursor: string): Promise<void> {
+      await prepare();
       await transact("readwrite", (store) => store.put({ rows, cursor, saved_at: new Date().toISOString() }, key));
     },
     async remove(key: string): Promise<void> {
+      await prepare();
       await transact("readwrite", (store) => store.delete(key));
     },
   };

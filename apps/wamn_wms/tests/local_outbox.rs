@@ -34,7 +34,7 @@ async fn a_lost_create_reply_replays_without_another_row() -> anyhow::Result<()>
     run("lost-reply").await
 }
 
-async fn run(scenario: &str) -> anyhow::Result<()> {
+pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
@@ -108,10 +108,17 @@ async fn run(scenario: &str) -> anyhow::Result<()> {
         )?;
         crate::business_fixture::seed_fixture(&admin, 1).await?;
         let bench = app.join("../../web/sync-bench").canonicalize()?;
+        if scenario == "old-entry" {
+            super::local_release::bindings(&app, scratch.path())?;
+        }
+        let driver = match scenario {
+            "release" | "old-entry" => "bench/release.mjs",
+            _ => "bench/outbox.mjs",
+        };
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(180),
             tokio::process::Command::new("node")
-                .arg("bench/outbox.mjs")
+                .arg(driver)
                 .arg(scenario)
                 .current_dir(&bench)
                 .env("WAMN_ENDPOINT", &application.endpoint)
@@ -121,6 +128,7 @@ async fn run(scenario: &str) -> anyhow::Result<()> {
                 .env("WAMN_AUD", audience)
                 .env("WAMN_LOCATION_ID", LOCATION_A_ID)
                 .env("WAMN_FIRST_ID", PACKAGING_ID)
+                .env("WAMN_RELEASE_TEST_DIR", scratch.path())
                 .stdin(Stdio::null())
                 .stderr(Stdio::inherit())
                 .kill_on_drop(true)
@@ -129,7 +137,7 @@ async fn run(scenario: &str) -> anyhow::Result<()> {
         .await
         .context("the screen driver exceeded 180 seconds")??;
         let stdout = String::from_utf8(output.stdout)?;
-        eprintln!("outbox.mjs: {stdout}");
+        eprintln!("{driver}: {stdout}");
         let last = stdout.lines().last().context("the driver's result")?;
         let outcome: serde_json::Value = serde_json::from_str(last)?;
         anyhow::ensure!(
@@ -156,7 +164,9 @@ async fn run(scenario: &str) -> anyhow::Result<()> {
                 "offline" => ["OFFLINE-1", "OFFLINE-2", "OFFLINE-3"].contains(&code.as_str()),
                 "refusal" => code == "CORRECTED",
                 "lost-reply" => code == "LOST-REPLY",
-                _ => unreachable!("the test names one of three cases"),
+                "release" => code == "RELEASE",
+                "old-entry" => code == "R2",
+                _ => unreachable!("the test names a supported case"),
             };
             anyhow::ensure!(valid_code, "the stored packaging code is {code}");
         }

@@ -7,7 +7,7 @@ import { shapeA } from "./shape-a";
 import { PackagingView } from "./view";
 
 /** The live packaging rows, create form, and refused writes. */
-export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean }) {
+export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean; updateAvailable?: boolean }) {
   const c = props.collection;
   const o = props.outbox;
   const [filter] = createSignal<StatusFilter>("all");
@@ -30,6 +30,7 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
     <div data-shape="a" class="bench-column">
       <h2>Packaging</h2>
       <p aria-label="Sync status">
+        <Show when={props.updateAvailable}>update available, reload. </Show>
         <Show when={props.signedIn === false}>Sign in to upload. </Show>
         Status: <output data-sync-status={source.status()}>{source.status()}</output>. Pending:{" "}
         {counts().pending + counts().sending}. Refused: {counts().refused}. Last sent: {counts().lastSentAt ?? "never"}.

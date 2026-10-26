@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, waitFor, within } from "@solidjs/testing-li
 import { Loading, flush } from "solid-js";
 import { outbox, type Change, type OperationCall, type Reply } from "@wfe/sync";
 import { createCall, createSend, createTransport, outboxDatabase, requestHash, rowsPersistence } from "@wamn/web-runtime";
-import { create, PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
+import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
 import { packagingCollection, packagingKey, type PackagingRow } from "../src/packaging-feed";
 import { packagingAddress } from "../src/packaging-writes";
 import { PackagingScreen } from "../src/packaging-screen";
@@ -49,7 +49,7 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   Object.defineProperty(navigator, "storage", { configurable: true, value: { persisted, persist } });
   const changes: Change<PackagingRow>[] = [];
   let readFailure: Error | undefined;
-  const persistence = rowsPersistence(`rows-${crypto.randomUUID()}`);
+  const persistence = rowsPersistence(`rows-${crypto.randomUUID()}`, [PACKAGING_SHAPE_DIGEST]);
   if (restored) await persistence.save(packagingKey({}), [restored.row], "saved");
   const c = packagingCollection(
     {

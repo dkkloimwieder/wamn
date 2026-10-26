@@ -4,10 +4,11 @@
  * emit later (docs/plan/wamn-sync.md, "Generator and bindings").
  */
 import { CursorExpired, collection, type Change, type Feed, type Persistence } from "@wfe/sync";
-import type { Transport } from "@wamn/web-runtime";
+import { collectionKey, type Transport } from "@wamn/web-runtime";
 import {
   changes,
   query,
+  PACKAGING_SHAPE_DIGEST,
   type PackagingQueryChange,
   type PackagingQueryRequest,
   type PackagingQueryRow,
@@ -85,9 +86,9 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The collection key: the model, then the list arguments as canonical JSON. */
+/** The collection key includes its row shape and canonical list arguments. */
 export function packagingKey(scope: PackagingScope): string {
-  return `packaging:${canonicalJson(scope)}`;
+  return collectionKey("packaging", PACKAGING_SHAPE_DIGEST, canonicalJson(scope));
 }
 
 /** The packaging collection of one scope. It follows the feed every `pollMs`, 10 s by default. */

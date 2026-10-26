@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { InvokeOptions, JsonValue, Transport, WireRequest } from "@wamn/web-runtime";
 import { CursorExpired } from "@wfe/sync";
+import { PACKAGING_SHAPE_DIGEST } from "@wamn/wms-client/packaging.js";
 import { canonicalJson, packagingFeed, packagingKey } from "../src/packaging-feed";
 
 const wireRow = {
@@ -111,7 +112,7 @@ describe("packagingKey", () => {
     const left = packagingKey({ filter: { status: ["held"], packagingCode: ["A"] } });
     const right = packagingKey({ filter: { packagingCode: ["A"], status: ["held"] } });
     expect(left).toBe(right);
-    expect(left).toBe('packaging:{"filter":{"packagingCode":["A"],"status":["held"]}}');
+    expect(JSON.parse(left)).toEqual(["packaging", PACKAGING_SHAPE_DIGEST, '{"filter":{"packagingCode":["A"],"status":["held"]}}']);
   });
 
   it("keeps array order, because the arguments are ordered", () => {

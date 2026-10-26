@@ -47,3 +47,6 @@ mod local_feed;
 
 #[cfg(test)]
 mod local_outbox;
+
+#[cfg(test)]
+mod local_release;
