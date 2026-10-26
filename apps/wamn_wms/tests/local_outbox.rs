@@ -73,7 +73,6 @@ async fn run(scenario: &str) -> anyhow::Result<()> {
         packages: &[LocalPackage {
             root: &app,
             component: "wms",
-            wirings: &[],
         }],
         attachments: &attachments,
     })
