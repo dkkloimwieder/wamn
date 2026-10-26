@@ -256,7 +256,7 @@ impl PlatformRouteAuthenticator {
         self
     }
 
-    fn authenticate_signature(
+    async fn authenticate_signature(
         &self,
         header: &str,
         credential: &str,
@@ -287,7 +287,9 @@ impl PlatformRouteAuthenticator {
             .as_ref()
             .ok_or_else(signature_unauthorized)?;
         let secret = credentials
-            .lookup(project, credential)
+            .read(project, credential)
+            .await
+            .map_err(|_| signature_unauthorized())?
             .ok_or_else(signature_unauthorized)?;
         let secret: SignatureSecret =
             serde_json::from_str(&secret).map_err(|_| signature_unauthorized())?;
@@ -353,8 +355,15 @@ impl PlatformRouteAuthenticator {
             .instrument(tracing::info_span!("wamn.auth.permissions"))
             .await
             .map_err(|error| {
-                tracing::warn!(error = %error, "route operation grants unavailable");
-                authentication_unavailable()
+                if error
+                    .downcast_ref::<super::wamn_postgres::SessionGrantRefusal>()
+                    .is_some()
+                {
+                    unauthorized()
+                } else {
+                    tracing::warn!(error = %error, "route operation grants unavailable");
+                    authentication_unavailable()
+                }
             })?;
         let cache = authentication.postgres.auth_cache();
         if !cache.session_active(token) {
@@ -420,7 +429,8 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
-            self.authenticate_signature(header, credential, request.headers, request.body)?;
+            self.authenticate_signature(header, credential, request.headers, request.body)
+                .await?;
             return Ok(None);
         }
         let AuthenticationRequest {
@@ -502,7 +512,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     tracing::warn!(error = %error, "route operation grants unavailable");
                     authentication_unavailable()
                 })?;
-            let active_role = permissions.active_role();
+            let active_role = permissions.pat_role();
             Ok(Some(AuthenticatedCaller::new(
                 attachment_id,
                 principal.id().as_str(),

@@ -669,20 +669,15 @@ impl WorkflowsFixture {
             .unwrap();
         let held = self
             .postgres
-            .session_operation_permissions(
-                "default",
-                TENANT,
-                &["automation".into()],
-                &SERVICE.parse()?,
-            )
+            .user_operation_permissions("default", TENANT, &SERVICE.parse()?)
             .await?;
         let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
             attachment.clone(),
             SERVICE,
-            CredentialType::Session,
+            CredentialType::Pat,
             held.admin,
             held.references.iter().cloned().collect(),
-            held.active_role(),
+            held.pat_role(),
         );
         let report = self
             .host

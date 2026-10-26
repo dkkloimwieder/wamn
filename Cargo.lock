@@ -6315,6 +6315,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "wamn-catalog",
  "wamn-control-provision",
  "wamn-execution-contract",
  "wamn-project-state",

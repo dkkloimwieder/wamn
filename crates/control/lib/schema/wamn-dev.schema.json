@@ -110,9 +110,13 @@
       "default": null,
       "description": "The CDC reader that `wamn dev up` enabled. Absent means no reader runs."
     },
+    "connection_database_url": {
+      "default": null,
+      "type": "string"
+    },
     "credentials_file": {
       "default": null,
-      "description": "The host credentials file in the environment's private root, as the cluster mounts its Secret. Absent means the host has no credentials.",
+      "description": "The legacy credentials file used by the one-time import.",
       "type": "string"
     },
     "dup_window_secs": {

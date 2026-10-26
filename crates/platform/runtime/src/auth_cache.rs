@@ -51,6 +51,9 @@ pub struct PrincipalGrants {
     pub present: bool,
     /// Whether that row is `active`. An inactive principal holds no role.
     pub active: bool,
+    /// Only a user can select an active role for a session.
+    #[serde(default)]
+    pub user: bool,
     /// Each held role, with each permission of that role.
     pub roles: BTreeMap<String, BTreeSet<String>>,
 }

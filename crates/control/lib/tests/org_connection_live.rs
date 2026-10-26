@@ -228,25 +228,53 @@ async fn org_connection_materializes_once_per_environment() {
         .is_err()
     );
     declaration.org = "missing".to_owned();
-    assert!(org_connection::declare(&declaration).await.is_err());
+    assert!(
+        org_connection::declare(
+            &declaration,
+            &wamn_platform_identity::auth_changes::AuthChanges::default()
+        )
+        .await
+        .is_err()
+    );
     declaration.org = "acme".to_owned();
-    assert!(org_connection::declare(&declaration).await.unwrap());
+    assert!(
+        org_connection::declare(
+            &declaration,
+            &wamn_platform_identity::auth_changes::AuthChanges::default()
+        )
+        .await
+        .unwrap()
+    );
     let xmin: String = control
-        .query_one("SELECT xmin::text FROM registry.org_connections", &[])
+        .query_one("SELECT xmin::text FROM registry.connection", &[])
         .await
         .unwrap()
         .get(0);
-    assert!(!org_connection::declare(&declaration).await.unwrap());
+    assert!(
+        !org_connection::declare(
+            &declaration,
+            &wamn_platform_identity::auth_changes::AuthChanges::default()
+        )
+        .await
+        .unwrap()
+    );
     assert_eq!(
         control
-            .query_one("SELECT xmin::text FROM registry.org_connections", &[])
+            .query_one("SELECT xmin::text FROM registry.connection", &[])
             .await
             .unwrap()
             .get::<_, String>(0),
         xmin
     );
     declaration.requirement_type = RequirementType::Blobstore;
-    assert!(org_connection::declare(&declaration).await.is_err());
+    assert!(
+        org_connection::declare(
+            &declaration,
+            &wamn_platform_identity::auth_changes::AuthChanges::default()
+        )
+        .await
+        .is_err()
+    );
     declaration.requirement_type = RequirementType::Http;
     assert!(
         resolve_connections(
@@ -256,6 +284,13 @@ async fn org_connection_materializes_once_per_environment() {
         .is_err()
     );
 
+    wamn_control::connection_configuration::import(
+        control_database.url(),
+        "acme",
+        &json!({"projects": {}, "orgs": {"acme": {"shared_erp": SECRET}}}).to_string(),
+    )
+    .await
+    .unwrap();
     let original = org_connection::snapshot(&control, "acme").await.unwrap();
     let inputs_a = resolve_connections(&doc_a, &original).unwrap();
     let inputs_b = resolve_connections(&doc_b, &original).unwrap();
@@ -273,15 +308,10 @@ async fn org_connection_materializes_once_per_environment() {
     assert_eq!(counts(&a).await, (1, 2));
     assert_eq!(counts(&b).await, (1, 2));
 
-    let path =
-        std::env::temp_dir().join(format!("wamn-org-connections-{}.json", std::process::id()));
-    std::fs::write(
-        &path,
-        json!({"projects": {}, "orgs": {"acme": {"shared_erp": SECRET}}}).to_string(),
-    )
-    .unwrap();
-    let vault = WamnCredentials::from_file(&path).unwrap().with_org("acme");
-    std::fs::remove_file(path).unwrap();
+    let vault = WamnCredentials::from_database(
+        std::sync::Arc::new(connect(control_database.url()).await),
+        "acme",
+    );
     for (database, tenant, targets) in [
         (&database_a, &tenant_a, &targets_a),
         (&database_b, &tenant_b, &targets_b),
@@ -291,7 +321,9 @@ async fn org_connection_materializes_once_per_environment() {
             assert_eq!(snapshot.definition, Some(declaration.definition.clone()));
             assert_eq!(
                 vault
-                    .lookup_connection(tenant, snapshot.credential_handle.as_deref().unwrap())
+                    .read_connection(tenant, snapshot.credential_handle.as_deref().unwrap())
+                    .await
+                    .unwrap()
                     .as_deref(),
                 Some(SECRET)
             );
@@ -326,9 +358,19 @@ async fn org_connection_materializes_once_per_environment() {
 
     // A -> B -> A between applies compares with selected A and creates nothing.
     declaration.definition = definition("changed.example");
-    org_connection::declare(&declaration).await.unwrap();
+    org_connection::declare(
+        &declaration,
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await
+    .unwrap();
     declaration.definition = definition("erp.example");
-    org_connection::declare(&declaration).await.unwrap();
+    org_connection::declare(
+        &declaration,
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await
+    .unwrap();
     apply(
         database_a.url(),
         &doc_a,
@@ -343,7 +385,12 @@ async fn org_connection_materializes_once_per_environment() {
     assert_eq!(counts(&a).await, (1, 2));
 
     declaration.definition = definition("changed.example");
-    org_connection::declare(&declaration).await.unwrap();
+    org_connection::declare(
+        &declaration,
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await
+    .unwrap();
     // A declaration after a snapshot takes effect only in the next snapshot.
     apply(database_a.url(), &doc_a, &inputs_a, &targets_a).await;
     assert_eq!(counts(&a).await, (1, 2));
@@ -382,7 +429,9 @@ async fn org_connection_materializes_once_per_environment() {
             assert_eq!(snapshot.definition, Some(declaration.definition.clone()));
             assert_eq!(
                 vault
-                    .lookup_connection(tenant, snapshot.credential_handle.as_deref().unwrap())
+                    .read_connection(tenant, snapshot.credential_handle.as_deref().unwrap())
+                    .await
+                    .unwrap()
                     .as_deref(),
                 Some(SECRET)
             );

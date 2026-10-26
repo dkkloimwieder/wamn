@@ -407,13 +407,22 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         accepted(&mixed, &first).await.credential_type(),
         CredentialType::Session
     );
-    for roles in [json!([]), json!(["unknown-role"])] {
-        let mut empty = first.clone();
-        empty["roles"] = roles;
-        let caller = accepted(&route, &empty).await;
-        assert!(!caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_TENANT));
-    }
-    // Each of the five admitted requests reads once.
+    let mut empty = first.clone();
+    empty["roles"] = json!([]);
+    let caller = accepted(&route, &empty).await;
+    assert!(!caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_TENANT));
+    empty["roles"] = json!(["unknown-role"]);
+    assert_eq!(
+        route
+            .authenticate_authorization_for_test(
+                ATTACHMENT,
+                Some(&format!("Bearer {}", signed(&header(), &empty)))
+            )
+            .await
+            .unwrap_err(),
+        (401, "unauthorized".into())
+    );
+    // Each admitted or refused request reads its current grants once.
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 5);
 
     // A grant stores a reference the loaded release does not serve. It holds
@@ -528,12 +537,25 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
     admin
         .execute("UPDATE platform.\"user\" SET status = 'disabled'", &[])
         .await?;
-    let snapshot = accepted(&route, &first).await;
-    assert!(
-        !snapshot.permits(READ) && !snapshot.permits(WRITE),
-        "removed roles and disabled users affect the next admission"
+    assert_eq!(
+        route
+            .authenticate_authorization_for_test(
+                ATTACHMENT,
+                Some(&format!("Bearer {}", signed(&header(), &first)))
+            )
+            .await
+            .unwrap_err(),
+        (401, "unauthorized".into()),
+        "removed roles and disabled users refuse the next admission"
     );
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 2);
+    admin
+        .batch_execute("UPDATE platform.\"user\" SET status = 'active'")
+        .await?;
+    for principal in [first["sub"].as_str().unwrap(), SECOND_PRINCIPAL] {
+        admin.execute("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'purchase-reader')", &[&principal]).await?;
+    }
+    admin.execute("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'purchase-writer')", &[&first["sub"].as_str().unwrap()]).await?;
 
     // Each request reuses the same unexpired signed token. No kept approval
     // survives the drop of a revoke.

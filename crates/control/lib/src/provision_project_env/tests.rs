@@ -368,6 +368,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
             // `wamn-a40n.2`: the control family reads the identity relations
             // of the control host.
             WorkloadRoleFamily::Control,
+            WorkloadRoleFamily::ConnectionReader,
         ],
         "a family acquired a grant set without acquiring authority"
     );
@@ -389,6 +390,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleFamily::Administration,
         WorkloadRoleFamily::Control,
+        WorkloadRoleFamily::ConnectionReader,
     ] {
         assert!(sql::stable_surface_sql(family).is_some(), "{family:?}");
     }
@@ -404,6 +406,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
                 | WorkloadRoleFamily::SessionRoleReader
                 | WorkloadRoleFamily::Administration
                 | WorkloadRoleFamily::Control
+                | WorkloadRoleFamily::ConnectionReader
         ) {
             assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
         }
@@ -915,6 +918,7 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
         (WorkloadRoleFamily::AuditRetention, "audit-retention"),
         (WorkloadRoleFamily::Administration, "administration"),
         (WorkloadRoleFamily::Control, "control"),
+        (WorkloadRoleFamily::ConnectionReader, "conn-reader"),
     ];
     assert_eq!(expected.len(), WorkloadRoleFamily::ALL.len());
     let mut seen = Vec::new();
@@ -1085,6 +1089,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         Some("system"),
         "abcd1234",
         Some(false),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
     )
     .await
     .unwrap();
@@ -1112,6 +1117,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         Some("system"),
         "efgh5678",
         Some(true),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
     )
     .await
     .unwrap();
@@ -1135,6 +1141,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         Some("system"),
         "efgh5678",
         Some(true),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
     )
     .await
     .unwrap_err();
@@ -1255,6 +1262,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
             Some("system"),
             "abcd1234",
             disposable,
+            &wamn_platform_identity::auth_changes::AuthChanges::default(),
         )
         .await
         .unwrap();

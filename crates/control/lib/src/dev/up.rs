@@ -136,6 +136,16 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         )
         .await?,
     );
+    if let Some(path) = &inputs.credentials_file {
+        let contents =
+            std::fs::read_to_string(path).context("read credentials for one-time import")?;
+        crate::connection_configuration::import(
+            &args.system_database_url,
+            &environment.identity.org,
+            &contents,
+        )
+        .await?;
+    }
     let config = write_dev_config(
         &args.root,
         &args.system_database_url,

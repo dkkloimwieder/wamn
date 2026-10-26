@@ -86,12 +86,18 @@ pub struct CreateUserArgs {
 /// The principal carries no access. Run `grant-project-env-membership` with the
 /// printed id to admit the user to one project environment.
 pub async fn create_user(args: CreateUserArgs) -> anyhow::Result<()> {
-    let principal = create_user_principal(CreateUserRequest {
-        subject: args.subject,
-        email: args.email,
-        display_name: args.display_name,
-        system_database_url: args.system_database_url,
-    })
+    let principal = create_user_principal(
+        CreateUserRequest {
+            subject: args.subject,
+            email: args.email,
+            display_name: args.display_name,
+            system_database_url: args.system_database_url,
+        },
+        &wamn_platform_identity::auth_changes::AuthChanges::connect(
+            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        )
+        .await?,
+    )
     .await?;
     println!(
         "user created principal_id={} subject={}",

@@ -355,8 +355,8 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     system
         .0
         .batch_execute(
-            "DROP TABLE registry.integrations, registry.target; \
-             DELETE FROM registry.schema_migrations WHERE ordinal = 29",
+            "DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); DROP TABLE registry.integrations, registry.target; \
+             DELETE FROM registry.schema_migrations WHERE ordinal >= 29",
         )
         .await
         .expect("make the system database as 0028 left it");

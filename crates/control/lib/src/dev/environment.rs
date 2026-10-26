@@ -511,6 +511,7 @@ pub struct JourneyCredentials {
     pub http_admitter: String,
     pub administration: String,
     pub identity_reader: String,
+    pub connection_reader: String,
     pub control_author: String,
     pub management_admitter: String,
 }
@@ -830,6 +831,16 @@ pub async fn prepare_journey_credentials(
             "identity-reader",
         )
         .await?,
+        connection_reader: prepare(
+            scope,
+            WorkloadRoleFamily::ConnectionReader,
+            system_url,
+            None,
+            host_secret_directory,
+            host_secret_namespace,
+            "conn-reader",
+        )
+        .await?,
         control_author: prepare(
             scope,
             WorkloadRoleFamily::ControlAuthor,
@@ -1084,6 +1095,7 @@ pub fn write_dev_config(
         "target_database_acl_file": root.join("database-acl.sql"),
         "system_database_url": system_url,
         "identity_database_url": credentials.identity_reader.as_str(),
+        "connection_database_url": credentials.connection_reader.as_str(),
         "guest_database_url": credentials.guest_sql.as_str(),
         "executor_platform_database_url": credentials.executor_platform.as_str(),
         "http_admitter_database_url": credentials.http_admitter.as_str(),

@@ -1125,3 +1125,64 @@ The author supplies an explicit shorter name when needed. Tools do not silently 
 
 For database preparation and SQLx commands, use the [operations pages](../operations/README.md).
 Test database isolation has one definition in [running tests](../operations/running-tests.md#test-database-isolation).
+
+### Org connections and credentials
+
+The system database owns `registry.external_system` and `registry.connection`.
+System migration 0030 copies every `registry.org_connections` row and preserves the source rows.
+Each connection names one `registry.integrations` entry: `http`, `gcs`, or `s3`.
+The writer refuses an integration change or an external system with a different integration.
+The writer refuses a rename when a project enables the connection or an applied binding names it.
+Project enablement also prevents connection disablement.
+Project migration 0039 grants the administration role read access to catalog connection references for this refusal.
+
+A connection has one unique inbound service principal and a current generation.
+Creation grants that principal no roles. Administrators grant its roles explicitly.
+The existing integration application principals keep their schedules and grants.
+Connection principals do not replace them. Inbound authentication remains separate work.
+The owner ruling of 2026-10-25 moves the `wamn` integration and automatic peer creation to `wamn-ym204`.
+
+The control operations `external_system.write`, `connection.write`, `project_connection.enable`, and `integration_allow.allow` write the system authority.
+The matching `wamn-ctl` commands use the same writer.
+The control host projects only enabled connections, their external systems, and applicable integration permissions into each project database.
+The system write commits before projection writes. A failed projection reports the affected environment and keeps the system authority.
+The administration login writes these projections. `wamn_app` reads them and cannot write them.
+An integration permission at project or environment scope requires its parent permission.
+
+`registry.connection_generation` holds immutable parameters and a credential reference.
+A parameter change or credential rotation appends a generation and advances the connection pointer.
+Published bindings retain their generation. Rotation does not rewrite them.
+The host reads secret material from `identity.credential` through the dedicated `wamn_conn_reader` family.
+Registry rows carry only the `secret_id` reference. The registry and provisioning schemas store no credential material.
+Neither `wamn_app` nor PUBLIC receives credential access.
+The host receives its reader URL through `WAMN_CONNECTION_STORE_URL`.
+
+`wamn-ctl connection import-credentials` imports the legacy `orgs` and `projects` maps once.
+Org entries require an existing named connection. Project entries use the command's org and preserve their project handles.
+The import is atomic, and a stored marker refuses a second import for an org.
+`wamn-ctl connection rotate` reads replacement material from its input file and appends a generation.
+The runtime no longer reads or mounts the legacy credential file.
+Org handles pin the first connection generation that holds the selected credential as `org:<org>:<name>@<generation>`.
+A legacy handle without a generation reads the first stored credential generation.
+The host refuses an org mismatch and never falls back from an org handle to a project credential.
+
+The host refuses a session when any signed role is absent from the user's current grants.
+It also refuses a service principal presented as a user session.
+A service principal has no user active role, even when it holds an application permission.
+Principal and grant writes record `AuthDrops`, and their callers publish the deletions after commit.
+A failed deletion is logged without retry. The auth cache TTL bounds stale access.
+
+A session with an unheld signed role or a disabled principal receives 401. A failure to read the database still receives 503.
+
+The control role keeps its existing table grants. Connection administration uses `registry.configure_connection` and the scoped `registry.connection_*` read functions.
+These functions return only non-secret authority. The write function creates a service principal only with its connection and returns its id for `AuthDrops`.
+The administration role uses `catalog.connection_is_referenced(text)` to test a binding reference without reading the catalog table.
+Catalog bootstrap installs this function after its tables. Application schema installation does not require the catalog schema.
+Provisioning grants execution to `wamn_administration`, matching project migration 0039.
+Each function is `SECURITY DEFINER`, is owned by `wamn_system`, and pins `search_path` to `pg_catalog`.
+PUBLIC holds no execute grant. Only the control or administration role receives the execute grant that it needs.
+Migration and provisioning install the same grants. Registry reads and writes remain unavailable through direct control table grants.
+
+A PAT-authenticated service can start an invoker workflow with its own held role.
+The host derives that role from current grants, with the existing single-role or held-admin selection rule.
+A service never borrows a user's active role. User sessions with a service role or any unheld role still refuse.

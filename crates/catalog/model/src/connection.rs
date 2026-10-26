@@ -256,6 +256,14 @@ pub fn parse_org_credential_handle(handle: &str) -> Result<(&str, &str), String>
         .strip_prefix("org:")
         .and_then(|tail| tail.split_once(':'))
         .ok_or_else(invalid)?;
+    let name = if let Some((name, generation)) = name.split_once('@') {
+        if generation.parse::<i64>().ok().is_none_or(|n| n < 1) {
+            return Err(invalid());
+        }
+        name
+    } else {
+        name
+    };
     if org.is_empty()
         || org.len() > 40
         || !org.split('-').all(|part| {

@@ -74,10 +74,11 @@ runtime:
         # The host's drain bound, equal to terminationGracePeriodSeconds (R20).
         - { name: WAMN_DRAIN_BOUND_SECONDS, value: "70" }
         - { name: WAMN_SCHEMA, value: wms }
-        # Host-held connection credentials, by HANDLE (wamn-362o.26). The file
-        # is `{ "projects": { "<project>": { "<handle>": "<secret>" } }, "orgs": {} }`. The labels
-        # store binds to the handle labels-store and never sees the material.
-        - { name: WAMN_CREDENTIALS_FILE, value: /etc/wamn/credentials/credentials.json }
+        - name: WAMN_CONNECTION_STORE_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-conn-reader-acme--wms--dev
+              key: url
         - name: WAMN_SYSTEM_URL
           valueFrom:
             secretKeyRef:
@@ -130,13 +131,6 @@ runtime:
             items:
               - key: .dockerconfigjson
                 path: config.json
-        - name: connection-credentials
-          secret:
-            secretName: wamn-object-store-credentials-acme--wms--dev
-            optional: false
-            items:
-              - key: credentials.json
-                path: credentials.json
       volumeMounts:
         - name: event-nats
           mountPath: /etc/wamn/event-nats
@@ -146,9 +140,6 @@ runtime:
           readOnly: true
         - name: registry-pull
           mountPath: /etc/wamn/registry
-          readOnly: true
-        - name: connection-credentials
-          mountPath: /etc/wamn/credentials
           readOnly: true
       ociCaPaths:
         - "/runtime-cert/ca.crt"

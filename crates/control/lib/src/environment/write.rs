@@ -26,9 +26,13 @@ use wamn_control_provision::WorkloadRoleFamily;
 
 /// The host variable each environment credential Secret feeds, by family.
 /// The Secret names derive from the coordinate (§9.1).
-const CREDENTIAL_VARIABLES: [(WorkloadRoleFamily, &str); 6] = [
+const CREDENTIAL_VARIABLES: [(WorkloadRoleFamily, &str); 7] = [
     (WorkloadRoleFamily::App, "WAMN_PG_URL"),
     (WorkloadRoleFamily::IdentityReader, "WAMN_SYSTEM_URL"),
+    (
+        WorkloadRoleFamily::ConnectionReader,
+        "WAMN_CONNECTION_STORE_URL",
+    ),
     (
         WorkloadRoleFamily::ExecutorPlatform,
         "WAMN_EXECUTOR_PLATFORM_PG_URL",

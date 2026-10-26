@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:connection/write@0.9.0",
+  "type": "command",
+  "label": "Write connection",
+  "grant": "wamn-control:connection/write@0.9.0",
+  "permission_token": "connection.write",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -1,0 +1,28 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.scope_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.scope_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.integration",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

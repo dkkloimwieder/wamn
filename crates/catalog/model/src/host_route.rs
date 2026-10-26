@@ -113,6 +113,14 @@ pub enum HostRouteSet {
 /// The host code that serves one host route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostHandler {
+    /// Write an org-wide external system.
+    ExternalSystemWrite,
+    /// Write an org-wide connection and its inbound principal.
+    ConnectionWrite,
+    /// Enable an org connection for a project.
+    ProjectConnectionEnable,
+    /// Allow an integration at one scope.
+    IntegrationAllow,
     /// The caller's effective permission set in this application.
     PermissionMine,
     /// The user rows of the application (docs/plan/platform-ui.md §4.6).
@@ -224,6 +232,34 @@ pub struct HostRoute {
 }
 
 const ROUTES: &[HostRoute] = &[
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "external_system.write",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ExternalSystemWrite,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.write",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ConnectionWrite,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project_connection.enable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectConnectionEnable,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "integration_allow.allow",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::IntegrationAllow,
+    },
     HostRoute {
         set: HostRouteSet::Application,
         operation: "permission.mine",

@@ -1220,13 +1220,24 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         (None, Some(_)) => anyhow::bail!("--admin needs --system-database-url"),
         (Some(_), None) => anyhow::bail!("--system-database-url needs --admin"),
     };
-    let provisioned = provision_org::provision_org(ProvisionOrgRequest {
-        org: args.org,
-        template: args.template.template(),
-        pool: args.pool,
-        record,
-        cluster_namespace: args.cluster_namespace,
-    })
+    let changes = if record.is_some() {
+        wamn_platform_identity::auth_changes::AuthChanges::connect(
+            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        )
+        .await?
+    } else {
+        wamn_platform_identity::auth_changes::AuthChanges::default()
+    };
+    let provisioned = provision_org::provision_org_with_changes(
+        ProvisionOrgRequest {
+            org: args.org,
+            template: args.template.template(),
+            pool: args.pool,
+            record,
+            cluster_namespace: args.cluster_namespace,
+        },
+        &changes,
+    )
     .await?;
     print_provisioned_org(&provisioned);
     if let Some(path) = &args.emit_control_administration_secret {

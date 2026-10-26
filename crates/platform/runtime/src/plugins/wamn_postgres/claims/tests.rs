@@ -3592,6 +3592,7 @@ fn session_and_pat_callers_act_with_their_single_role() {
     let grants = |roles: &[&str]| crate::auth_cache::PrincipalGrants {
         present: true,
         active: true,
+        user: true,
         roles: roles
             .iter()
             .map(|role| {
@@ -3924,4 +3925,57 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         cached_at.elapsed() < ttl,
         "only the drop can expire this PAT approval"
     );
+}
+
+#[tokio::test]
+async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_user_role() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    let admin = connect_raw(database.url()).await;
+    admin.batch_execute(&format!(
+        "SET app.user_id='{LIVE_PLATFORM_PRINCIPAL}'; SET app.operation='admin:role-refusal-fixture';
+         INSERT INTO platform.\"user\"(id,type,email) VALUES
+          ('00000000-0000-4000-8000-000000000081','user','user@example.test'),
+          ('00000000-0000-4000-8000-000000000082','service','service@example.test');
+         INSERT INTO platform.role(name) VALUES ('human-reader'),('service-reader');
+         INSERT INTO platform.user_role(user_id,role_name) VALUES
+          ('00000000-0000-4000-8000-000000000081','human-reader'),
+          ('00000000-0000-4000-8000-000000000082','service-reader');"
+    )).await.unwrap();
+    let user = principal_grants_from_rows(
+        &admin
+            .query(
+                PRINCIPAL_GRANTS_SQL,
+                &[&"00000000-0000-4000-8000-000000000081"],
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let service = principal_grants_from_rows(
+        &admin
+            .query(
+                PRINCIPAL_GRANTS_SQL,
+                &[&"00000000-0000-4000-8000-000000000082"],
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        session_grants(&user, &["human-reader".into()])
+            .unwrap()
+            .active_role()
+            .as_deref(),
+        Some("human-reader")
+    );
+    assert!(session_grants(&user, &["unheld".into()]).is_err());
+    assert!(session_grants(&user, &["service-reader".into()]).is_err());
+    assert!(session_grants(&service, &["service-reader".into()]).is_err());
+    assert_eq!(held_grants(&service, None).active_role(), None);
+    assert_eq!(
+        held_grants(&service, None).pat_role().as_deref(),
+        Some("service-reader")
+    );
+    assert!(!held_grants(&service, None).roles.contains("human-reader"));
 }

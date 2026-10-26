@@ -86,6 +86,7 @@ async fn run(
                 )
                 .await
                 .context("grant project environment membership")?;
+                drops.identity(principal_id.as_str());
             }
             Action::Revoke => {
                 revoke_project_env_membership(

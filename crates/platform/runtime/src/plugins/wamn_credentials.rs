@@ -5,13 +5,11 @@
 //!
 //! - Ordinary handles use the host-owned project identity. Org handles use
 //!   the trusted host org and never fall back to project credentials.
-//! - `WAMN_CREDENTIALS_FILE` is a mounted static file. It carries
-//!   separate `projects` and `orgs` maps.
+//! - The dedicated database reader accesses immutable credential generations.
 //! - No configured source is `unavailable`; a configured source missing the
 //!   selected handle is `not-found`.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use anyhow::Context as _;
 
@@ -21,7 +19,7 @@ enum CredentialError {
     Unavailable,
 }
 
-/// Project and org credentials loaded from the fixed Secret mount.
+/// Project and org credentials read by the host.
 pub struct WamnCredentials {
     /// Whether ANY backing source was configured. Distinguishes `unavailable`
     /// (no source — retryable) from `not-found` (source present, name absent —
@@ -31,6 +29,7 @@ pub struct WamnCredentials {
     projects: HashMap<String, HashMap<String, String>>,
     orgs: HashMap<String, HashMap<String, String>>,
     org: Option<String>,
+    database: Option<std::sync::Arc<tokio_postgres::Client>>,
 }
 
 impl std::fmt::Debug for WamnCredentials {
@@ -46,6 +45,61 @@ impl std::fmt::Debug for WamnCredentials {
 }
 
 impl WamnCredentials {
+    /// Read credentials through the dedicated system reader, scoped by the host org.
+    pub fn from_database(client: std::sync::Arc<tokio_postgres::Client>, org: &str) -> Self {
+        Self {
+            database: Some(client),
+            org: Some(org.to_owned()),
+            has_source: true,
+            ..Self::empty()
+        }
+    }
+
+    /// Read the immutable generation selected by a connection handle.
+    pub async fn read_connection(
+        &self,
+        project: &str,
+        handle: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(client) = &self.database else {
+            return Ok(self.lookup_connection(project, handle));
+        };
+        let org = self
+            .org
+            .as_deref()
+            .context("credential reader has no org")?;
+        if handle.starts_with("org:") {
+            let (handle_org, name) =
+                wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(handle_org == org, "credential org mismatch");
+            let generation = handle
+                .rsplit_once('@')
+                .map(|(_, generation)| generation.parse::<i64>())
+                .transpose()?;
+            let row = client.query_opt(
+                "SELECT k.secret FROM registry.connection c JOIN registry.connection_generation g ON g.connection_id = c.id JOIN identity.credential k ON k.id = g.secret_id WHERE c.org = $1 AND c.name = $2 AND c.status = 'active' AND ($3::bigint IS NULL OR g.generation = $3) ORDER BY g.generation LIMIT 1",
+                &[&org, &name, &generation],
+            ).await?;
+            return Ok(row.map(|row| row.get(0)));
+        }
+        self.read(project, handle).await
+    }
+
+    /// Read an imported project credential. An org handle never falls back here.
+    pub async fn read(&self, project: &str, handle: &str) -> anyhow::Result<Option<String>> {
+        if handle.starts_with("org:") {
+            return Ok(None);
+        }
+        let Some(client) = &self.database else {
+            return Ok(self.lookup(project, handle));
+        };
+        let org = self
+            .org
+            .as_deref()
+            .context("credential reader has no org")?;
+        Ok(client.query_opt("SELECT secret FROM identity.credential WHERE org = $1 AND project = $2 AND handle = $3 AND connection_id IS NULL", &[&org, &project, &handle]).await?.map(|row| row.get(0)))
+    }
+
     /// A vault with NO backing source: every lookup is unavailable.
     /// Gates and credential-less deployments use this.
     pub fn empty() -> Self {
@@ -54,6 +108,7 @@ impl WamnCredentials {
             projects: HashMap::new(),
             orgs: HashMap::new(),
             org: None,
+            database: None,
         }
     }
 
@@ -64,10 +119,11 @@ impl WamnCredentials {
             projects,
             orgs: HashMap::new(),
             org: None,
+            database: None,
         }
     }
 
-    /// Parse the mounted credentials file with separate project and org maps.
+    /// Parse in-memory credential maps for a test harness.
     pub fn from_json(text: &str) -> anyhow::Result<Self> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -81,6 +137,7 @@ impl WamnCredentials {
             projects: envelope.projects,
             orgs: envelope.orgs,
             org: None,
+            database: None,
         })
     }
 
@@ -100,44 +157,6 @@ impl WamnCredentials {
             return self.orgs.get(org)?.get(name).cloned();
         }
         self.lookup(project, handle)
-    }
-
-    /// A vault from the file at `path`. A MISSING file is a warn + empty
-    /// vault (the deploy manifest mounts the Secret `optional`, so a
-    /// credential-less project deploys cleanly); a present-but-malformed file
-    /// is a hard error (a real misconfiguration must be loud).
-    ///
-    /// # Rotation is a pod roll, not a reload — decided once, recorded here
-    ///
-    /// This reads once, at startup, so material rotated under an UNCHANGED
-    /// handle is not observed until the process restarts. An unchanged handle is
-    /// exactly what a rotation keeps: a rotation mints a new credential
-    /// GENERATION and leaves the portable artifact — and therefore the
-    /// connection definition that names the handle — untouched
-    /// (`docs/archive/data-path/credential-vault.md`). Snapshotting is
-    /// nonetheless the correct posture, not an omission, because an attempt's
-    /// durable facts pin the `credential_generation` that authorized it
-    /// (`wamn_run.effect_attempts`), which recovery must reuse or explicitly
-    /// refuse. This file's `{projects, orgs}` shape carries no
-    /// generation, so a watcher could not tell rotated material from the pinned
-    /// material and would silently substitute credentials under a recovering
-    /// attempt. A process-lifetime snapshot cannot.
-    ///
-    /// Supporting rotation therefore means making the generation part of the
-    /// source, not adding a reload here. Until then the rotation procedure is a
-    /// roll: `deploy/mvp/bootstrap.sh` already rolls the runner Deployment after
-    /// it publishes replacement credential material.
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
-        if !path.exists() {
-            tracing::warn!(
-                path = %path.display(),
-                "credentials file not found — the vault is empty (every get is unavailable)"
-            );
-            return Ok(Self::empty());
-        }
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("read credentials file {}", path.display()))?;
-        Self::from_json(&text)
     }
 
     /// Resolve a `(project, name)` secret for the native effect adapter.
@@ -229,30 +248,22 @@ mod tests {
         }
     }
 
-    /// Material is a PROCESS-LIFETIME snapshot: rotating the mount under the
-    /// same handle is not observed. A later reload would resolve material no
-    /// pinned `credential_generation` names, so it has to fail here rather than
-    /// land as a silent behaviour change.
     #[test]
-    fn from_file_snapshots_material_for_the_process_lifetime() {
-        let path = std::env::temp_dir().join(format!(
-            "wamn-credentials-snapshot-{}.json",
-            std::process::id()
-        ));
-        std::fs::write(
-            &path,
-            r#"{"projects":{"proj-a":{"token":"generation-1"}},"orgs":{}}"#,
-        )
-        .expect("write the mounted credentials file");
-        let vault = WamnCredentials::from_file(&path).expect("snapshot the mount");
-        std::fs::write(
-            &path,
+    fn in_memory_material_preserves_the_selected_generation() {
+        let original = r#"{"projects":{"proj-a":{"token":"generation-1"}},"orgs":{}}"#;
+        let vault = WamnCredentials::from_json(original).unwrap();
+        let rotated = WamnCredentials::from_json(
             r#"{"projects":{"proj-a":{"token":"generation-2"}},"orgs":{}}"#,
         )
-        .expect("rotate the material under the same handle");
-        let resolved = vault.lookup("proj-a", "token");
-        std::fs::remove_file(&path).expect("remove the test mount");
-        assert_eq!(resolved.as_deref(), Some("generation-1"));
+        .unwrap();
+        assert_eq!(
+            vault.lookup("proj-a", "token").as_deref(),
+            Some("generation-1")
+        );
+        assert_eq!(
+            rotated.lookup("proj-a", "token").as_deref(),
+            Some("generation-2")
+        );
     }
 }
 
@@ -295,14 +306,105 @@ mod org_tests {
         ] {
             assert!(WamnCredentials::from_json(text).is_err());
         }
-        let path =
-            std::env::temp_dir().join(format!("absent-org-credentials-{}", std::process::id()));
-        assert!(!path.exists());
         assert!(
-            WamnCredentials::from_file(&path)
-                .unwrap()
+            WamnCredentials::empty()
                 .lookup_connection("p", "org:acme:erp")
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod database_tests {
+    use super::*;
+    use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops, auth_bucket, identity_key};
+    use wamn_platform_identity::connections::{
+        ConnectionWrite, import_credentials, rotate, write_connection,
+    };
+
+    #[tokio::test]
+    async fn live_import_rotation_and_principal_drops_use_the_store() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_control_provision::test_database::system();
+        let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+            .await
+            .unwrap();
+        tokio::spawn(async move {
+            driver.await.unwrap();
+        });
+        client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','project')").await.unwrap();
+        let tx = client.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        let mut drops = AuthDrops::default();
+        let id = write_connection(&tx, "acme", &ConnectionWrite {
+            id: None, integration: "http".into(), external_system_id: None, name: "erp".into(), transport: "http".into(), exchange: "request".into(),
+            parameters: serde_json::json!({"primary-authority":"https://example.invalid","tls-verification":"verify-authority"}), status: "active".into(),
+        }, &mut drops).await.unwrap();
+        let principal: String = tx.query_one("SELECT service_principal_id::text FROM registry.connection WHERE id=$1::text::uuid", &[&id]).await.unwrap().get(0);
+        import_credentials(&tx, "acme", r#"{"orgs":{"acme":{"erp":"first"}},"projects":{"project":{"legacy":"project-secret"}}}"#).await.unwrap();
+        rotate(&tx, "acme", &id, "second").await.unwrap();
+        tx.commit().await.unwrap();
+        let (_server, nats) = crate::auth_cache::test_util::nats().await;
+        let bucket = auth_bucket(&nats).await.unwrap();
+        let key = identity_key(&principal);
+        bucket.put(&key, "cached".into()).await.unwrap();
+        AuthChanges::new(nats).publish(drops).await;
+        assert!(bucket.get(&key).await.unwrap().is_none());
+        client.batch_execute("RESET ROLE").await.unwrap();
+        client
+            .batch_execute(&wamn_control_provision::sql::grant_connection_reader_surface_sql())
+            .await
+            .unwrap();
+        client
+            .batch_execute("SET ROLE wamn_conn_reader")
+            .await
+            .unwrap();
+        let vault = WamnCredentials::from_database(std::sync::Arc::new(client), "acme");
+        assert_eq!(
+            vault
+                .read_connection("project", "org:acme:erp@2")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            vault
+                .read_connection("project", "org:acme:erp@3")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("second")
+        );
+        assert_eq!(
+            vault
+                .read_connection("project", "org:acme:erp")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            vault.read("project", "legacy").await.unwrap().as_deref(),
+            Some("project-secret")
+        );
+        assert!(
+            vault
+                .read_connection("project", "org:other:erp@2")
+                .await
+                .is_err()
+        );
+        assert!(
+            vault
+                .read_connection("project", "org:acme:missing@2")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(vault.read("other", "legacy").await.unwrap().is_none());
     }
 }

@@ -332,7 +332,9 @@ impl WamnBlobstore {
             } => {
                 let secret = self
                     .vault
-                    .lookup_connection(&self.project, credential_handle)
+                    .read_connection(&self.project, credential_handle)
+                    .await
+                    .map_err(|_| BindingError::NoCredential)?
                     .ok_or_else(|| {
                         tracing::warn!(
                             store_alias,

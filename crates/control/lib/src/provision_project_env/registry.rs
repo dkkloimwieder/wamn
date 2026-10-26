@@ -183,6 +183,7 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
 /// Returns the environment's STORED instance suffix, which is `minted` only on a
 /// first provision — see [`do_record_project_env`]. The tenant derives from
 /// the coordinate (`project_env_tenant`).
+#[expect(clippy::too_many_arguments)]
 pub(super) async fn record_project_env(
     system_url: &str,
     triple: &Triple,
@@ -191,6 +192,7 @@ pub(super) async fn record_project_env(
     secret_namespace: Option<&str>,
     minted: &str,
     disposable: Option<bool>,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
 ) -> anyhow::Result<String> {
     let (mut client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -210,6 +212,7 @@ pub(super) async fn record_project_env(
         secret_namespace,
         minted,
         disposable,
+        changes,
     )
     .await;
     drop(client);
@@ -227,6 +230,7 @@ pub(super) async fn do_record_project_env(
     secret_namespace: Option<&str>,
     minted: &str,
     disposable: Option<bool>,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
 ) -> anyhow::Result<String> {
     client
         .batch_execute("SET ROLE wamn_system")
@@ -268,10 +272,21 @@ pub(super) async fn do_record_project_env(
     )
     .await
     .context("give the environment the rows of the current administrators")?;
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    for row in transaction
+        .query(
+            "SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2",
+            &[&triple.org, &triple.project],
+        )
+        .await?
+    {
+        drops.identity(row.get(0));
+    }
     transaction
         .commit()
         .await
         .context("commit the administrator rows")?;
+    changes.publish(drops).await;
     // Read-or-mint: the upsert RETURNS the STORED suffix, which is the freshly
     // minted one on a first provision and the EXISTING one when this triple was
     // already provisioned — the upsert deliberately never refreshes it, because

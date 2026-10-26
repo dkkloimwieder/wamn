@@ -186,18 +186,24 @@ fn print_membership(state: &str, args: &ProjectEnvMembershipArgs, principal_id: 
 /// Invite one user to an org and print what it did. Identity's reply carries
 /// no token, because identity mails the invitation secret.
 pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
-    let outcome = run_invite(&InviteRequest {
-        email: args.email,
-        display_name: args.display_name,
-        org: args.org.clone(),
-        grants: MemberGrants {
-            org_admin: args.org_admin,
-            project_admins: args.project_admins,
-            memberships: args.memberships,
+    let outcome = run_invite(
+        &InviteRequest {
+            email: args.email,
+            display_name: args.display_name,
+            org: args.org.clone(),
+            grants: MemberGrants {
+                org_admin: args.org_admin,
+                project_admins: args.project_admins,
+                memberships: args.memberships,
+            },
+            system_database_url: args.system_database_url,
+            identity: args.pat_issuer.into(),
         },
-        system_database_url: args.system_database_url,
-        identity: args.pat_issuer.into(),
-    })
+        &wamn_platform_identity::auth_changes::AuthChanges::connect(
+            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        )
+        .await?,
+    )
     .await?;
     match outcome.invitation {
         Some(reply) => println!(

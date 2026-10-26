@@ -386,7 +386,6 @@ impl Run {
             for resource in [
                 format!("deployment/{}", http_connection::SERVICE),
                 format!("service/{}", http_connection::SERVICE),
-                format!("secret/{}", http_connection::SECRET),
             ] {
                 let _ = self
                     .run(
@@ -927,7 +926,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         [manifest_h, manifest_http],
     )
     .await?;
-    http_connection::deploy(run, repository).await?;
+    http_connection::deploy(run, repository, &system_url).await?;
 
     wash_runtime::oci::set_extra_ca_certificates(&[work.join("ca.crt")])?;
     let http_digest = platform_images::copy_role(
@@ -1047,20 +1046,15 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
                 {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
                 {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{local}/wamn/components")},
-                {"name": "WAMN_CREDENTIALS_FILE", "value": "/etc/wamn/credentials/credentials.json"},
                 {"name": "WAMN_ALLOWED_HOSTS", "value": http_connection::ORIGIN},
             ],
             "ociCaPaths": ["/apply-registry/ca.crt"],
             "volumes": [
                 {"name": "apply-registry", "secret": {"secretName": "apply-registry"}},
-                {"name": "connection-credentials", "secret": {
-                    "secretName": http_connection::SECRET,
-                    "items": [{"key": "credentials.json", "path": "credentials.json"}]
-                }},
+
             ],
             "volumeMounts": [
                 {"name": "apply-registry", "mountPath": "/apply-registry", "readOnly": true},
-                {"name": "connection-credentials", "mountPath": "/etc/wamn/credentials", "readOnly": true},
             ],
         }))?,
     )?;

@@ -112,6 +112,18 @@ pub struct ProvisionedOrg {
 
 /// Stamp one org from its template, record it, and render the clusters it owns.
 pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<ProvisionedOrg> {
+    provision_org_with_changes(
+        request,
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await
+}
+
+/// Provision an org and invalidate the administrator identity after commit.
+pub async fn provision_org_with_changes(
+    request: ProvisionOrgRequest,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+) -> anyhow::Result<ProvisionedOrg> {
     // The template stamps the placement + the org's env-policy set in one step.
     let template = request.template;
     let (org, stamped) = template.stamp(&request.org, &request.pool);
@@ -146,7 +158,7 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
     // absent), missing template envs added.
     let (policies, stamped_policies) = match &client {
         Some((c, _, admin)) => {
-            record_org(c, &org, &stamped, admin).await?;
+            record_org(c, &org, &stamped, admin, changes).await?;
             (read_env_policies(c, &org.id).await?, Some(stamped.len()))
         }
         None => (template.policies.clone(), None),
@@ -203,6 +215,7 @@ async fn record_org(
     org: &Org,
     stamped: &[OrgEnvPolicy],
     admin: &str,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
 ) -> anyhow::Result<()> {
     client
         .batch_execute("SET ROLE wamn_system")
@@ -215,7 +228,12 @@ async fn record_org(
     }
     .await;
     match result {
-        Ok(()) => client.batch_execute("COMMIT").await.context("COMMIT")?,
+        Ok(admin) => {
+            client.batch_execute("COMMIT").await.context("COMMIT")?;
+            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+            drops.identity(admin.as_str());
+            changes.publish(drops).await;
+        }
         Err(e) => {
             let _ = client.batch_execute("ROLLBACK").await;
             return Err(e);
@@ -288,7 +306,7 @@ async fn record_admin_rows(
     client: &tokio_postgres::Client,
     org: &str,
     email: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PrincipalId> {
     client
         .batch_execute(&bind_platform_principal_sql(
             PlatformComponent::Provisioning,
@@ -327,7 +345,7 @@ async fn record_admin_rows(
     grant_org_admin(client, &admin, org)
         .await
         .context("write the admin's org-admin row")?;
-    Ok(())
+    Ok(admin)
 }
 
 fn fmt_issues(issues: &[wamn_control_registry::Issue]) -> String {

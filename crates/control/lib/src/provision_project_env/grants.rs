@@ -49,6 +49,7 @@ pub(super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrant
         WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
         WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
+        WorkloadRoleFamily::ConnectionReader => Some(StableGrantSet::ConnectionReader),
         WorkloadRoleFamily::SessionRoleReader => Some(StableGrantSet::SessionRoleReader),
         WorkloadRoleFamily::Retention => Some(StableGrantSet::Retention),
         // `wamn-0h0g.22.37`: both families acquired authority, so both acquire
@@ -75,6 +76,7 @@ pub(super) enum StableGrantSet {
     ManagementAdmitter,
     RegistryReader,
     IdentityReader,
+    ConnectionReader,
     SessionRoleReader,
     Retention,
     ExecutorPlatform,
@@ -111,6 +113,15 @@ impl StableGrantSet {
                 SystemReader::Identity,
                 "identity",
                 &sql::IDENTITY_READER_RELATIONS,
+                role,
+                database,
+                required_database,
+                grants,
+            ),
+            Self::ConnectionReader => verify_system_reader_grants(
+                SystemReader::Connection,
+                "registry",
+                &sql::CONNECTION_READER_RELATIONS,
                 role,
                 database,
                 required_database,
@@ -814,6 +825,7 @@ pub(super) fn verify_administration_grants(
         tuple("schema", "wamn_history", "wamn_history", "USAGE"),
         tuple("routine", "wamn_history", "row_image", "EXECUTE"),
         tuple("relation", "catalog", "releases", "SELECT"),
+        tuple("routine", "catalog", "connection_is_referenced", "EXECUTE"),
     ]);
     for relation in sql::ADMINISTRATION_RELATIONS {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
@@ -932,10 +944,17 @@ pub(super) fn verify_system_reader_grants(
         "USAGE".to_string(),
     )]);
     for relation in relations {
+        let (schema, relation) = relation.split_once('.').unwrap_or((schema, relation));
+        expected.insert((
+            "schema".to_string(),
+            schema.to_string(),
+            schema.to_string(),
+            "USAGE".to_string(),
+        ));
         expected.insert((
             "relation".to_string(),
             schema.to_string(),
-            (*relation).to_string(),
+            relation.to_string(),
             "SELECT".to_string(),
         ));
     }
@@ -1003,6 +1022,18 @@ pub(super) fn verify_control_grants(
                 privilege.to_string(),
             ));
         }
+    }
+    for signature in sql::CONTROL_CONNECTION_FUNCTIONS {
+        expected.insert((
+            "routine".to_owned(),
+            "registry".to_owned(),
+            signature
+                .split('(')
+                .next()
+                .expect("function signature")
+                .to_owned(),
+            "EXECUTE".to_owned(),
+        ));
     }
     anyhow::ensure!(
         actual == expected,

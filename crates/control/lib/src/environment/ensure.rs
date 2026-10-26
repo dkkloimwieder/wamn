@@ -216,10 +216,22 @@ pub async fn ensure(
     )
     .await
     .context("give the environment the rows of the current administrators")?;
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    for row in transaction
+        .query(
+            "SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2",
+            &[&document.org, &document.project],
+        )
+        .await?
+    {
+        drops.identity(row.get(0));
+    }
     transaction
         .commit()
         .await
-        .context("commit the administrator rows")
+        .context("commit the administrator rows")?;
+    platform.auth_changes().await?.publish(drops).await;
+    Ok(())
 }
 
 /// Ensure capture of every model in the environment's installed applications.

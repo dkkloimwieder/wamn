@@ -657,7 +657,7 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
     assert_eq!(seeds().await, expected);
     let target: String=admin.query_one("SELECT name || ':' || type || ':' || status FROM registry.target WHERE last_seen_at IS NULL",&[]).await.unwrap().get(0);
     assert_eq!(target, "cloud:cloud:active");
-    admin.batch_execute("DROP TABLE registry.integrations,registry.target; DELETE FROM registry.schema_migrations WHERE ordinal=29").await.unwrap();
+    admin.batch_execute("DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); DROP TABLE registry.integrations,registry.target; DELETE FROM registry.schema_migrations WHERE ordinal>=29").await.unwrap();
     let mut owner_url = url::Url::parse(database.url()).unwrap();
     owner_url.set_username("wamn_system").unwrap();
     owner_url.set_password(Some("c31-system-fixture")).unwrap();
@@ -745,5 +745,30 @@ async fn administration_migration_refuses_duplicate_keys_without_losing_rows() {
             .unwrap()
             .get::<_, i64>(0),
         2
+    );
+}
+
+/// Effective PostgreSQL privilege checks include inherited roles and PUBLIC.
+#[tokio::test]
+async fn credentials_are_inaccessible_to_application_roles() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let client = connect(database.url()).await;
+    client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$").await.unwrap();
+    let exposed: Vec<String> = client.query(
+        "SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (c.relname LIKE '%credential%' OR c.relname IN ('pats','password_tokens','password_logins')) AND c.relkind IN ('r','p','v','m','f') AND (has_table_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) ORDER BY 1",
+        &[],
+    ).await.unwrap().iter().map(|row| row.get(0)).collect();
+    assert!(
+        exposed.is_empty(),
+        "credential relations exposed to wamn_app: {exposed:?}"
+    );
+    let routines: Vec<String> = client.query(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (p.prosrc ~* '(credential|password|secret|token|identity[.]pats)' OR p.prorettype IN (SELECT reltype FROM pg_class WHERE relname IN ('credential','password_credentials','password_tokens','password_logins','pats'))) AND has_function_privilege('wamn_app',p.oid,'EXECUTE') ORDER BY 1",
+        &[],
+    ).await.unwrap().iter().map(|row| row.get(0)).collect();
+    assert!(
+        routines.is_empty(),
+        "credential routines exposed through inherited or PUBLIC access: {routines:?}"
     );
 }

@@ -320,7 +320,7 @@ async fn handle(
             let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
                 return invalid();
             };
-            create_user(&mut database.client, &request).await
+            create_user(&mut database.client, &request, &inner.changes).await
         }
         "/invitations" => {
             let Ok(request) = serde_json::from_slice::<InvitationRequest>(&bytes) else {
@@ -1006,7 +1006,11 @@ fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
 }
 /// Create or reuse the user of one email, as `wamn:provisioning`, and reply
 /// with the principal and whether it has a password credential.
-async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Full<Bytes>> {
+async fn create_user(
+    client: &mut Client,
+    request: &UserRequest,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+) -> Response<Full<Bytes>> {
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
     let Ok(tx) = client.transaction().await else {
         return unavailable();
@@ -1033,6 +1037,9 @@ async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Ful
     if tx.commit().await.is_err() {
         return unavailable();
     }
+    let mut drops = AuthDrops::default();
+    drops.identity(account.principal_id.as_str());
+    changes.publish(drops).await;
     let body = serde_json::json!({
         "principal_id": account.principal_id.as_str(),
         "enrolled": account.enrolled,

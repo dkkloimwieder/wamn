@@ -80,9 +80,12 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
     let url = locked_database::database(wamn_test_postgres::database);
     let observer = system_database(&url).await;
 
-    let principal = create_user_principal(request(&url, "A.Person@Example.Test", EMAIL))
-        .await
-        .expect("create the user principal");
+    let principal = create_user_principal(
+        request(&url, "A.Person@Example.Test", EMAIL),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await
+    .expect("create the user principal");
 
     let id = principal.id().as_str().to_owned();
     let stored: String = observer
@@ -96,11 +99,14 @@ async fn create_user_stores_the_email_folded_to_lower_case() {
     assert_eq!(stored, EMAIL);
 
     // The address the caller typed in mixed case names the same user.
-    let mixed = create_user_principal(request(
-        &url,
-        "second.person@example.test",
-        "Second.Person@Example.Test",
-    ))
+    let mixed = create_user_principal(
+        request(
+            &url,
+            "second.person@example.test",
+            "Second.Person@Example.Test",
+        ),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
     .await
     .expect("create a second user principal from a mixed-case address");
     let mixed_id = mixed.id().as_str().to_owned();
@@ -120,16 +126,18 @@ async fn one_email_address_names_one_principal() {
     let url = locked_database::database(wamn_test_postgres::database);
     let mut observer = system_database(&url).await;
 
-    create_user_principal(request(&url, "first.person@example.test", EMAIL))
-        .await
-        .expect("create the first user principal");
+    create_user_principal(
+        request(&url, "first.person@example.test", EMAIL),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await
+    .expect("create the first user principal");
 
     // A different subject and a different spelling of the same address.
-    let error = create_user_principal(request(
-        &url,
-        "second.person@example.test",
-        "A.PERSON@Example.Test",
-    ))
+    let error = create_user_principal(
+        request(&url, "second.person@example.test", "A.PERSON@Example.Test"),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
     .await
     .expect_err("the second principal with that address is refused");
 

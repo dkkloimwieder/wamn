@@ -286,6 +286,15 @@ pub async fn prepare_project(
             false,
         )
         .await?,
+        connection_reader: prepare_family(
+            inputs,
+            route,
+            WorkloadRoleFamily::ConnectionReader,
+            &inputs.host_secret_directory.join("connection-reader.json"),
+            &inputs.host_secret_namespace,
+            false,
+        )
+        .await?,
         control_author: prepare_family(
             inputs,
             route,

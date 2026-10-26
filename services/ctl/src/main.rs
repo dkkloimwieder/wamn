@@ -90,6 +90,12 @@ enum Command {
     BindConnection(component_verbs::BindConnectionArgs),
     /// Manage org connection declarations.
     Connection(component_verbs::ConnectionArgs),
+    /// Write an org external system from a JSON request.
+    ExternalSystem(component_verbs::ConfigurationArgs),
+    /// Enable an org connection in a project from a JSON request.
+    ProjectConnection(component_verbs::ConfigurationArgs),
+    /// Allow an integration at an org, project or environment scope.
+    IntegrationAllow(component_verbs::ConfigurationArgs),
     /// Publish one immutable release from exact package-owned facts and push
     /// its manifest to the release repository.
     ///
@@ -157,6 +163,15 @@ async fn main() -> anyhow::Result<()> {
         Command::QualifyUpgrade(args) => package_verbs::qualify_upgrade(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::Connection(args) => component_verbs::connection(args).await,
+        Command::ExternalSystem(args) => {
+            component_verbs::configuration(args, "external_system.write").await
+        }
+        Command::ProjectConnection(args) => {
+            component_verbs::configuration(args, "project_connection.enable").await
+        }
+        Command::IntegrationAllow(args) => {
+            component_verbs::configuration(args, "integration_allow.allow").await
+        }
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await
         }
@@ -201,7 +216,10 @@ mod tests {
         let Command::Connection(connection) = parsed.command else {
             panic!("connection verb")
         };
-        let wamn_ctl::component_verbs::ConnectionCommand::Declare(declare) = connection.command;
+        let wamn_ctl::component_verbs::ConnectionCommand::Declare(declare) = connection.command
+        else {
+            panic!("declare verb");
+        };
         assert_eq!(declare.org, "acme");
         assert_eq!(declare.name, "erp");
         assert_eq!(

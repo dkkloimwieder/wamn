@@ -122,6 +122,53 @@ pub struct ConnectionArgs {
 pub enum ConnectionCommand {
     /// Declare a non-secret HTTP connection shared by an org.
     Declare(DeclareConnectionArgs),
+    /// Create or update a connection from non-secret JSON.
+    Write(ConfigurationArgs),
+    /// Load the legacy credential maps once.
+    ImportCredentials(ConfigurationArgs),
+    /// Append a credential generation from a private file.
+    Rotate(RotateConnectionArgs),
+}
+
+/// A control configuration request stored in a JSON file.
+#[derive(Debug, Args)]
+pub struct ConfigurationArgs {
+    #[arg(long, env = "WAMN_CONTROL_DATABASE_URL")]
+    pub system_database_url: String,
+    #[arg(long)]
+    pub org: String,
+    #[arg(long)]
+    pub file: PathBuf,
+    /// Directory of scoped administration URLs for projection writes.
+    #[arg(long)]
+    pub administration: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RotateConnectionArgs {
+    #[command(flatten)]
+    pub input: ConfigurationArgs,
+    #[arg(long)]
+    pub connection_id: String,
+}
+
+pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::Result<()> {
+    let text = std::fs::read_to_string(&args.file).context("read configuration file")?;
+    let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
+        &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+    )
+    .await?;
+    let answer = wamn_control::connection_configuration::write(
+        &args.system_database_url,
+        &args.org,
+        operation,
+        &text,
+        &changes,
+        args.administration.as_deref(),
+    )
+    .await?;
+    println!("{answer}");
+    Ok(())
 }
 
 #[derive(Debug, Args)]
@@ -140,6 +187,32 @@ pub struct DeclareConnectionArgs {
 
 pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
     match args.command {
+        ConnectionCommand::Write(args) => configuration(args, "connection.write").await,
+        ConnectionCommand::ImportCredentials(args) => {
+            let text =
+                std::fs::read_to_string(&args.file).context("read credential import file")?;
+            wamn_control::connection_configuration::import(
+                &args.system_database_url,
+                &args.org,
+                &text,
+            )
+            .await?;
+            println!("credentials imported");
+            Ok(())
+        }
+        ConnectionCommand::Rotate(args) => {
+            let text = std::fs::read_to_string(&args.input.file)
+                .context("read credential rotation file")?;
+            let generation = wamn_control::connection_configuration::rotate(
+                &args.input.system_database_url,
+                &args.input.org,
+                &args.connection_id,
+                &text,
+            )
+            .await?;
+            println!("generation {generation}");
+            Ok(())
+        }
         ConnectionCommand::Declare(args) => {
             let definition =
                 serde_json::from_slice(&std::fs::read(&args.definition).with_context(|| {
@@ -153,6 +226,10 @@ pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
                     requirement_type: args.requirement_type.requirement_type(),
                     definition,
                 },
+                &wamn_platform_identity::auth_changes::AuthChanges::connect(
+                    &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+                )
+                .await?,
             )
             .await?;
             println!(

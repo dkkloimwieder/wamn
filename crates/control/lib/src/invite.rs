@@ -9,6 +9,7 @@
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 use wamn_control_provision::validate_project_env;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::{
     PrincipalId,
     org::{MemberGrants, invite_member},
@@ -45,14 +46,17 @@ pub struct InviteOutcome {
 }
 
 /// Run the three steps of one invitation.
-pub async fn invite(request: &InviteRequest) -> anyhow::Result<InviteOutcome> {
+pub async fn invite(
+    request: &InviteRequest,
+    changes: &AuthChanges,
+) -> anyhow::Result<InviteOutcome> {
     for (project, env) in &request.grants.memberships {
         validate_project_env(&request.org, project, env)
             .with_context(|| format!("invalid --membership {project}/{env}"))?;
     }
     let user =
         pat_client::create_user(&request.identity, &request.email, &request.display_name).await?;
-    write_grants(request, &user.principal_id).await?;
+    write_grants(request, &user.principal_id, changes).await?;
     let invitation = if user.enrolled {
         None
     } else {
@@ -72,7 +76,11 @@ pub async fn invite(request: &InviteRequest) -> anyhow::Result<InviteOutcome> {
 }
 
 /// Write the org membership and the grants in one transaction.
-async fn write_grants(request: &InviteRequest, principal_id: &PrincipalId) -> anyhow::Result<()> {
+async fn write_grants(
+    request: &InviteRequest,
+    principal_id: &PrincipalId,
+    changes: &AuthChanges,
+) -> anyhow::Result<()> {
     let (mut client, connection) = tokio_postgres::connect(&request.system_database_url, NoTls)
         .await
         .context("connect to the system database for the invitation")?;
@@ -86,10 +94,14 @@ async fn write_grants(request: &InviteRequest, principal_id: &PrincipalId) -> an
         invite_member(&transaction, principal_id, &request.org, &request.grants)
             .await
             .context("write the org membership and the grants")?;
+        let mut drops = AuthDrops::default();
+        drops.identity(principal_id.as_str());
         transaction
             .commit()
             .await
-            .context("commit the invitation grants")
+            .context("commit the invitation grants")?;
+        changes.publish(drops).await;
+        Ok(())
     }
     .await;
     drop(client);

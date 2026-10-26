@@ -133,6 +133,9 @@ struct DevConfigDocument {
     system_database_url: String,
     identity_database_url: String,
     #[serde(default)]
+    #[schemars(with = "String")]
+    connection_database_url: Option<String>,
+    #[serde(default)]
     session_identity: Option<SessionIdentity>,
     guest_database_url: String,
     executor_platform_database_url: String,
@@ -164,8 +167,7 @@ struct DevConfigDocument {
     /// The materializer's events binding in the environment's private root,
     /// as the cluster mounts its Secret.
     materializer_nats_binding_file: PathBuf,
-    /// The host credentials file in the environment's private root, as the
-    /// cluster mounts its Secret. Absent means the host has no credentials.
+    /// The legacy credentials file used by the one-time import.
     #[serde(default)]
     #[schemars(with = "String")]
     credentials_file: Option<PathBuf>,
@@ -564,6 +566,7 @@ pub struct DevConfig {
     target_database_acl_file: PathBuf,
     system_database_url: Box<str>,
     identity_database_url: Box<str>,
+    connection_database_url: Option<String>,
     session_identity: Option<SessionIdentity>,
     guest_database_url: Box<str>,
     executor_platform_database_url: Box<str>,
@@ -714,6 +717,11 @@ impl DevConfig {
         &self.system_database_url
     }
 
+    /// Connection-reader PostgreSQL URL passed to the local serving host.
+    pub fn connection_database_url(&self) -> Option<&str> {
+        self.connection_database_url.as_deref()
+    }
+
     /// Identity-reader PostgreSQL URL passed to the local serving host.
     pub fn identity_database_url(&self) -> &str {
         &self.identity_database_url
@@ -830,7 +838,7 @@ impl DevConfig {
         &self.materializer_nats_binding_file
     }
 
-    /// The host credentials file, passed to the host as `WAMN_CREDENTIALS_FILE`.
+    /// The legacy credentials file used only for one-time import.
     pub fn credentials_file(&self) -> Option<&Path> {
         self.credentials_file.as_deref()
     }
@@ -887,6 +895,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         target_database_acl_file,
         system_database_url,
         identity_database_url,
+        connection_database_url,
         session_identity,
         guest_database_url,
         executor_platform_database_url,
@@ -1163,6 +1172,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         target_database_acl_file,
         system_database_url,
         identity_database_url,
+        connection_database_url,
         session_identity,
         guest_database_url,
         executor_platform_database_url,

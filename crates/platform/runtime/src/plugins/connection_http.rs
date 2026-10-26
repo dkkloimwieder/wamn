@@ -508,7 +508,9 @@ impl ConnectionHttp {
     ) -> Result<Response, ConnectionError> {
         let secret = self
             .vault
-            .lookup_connection(&self.project, handle)
+            .read_connection(&self.project, handle)
+            .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?
             .ok_or(ConnectionError::CredentialUnavailable)?;
         let object = credential_object(&secret)?;
         let Some(oauth2) = object.get("oauth2") else {

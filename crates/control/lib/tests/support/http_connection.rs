@@ -14,7 +14,6 @@ use wamn_catalog::{
 };
 
 pub const SERVICE: &str = "http-fixture";
-pub const SECRET: &str = "apply-http-credentials";
 pub const ORIGIN: &str = "http://http-fixture:8080";
 pub const INBOUND_HANDLE: &str = "inbound-signature";
 pub const INBOUND_SECRET: &str = "fixture-inbound-key";
@@ -24,7 +23,7 @@ pub const SCHEDULE: &str = "http-minute";
 pub const OAUTH2_HANDLE: &str = "oauth2-upstream";
 pub const OAUTH1_HANDLE: &str = "oauth1-upstream";
 
-pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
+pub async fn deploy(run: &Run, repository: &Path, system_url: &str) -> anyhow::Result<()> {
     let consumer_key = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_KEY")?;
     let consumer_secret = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_SECRET")?;
     let token = std::env::var("WAMN_HTTP_FIXTURE_TOKEN")?;
@@ -60,7 +59,7 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
             "apiVersion": "v1", "kind": "List", "items": [
                 {
                     "apiVersion": "v1", "kind": "Secret",
-                    "metadata": {"name": SECRET, "namespace": NAMESPACE},
+                    "metadata": {"name": "import-source", "namespace": NAMESPACE},
                     "stringData": {"credentials.json": json!({"orgs": {ORG: {"netsuite": oauth1}}, "projects": {
                         PROJECT: {
                             "upstream": json!({
@@ -112,6 +111,26 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
             ]
         }))?,
     )?;
+    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&file)?)?;
+    let secret = manifest["items"].as_array_mut().unwrap().remove(0);
+    wamn_control::org_connection::declare(
+        &wamn_control::org_connection::DeclareConnectionRequest {
+            system_database_url: system_url.to_owned(),
+            org: ORG.into(),
+            name: "netsuite".into(),
+            requirement_type: wamn_catalog::RequirementType::Http,
+            definition: json!({"primary-authority":ORIGIN, "tls-verification":"disabled"}),
+        },
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await?;
+    wamn_control::connection_configuration::import(
+        system_url,
+        ORG,
+        secret["stringData"]["credentials.json"].as_str().unwrap(),
+    )
+    .await?;
+    std::fs::write(&file, serde_json::to_vec(&manifest)?)?;
     run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
         .await?;
     run.run(

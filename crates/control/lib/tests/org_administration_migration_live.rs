@@ -46,6 +46,8 @@ CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership() RETURNS
 CREATE FUNCTION catalog.reject_package_migration_after_release_membership() RETURNS trigger
   LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;
 ";
+const CONNECTION_AUTHORITY: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0030_org_connection_authority.sql");
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 
 /// The relations whose principal type 0007 changes.
@@ -242,7 +244,7 @@ async fn the_migration_creates_the_org_tables_and_grants_the_provisioned_surface
     // inserts a principal.
     client
         .batch_execute(&format!(
-            "{control} {issuer} \
+            "{control} {issuer} DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); \
              DROP TABLE identity.org_roles, identity.org_memberships; \
              ALTER TABLE registry.project_envs DROP COLUMN status; \
              CREATE TABLE provisioning.sagas (saga_id text PRIMARY KEY, type text NOT NULL, \
@@ -343,7 +345,7 @@ async fn the_migration_creates_the_org_tables_and_grants_the_provisioned_surface
              BEGIN; SET LOCAL ROLE wamn_system; {PACKAGE_LIST_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {COPY_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {REMOVE_SAGAS_MIGRATION} COMMIT; \
-             BEGIN; SET LOCAL ROLE wamn_system; {REMOVE_PACKAGE_COPIES_MIGRATION} COMMIT;"
+             BEGIN; SET LOCAL ROLE wamn_system; {REMOVE_PACKAGE_COPIES_MIGRATION} {CONNECTION_AUTHORITY} COMMIT;"
         ))
         .await
         .expect("apply system/0008, 0010, 0012 to 0016 and the two removals as wamn_system");

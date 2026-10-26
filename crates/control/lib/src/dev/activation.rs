@@ -1087,11 +1087,8 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             ),
         ));
     }
-    if let Some(path) = request.config.credentials_file() {
-        env.push((
-            "WAMN_CREDENTIALS_FILE".to_owned(),
-            path.display().to_string(),
-        ));
+    if let Some(url) = request.config.connection_database_url() {
+        env.push(("WAMN_CONNECTION_STORE_URL".to_owned(), url.to_owned()));
     }
     if let Some(identity) = request.config.session_identity() {
         env.extend([
@@ -2264,7 +2261,7 @@ mod tests {
             "WAMN_EVT_NATS_USERNAME",     // Local events use disposable broker credentials.
             "WAMN_EVT_NATS_PASSWORD_FILE", // Local event credentials use a private file.
             "WAMN_MAT_NATS_BINDING_FILE", // Local materializer credentials use a private file.
-            "WAMN_CREDENTIALS_FILE",      // Local application credentials use a private file.
+            "WAMN_CONNECTION_STORE_URL",  // Local credentials use the database reader.
             "WAMN_SESSION_ISSUER",        // Local identity uses a disposable issuer.
             "WAMN_SESSION_JWKS_CA",       // Local identity uses its private TLS CA.
             "WAMN_SESSION_INSTANCE_SUFFIX", // Local identity uses its provisioned instance.
@@ -2310,10 +2307,9 @@ mod tests {
         assert!(parse_config(&serde_json::to_vec(&document).unwrap()).is_err());
     }
 
-    /// The host reads its credentials from the file `dev.json` names, as the
-    /// cluster host reads its mounted Secret (wamn-hw3n).
+    /// The host reads credentials through the reader that `dev.json` names.
     #[test]
-    fn the_credentials_file_reaches_the_host() {
+    fn the_credential_reader_reaches_the_host() {
         let mut document = config_document();
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
         let release = release();
@@ -2333,6 +2329,7 @@ mod tests {
                 .iter()
                 .any(|(key, _)| key == "WAMN_CREDENTIALS_FILE")
         );
+        document["connection_database_url"] = "postgres://reader:password@localhost/system".into();
         document["credentials_file"] = "/tmp/owned-root/credentials.json".into();
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
         let request = DevActivationRequest {
@@ -2343,8 +2340,8 @@ mod tests {
         assert!(
             spec.env
                 .iter()
-                .any(|(key, value)| key == "WAMN_CREDENTIALS_FILE"
-                    && value == "/tmp/owned-root/credentials.json")
+                .any(|(key, value)| key == "WAMN_CONNECTION_STORE_URL"
+                    && value == "postgres://reader:password@localhost/system")
         );
         document["credentials_file"] = "credentials.json".into();
         assert!(parse_config(&serde_json::to_vec(&document).unwrap()).is_err());

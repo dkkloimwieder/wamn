@@ -257,6 +257,85 @@ impl ControlRoutes<'_> {
             return Err(denied(attachment));
         }
         match attachment.route.handler {
+            HostHandler::ExternalSystemWrite
+            | HostHandler::ConnectionWrite
+            | HostHandler::ProjectConnectionEnable
+            | HostHandler::IntegrationAllow => {
+                let mut writer = self.writer.lock().await;
+                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                let mut drops = AuthDrops::default();
+                let environments = org_environments(&transaction, self.org, None).await?;
+                let logins = self.logins(&environments)?;
+                let mut targets = Vec::new();
+                for ((project, env), url) in environments.iter().zip(logins) {
+                    let (client, connection) = tokio_postgres::connect(&url, NoTls).await?;
+                    let driver = tokio::spawn(connection);
+                    wamn_platform_identity::connections::check_applied_rename(
+                        &transaction,
+                        &client,
+                        self.org,
+                        attachment.route.operation,
+                        payload,
+                    )
+                    .await
+                    .map_err(|error| {
+                        if error.kind == "database_error" {
+                            Refusal::Failed(error.into())
+                        } else {
+                            Refusal::Declared {
+                                code: error.kind,
+                                detail: json!({"field":error.field}),
+                            }
+                        }
+                    })?;
+                    targets.push((project, env, client, driver));
+                }
+                let result = wamn_platform_identity::connections::write(
+                    &transaction,
+                    self.org,
+                    attachment.route.operation,
+                    payload,
+                    &mut drops,
+                )
+                .await
+                .map_err(|error| {
+                    if error.kind == "database_error" {
+                        Refusal::Failed(error.into())
+                    } else {
+                        Refusal::Declared {
+                            code: error.kind,
+                            detail: json!({"field": error.field}),
+                        }
+                    }
+                })?;
+                transaction.commit().await?;
+                self.changes.publish(drops).await;
+                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                let mut completed = Vec::new();
+                for (project, env, mut client, driver) in targets {
+                    let projected = async {
+                        let target = client.transaction().await?;
+                        target.execute("SELECT set_config('app.user_id', $1, true), set_config('app.operation', $2, true)", &[&caller.as_str(), &attachment.operation]).await?;
+                        let projected = wamn_platform_identity::connections::project(
+                            &transaction, &target, self.org, project, env,
+                        ).await?;
+                        target.commit().await?;
+                        Ok::<_, anyhow::Error>(projected)
+                    }.await;
+                    drop(client);
+                    let _ = driver.await;
+                    match projected {
+                        Ok(drops) => self.changes.publish(drops).await,
+                        Err(error) => {
+                            tracing::warn!(%error, project, env, "connection projection failed");
+                            return Err(incomplete(project, env, &completed));
+                        }
+                    }
+                    completed.push(format!("{project}/{env}"));
+                }
+                transaction.commit().await?;
+                Ok(result)
+            }
             HostHandler::UserList => {
                 let page = control_page(
                     payload,
@@ -290,7 +369,10 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 reactivate_org_membership(&transaction, &principal, self.org).await?;
+                let mut drops = AuthDrops::default();
+                drops.identity(principal.as_str());
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 Ok(json!({ "principal_id": principal.as_str(), "status": "active" }))
             }
             HostHandler::UserDeactivate => {
@@ -313,7 +395,10 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 grant_org_admin(&transaction, &principal, self.org).await?;
+                let mut drops = AuthDrops::default();
+                drops.identity(principal.as_str());
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 let environments = self.environments(None, ApplicationWrite::Admin).await?;
                 self.write_applications(attachment, caller, &principal, &environments)
                     .await?;
@@ -471,7 +556,10 @@ impl ControlRoutes<'_> {
                     &request.env,
                 )
                 .await?;
+                let mut drops = AuthDrops::default();
+                drops.identity(principal.as_str());
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 let environment = [(
                     (request.project.clone(), request.env.clone()),
                     ApplicationWrite::User,
@@ -525,7 +613,10 @@ impl ControlRoutes<'_> {
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
                 grant_project_admin(&transaction, &principal, self.org, &request.project).await?;
+                let mut drops = AuthDrops::default();
+                drops.identity(principal.as_str());
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 let environments = self
                     .environments(Some(&request.project), ApplicationWrite::Admin)
                     .await?;
@@ -609,7 +700,12 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 create_project(&transaction, self.org, &request.project).await?;
+                let mut drops = AuthDrops::default();
+                for row in transaction.query("SELECT principal_id::text FROM identity.project_roles WHERE org=$1 AND project=$2", &[&self.org, &request.project]).await? {
+                    drops.identity(row.get(0));
+                }
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 Ok(json!({ "project": request.project }))
             }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
@@ -661,7 +757,10 @@ impl ControlRoutes<'_> {
         let mut writer = self.writer.lock().await;
         let transaction = self.begin(&mut writer, attachment, caller).await?;
         invite_member(&transaction, &user.principal_id, self.org, &grants).await?;
+        let mut drops = AuthDrops::default();
+        drops.identity(user.principal_id.as_str());
         transaction.commit().await?;
+        self.changes.publish(drops).await;
         // The application rows of the grants, each environment once, with
         // `admin` where an administrative grant covers it.
         let mut environments: BTreeMap<(String, String), ApplicationWrite> = BTreeMap::new();

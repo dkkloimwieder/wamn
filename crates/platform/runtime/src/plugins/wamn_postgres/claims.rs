@@ -39,7 +39,7 @@ const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform
 /// of that role, in one read. No row means no user row. A role without
 /// permissions, such as `admin`, yields one row with a null permission, and a
 /// principal without roles yields one row with a null role.
-const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission \
+const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission, u.type = 'user' \
     FROM platform.\"user\" u LEFT JOIN platform.user_role r \
     ON r.user_id = u.id \
     LEFT JOIN platform.permission p \
@@ -69,6 +69,8 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permis
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HeldOperationGrants {
     pub admin: bool,
+    /// A service holds permissions but never selects a user's active role.
+    pub user: bool,
     pub references: BTreeSet<String>,
     /// The names of the held roles.
     pub roles: BTreeSet<String>,
@@ -95,6 +97,15 @@ impl HeldOperationGrants {
     /// single role of a caller that holds exactly one, and none for a caller
     /// that holds no role or more than one.
     pub fn active_role(&self) -> Option<Box<str>> {
+        if !self.user {
+            return None;
+        }
+        self.pat_role()
+    }
+
+    /// A PAT caller selects only a role held by its own active principal.
+    /// Service callers never inherit the role of a user session.
+    pub fn pat_role(&self) -> Option<Box<str>> {
         if self.admin {
             return Some(wamn_project_state::ADMIN_ROLE.into());
         }
@@ -115,6 +126,7 @@ fn principal_grants_from_rows(
     };
     for row in rows {
         grants.active = row.try_get(0)?;
+        grants.user = row.try_get(3)?;
         if let Some(role) = row.try_get::<_, Option<String>>(1)? {
             let permissions = grants.roles.entry(role).or_default();
             permissions.extend(row.try_get::<_, Option<String>>(2)?);
@@ -123,13 +135,49 @@ fn principal_grants_from_rows(
     Ok(grants)
 }
 
+/// A session presents authority that its principal does not currently hold.
+#[derive(Debug)]
+pub(crate) struct SessionGrantRefusal {
+    kind: &'static str,
+}
+
+impl std::fmt::Display for SessionGrantRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.kind)
+    }
+}
+
+impl std::error::Error for SessionGrantRefusal {}
+
 /// The grants an active principal holds, from all its roles or only from the
 /// `signed` roles it still holds.
+fn session_grants(
+    grants: &crate::auth_cache::PrincipalGrants,
+    roles: &[String],
+) -> anyhow::Result<HeldOperationGrants> {
+    if !grants.active || !grants.user {
+        return Err(SessionGrantRefusal {
+            kind: "session principal is not an active user",
+        }
+        .into());
+    }
+    if !roles.iter().all(|role| grants.roles.contains_key(role)) {
+        return Err(SessionGrantRefusal {
+            kind: "session principal does not hold a signed role",
+        }
+        .into());
+    }
+    Ok(held_grants(grants, Some(roles)))
+}
+
 fn held_grants(
     grants: &crate::auth_cache::PrincipalGrants,
     signed: Option<&[String]>,
 ) -> HeldOperationGrants {
-    let mut held = HeldOperationGrants::default();
+    let mut held = HeldOperationGrants {
+        user: grants.user,
+        ..HeldOperationGrants::default()
+    };
     if !grants.active {
         return held;
     }
@@ -2060,7 +2108,7 @@ impl WamnPostgres {
         principal: &wamn_platform_identity::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
         let grants = self.principal_grants(project, tenant, principal).await?;
-        Ok(held_grants(&grants, Some(roles)))
+        session_grants(&grants, roles)
     }
 
     /// The current WAL position used by weak ETags.

@@ -1521,3 +1521,275 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     std::fs::remove_dir_all(logins)?;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("connection_routes")?;
+    let admin = connect(database.url()).await?;
+    let control_url = install(&admin, database.url()).await?;
+    let (logins, billing, shop) = environments(&admin, database.url(), "connections").await?;
+    admin
+        .batch_execute(&format!(
+            "SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'",
+            PlatformComponent::Provisioning.principal_id()
+        ))
+        .await?;
+    let functions = admin.query("SELECT p.proname, p.prosecdef, p.proconfig, p.proowner = 'wamn_system'::regrole, has_function_privilege('wamn_app',p.oid,'EXECUTE'), has_function_privilege('wamn_control',p.oid,'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='registry' AND p.proname IN ('connection_org_exists','connection_integration_exists','connection_system_rows','connection_rows','connection_project_rows','connection_allow_rows','connection_principal_rows','configure_connection')", &[]).await?;
+    assert_eq!(functions.len(), 8);
+    for function in functions {
+        assert!(function.get::<_, bool>(1));
+        assert_eq!(
+            function.get::<_, Vec<String>>(2),
+            ["search_path=pg_catalog"]
+        );
+        assert!(function.get::<_, bool>(3));
+        assert!(!function.get::<_, bool>(4));
+        assert!(function.get::<_, bool>(5));
+    }
+    let reference = billing.query_one("SELECT p.prosecdef, p.proconfig, p.proowner = 'wamn_system'::regrole, has_function_privilege('wamn_app',p.oid,'EXECUTE'), has_function_privilege('wamn_administration',p.oid,'EXECUTE') FROM pg_proc p WHERE p.oid='catalog.connection_is_referenced(text)'::regprocedure", &[]).await?;
+    assert!(reference.get::<_, bool>(0));
+    assert_eq!(
+        reference.get::<_, Vec<String>>(1),
+        ["search_path=pg_catalog"]
+    );
+    assert!(reference.get::<_, bool>(2));
+    assert!(!reference.get::<_, bool>(3));
+    assert!(reference.get::<_, bool>(4));
+    let boss = create_or_reuse_user(&admin, "connection-admin@example.test", "Admin")
+        .await?
+        .principal_id;
+    invite_member(
+        &admin,
+        &boss,
+        ORG,
+        &MemberGrants {
+            org_admin: true,
+            ..MemberGrants::default()
+        },
+    )
+    .await?;
+    let (_nats_server, nats) = wamn_runtime::auth_cache::test_util::nats().await;
+    let bucket = wamn_platform_identity::auth_changes::auth_bucket(&nats).await?;
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
+            administration: Some(logins),
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            org: ORG.to_owned(),
+            changes: AuthChanges::new(nats),
+        },
+        None,
+    );
+    let system = json!({"integration":"http","name":"erp","parameters":{},"status":"active"});
+    assert!(
+        call(
+            &delivery,
+            "external-system/write",
+            "00000000-0000-4000-8000-000000000099",
+            system.clone()
+        )
+        .await
+        .unwrap_err()
+        .starts_with("permission denied ")
+    );
+    let system_id = call(
+        &delivery,
+        "external-system/write",
+        boss.as_str(),
+        system.clone(),
+    )
+    .await
+    .unwrap()["id"]
+        .clone();
+    let connection = json!({"integration":"http","external_system_id":system_id,"name":"erp","transport":"http","exchange":"request","parameters":{"primary-authority":"https://example.invalid","tls-verification":"verify-authority"},"status":"active"});
+    let id = call(
+        &delivery,
+        "connection/write",
+        boss.as_str(),
+        connection.clone(),
+    )
+    .await
+    .unwrap()["id"]
+        .clone();
+    let principal: String = admin
+        .query_one(
+            "SELECT service_principal_id::text FROM registry.connection WHERE id=$1::text::uuid",
+            &[&id.as_str().unwrap()],
+        )
+        .await?
+        .get(0);
+    let key =
+        wamn_platform_identity::auth_changes::principal_key("org-a--billing--dev", &principal);
+    bucket.put(&key, "cached".into()).await?;
+    call(
+        &delivery,
+        "project-connection/enable",
+        boss.as_str(),
+        json!({"project":"billing","connection_id":id}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        bucket.get(&key).await?.is_none(),
+        "enabling the connection deletes its projected auth key"
+    );
+    let mut rename = connection.clone();
+    rename["id"] = id.clone();
+    rename["name"] = "renamed".into();
+    assert!(
+        call(&delivery, "connection/write", boss.as_str(), rename)
+            .await
+            .unwrap_err()
+            .starts_with("referenced ")
+    );
+    let mut rename = system;
+    rename["id"] = system_id.clone();
+    rename["name"] = "renamed".into();
+    assert!(
+        call(
+            &delivery,
+            "external-system/write",
+            boss.as_str(),
+            rename.clone()
+        )
+        .await
+        .unwrap_err()
+        .starts_with("referenced ")
+    );
+    rename["integration"] = "gcs".into();
+    assert!(
+        call(&delivery, "external-system/write", boss.as_str(), rename)
+            .await
+            .unwrap_err()
+            .starts_with("integration_mismatch ")
+    );
+    let mismatch = json!({"integration":"gcs","external_system_id":system_id,"name":"blob","transport":"http","exchange":"request","parameters":{"provider":"gcs","container":"bucket","prefix":"test"},"status":"active"});
+    assert!(
+        call(&delivery, "connection/write", boss.as_str(), mismatch)
+            .await
+            .unwrap_err()
+            .starts_with("integration_mismatch ")
+    );
+    assert!(
+        call(
+            &delivery,
+            "project-connection/enable",
+            boss.as_str(),
+            json!({"project":"missing","connection_id":id})
+        )
+        .await
+        .unwrap_err()
+        .starts_with("not_found ")
+    );
+    assert!(
+        call(
+            &delivery,
+            "integration-allow/allow",
+            boss.as_str(),
+            json!({"scope_type":"project","scope_id":"billing","integration":"http"})
+        )
+        .await
+        .unwrap_err()
+        .starts_with("integration_not_allowed ")
+    );
+    call(
+        &delivery,
+        "integration-allow/allow",
+        boss.as_str(),
+        json!({"scope_type":"org","scope_id":ORG,"integration":"http"}),
+    )
+    .await
+    .unwrap();
+    let replacement = call(
+        &delivery,
+        "external-system/write",
+        boss.as_str(),
+        json!({"integration":"http","name":"replacement","parameters":{},"status":"active"}),
+    )
+    .await
+    .unwrap()["id"]
+        .clone();
+    let mut moved = connection;
+    moved["id"] = id;
+    moved["external_system_id"] = replacement.clone();
+    call(&delivery, "connection/write", boss.as_str(), moved)
+        .await
+        .unwrap();
+    assert_eq!(
+        billing
+            .query_one("SELECT id::text FROM platform.external_system", &[])
+            .await?
+            .get::<_, String>(0),
+        replacement.as_str().unwrap()
+    );
+    for (client, expected) in [(&billing, 1_i64), (&shop, 0)] {
+        assert_eq!(
+            client
+                .query_one("SELECT count(*) FROM platform.connection", &[])
+                .await?
+                .get::<_, i64>(0),
+            expected
+        );
+        for table in [
+            "connection",
+            "external_system",
+            "project_connection",
+            "integration_allow",
+        ] {
+            let privilege: bool = client
+                .query_one(
+                    "SELECT has_table_privilege('wamn_app', $1, 'INSERT,UPDATE,DELETE,TRUNCATE') OR has_any_column_privilege('wamn_app', $1, 'INSERT,UPDATE')",
+                    &[&format!("platform.{table}")],
+                )
+                .await?
+                .get(0);
+            assert!(!privilege, "wamn_app writes {table}");
+        }
+    }
+    shop.batch_execute("DROP TABLE platform.integration_allow")
+        .await?;
+    let mut changed = json!({"id": admin.query_one("SELECT id::text FROM registry.connection WHERE name='erp'", &[]).await?.get::<_, String>(0), "integration":"http","external_system_id":replacement,"name":"erp","transport":"http","exchange":"request","parameters":{"primary-authority":"https://changed.invalid","tls-verification":"verify-authority"},"status":"active"});
+    assert!(
+        call(
+            &delivery,
+            "connection/write",
+            boss.as_str(),
+            changed.clone()
+        )
+        .await
+        .unwrap_err()
+        .starts_with("application_write_incomplete ")
+    );
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT parameters->>'primary-authority' FROM registry.connection WHERE name='erp'",
+                &[]
+            )
+            .await?
+            .get::<_, String>(0),
+        "https://changed.invalid"
+    );
+    assert_eq!(
+        billing
+            .query_one(
+                "SELECT parameters->>'primary-authority' FROM platform.connection WHERE name='erp'",
+                &[]
+            )
+            .await?
+            .get::<_, String>(0),
+        "https://changed.invalid"
+    );
+    changed["integration"] = "wamn".into();
+    assert!(
+        call(&delivery, "connection/write", boss.as_str(), changed)
+            .await
+            .unwrap_err()
+            .starts_with("integration_not_found ")
+    );
+    Ok(())
+}

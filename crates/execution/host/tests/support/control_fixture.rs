@@ -94,7 +94,7 @@ pub(super) async fn project_database(
         .batch_execute(&provision_project_env::role_posture_sql())
         .await?;
     admin
-        .batch_execute(&format!("CREATE DATABASE \"{database}\""))
+        .batch_execute(&format!("CREATE DATABASE \"{database}\" OWNER wamn_system"))
         .await?;
     admin
         .batch_execute(&provision_project_env::privilege_sql(&database))
@@ -113,10 +113,26 @@ pub(super) async fn project_database(
         )
         .await?;
     target
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .batch_execute(&format!(
+            "{} {} {}",
+            wamn_control_provision::sql::ensure_platform_group_role_sql(),
+            wamn_control_provision::sql::ensure_db_owner_role_sql(),
+            wamn_control_provision::sql::ensure_workload_acl_role_sql(
+                WorkloadRoleFamily::AuditRetention
+            ),
+        ))
         .await?;
     target
-        .batch_execute(include_str!("../../../../../deploy/sql/app-schema.sql"))
+        .batch_execute(&format!(
+            "SET ROLE wamn_system; {}",
+            wamn_catalog::CATALOG_SCHEMA_SQL
+        ))
+        .await?;
+    target
+        .batch_execute(&format!(
+            "{} RESET ROLE;",
+            include_str!("../../../../../deploy/sql/app-schema.sql")
+        ))
         .await?;
     target
         .execute(

@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "integration",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

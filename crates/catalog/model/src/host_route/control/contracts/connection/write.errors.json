@@ -1,0 +1,81 @@
+{
+  "cases": [
+    {
+      "literal": "invalid_input",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "integration_not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "integration_mismatch",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "integration_not_allowed",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "referenced",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    },
+    {
+      "literal": "application_write_incomplete",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "environment"
+        ],
+        "optional": [
+          "completed"
+        ]
+      },
+      "text": "The application rows stopped at this environment. The completed environments are done."
+    }
+  ],
+  "closed": true
+}

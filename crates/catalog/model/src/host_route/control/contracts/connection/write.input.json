@@ -1,0 +1,58 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.id",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.integration",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.external_system_id",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.transport",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.exchange",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.parameters",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

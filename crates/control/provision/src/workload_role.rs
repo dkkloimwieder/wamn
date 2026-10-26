@@ -51,6 +51,8 @@ const EVENT_MATERIALIZER_GENERATION_PREFIX: &str = "wamn_materializer";
 pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
 /// Stable NOLOGIN role used by control-identity reader generations.
 pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
+/// Host-only reader of connection generations and credentials.
+pub const CONNECTION_READER_ROLE: &str = "wamn_conn_reader";
 /// Stable NOLOGIN role for the identity service's environment role reads.
 pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
 /// Keep the 40-hex scope digest and A/B suffix within PostgreSQL's 63 bytes.
@@ -127,6 +129,7 @@ pub enum WorkloadRoleFamily {
     AuditRetention,
     Administration,
     Control,
+    ConnectionReader,
 }
 
 impl WorkloadRoleFamily {
@@ -136,7 +139,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::ControlAuthor,
         Self::ManagementAdmitter,
         Self::ServiceReader,
@@ -151,6 +154,7 @@ impl WorkloadRoleFamily {
         Self::AuditRetention,
         Self::Administration,
         Self::Control,
+        Self::ConnectionReader,
     ];
 
     /// Stable NOLOGIN ACL role inherited by this family's generations.
@@ -166,6 +170,7 @@ impl WorkloadRoleFamily {
             Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
             Self::RegistryReader => REGISTRY_READER_ROLE,
             Self::IdentityReader => IDENTITY_READER_ROLE,
+            Self::ConnectionReader => CONNECTION_READER_ROLE,
             Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
             Self::AuditRetention => AUDIT_RETENTION_ROLE,
             Self::Administration => ADMINISTRATION_ROLE,
@@ -208,9 +213,10 @@ impl WorkloadRoleFamily {
             | Self::Administration => WorkloadRoleScopeKind::ProjectEnvironment,
             // Scope follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
-            Self::ControlAuthor | Self::RegistryReader | Self::IdentityReader => {
-                WorkloadRoleScopeKind::Control
-            }
+            Self::ControlAuthor
+            | Self::RegistryReader
+            | Self::IdentityReader
+            | Self::ConnectionReader => WorkloadRoleScopeKind::Control,
             // One credential per org on the control database; `provision-org`
             // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
             Self::Control => WorkloadRoleScopeKind::Org,
@@ -352,6 +358,7 @@ impl WorkloadRoleFamily {
             Self::EventMaterializer => b"wamn.event-materializer.scope.v0.1",
             Self::RegistryReader => b"wamn.registry-reader.scope.v0.1",
             Self::IdentityReader => b"wamn.identity-reader.scope.v0.1",
+            Self::ConnectionReader => b"wamn.connection-reader.scope.v0.1",
             Self::SessionRoleReader => b"wamn.session-role-reader.scope.v0.1",
             Self::AuditRetention => b"wamn.audit-retention.scope.v0.1",
             Self::Administration => b"wamn.administration.scope.v0.1",
@@ -653,7 +660,7 @@ mod tests {
     /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen;
     /// `wamn-emtx.13`: fourteen; `wamn-0h0g.10.15`: thirteen; `wamn-a40n.2`:
     /// administration and control).
-    const FAMILIES: [WorkloadRoleFamily; 14] = [
+    const FAMILIES: [WorkloadRoleFamily; 15] = [
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
         WorkloadRoleFamily::ServiceReader,
@@ -668,6 +675,7 @@ mod tests {
         WorkloadRoleFamily::AuditRetention,
         WorkloadRoleFamily::Administration,
         WorkloadRoleFamily::Control,
+        WorkloadRoleFamily::ConnectionReader,
     ];
 
     #[test]
@@ -686,6 +694,7 @@ mod tests {
                 WorkloadRoleFamily::EventMaterializer => 7,
                 WorkloadRoleFamily::RegistryReader => 8,
                 WorkloadRoleFamily::IdentityReader => 9,
+                WorkloadRoleFamily::ConnectionReader => 14,
                 WorkloadRoleFamily::SessionRoleReader => 10,
                 WorkloadRoleFamily::AuditRetention => 11,
                 WorkloadRoleFamily::Administration => 12,
@@ -710,6 +719,7 @@ mod tests {
                 WorkloadRoleScopeKind::Tenant,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Org,
+                WorkloadRoleScopeKind::Control,
             ],
         );
         assert_eq!(
@@ -729,11 +739,16 @@ mod tests {
                 "wamn_audit_retention",
                 "wamn_administration",
                 "wamn_control",
+                "wamn_conn_reader",
             ],
         );
         assert_eq!(
             WorkloadRoleFamily::project_env_families().collect::<Vec<_>>(),
-            FAMILIES[..13],
+            FAMILIES[..13]
+                .iter()
+                .copied()
+                .chain([WorkloadRoleFamily::ConnectionReader])
+                .collect::<Vec<_>>(),
             "only the org-scoped control family is left to provision-org"
         );
         assert!(!WorkloadRoleFamily::Control.is_platform_grain());
@@ -843,6 +858,15 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::IdentityReader,
+                WorkloadRoleScope::Control {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "control",
+                },
+            ),
+            (
+                WorkloadRoleFamily::ConnectionReader,
                 WorkloadRoleScope::Control {
                     org: "o",
                     project: "p",

@@ -515,7 +515,7 @@ pub async fn exercise(
             org: ORG.into(), name: "netsuite".into(),
             requirement_type: wamn_catalog::RequirementType::Http,
             definition: json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
-        }).await?;
+        }, &platform.auth_changes().await?).await?;
         document.connections.insert(
             "upstream".into(),
             ConnectionDefinition::Org {

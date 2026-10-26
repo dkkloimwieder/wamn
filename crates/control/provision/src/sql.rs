@@ -621,6 +621,7 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
         .expect("writing to a String cannot fail");
     }
 
+    sql.push_str(" DO $connection_acl$ BEGIN IF to_regprocedure('catalog.connection_is_referenced(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION catalog.connection_is_referenced(text) TO wamn_administration; END IF; END $connection_acl$;");
     sql
 }
 
@@ -930,6 +931,35 @@ pub fn grant_identity_reader_surface_sql() -> String {
     )
 }
 
+/// The host connection reader holds no identity or application grants.
+pub const CONNECTION_READER_RELATIONS: [&str; 3] =
+    ["connection", "connection_generation", "identity.credential"];
+
+/// Grant the dedicated credential reader its read-only system surface.
+pub fn grant_connection_reader_surface_sql() -> String {
+    let mut sql = grant_system_reader_surface_sql(
+        WorkloadRoleFamily::ConnectionReader,
+        "registry",
+        &["connection", "connection_generation"],
+    );
+    let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
+    write!(sql, " GRANT USAGE ON SCHEMA identity TO {role}; GRANT SELECT ON TABLE identity.credential TO {role};")
+        .expect("writing to a String cannot fail");
+    sql
+}
+
+/// Non-secret connection functions available to the control host.
+pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
+    "connection_org_exists(text)",
+    "connection_integration_exists(text)",
+    "connection_system_rows(text)",
+    "connection_rows(text)",
+    "connection_project_rows(text)",
+    "connection_allow_rows(text)",
+    "connection_principal_rows(text,text)",
+    "configure_connection(text,text,jsonb)",
+];
+
 /// The privileges the control host holds on a relation that it writes.
 const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 
@@ -1021,6 +1051,9 @@ pub fn control_surface_grants_sql() -> String {
         )
         .expect("writing to a String cannot fail");
     }
+    for signature in CONTROL_CONNECTION_FUNCTIONS {
+        write!(sql, " DO $connection_acl$ BEGIN IF to_regprocedure('registry.{signature}') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.{signature} TO {role}; END IF; END $connection_acl$;").expect("writing to a String cannot fail");
+    }
     sql
 }
 
@@ -1043,6 +1076,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         WorkloadRoleFamily::SessionRoleReader => Some(grant_session_role_reader_surface_sql()),
         WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
+        WorkloadRoleFamily::ConnectionReader => Some(grant_connection_reader_surface_sql()),
         WorkloadRoleFamily::EventMaterializer => {
             Some(grant_event_materializer_surface_sql("wamn_run"))
         }

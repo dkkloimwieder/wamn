@@ -424,6 +424,10 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     for (reader, grant) in [
         (SystemReader::Identity, grant_identity_reader_surface_sql()),
         (SystemReader::Registry, grant_registry_reader_surface_sql()),
+        (
+            SystemReader::Connection,
+            wamn_control_provision::sql::grant_connection_reader_surface_sql(),
+        ),
     ] {
         let role = generation_role(reader, CredentialGeneration::A, &database);
         run_admin(&admin_url, "converge a system reader", &grant);
@@ -530,7 +534,9 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         // Neither reader may reach the OTHER's plane, in either direction.
         let foreign = match reader {
             SystemReader::Identity => "SELECT publication FROM registry.event_readers",
-            SystemReader::Registry => "SELECT token_hash FROM identity.pats",
+            SystemReader::Registry | SystemReader::Connection => {
+                "SELECT token_hash FROM identity.pats"
+            }
         };
         assert_eq!(
             reader_sqlstate(url, foreign).as_deref(),

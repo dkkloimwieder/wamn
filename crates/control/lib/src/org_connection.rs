@@ -6,7 +6,9 @@ use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use tokio_postgres::Client;
 use wamn_catalog::{RequirementType, org_credential_handle};
-use wamn_control_registry::sql::{select_org_connections_sql, upsert_org_connection_sql};
+use wamn_control_registry::sql::select_org_connections_sql;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
+use wamn_platform_identity::connections::{ConnectionWrite, write_connection};
 
 /// Non-secret inputs to an org connection declaration.
 #[derive(Debug)]
@@ -46,7 +48,10 @@ fn validate(
 }
 
 /// Insert or update a definition, refusing a type change. An identical retry writes nothing.
-pub async fn declare(request: &DeclareConnectionRequest) -> anyhow::Result<bool> {
+pub async fn declare(
+    request: &DeclareConnectionRequest,
+    changes: &AuthChanges,
+) -> anyhow::Result<bool> {
     validate(
         &request.org,
         &request.name,
@@ -61,35 +66,50 @@ pub async fn declare(request: &DeclareConnectionRequest) -> anyhow::Result<bool>
     transaction
         .batch_execute("SET LOCAL ROLE wamn_system")
         .await?;
-    let requirement_type = request.requirement_type.descriptor().requirement_type;
-    let changed = transaction
-        .execute(
-            upsert_org_connection_sql(),
-            &[
-                &request.org,
-                &request.name,
-                &requirement_type,
-                &request.definition.to_string(),
-            ],
+    transaction
+        .batch_execute(
+            &wamn_control_provision::platform_principals::bind_platform_principal_sql(
+                wamn_project_state::PlatformComponent::Provisioning,
+            ),
         )
-        .await
-        .context("declare the org connection")?;
-    let stored: String = transaction
-        .query_one(
-            "SELECT type FROM registry.org_connections WHERE org = $1 AND name = $2",
-            &[&request.org, &request.name],
-        )
-        .await?
-        .get(0);
-    ensure!(
-        stored == requirement_type,
-        "an existing org connection cannot change type"
-    );
+        .await?;
+    let old = transaction.query_opt(
+        "SELECT id::text, integration, parameters::text, external_system_id::text FROM registry.connection WHERE org = $1 AND name = $2",
+        &[&request.org, &request.name],
+    ).await?;
+    if let Some(old) = &old {
+        ensure!(
+            old.get::<_, String>(1) == "http",
+            "an existing org connection cannot change type"
+        );
+        let definition: Value = serde_json::from_str(old.get(2))?;
+        if definition == request.definition {
+            return Ok(false);
+        }
+    }
+    let mut drops = AuthDrops::default();
+    write_connection(
+        &transaction,
+        &request.org,
+        &ConnectionWrite {
+            id: old.as_ref().map(|row| row.get(0)),
+            integration: "http".into(),
+            external_system_id: old.as_ref().and_then(|row| row.get(3)),
+            name: request.name.clone(),
+            transport: "http".into(),
+            exchange: "request".into(),
+            parameters: request.definition.clone(),
+            status: "active".into(),
+        },
+        &mut drops,
+    )
+    .await?;
     transaction
         .commit()
         .await
         .context("commit the org connection declaration")?;
-    Ok(changed != 0)
+    changes.publish(drops).await;
+    Ok(true)
 }
 
 /// Read all declarations for this org in one database snapshot.
@@ -105,20 +125,25 @@ pub async fn snapshot(
     {
         let name: String = row.get(0);
         let requirement_type: String = row.get(1);
-        ensure!(
-            requirement_type == "http",
-            "org connection {name} has unsupported type {requirement_type}"
-        );
+        let requirement_type = match requirement_type.as_str() {
+            "http" => RequirementType::Http,
+            "gcs" | "s3" => RequirementType::Blobstore,
+            _ => anyhow::bail!("org connection {name} has unsupported type {requirement_type}"),
+        };
         let definition: Value = serde_json::from_str(row.get(2))?;
-        validate(org, &name, RequirementType::Http, &definition)?;
+        requirement_type
+            .check_definition(&definition)
+            .map_err(anyhow::Error::msg)?;
         connections.insert(
             name.clone(),
             ResolvedConnection {
-                requirement_type: RequirementType::Http,
+                requirement_type,
                 definition,
-                credential_handle: Some(
+                credential_handle: Some(format!(
+                    "{}@{}",
                     org_credential_handle(org, &name).map_err(anyhow::Error::msg)?,
-                ),
+                    row.get::<_, i64>(3)
+                )),
                 org_connection_name: Some(name),
             },
         );

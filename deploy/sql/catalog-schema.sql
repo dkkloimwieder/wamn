@@ -529,4 +529,18 @@ TO wamn_app;
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;
 
+-- ---------------------------------------------------------------------------
+-- CONNECTION REFERENCE (connection administration).
+-- ---------------------------------------------------------------------------
+DO $connection_reference$ BEGIN
+ IF to_regrole('wamn_system') IS NOT NULL THEN
+  EXECUTE $definition$CREATE OR REPLACE FUNCTION catalog.connection_is_referenced(connection_name text) RETURNS boolean
+  LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $body$
+   SELECT EXISTS (SELECT FROM catalog.connection_instances WHERE org_connection_name = connection_name)
+  $body$$definition$;
+  ALTER FUNCTION catalog.connection_is_referenced(text) OWNER TO wamn_system;
+  REVOKE ALL ON FUNCTION catalog.connection_is_referenced(text) FROM PUBLIC;
+ END IF;
+END $connection_reference$;
+
 COMMIT;

@@ -349,9 +349,9 @@ pub struct HostArgs {
     )]
     pub registry_token_metadata: bool,
 
-    /// Mounted production credentials for node capabilities and signature routes.
-    #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
-    pub credentials_file: Option<PathBuf>,
+    /// Scoped system connection reader for node credentials and signature routes.
+    #[arg(long, env = "WAMN_CONNECTION_STORE_URL")]
+    pub connection_store_url: Option<String>,
 
     /// Project whose platform pool and credentials this host uses.
     #[arg(long, env = "WAMN_PROJECT", default_value = "default")]
@@ -1209,14 +1209,28 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
-    let credentials = Arc::new(match (&application, &args.credentials_file) {
-        (Some(_), Some(path)) => {
-            release_scope(&args)?;
-            WamnCredentials::from_file(path)?
-                .with_org(args.org.as_deref().context("host org is absent")?)
+    let (credentials, mut credential_connection) = match (&application, &args.connection_store_url)
+    {
+        (Some(release), Some(url)) => {
+            let org = args.org.as_deref().context("host org is absent")?;
+            parse_system_reader_url(
+                SystemReader::Connection,
+                url,
+                org,
+                &args.project,
+                &release.scope().environment,
+            )?;
+            let (client, connection) = tokio_postgres::connect(url, NoTls)
+                .await
+                .context("connect the credential reader")?;
+            (
+                WamnCredentials::from_database(Arc::new(client), org),
+                Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
+            )
         }
-        _ => WamnCredentials::empty(),
-    });
+        _ => (WamnCredentials::empty(), None),
+    };
+    let credentials = Arc::new(credentials);
     let operations = match application {
         Some(release) => {
             let source: Arc<dyn ArtifactSource> =
@@ -1777,6 +1791,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 };
                 connection.failure().await
             };
+            let credential_failure = async {
+                let Some(connection) = credential_connection.as_mut() else {
+                    return std::future::pending::<anyhow::Error>().await;
+                };
+                connection.failure().await
+            };
             let queue_failure = async {
                 let Some(queue) = queue.as_ref() else {
                     return std::future::pending::<anyhow::Error>().await;
@@ -1793,6 +1813,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
                 _ = sigterm.recv() => Ok(()),
                 error = identity_failure => Err(error),
+                error = credential_failure => Err(error),
                 error = queue_failure => Err(error),
                 error = wamn_engine::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
                 () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
@@ -1851,6 +1872,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
     let identity_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         if let Some(mut connection) = identity_connection.take() {
+            connection.shutdown().await;
+        }
+        if let Some(mut connection) = credential_connection.take() {
             connection.shutdown().await;
         }
         Ok(())

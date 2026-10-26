@@ -520,6 +520,7 @@ pub async fn provision_project_env(
             args.secret_namespace.as_deref(),
             &mint_instance_suffix()?,
             args.disposable,
+            &args.changes,
         )
         .await?
     };

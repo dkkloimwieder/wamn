@@ -1074,10 +1074,14 @@ fn compiled_ctl_binary() -> std::path::PathBuf {
     let binary = std::path::PathBuf::from(binary)
         .canonicalize()
         .expect_redacted("resolve compiled ctl binary");
-    let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/debug/wamn-ctl")
+    let executable = std::env::current_exe().expect_redacted("resolve this test executable");
+    let expected = executable
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect_redacted("this test executable is in the Cargo deps directory")
+        .join("wamn-ctl")
         .canonicalize()
-        .expect_redacted("this worktree's default-target ctl binary");
+        .expect_redacted("this test target's ctl binary");
     assert!(
         binary == expected,
         "WAMN_SESSION_EXCHANGE_CTL_BIN must name this worktree's compiled ctl at {}",

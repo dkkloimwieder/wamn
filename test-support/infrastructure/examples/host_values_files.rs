@@ -192,19 +192,24 @@ fn render(
 fn without_object_store_credentials(overlay: &str) -> anyhow::Result<String> {
     let mut document: Value = serde_yaml::from_str(overlay)?;
     let group = group_mut(&mut document)?;
-    for (list, key, name) in [
-        ("env", "name", "WAMN_CREDENTIALS_FILE"),
-        ("volumes", "name", "connection-credentials"),
-        ("volumeMounts", "name", "connection-credentials"),
-    ] {
+    let entries = group["env"]
+        .as_sequence_mut()
+        .context("the overlay host group has env")?;
+    let before = entries.len();
+    entries.retain(|entry| entry["name"] != "WAMN_CONNECTION_STORE_URL");
+    ensure!(
+        entries.len() + 1 == before,
+        "the overlay has one WAMN_CONNECTION_STORE_URL in env"
+    );
+    for list in ["volumes", "volumeMounts"] {
         let entries = group[list]
-            .as_sequence_mut()
+            .as_sequence()
             .with_context(|| format!("the overlay host group has {list}"))?;
-        let before = entries.len();
-        entries.retain(|entry| entry[key] != name);
         ensure!(
-            entries.len() + 1 == before,
-            "the overlay has one {name} in {list}"
+            entries
+                .iter()
+                .all(|entry| entry["name"] != "connection-credentials"),
+            "the overlay must not mount connection credentials in {list}"
         );
     }
     Ok(serde_yaml::to_string(&document)?)

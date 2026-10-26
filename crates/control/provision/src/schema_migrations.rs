@@ -230,6 +230,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0029_integrations_and_target.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0030_org_connection_authority.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0030_org_connection_authority.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -428,6 +434,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0038_administration_database_boundary.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0039_connection_reference_reader.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0039_connection_reference_reader.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]
@@ -483,10 +495,8 @@ mod tests {
         }
     }
 
-    /// The project migration that drops the tenant floor from `user` and the
-    /// platform configuration tables carries the latest rendering of the
-    /// administration surface. 0003, 0006, 0008, 0016, 0020, 0024, 0026, 0027
-    /// and 0028 hold the earlier surfaces, as installed databases recorded them.
+    /// The connection reference migration carries the latest administration
+    /// surface. Earlier migrations retain the surfaces installed databases recorded.
     #[test]
     fn the_latest_administration_migration_is_the_rendered_administration_surface() {
         let rendered = format!(
@@ -498,9 +508,9 @@ mod tests {
             .find(|migration| {
                 migration
                     .relative_path
-                    .ends_with("_administration_database_boundary.sql")
+                    .ends_with("_connection_reference_reader.sql")
             })
-            .expect("the administration database boundary migration exists");
+            .expect("the connection reference reader migration exists");
         assert!(
             migration.sql.ends_with(&rendered),
             "{} does not end with the rendered administration surface",
@@ -551,7 +561,7 @@ mod tests {
             .find(|migration| {
                 migration
                     .relative_path
-                    .ends_with("_remove_package_copies.sql")
+                    .ends_with("_org_connection_authority.sql")
             })
             .expect("the migration that drops catalog.package_artifacts exists");
         let grants = format!(

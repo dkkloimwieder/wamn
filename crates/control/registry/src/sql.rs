@@ -277,16 +277,7 @@ pub fn select_event_reader_sql() -> &'static str {
      WHERE org = $1 AND project = $2 AND env = $3"
 }
 
-/// Declare an org connection. Equal definitions and different types write nothing.
-pub fn upsert_org_connection_sql() -> &'static str {
-    "INSERT INTO registry.org_connections (org, name, type, definition) \
-     VALUES ($1, $2, $3, $4::text::jsonb) \
-     ON CONFLICT (org, name) DO UPDATE SET definition = EXCLUDED.definition \
-     WHERE org_connections.type = EXCLUDED.type \
-       AND org_connections.definition IS DISTINCT FROM EXCLUDED.definition"
-}
-
 /// Read an org's connection definitions in one statement.
 pub fn select_org_connections_sql() -> &'static str {
-    "SELECT name, type, definition::text FROM registry.org_connections WHERE org = $1"
+    "SELECT c.name, c.integration, c.parameters::text, (SELECT min(g.generation) FROM registry.connection_generation g JOIN registry.connection_generation current ON current.connection_id = c.id AND current.generation = c.current_generation WHERE g.connection_id = c.id AND g.secret_id IS NOT DISTINCT FROM current.secret_id) FROM registry.connection c WHERE c.org = $1 AND c.status = 'active' "
 }

@@ -218,7 +218,6 @@ impl ApplicationRoutes<'_> {
             ("invoker", None) => {
                 let role = caller
                     .active_role()
-                    .or(caller.admin().then_some(ADMIN_ROLE))
                     .ok_or_else(|| start_refusal("active_role_required", "workflow_id"))?;
                 (user.to_owned(), role.to_owned())
             }

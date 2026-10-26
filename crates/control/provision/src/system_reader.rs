@@ -1,20 +1,10 @@
 //! Scoped T1 system-database READER credential contract
 //! (`wamn-0h0g.12.116`, `wamn-0h0g.12.67`).
 //!
-//! Two consumers read the control database and only read it: the CDC reader
-//! wants one registration row, and the management surface wants a token digest
-//! and a principal's project roles. Both mounted `WAMN_SYSTEM_URL`, and that
-//! Secret authenticated as `wamn_system` — the AUTHORIZATION owner of the
-//! `registry`, `provisioning` and `identity` schemas. `deploy/sql/system-schema.sql`
-//! forces no row-level security, so that credential is not merely wide, it is
-//! unconfined.
-//!
-//! Each consumer's identity is now a scoped A/B LOGIN generation of its own
-//! stable NOLOGIN ACL role, on the [`crate::sql::stable_surface_sql`] grant set
-//! for its family. ONE module for both because the derivation and the refusal
-//! are identical; TWO families because the grant sets are disjoint and must
-//! stay so. [`SystemReader`] is closed over exactly the two, so no third caller
-//! can reach this machinery with a family that has no read surface.
+//! The CDC reader, identity reader and connection reader each hold a scoped
+//! login for a distinct stable role. Their grant sets stay separate.
+//! The connection reader accesses immutable credentials in the system database.
+//! [`SystemReader`] accepts only families with a defined read surface.
 //!
 //! Everything here is pure. [`parse_system_reader_url`] is what lets a consumer
 //! refuse a mis-scoped connection input **before it opens a socket** — including
@@ -31,9 +21,9 @@ use crate::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role, workload_role_scope_hash,
 };
 
-/// The closed pair of T1 control-database read consumers.
+/// The closed set of control-database read consumers.
 ///
-/// Not `WorkloadRoleFamily`: only these two families have a read surface on the
+/// Not `WorkloadRoleFamily`: only these three families have a read surface on the
 /// control database, and taking the wider enum here would let a caller derive a
 /// plausible-looking system-reader login for a family that has no grant set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,17 +33,20 @@ pub enum SystemReader {
     /// `services/scenario-worker`'s management surface — `identity.*`, two
     /// `SELECT`s.
     Identity,
+    /// Host connection configuration and credentials.
+    Connection,
 }
 
 impl SystemReader {
-    /// Both readers, in family declaration order.
-    pub const ALL: [Self; 2] = [Self::Registry, Self::Identity];
+    /// All readers, in family declaration order.
+    pub const ALL: [Self; 3] = [Self::Registry, Self::Identity, Self::Connection];
 
     /// The provisioning family this reader's credential belongs to.
     pub const fn family(self) -> WorkloadRoleFamily {
         match self {
             Self::Registry => WorkloadRoleFamily::RegistryReader,
             Self::Identity => WorkloadRoleFamily::IdentityReader,
+            Self::Connection => WorkloadRoleFamily::ConnectionReader,
         }
     }
 }
@@ -393,7 +386,7 @@ mod tests {
         for reader in SystemReader::ALL {
             let other = match reader {
                 SystemReader::Registry => SystemReader::Identity,
-                SystemReader::Identity => SystemReader::Registry,
+                SystemReader::Identity | SystemReader::Connection => SystemReader::Registry,
             };
             let error = parse(
                 reader,
@@ -465,8 +458,7 @@ mod tests {
         }
     }
 
-    /// Both readers' derived logins are exactly 63 bytes — the largest
-    /// PostgreSQL stores untruncated. A longer role name or digest would be
+    /// Reader logins fit PostgreSQL without truncation. A longer name would be
     /// truncated with a NOTICE rather than refused, and truncation drops the
     /// `_a`/`_b` suffix that keeps the two generations apart.
     #[test]
@@ -474,7 +466,11 @@ mod tests {
         for reader in SystemReader::ALL {
             for generation in [CredentialGeneration::A, CredentialGeneration::B] {
                 let derived = role(reader, generation);
-                assert_eq!(derived.len(), 63, "{reader} {generation:?}");
+                let expected_length = match reader {
+                    SystemReader::Connection => 59,
+                    SystemReader::Registry | SystemReader::Identity => 63,
+                };
+                assert_eq!(derived.len(), expected_length, "{reader} {generation:?}");
                 assert!(derived.starts_with(reader.family().acl_role()));
             }
             assert_ne!(
