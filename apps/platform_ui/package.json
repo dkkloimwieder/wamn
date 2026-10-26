@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node ../../web/host-route-clients.mjs && tsc --noEmit",
-    "test": "node ../../web/host-route-clients.mjs && vitest run",
-    "build": "node ../../web/host-route-clients.mjs && vite build"
+    "check": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && tsc --noEmit",
+    "test": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vitest run",
+    "build": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vite build"
   },
   "dependencies": {
     "@wfe/components": "workspace:*",

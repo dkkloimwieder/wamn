@@ -6,7 +6,8 @@
     "check": "prettier --check . && eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "wfe:build": "pnpm --recursive --filter \"./web/wfe/packages/*\" run prepare"
   },
   "devDependencies": {
     "@wfe/generator": "workspace:*",

@@ -5,12 +5,16 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "check": "tsc --project tsconfig.json",
-    "test": "vitest run",
-    "bench": "vite build && node bench/run.mjs"
+    "build": "pnpm --workspace-root run wfe:build && vite build",
+    "check": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json",
+    "test": "pnpm --workspace-root run wfe:build && vitest run",
+    "bench": "pnpm --workspace-root run wfe:build && vite build && node bench/run.mjs"
   },
-  "wamn": { "clients": ["wamn_wms"] },
+  "wamn": {
+    "clients": [
+      "wamn_wms"
+    ]
+  },
   "dependencies": {
     "@wamn/web-runtime": "workspace:*",
     "@tanstack/db": "0.15.2",
