@@ -236,23 +236,6 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     use wamn_platform_identity::{
         assign_project_role, create_or_reuse_user, grant_project_env_membership,
     };
-    async fn application_role(url: &str, user: &str, actor: &str) {
-        let (project, task) = connect(url).await.ok().expect("application connection");
-        project
-            .execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)", &[&actor])
-            .await
-            .unwrap();
-        project
-            .execute(
-                "INSERT INTO platform.role (name) VALUES ('admin') ON CONFLICT DO NOTHING",
-                &[],
-            )
-            .await
-            .unwrap();
-        project.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'admin')",
-            &[&user]).await.unwrap();
-        task.abort();
-    }
     wamn_test_postgres::require_prerequisites(&["RESEND_API_KEY", "RESEND_FROM"]);
     let mut postgres = wamn_test_postgres::start(&[]).expect("start owned PostgreSQL");
     let system = postgres
@@ -328,7 +311,6 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("project the user into the application");
-    application_role(&environment.route.database_url, user.as_str(), &actor).await;
     let (mut password_admin, connection) =
         tokio_postgres::connect(system.url(), tokio_postgres::NoTls)
             .await
@@ -406,7 +388,6 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("restore application membership after recreation");
-    application_role(&environment.route.database_url, user.as_str(), &actor).await;
     let second = login()
         .send()
         .await
