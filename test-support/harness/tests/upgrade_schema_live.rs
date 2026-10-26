@@ -299,6 +299,8 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     // gets back what 0025 removes, has the table names from before
     // 0027 and 0028, and has the tenant floors that 0031 and 0038 drop.
     // Its platform rows and history keys carry the tenant, as before 0031.
+    // Remove the workflow table and guard added by 0032 to 0035. Restore
+    // empty tables for 0034 and 0036, which only drop those tables.
     // The system database loses the integrations and target tables from
     // system 0029, which the system upgrade below recreates and records.
     let fresh_shape = platform_shape(&project_url).await;
@@ -324,6 +326,11 @@ async fn upgrade_schema_applies_each_pending_file_once() {
         .0
         .batch_execute(
             "DELETE FROM platform.schema_migrations WHERE ordinal >= 24; \
+             DROP TABLE catalog.workflows; \
+             DROP FUNCTION catalog.guard_workflow_update(); \
+             CREATE TABLE catalog.workflow_schedules (); \
+             CREATE TABLE catalog.wirings (); \
+             CREATE TABLE catalog.event_registrations (); \
              DROP FUNCTION platform.set_counter(uuid, text, text, bigint); \
              DROP FUNCTION platform.assign_counter(uuid, text, text); \
              DROP FUNCTION platform.bump_counter(uuid, text, text); \
