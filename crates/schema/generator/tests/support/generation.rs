@@ -180,6 +180,7 @@ pub(super) fn manifest() -> Value {
         },
         "models": {
             "gadget": {
+                "feed": false,
                 "schema": "inventory",
                 "table": "gadget",
                 "owner": "platform_gadget",

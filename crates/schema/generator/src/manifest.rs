@@ -53,6 +53,9 @@ pub struct PackageManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustomOperationDeclaration {
+    /// Whether a refusal leaves later entries for the row free to proceed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub append_only: bool,
     #[serde(rename = "type")]
     pub type_: CustomOperationType,
     pub visibility: OperationVisibility,
@@ -2442,6 +2445,9 @@ pub enum PolicyContractState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDeclaration {
+    /// Whether the list read carries a feed. An omitted value follows the list read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed: Option<bool>,
     pub schema: String,
     pub table: String,
     pub owner: String,
@@ -2649,10 +2655,12 @@ impl ModelDeclaration {
 
     /// The revision field of the change feed on the model's list read.
     ///
-    /// A model has a feed when it has a generated list read, a history table
-    /// and a revision field (`docs/plan/wamn-sync.md`). Any other model
-    /// returns `None` and gets no feed.
+    /// Validation refuses an enabled feed without a generated list read,
+    /// a history table, or a revision field.
     pub fn feed_revision(&self) -> Option<&str> {
+        if !self.feed_enabled() {
+            return None;
+        }
         self.log_retention()?;
         // An authored list statement returns no feed cursor.
         if self
@@ -2664,6 +2672,12 @@ impl ModelDeclaration {
             return None;
         }
         self.revision_field()
+    }
+
+    /// Whether the model requests a feed, by declaration or by its list read.
+    pub fn feed_enabled(&self) -> bool {
+        self.feed
+            .unwrap_or_else(|| self.operations.contains_key(&CrudAction::Query))
     }
 
     /// Definition owner for one field, inheriting the relation owner when omitted.
@@ -2723,6 +2737,9 @@ impl CrudAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperationDeclaration {
+    /// Whether a refusal leaves later entries for the row free to proceed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub append_only: bool,
     pub permission: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,

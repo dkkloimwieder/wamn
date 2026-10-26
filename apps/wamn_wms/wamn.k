@@ -13,6 +13,7 @@ manifest.Package {
     required_platform_policy_contract = {id = "wms_data_access", state = "satisfied"}
     models = {
         inventory_transaction = manifest.Model("inventory_transaction", _schema) {
+            feed = False
             table = "inventory_transaction"
             owner = "wamn_wms"
             server_owned_fields = []
@@ -65,6 +66,7 @@ manifest.Package {
             }
         }
         packaging_quantity = manifest.Model("packaging_quantity", _schema) {
+            feed = False
             table = "packaging_quantity"
             owner = "wamn_wms"
             server_owned_fields = []

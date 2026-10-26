@@ -90,6 +90,7 @@ manifest.Package {
             operations = {}
         }
         receipt = manifest.Model("receipt", _schema) {
+            feed = False
             table = "receipt"
             owner = "wamn_receiving"
             server_owned_fields = ["purchase_order_id", "receipt_reference", "occurred_at"]
@@ -119,6 +120,7 @@ manifest.Package {
             operations = {}
         }
         supplier = manifest.Model("supplier", _schema) {
+            feed = False
             table = "supplier"
             owner = "wamn_receiving"
             min_lengths = {name = 1}

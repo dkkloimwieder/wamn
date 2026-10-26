@@ -891,6 +891,7 @@ mod tests {
             "connections": ["postgres"],
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
+                "feed": false,
                 "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
                 "server_owned_fields": [],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
@@ -987,6 +988,7 @@ mod tests {
             "connections": ["postgres"],
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
+                "feed": false,
                 "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
                 "server_owned_fields": [],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},

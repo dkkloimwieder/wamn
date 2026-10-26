@@ -1,7 +1,9 @@
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
+use wamn_schema_generator::client_ts::emit_ts_client;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, GenerateErrorType, GeneratedPackage,
     PackageManifest, REQUIRED_SCHEMA_CONTRACT_PATH, canonical_operation_identity,
@@ -2675,6 +2677,7 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
 fn a_logged_list_read_gets_its_change_feed() {
     let generated = |retention: &str| {
         let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), retention);
+        manifest["models"]["gadget"]["feed"] = json!(retention != "none");
         manifest["models"]["gadget"]["operations"]["query"]
             .as_object_mut()
             .unwrap()
@@ -3293,6 +3296,7 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
             rebuilt_table(model, columns, model.constraints().to_vec()),
         );
         let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "P30D");
+        manifest["models"]["gadget"]["feed"] = json!(true);
         manifest["models"]["gadget"]["operations"]["query"]
             .as_object_mut()
             .unwrap()
@@ -3364,6 +3368,217 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
         assert_eq!(
             wamn_schema_generator::client_plan::idempotency_field(&input).as_deref(),
             Some("idempotency_key")
+        );
+    }
+}
+
+fn feed_manifest() -> Value {
+    let mut value = manifest();
+    let model = &mut value["models"]["gadget"];
+    model.as_object_mut().unwrap().remove("feed");
+    model["audit_log"]["retention"] = json!("unlimited");
+    model["operations"]["query"]
+        .as_object_mut()
+        .unwrap()
+        .remove("authored_sql");
+    value
+}
+
+#[test]
+fn a_feed_refuses_missing_history() {
+    let mut value = feed_manifest();
+    value["models"]["gadget"]["audit_log"]["retention"] = json!("none");
+    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
+    assert_eq!(
+        refusal.context(),
+        "gadget feed needs a history table: declare audit_log.retention other than none"
+    );
+    value["models"]["gadget"]
+        .as_object_mut()
+        .unwrap()
+        .remove("audit_log");
+    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
+    assert!(refusal.context().contains("gadget"));
+    assert!(refusal.context().contains("audit_log"));
+}
+
+#[test]
+fn a_feed_refuses_a_missing_revision_field() {
+    let mut value = feed_manifest();
+    value["models"]["gadget"]["feed"] = json!(true);
+    value["models"]["gadget"]["operations"]["update"]
+        .as_object_mut()
+        .unwrap()
+        .remove("revision_field");
+    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
+    assert_eq!(
+        refusal.context(),
+        "gadget feed needs a revision field: declare revision_field on an operation"
+    );
+}
+
+#[test]
+fn an_append_only_operation_refuses_a_revision_guard() {
+    let mut value = manifest();
+    value["models"]["gadget"]["operations"]["update"]["append_only"] = json!(true);
+    let refusal = run(&catalog(false), &value, &QUERY_SOURCES).unwrap_err();
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
+    assert_eq!(
+        refusal.context(),
+        "gadget.update declares append_only = true with revision guard revision_field = row_version"
+    );
+
+    for revision in [json!(true), json!("gadget_id"), json!(false)] {
+        let mut value = manifest();
+        let mut operation = projection_operation();
+        operation["type"] = json!("command");
+        operation["transaction"] = json!("explicit_per_input");
+        operation["automatic_retry"] = json!(false);
+        operation["append_only"] = json!(true);
+        operation["input"]["fields"][0]["references"] = json!({"model": "gadget"});
+        operation["idempotent_by"] =
+            json!({"state": {"guards": {"gadget": "expected_row_version"}}});
+        operation["input"]["fields"].as_array_mut().unwrap().push(json!({
+            "path": "expected_row_version", "type": "int64", "nullable": false, "revision": revision
+        }));
+        value["custom_operations"]["quality.load_gadget_part"] = operation;
+        let mut sources = QUERY_SOURCES.to_vec();
+        sources.push(AuthoredSql::new(
+            "query/quality_gadget_part.sql",
+            b"SELECT id FROM gadget WHERE id = $1;",
+        ));
+        let refusal = run(&catalog(false), &value, &sources).unwrap_err();
+        assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
+        assert_eq!(
+            refusal.context(),
+            "quality.load_gadget_part declares append_only = true with revision guard expected_row_version"
+        );
+    }
+}
+
+#[test]
+fn a_feed_refuses_authored_list_sql() {
+    for explicit in [false, true] {
+        let mut value = manifest();
+        if explicit {
+            value["models"]["gadget"]["feed"] = json!(true);
+        } else {
+            value["models"]["gadget"]
+                .as_object_mut()
+                .unwrap()
+                .remove("feed");
+        }
+        let refusal = run(&catalog(false), &value, &QUERY_SOURCES).unwrap_err();
+        assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
+        assert_eq!(
+            refusal.context(),
+            "gadget authored list SQL cannot carry a feed"
+        );
+    }
+}
+
+#[test]
+fn an_explicit_feed_refuses_a_missing_list_read() {
+    let mut value = feed_manifest();
+    value["models"]["gadget"]["operations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("query");
+    run(&catalog(false), &value, &[]).expect("no list read means no default feed");
+    value["models"]["gadget"]["feed"] = json!(true);
+    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
+    assert_eq!(
+        refusal.context(),
+        "gadget feed needs a list read (operations.query)"
+    );
+}
+
+#[test]
+fn feed_false_removes_feed_emission() {
+    let mut value = feed_manifest();
+    let default = run(&catalog(false), &value, &[]).unwrap();
+    value["models"]["gadget"]["feed"] = json!(true);
+    assert_eq!(default, run(&catalog(false), &value, &[]).unwrap());
+    value["models"]["gadget"]["feed"] = json!(false);
+    let disabled = run(&catalog(false), &value, &[]).unwrap();
+    for (package, enabled) in [(&default, true), (&disabled, false)] {
+        assert_eq!(
+            package.file("generated/sql/gadget/changes.sql").is_some(),
+            enabled
+        );
+        let input = artifact_json(package, "generated/contracts/gadget/query.input.json");
+        assert_eq!(input.get("feed").is_some(), enabled);
+        let route = artifact_json(package, "generated/routes/gadget/query.json");
+        assert_eq!(route["items"]["properties"].get("feed").is_some(), enabled);
+        let text = |path| std::str::from_utf8(package.file(path).unwrap().bytes()).unwrap();
+        assert_eq!(
+            text("generated/component/gadget.rs").contains("request.feed"),
+            enabled
+        );
+        assert_eq!(
+            text("generated/data/gadget.rs").contains("pub async fn changes("),
+            enabled
+        );
+        let wit = package
+            .files()
+            .iter()
+            .find(|file| file.path().ends_with("gadget/package.wit"))
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(wit.bytes())
+                .unwrap()
+                .contains("changes(query-changes)"),
+            enabled
+        );
+        let overlay = artifact_json(package, DATA_ACCESS_OVERLAY_PATH);
+        let history = overlay["relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|relation| relation["table"] == "gadget_history")
+            .unwrap();
+        assert_eq!(
+            !history["select_fields"].as_array().unwrap().is_empty(),
+            enabled
+        );
+
+        let contracts = package
+            .files()
+            .iter()
+            .filter_map(|file| {
+                file.path()
+                    .strip_prefix("generated/contracts/")
+                    .map(|path| (path.to_owned(), file.bytes().to_vec()))
+            })
+            .collect();
+        let identity = "platform-gadget:gadget/query@1.0.0";
+        let routes = BTreeMap::from([(
+            identity.to_owned(),
+            RouteIr {
+                method: "GET".to_owned(),
+                template: "/gadget/query".to_owned(),
+                input_schema: Some(route),
+                terminal_operation: Some(identity.to_owned()),
+                direct: true,
+                response: ResponseIr::default(),
+                replay: None,
+            },
+        )]);
+        let ir = ClientContractIr::from_release_contracts("platform_gadget", &contracts, &routes)
+            .unwrap();
+        let client = emit_ts_client(&ir).unwrap();
+        let source = client
+            .iter()
+            .find(|file| file.path() == "generated/client-ts/gadget.ts")
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(source.bytes())
+                .unwrap()
+                .contains("export async function changes("),
+            enabled
         );
     }
 }

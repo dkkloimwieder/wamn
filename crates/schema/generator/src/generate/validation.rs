@@ -122,6 +122,28 @@ pub(super) fn validate(
     validate_authored_query_filters(manifest, input.authored_sql)?;
     refuse_generator_owned_queries(input.catalog, manifest, input.authored_sql)?;
     for (operation_name, operation) in &manifest.custom_operations {
+        if operation.append_only {
+            let revision = operation
+                .input
+                .fields
+                .iter()
+                .find(|field| field.revision.is_revision())
+                .map(|field| field.path.as_str())
+                .or_else(|| match &operation.idempotent_by {
+                    Some(crate::CommandIdempotence::State(state)) => {
+                        state.guards.values().next().map(String::as_str)
+                    }
+                    _ => None,
+                });
+            if let Some(revision) = revision {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidOperation,
+                    format!(
+                        "{operation_name} declares append_only = true with revision guard {revision}"
+                    ),
+                ));
+            }
+        }
         validate_custom_operation_sql(
             input.catalog,
             manifest,
@@ -209,6 +231,29 @@ fn validate_model(
     model_name: &str,
     model: &ModelDeclaration,
 ) -> Result<(), GenerateError> {
+    if model.feed_enabled() {
+        let refuse = |message| GenerateError::new(GenerateErrorType::InvalidModel, message);
+        let query = model.operations.get(&CrudAction::Query).ok_or_else(|| {
+            refuse(format!(
+                "{model_name} feed needs a list read (operations.query)"
+            ))
+        })?;
+        if query.authored_sql.is_some() {
+            return Err(refuse(format!(
+                "{model_name} authored list SQL cannot carry a feed"
+            )));
+        }
+        if model.log_retention().is_none() {
+            return Err(refuse(format!(
+                "{model_name} feed needs a history table: declare audit_log.retention other than none"
+            )));
+        }
+        if model.revision_field().is_none() {
+            return Err(refuse(format!(
+                "{model_name} feed needs a revision field: declare revision_field on an operation"
+            )));
+        }
+    }
     validate_identifier(model_name, "model")?;
     validate_identifier(&model.schema, "schema")?;
     validate_identifier(&model.table, "table")?;
@@ -376,6 +421,16 @@ fn validate_operation(
     operation: &OperationDeclaration,
 ) -> Result<(), GenerateError> {
     let context = format!("{model_name}.{}", action.as_str());
+    if operation.append_only
+        && let Some(revision) = &operation.revision_field
+    {
+        return Err(GenerateError::new(
+            GenerateErrorType::InvalidOperation,
+            format!(
+                "{context} declares append_only = true with revision guard revision_field = {revision}"
+            ),
+        ));
+    }
     let id = validate_field(table, model_name, "id")?;
     crate::key::key_type(table)?;
     if id.nullable() {

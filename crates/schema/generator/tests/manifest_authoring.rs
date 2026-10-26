@@ -100,6 +100,33 @@ manifest.Package {{
 }
 
 #[test]
+fn feed_and_append_only_declarations_round_trip() {
+    let defaults = Package::new(&source("", "")).compile();
+    let parsed =
+        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&defaults).unwrap())
+            .unwrap();
+    assert!(parsed.models["widget"].feed_enabled());
+    assert!(
+        !parsed.models["widget"].operations[&wamn_schema_generator::CrudAction::Get].append_only
+    );
+    assert!(!parsed.custom_operations["widget.archive"].append_only);
+
+    let explicit = Package::new(&source(
+        "            feed = False\n            operations: {get: {append_only = True}}",
+        "            append_only = True",
+    ))
+    .compile();
+    let parsed =
+        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&explicit).unwrap())
+            .unwrap();
+    assert!(!parsed.models["widget"].feed_enabled());
+    assert!(
+        parsed.models["widget"].operations[&wamn_schema_generator::CrudAction::Get].append_only
+    );
+    assert!(parsed.custom_operations["widget.archive"].append_only);
+}
+
+#[test]
 fn each_authoring_default_fills() {
     let package = Package::new(&source("", ""));
     let manifest = package.compile();
