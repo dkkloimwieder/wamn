@@ -223,6 +223,8 @@ try {
     assert.match(await page.getByLabel("Sync status").textContent(), /update available, reload/);
     holdCreate = false;
     releaseCreate();
+    // Known flaky under load: wfe gap wamn-c361p. The waiting worker can stay
+    // installed after skip-waiting while the old worker holds no fetch event.
     await waitForStep("R2 shell loads after the outbox drains", () => document.documentElement.dataset.testShell === "r2");
     const remaining = await entries();
     assert.equal(remaining.length, 1);

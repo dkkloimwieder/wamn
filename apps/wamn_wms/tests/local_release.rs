@@ -9,6 +9,8 @@ use anyhow::Context as _;
 use wamn_schema_generator::client_ir::ClientContractIr;
 use wamn_schema_generator::client_ts::emit_ts_client;
 
+/// Known flaky under load: wfe gap wamn-c361p. The waiting worker can stay
+/// installed after skip-waiting, so the reload does not happen within 60 s.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN, node, Chrome"]
 async fn a_waiting_shell_reloads_after_pending_and_sending_entries_finish() -> anyhow::Result<()> {
