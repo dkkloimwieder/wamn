@@ -129,7 +129,8 @@ it.each([false, true])("renders an offline reopen and update notice with a store
   });
   try {
     await waitFor(() => expect(visible()).toEqual({ row: true, picker: true, update: true }));
-    if (restoreExpected) expect(view.container.querySelector(`tr[data-row="${expected.id}"]`)?.textContent).toContain("RESTORED (tentative)");
+    // The restore starts after the saved rows land.
+    if (restoreExpected) await waitFor(() => expect(view.container.querySelector(`tr[data-row="${expected.id}"]`)?.textContent).toContain("RESTORED (tentative)"));
   } finally {
     // Ending the restored action must release the same reads without another load.
     await o.discard(o.entries()[0]!.seq);

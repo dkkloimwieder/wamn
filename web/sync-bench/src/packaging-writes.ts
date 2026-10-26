@@ -1,8 +1,7 @@
-import { createMemo, createProjection, from } from "solid-js";
-import { liveRows, recordWrite, type OperationCall, type Outbox, type OutboxEntry } from "@wfe/sync";
+import { recordWrite, type OperationCall, type Outbox, type OutboxEntry } from "@wfe/sync";
 import { createCall, requestHash } from "@wamn/web-runtime";
 import { PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
-import type { packagingCollection, PackagingRow } from "./packaging-feed.js";
+import type { packagingCollection } from "./packaging-feed.js";
 
 export type PackagingDraft = Omit<PackagingCreateRequest, "id" | "idempotencyKey" | "requestId">;
 
@@ -16,35 +15,9 @@ export function packagingAddress(path: string): { aud: string; application: stri
 
 /** Create through the optimistic store, and keep the same id when correcting a refused request. */
 export function packagingWrites(c: ReturnType<typeof packagingCollection>, o: Outbox) {
-  const record = recordWrite(c, o);
-  const current = liveRows(c);
-  const written = new Set<string>();
-  const recovered = new Map<number, OutboxEntry>();
-  // wfe gap wamn-qz0ck: recordWrite's restore action holds the screen while a restored entry is pending.
-  // Keep recovered creates until both their send and their feed echo arrive.
-  const entries = createMemo(() => from<OutboxEntry[]>((next) => o.watch(() => {
-    const entries = o.entries();
-    for (const entry of entries) {
-      if (entry.state === "refused") recovered.delete(entry.seq);
-      else if (!written.has(entry.request_hash)) recovered.set(entry.seq, entry);
-    }
-    next(entries);
-  })));
-  const rows = createProjection<Record<string, PackagingRow>>(() => {
-    const pending = new Set(entries().map((entry) => entry.seq));
-    const rows = { ...record.rows };
-    for (const [seq, entry] of recovered) {
-      if (!pending.has(seq) && current[entry.expect.id] !== undefined) {
-        recovered.delete(seq);
-        continue;
-      }
-      rows[entry.expect.id] = entry.request as PackagingRow;
-    }
-    return rows;
-  }, {});
+  const record = recordWrite(c, o, { model: "packaging" });
 
   function save(call: OperationCall): Promise<void> {
-    written.add(call.request_hash);
     // The watch sees the committed entry. The write itself still waits for the feed.
     return new Promise((resolve, reject) => {
       let stop = () => {};
@@ -63,7 +36,7 @@ export function packagingWrites(c: ReturnType<typeof packagingCollection>, o: Ou
   }
 
   return {
-    rows,
+    rows: record.rows,
     async create(request: PackagingDraft): Promise<void> {
       const { call } = await createCall<PackagingCreateRequest>({
         operation: PACKAGING_CREATE_ROUTE.operation,

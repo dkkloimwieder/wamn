@@ -86,7 +86,7 @@ The browser adapter targets Solid 2.
 
 ### `@wfe/sync` public surface
 
-The surface below comes from wfe commit `71eb5b444cc3bf82538255fe330db970709291d2`, pinned by the `web/wfe` entry.
+The surface below comes from wfe commit `248556349cb29a1483b35d8022734c317b67368b`, pinned by the `web/wfe` entry.
 [`index.ts`](../../web/wfe/packages/sync/src/index.ts) exports the main entry.
 [`internal.ts`](../../web/wfe/packages/sync/src/internal.ts) exports `applyChanges`.
 [`worker.ts`](../../web/wfe/packages/sync/src/worker.ts) exports `precache` and `skipWaitingMessage`.
@@ -574,8 +574,8 @@ Refusal of a new write throws `OutboxRefused`, and discard throws `OutboxDiscard
 Either rejection ends the action and reverts its guess.
 Restored refusals keep their tentative rows until discard or successful resubmission.
 
-At `71eb5b4`, [`outbox.ts`](../../web/wfe/packages/sync/src/outbox.ts), `OutboxEntry`, stores `expected`, and [`solid.ts`](../../web/wfe/packages/sync/src/solid.ts), `recordWrite`, restores tentative rows from the outbox with `{ model }`.
-Gap: the `restoreEntry` action in `recordWrite` holds the screen's reads while a restored entry is pending. Until wfe fixes it, [`packaging-writes.ts`](../../web/sync-bench/src/packaging-writes.ts), `packagingWrites`, restores the rows itself.
+[`outbox.ts`](../../web/wfe/packages/sync/src/outbox.ts), `OutboxEntry`, stores `expected`.
+[`solid.ts`](../../web/wfe/packages/sync/src/solid.ts), `recordWrite`, restores tentative rows from the outbox with `{ model }`, after the collection's first committed rows land.
 
 ### Pinned versions
 
