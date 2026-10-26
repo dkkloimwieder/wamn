@@ -1,0 +1,7 @@
+{
+  "name": "WAMN Sync Bench",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }],
+  "display": "standalone",
+  "start_url": "./live.html",
+  "scope": "./"
+}

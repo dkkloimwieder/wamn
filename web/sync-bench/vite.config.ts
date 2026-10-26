@@ -5,10 +5,10 @@ import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
 import { applicationConfig } from "../shell/vite";
 
-/** Serve the live page at the same audience path that an application uses. */
-function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
-  if (/^\/urn(?:%3A|:)wamn(?:%3A|:)project-env[^/]+\/live\.html(?:\?|$)/i.test(request.url ?? "")) {
-    request.url = request.url!.replace(/^\/[^/]+\/live\.html/, "/live.html");
+/** Serve the live page and install assets at the application's audience path. */
+export function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
+  if (/^\/urn(?:%3A|:)wamn(?:%3A|:)project-env[^/]+\/(?:live\.html|manifest\.webmanifest|icon\.svg)(?:\?|$)/i.test(request.url ?? "")) {
+    request.url = request.url!.replace(/^\/[^/]+\//, "/");
   }
   next();
 }
@@ -22,7 +22,8 @@ function precacheManifest(): Plugin {
       const chunk = bundle["sw.js"];
       if (chunk?.type !== "chunk") throw new Error("sw.js was not built");
       const files = Object.keys(bundle).filter((name) => name !== "sw.js");
-      chunk.code = chunk.code.replace("__PRECACHE_MANIFEST__", JSON.stringify(["./", ...files]));
+      // Vite copies public assets separately from the bundle.
+      chunk.code = chunk.code.replace("__PRECACHE_MANIFEST__", JSON.stringify(["./", ...files, "manifest.webmanifest", "icon.svg"]));
     },
   };
 }

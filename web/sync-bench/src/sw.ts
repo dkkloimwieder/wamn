@@ -2,11 +2,11 @@ import { precache } from "@wfe/sync/worker";
 
 declare const __PRECACHE_MANIFEST__: string[];
 
-// wfe gap: precache accepts only one excluded prefix. Identity navigations
-// must also bypass its offline fallback, not just its asset cache.
+// wfe 5a gap: remove this local filter and listener when precache supports
+// bypassPrefixes. Both paths must bypass installation and the fetch handler.
+const bypass = (url: string) => /^\/(wamn|password)(\/|$)/.test(new URL(url, location.href).pathname);
 globalThis.addEventListener("fetch", (event: Event) => {
-  const path = new URL((event as Event & { request: Request }).request.url).pathname;
-  if (path === "/password" || path.startsWith("/password/")) event.stopImmediatePropagation();
+  if (bypass((event as Event & { request: Request }).request.url)) event.stopImmediatePropagation();
 });
 
-precache(__PRECACHE_MANIFEST__, { apiPrefix: "/wamn", navigationFallback: "live.html" });
+precache(__PRECACHE_MANIFEST__.filter((url) => !bypass(url)), { apiPrefix: "/wamn", navigationFallback: "live.html" });

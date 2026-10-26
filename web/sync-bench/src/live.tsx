@@ -1,7 +1,7 @@
 import { Loading, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { render } from "@solidjs/web";
 import { Theme } from "@wfe/components";
-import { outbox, outboxStatus, shell } from "@wfe/sync";
+import { outbox, outboxStatus, shell, type ShellResult } from "@wfe/sync";
 import "@wfe/components/styles.css";
 import { createSend, createTransport, keepSession, outboxDatabase, renew, rowsDatabase, rowsPersistence, type SessionState } from "@wamn/web-runtime";
 import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
@@ -17,11 +17,11 @@ const address = packagingAddress(location.pathname);
 const pollMs = Number(new URLSearchParams(location.search).get("poll") ?? 10_000);
 const lastUser = savedUser(address.application, address.environment);
 const [waitingReload, setWaitingReload] = createSignal<(() => void) | undefined>();
+const [shellResult, setShellResult] = createSignal<ShellResult>();
 void shell({
   workerUrl: `${import.meta.env.BASE_URL}sw.js`,
-  persist: false,
   onUpdate: (reload) => setWaitingReload(() => reload),
-});
+}).then(setShellResult);
 
 function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (next: SessionState) => void }) {
   const userId = props.userId;
@@ -66,7 +66,7 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
   });
   return (
     <Loading>
-      <PackagingScreen collection={c} outbox={o} signedIn={props.signedIn} updateAvailable={waitingReload() !== undefined} />
+      <PackagingScreen collection={c} outbox={o} signedIn={props.signedIn} updateAvailable={waitingReload() !== undefined} shellResult={shellResult()} />
     </Loading>
   );
 }

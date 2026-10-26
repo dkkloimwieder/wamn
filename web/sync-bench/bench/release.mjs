@@ -126,6 +126,50 @@ try {
   browser = await chromium.launch({ channel: "chrome", headless: true });
   const page = await browser.newPage();
   page.setDefaultTimeout(60_000);
+  const consoleMessages = [];
+  page.on("console", (message) => consoleMessages.push({
+    type: message.type(), text: message.text(), location: message.location(),
+  }));
+  const entries = () => page.evaluate(async (name) => new Promise((resolve, reject) => {
+    const open = indexedDB.open(name);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction("outbox");
+      const read = tx.objectStore("outbox").getAll();
+      tx.oncomplete = () => { db.close(); resolve(read.result); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+  }), database);
+  async function waitForStep(step, test) {
+    try {
+      await page.waitForFunction(test);
+    } catch (error) {
+      const [state, outbox] = await Promise.allSettled([
+        page.evaluate(async () => {
+          const registration = await navigator.serviceWorker.getRegistration();
+          return {
+            statusText: document.querySelector('[aria-label="Sync status"]')?.textContent ?? null,
+            testShell: document.documentElement.dataset.testShell ?? null,
+            controller: navigator.serviceWorker.controller?.scriptURL ?? null,
+            registration: {
+              active: registration?.active?.state ?? null,
+              waiting: registration?.waiting?.state ?? null,
+              installing: registration?.installing?.state ?? null,
+            },
+          };
+        }),
+        entries(),
+      ]);
+      console.log(JSON.stringify({
+        step, error: String(error),
+        ...(state.status === "fulfilled" ? state.value : { stateError: String(state.reason) }),
+        outbox: outbox.status === "fulfilled" ? outbox.value : { error: String(outbox.reason) },
+        console: consoleMessages,
+      }));
+      throw new Error(`${step}: ${error}`, { cause: error });
+    }
+  }
   page.on("pageerror", (error) => errors.push(String(error)));
   const base = server.resolvedUrls.local[0];
   if (scenario === "old-entry") {
@@ -142,18 +186,7 @@ try {
   } else {
     await page.goto(`${base}${audience}/live.html?poll=1000`);
     await page.locator(`tr[data-row="${process.env.WAMN_FIRST_ID}"]`).waitFor();
-    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-    const entries = () => page.evaluate(async (name) => new Promise((resolve, reject) => {
-      const open = indexedDB.open(name);
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const db = open.result;
-        const tx = db.transaction("outbox");
-        const read = tx.objectStore("outbox").getAll();
-        tx.oncomplete = () => { db.close(); resolve(read.result); };
-        tx.onabort = () => { db.close(); reject(tx.error); };
-      };
-    }), database);
+    await waitForStep("R1 worker controls the page", () => navigator.serviceWorker.controller !== null);
     async function until(test, message) {
       const deadline = Date.now() + 60_000;
       while (!(await test())) {
@@ -178,7 +211,7 @@ try {
     await page.getByRole("region", { name: "Not uploaded" }).locator("article").waitFor();
     await buildShell("r2");
     await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
-    await page.waitForFunction(() => document.querySelector('[aria-label="Sync status"]')?.textContent.includes("update available, reload"));
+    await waitForStep("R2 update notice appears", () => document.querySelector('[aria-label="Sync status"]')?.textContent.includes("update available, reload"));
     assert.equal(await page.evaluate(() => document.documentElement.dataset.testShell), "r1");
     assert.ok((await entries()).some((entry) => entry.state === "pending"));
     holdCreate = true;
@@ -190,7 +223,7 @@ try {
     assert.match(await page.getByLabel("Sync status").textContent(), /update available, reload/);
     holdCreate = false;
     releaseCreate();
-    await page.waitForFunction(() => document.documentElement.dataset.testShell === "r2");
+    await waitForStep("R2 shell loads after the outbox drains", () => document.documentElement.dataset.testShell === "r2");
     const remaining = await entries();
     assert.equal(remaining.length, 1);
     assert.equal(remaining[0].state, "refused", "a refusal survived and did not block reload");

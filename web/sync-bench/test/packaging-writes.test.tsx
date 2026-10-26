@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@solidjs/testing-library";
 import { Loading, flush } from "solid-js";
-import { outbox, type Change, type OperationCall, type Reply } from "@wfe/sync";
+import { outbox, shell, type Change, type OperationCall, type Reply } from "@wfe/sync";
 import { createCall, createSend, createTransport, outboxDatabase, requestHash, rowsPersistence } from "@wamn/web-runtime";
 import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "@wamn/wms-client/packaging.js";
 import { packagingCollection, packagingKey, type PackagingRow } from "../src/packaging-feed";
@@ -45,8 +45,10 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
     },
   );
   const persisted = vi.fn(async () => true);
-  const persist = vi.fn();
-  Object.defineProperty(navigator, "storage", { configurable: true, value: { persisted, persist } });
+  const persist = vi.fn(async () => true);
+  const estimate = vi.fn(async () => ({ usage: 1024, quota: 4096 }));
+  Object.defineProperty(navigator, "storage", { configurable: true, value: { persisted, persist, estimate } });
+  const shellResult = await shell();
   const changes: Change<PackagingRow>[] = [];
   let readFailure: Error | undefined;
   const persistence = rowsPersistence(`rows-${crypto.randomUUID()}`, [PACKAGING_SHAPE_DIGEST]);
@@ -80,7 +82,7 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   await o.replay();
   const view = render(() => (
     <Loading>
-      <PackagingScreen collection={c} outbox={o} />
+      <PackagingScreen collection={c} outbox={o} shellResult={shellResult} />
     </Loading>
   ));
   disposals.push(
@@ -135,8 +137,10 @@ it("records a UUIDv7 create, keeps it tentative after send, and confirms only on
   expect(h.getByLabelText("Sync status").textContent).toContain("Pending: 1");
   expect(h.getByLabelText("Sync status").textContent).toContain("Refused: 0");
   expect(h.getByLabelText("Sync status").textContent).toContain("Storage protected");
-  expect(h.persisted).toHaveBeenCalledOnce();
-  expect(h.persist).not.toHaveBeenCalled();
+  expect(h.getByLabelText("Sync status").textContent).toContain("Worker: unavailable. Persisted: yes.");
+  expect(h.getByLabelText("Sync status").textContent).toContain("Quota: 4096 bytes. Used: 1024 bytes.");
+  expect(h.persisted).not.toHaveBeenCalled();
+  expect(h.persist).toHaveBeenCalledOnce();
   h.net.up = true;
   await h.o.replay();
   expect(h.o.entries()).toHaveLength(0);

@@ -1,13 +1,14 @@
 import { For, Show, createMemo, createSignal, onCleanup, untrack } from "solid-js";
-import { liveRows, outboxStatus, type Outbox, type OutboxEntry } from "@wfe/sync";
+import { liveRows, outboxStatus, type Outbox, type OutboxEntry, type ShellResult } from "@wfe/sync";
 import type { packagingCollection } from "./packaging-feed";
 import { orderedIds, type StatusFilter } from "./order";
 import { packagingWrites, type PackagingDraft } from "./packaging-writes";
 import { shapeA } from "./shape-a";
 import { PackagingView } from "./view";
+import { shellStatus } from "./shell-status";
 
 /** The live packaging rows, create form, and refused writes. */
-export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean; updateAvailable?: boolean }) {
+export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean; updateAvailable?: boolean; shellResult?: ShellResult }) {
   const c = props.collection;
   const o = props.outbox;
   const [filter] = createSignal<StatusFilter>("all");
@@ -24,8 +25,6 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
   // wfe gap: currentAt() has no change subscription, including empty feed replies.
   const timer = setInterval(() => setCurrentAt(c.utils.currentAt()), 1000);
   onCleanup(() => clearInterval(timer));
-  const [protectedStorage, setProtectedStorage] = createSignal(false);
-  void navigator.storage?.persisted().then(setProtectedStorage, () => setProtectedStorage(false));
   return (
     <div data-shape="a" class="bench-column">
       <h2>Packaging</h2>
@@ -34,7 +33,7 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
         <Show when={props.signedIn === false}>Sign in to upload. </Show>
         Status: <output data-sync-status={source.status()}>{source.status()}</output>. Pending:{" "}
         {counts().pending + counts().sending}. Refused: {counts().refused}. Last sent: {counts().lastSentAt ?? "never"}.
-        Current as of: {currentAt() ?? "not yet read"}. Storage {protectedStorage() ? "protected" : "not protected"}.
+        Current as of: {currentAt() ?? "not yet read"}. {shellStatus(props.shellResult)}
       </p>
       <Show when={source.status() === "ready" || currentAt() !== undefined || Object.keys(current).length > 0}>
         <CreatePackaging create={writes.create} />
