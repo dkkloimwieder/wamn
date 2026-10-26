@@ -287,7 +287,9 @@ async fn provision(
 ) -> anyhow::Result<(ProvisionedRoute, ReleaseCarrier)> {
     let (candidate, _) = cluster.candidate()?;
     case_release::copy_release(candidate, &case_registry(&cluster.inputs)?).await?;
-    let route = routes::install_candidate_release(&cluster.inputs, candidate).await?;
+    let route =
+        routes::install_candidate_release(&cluster.inputs, candidate, &cluster.resources.evidence)
+            .await?;
     let (_, digest) = candidate.manifest()?;
     Ok((route, carrier(&cluster.inputs, digest.to_string())?))
 }
@@ -698,7 +700,16 @@ async fn with_signals(
     operation: impl std::future::Future<Output = anyhow::Result<()>>,
 ) -> anyhow::Result<()> {
     use futures_util::FutureExt as _;
+    use std::os::unix::fs::DirBuilderExt as _;
     use tokio::signal::unix::{SignalKind, signal};
+    fs::DirBuilder::new().mode(0o700).create(evidence)?;
+    let test_log = evidence.join("test.log");
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(fs::File::create(&test_log)?)
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    tracing::info!("Receiving test started");
     wash_runtime::init_crypto();
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
@@ -712,6 +723,18 @@ async fn with_signals(
             _ = hangup.recv() => Err(anyhow::anyhow!("the Receiving test received SIGHUP")),
         }
     };
+    let result = result.with_context(|| {
+        format!(
+            "test log: {}; identity log: {}",
+            test_log.display(),
+            evidence.join("identity.log").display()
+        )
+    });
+    if let Err(error) = &result {
+        tracing::error!(failure = %format!("{error:#}"), "Receiving test failed");
+    } else {
+        tracing::info!("Receiving test passed");
+    }
     if let Err(error) = &result
         && evidence.is_dir()
     {
@@ -728,13 +751,50 @@ async fn with_signals(
 #[tokio::test]
 async fn cluster_startup_initializes_tls_client_provider() -> anyhow::Result<()> {
     let evidence = std::env::temp_dir().join(format!("receiving-tls-{}", uuid::Uuid::new_v4()));
-    with_signals(&evidence, async {
+    let result = with_signals(&evidence, async {
         let _client = async_nats::rustls::ClientConfig::builder()
             .with_root_certificates(async_nats::rustls::RootCertStore::empty())
             .with_no_client_auth();
         Ok(())
     })
+    .await;
+    fs::remove_dir_all(&evidence)?;
+    result
+}
+
+#[tokio::test]
+async fn failed_case_retains_tracing_and_identity_output() -> anyhow::Result<()> {
+    let evidence = std::env::temp_dir().join(format!("receiving-logs-{}", uuid::Uuid::new_v4()));
+    let error = with_signals(&evidence, async {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+        fs::File::create(evidence.join("identity.log"))?;
+        std::os::unix::fs::symlink(
+            evidence.join("identity.log"),
+            scratch.path().join("identity.log"),
+        )?;
+        fs::write(
+            scratch.path().join("identity.log"),
+            "identity output after readiness\n",
+        )?;
+        tracing::warn!("provisioning test marker");
+        anyhow::bail!("forced provisioning failure")
+    })
     .await
+    .expect_err("the case must fail");
+    let message = format!("{error:#}");
+    assert!(message.contains("forced provisioning failure"));
+    for name in ["identity.log", "test.log"] {
+        assert!(message.contains(&evidence.join(name).display().to_string()));
+    }
+    assert_eq!(
+        fs::read_to_string(evidence.join("identity.log"))?,
+        "identity output after readiness\n"
+    );
+    let trace = fs::read_to_string(evidence.join("test.log"))?;
+    assert!(trace.contains("provisioning test marker"));
+    assert!(trace.contains("forced provisioning failure"));
+    fs::remove_dir_all(evidence)?;
+    Ok(())
 }
 
 async fn released_http(

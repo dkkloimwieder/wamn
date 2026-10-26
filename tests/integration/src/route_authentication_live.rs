@@ -778,6 +778,59 @@ async fn assert_user_environment_membership(
 #[tokio::test]
 #[ignore = "requires:"]
 async fn production_operator_authentication_and_operation_authorization() {
+    use futures_util::FutureExt as _;
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let results = std::env::var_os("TMPDIR")
+        .map_or_else(|| PathBuf::from("/var/tmp"), PathBuf::from)
+        .join(format!("wamn-route-auth-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&results)
+        .expect("create route-auth results");
+    let results = results.canonicalize().expect("resolve route-auth results");
+    let test_log = results.join("test.log");
+    let identity_log = results.join("identity.log");
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(std::fs::File::create(&test_log).expect("create test log"))
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let scratch = ScratchRoot::create().expect("create route-auth test directory");
+    // Keep a second name for the output before the child starts. Scratch cleanup
+    // removes only its link, even if the test panics during provisioning.
+    std::fs::File::create(&identity_log).expect("create identity log");
+    std::os::unix::fs::symlink(&identity_log, scratch.path().join("identity.log"))
+        .expect("retain identity output outside the private scratch directory");
+    println!(
+        "route-auth logs: {}; {}",
+        test_log.display(),
+        identity_log.display()
+    );
+    tracing::info!("production operator authentication test started");
+    let result = std::panic::AssertUnwindSafe(production_operator_authentication(scratch.path()))
+        .catch_unwind()
+        .await;
+    if let Err(panic) = result {
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("non-text panic");
+        tracing::error!(
+            failure = message,
+            "production operator authentication test failed"
+        );
+        panic!(
+            "{message}\ntest log: {}\nidentity log: {}",
+            test_log.display(),
+            identity_log.display()
+        );
+    }
+    tracing::info!("production operator authentication test passed");
+}
+
+async fn production_operator_authentication(root: &Path) {
     wamn_test_postgres::require_prerequisites(&[]);
     wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     // Provisioning changes roles and database grants of the whole server, so
@@ -789,8 +842,6 @@ async fn production_operator_authentication_and_operation_authorization() {
         .expect("create the wamn_system database")
         .url()
         .to_owned();
-    let scratch = ScratchRoot::create().expect("create route-auth test directory");
-    let root = scratch.path();
 
     let (admin, admin_task) = connect(&admin_url).await.expect("connect admin");
     let version: i32 = admin

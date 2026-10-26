@@ -108,10 +108,15 @@ async fn provision_environment(
 pub(super) async fn install_candidate_release(
     inputs: &JourneyDocument,
     candidate: &Candidate,
+    evidence: &Path,
 ) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
     let system_url = inputs.system_pg_url.clone();
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
+    let identity_log = evidence.join("identity.log");
+    std::fs::File::create(&identity_log).context("create retained identity log")?;
+    std::os::unix::fs::symlink(&identity_log, root.join("identity.log"))
+        .context("retain identity output outside the private scratch directory")?;
     let (admin, admin_task) = connect(&system_url).await?;
     let route = provision_environment(inputs, admin.as_ref(), root).await;
     admin_task.abort();

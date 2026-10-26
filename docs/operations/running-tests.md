@@ -410,6 +410,9 @@ The source owners declare additional credentials, artifact paths, and selected a
 Do not substitute shared services for missing test inputs.
 For deployed runs, use [cluster commands](cluster-tests.md).
 
+`production_operator_authentication_and_operation_authorization` keeps `identity.log` and `test.log` in a new `wamn-route-auth-*` directory under `${TMPDIR:-/var/tmp}`.
+A failure prints both paths; the Receiving qualification cases keep these logs in their existing results directory and print their paths on failure.
+
 ### Record history retention test
 
 `services/ctl/tests/prune_record_history_live.rs` tests the record history retention verb.

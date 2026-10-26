@@ -63,10 +63,9 @@ pub(super) async fn prepare(
         }
     }
     ensure!(
-        evidence.is_absolute() && !evidence.exists(),
-        "the evidence directory must be a new absolute path"
+        evidence.is_absolute() && evidence.is_dir(),
+        "the evidence directory must be an existing absolute path"
     );
-    DirBuilder::new().mode(0o700).create(evidence)?;
     let work = std::env::temp_dir().join(&name);
     DirBuilder::new().mode(0o700).create(&work)?;
     let cluster = Resources {

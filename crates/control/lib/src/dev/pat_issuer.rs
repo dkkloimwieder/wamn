@@ -17,7 +17,7 @@ use rcgen::{
     KeyUsagePurpose,
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
-use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
+use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::{Child, Command};
 use url::Url;
 use wamn_control_provision::CredentialGeneration;
@@ -99,8 +99,6 @@ impl Bootstrap {
             .arg(self.files.0.join("operator-ca.pem"))
             .env("RUST_LOG", "info")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
             .kill_on_drop(false);
         if let Some(target) = &self.session_target {
             command.arg("--session-target").arg(target);
@@ -108,34 +106,62 @@ impl Bootstrap {
                 .arg("--local-mail")
                 .arg(self.files.0.join("mail.jsonl"));
         }
-        let child = command
-            .spawn()
-            .context("start the separate identity process")?;
-        self.child = Some(child);
-        let stderr = self
-            .child
-            .as_mut()
-            .and_then(|child| child.stderr.take())
-            .context("read the identity readiness pipe")?;
-        // The readiness signal is the first tracing line that names the listener.
-        let mut lines = BufReader::new(stderr.take(4096)).lines();
-        let readiness = tokio::time::timeout(IO_TIMEOUT, async {
-            while let Some(line) = lines.next_line().await? {
-                if let Some((_, address)) = line.split_once("identity listening on ") {
-                    return Ok(Some(address.trim().to_owned()));
-                }
-            }
-            Ok::<_, std::io::Error>(None)
-        })
-        .await
-        .context("disposable identity startup timed out")?
-        .context("read disposable identity readiness")?;
-        anyhow::ensure!(
-            readiness == Some(bind.to_string()),
-            "disposable identity process did not report its expected listener"
-        );
+        let log = self
+            .files
+            .0
+            .parent()
+            .context("identity directory has a parent")?
+            .join("identity.log");
+        self.child = Some(spawn_logged(&mut command, &log)?);
+        wait_for_listener(&log, bind)
+            .await
+            .with_context(|| format!("identity output: {}", log.display()))?;
         Ok(())
     }
+}
+
+// Both streams go directly to one file, including after readiness and when
+// retain transfers the process out of this runtime. No pipe can fill or close.
+fn spawn_logged(command: &mut Command, log: &Path) -> anyhow::Result<Child> {
+    let output = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(log)
+        .context("create the identity output file")?;
+    command
+        .stdout(output.try_clone()?)
+        .stderr(output)
+        .spawn()
+        .context("start the separate identity process")
+}
+
+async fn wait_for_listener(log: &Path, bind: std::net::SocketAddr) -> anyhow::Result<()> {
+    let mut reader = BufReader::new(tokio::fs::File::open(log).await?);
+    let mut line = String::new();
+    tokio::time::timeout(IO_TIMEOUT, async {
+        loop {
+            if reader.read_line(&mut line).await? == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+            // A file read can end partway through a line while the child writes.
+            if !line.ends_with('\n') {
+                continue;
+            }
+            if let Some((_, address)) = line.split_once("identity listening on ") {
+                anyhow::ensure!(
+                    address.trim() == bind.to_string(),
+                    "disposable identity process did not report its expected listener"
+                );
+                return Ok(());
+            }
+            line.clear();
+        }
+    })
+    .await
+    .context("disposable identity startup timed out")?
 }
 
 /// Prepare temporary operator credentials and start the existing service binary.
@@ -496,4 +522,46 @@ pub async fn stop_environment(root: &Path) -> anyhow::Result<()> {
     std::fs::remove_dir_all(state.directory)?;
     std::fs::remove_file(path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn output_survives_readiness_and_process_exit() -> anyhow::Result<()> {
+        let directory = PrivateDirectory::new(&std::env::temp_dir())?;
+        let log = directory.0.join("identity.log");
+        let proceed = directory.0.join("proceed");
+        let mut command = Command::new("sh");
+        command
+            .args([
+                "-c",
+                r#"
+            printf 'before stdout\n'
+            printf 'identity listening on 127.0.0.1:12345\n' >&2
+            while [ ! -f "$1" ]; do sleep 0.01; done
+            head -c 131072 /dev/zero >&2
+            printf 'after stderr\n' >&2
+            printf 'after stdout\n'
+        "#,
+                "identity-output-test",
+            ])
+            .arg(&proceed)
+            .kill_on_drop(true);
+        let mut child = spawn_logged(&mut command, &log)?;
+        wait_for_listener(&log, "127.0.0.1:12345".parse()?).await?;
+        std::fs::write(proceed, b"")?;
+        assert!(
+            tokio::time::timeout(IO_TIMEOUT, child.wait())
+                .await??
+                .success()
+        );
+        let output = std::fs::read(log)?;
+        let mut expected = b"before stdout\nidentity listening on 127.0.0.1:12345\n".to_vec();
+        expected.extend(vec![0; 131_072]);
+        expected.extend(b"after stderr\nafter stdout\n");
+        assert_eq!(output, expected);
+        Ok(())
+    }
 }
