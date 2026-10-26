@@ -153,6 +153,15 @@ pub(super) async fn apply(
     registry: &PackageRegistry,
 ) -> anyhow::Result<bool> {
     let image = runner_image(directory)?;
+    let auth: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-ctl-auth-nats",
+    )
+    .await?
+    .context("missing Secret platform/wamn-ctl-auth-nats")?;
     let mut changed = false;
     for (path, environment) in super::broker::documents(environments)? {
         let tenant = format!(
@@ -195,8 +204,25 @@ pub(super) async fn apply(
                     "--tenant".into(),
                     tenant.clone(),
                 ],
+                environment: [
+                    (
+                        "WAMN_AUTH_NATS_URL".into(),
+                        "nats://nats.platform.svc.cluster.local:4222".into(),
+                    ),
+                    (
+                        "WAMN_AUTH_NATS_TLS_SERVER_NAME".into(),
+                        "nats.platform.svc.cluster.local".into(),
+                    ),
+                    ("WAMN_AUTH_NATS_TLS_CA".into(), "/inputs/ca.crt".into()),
+                    ("WAMN_AUTH_NATS_TLS_CERT".into(), "/inputs/tls.crt".into()),
+                    ("WAMN_AUTH_NATS_TLS_KEY".into(), "/inputs/tls.key".into()),
+                ]
+                .into(),
                 ..JobRequest::default()
             };
+            for key in ["ca.crt", "tls.crt", "tls.key"] {
+                request.files.insert(key.into(), secret_text(&auth, key)?);
+            }
             registry_inputs(&mut request, registry)?;
             changed |= job::run(
                 target,
