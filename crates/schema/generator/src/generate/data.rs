@@ -718,10 +718,12 @@ fn emit_feed(
 ) {
     let key = key_type(table).expect("validated model key");
     let (feed, id, id_type, cloned) = match key {
-        KeyType::Uuid => ("feed", "id.0.clone()", "", ".clone()"),
+        KeyType::Uuid => ("feed", "id: id.0.clone()", "", ".clone()"),
         KeyType::Int32 => ("feed::id", "id", ", i32", ""),
         KeyType::Int64 => ("feed::id", "id", ", i64", ""),
     };
+    // A list with no filters reads nothing from its input.
+    let input = if binds.is_empty() { "_input" } else { "input" };
     let cursor_type = if key == KeyType::Uuid {
         String::new()
     } else {
@@ -789,7 +791,7 @@ fn emit_feed(
          /// scope of the list's filters since the cursor, one entry per row.\n\
          ///\n/// A row that left the scope, or was deleted, is a change with no data.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn changes(connection: &mut Connection, input: QueryInput, part: FeedInput) -> Result<{feed}::Changes<{model_type}Row{id_type}>, Error> {{\n\
+         pub async fn changes(connection: &mut Connection, {input}: QueryInput, part: FeedInput) -> Result<{feed}::Changes<{model_type}Row{id_type}>, Error> {{\n\
          let cursor = part.cursor.as_deref().map(|encoded| {feed}::decode{cursor_type}(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\
          {binds}\
          let (cursor_transaction, cursor_id) = match cursor {{\n\
@@ -810,10 +812,10 @@ fn emit_feed(
          let present = row.present == Some(true);\n\
          let deleted_version = row.deleted_version;\n\
          let change = match live_row!(row) {{\n\
-         Some(data) if present => {feed}::Change {{ id: {id}, row_version: {version}, data: Some(data) }},\n\
+         Some(data) if present => {feed}::Change {{ {id}, row_version: {version}, data: Some(data) }},\n\
          // A row that left the scope carries its live revision, and a\n\
          // deleted row the revision its delete entry left.\n\
-         live => {feed}::Change {{ id: {id}, row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
+         live => {feed}::Change {{ {id}, row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
          }};\n\
          changed.push({feed}::Changed {{ transaction, id, change }});\n\
          }}\n\
