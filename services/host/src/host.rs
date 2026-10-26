@@ -93,9 +93,9 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS")]
     pub drain_bound_seconds: u64,
 
-    /// The materializer's grace, which the release chart renders: the time to
-    /// stop materializer services and answer the operator's stop before the
-    /// host closes ingress. It must be shorter than the drain bound.
+    /// The workload grace, which the release chart renders: the time to stop
+    /// services and answer operator stops before the host closes ingress.
+    /// Components stop after HTTP drains. This must be shorter than the drain bound.
     #[arg(
         long,
         env = "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
@@ -1668,7 +1668,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .start()
         .await
         .context("failed to start native host")?;
-    let service_drain = Arc::new(commands::ServiceDrain::default());
+    let workload_drain = Arc::new(commands::WorkloadDrain::default());
     let local_materializer = local_workload
         .as_ref()
         .and_then(|(_, materializer)| materializer.as_ref())
@@ -1681,7 +1681,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 postgres: Arc::clone(&postgres),
                 operations: operations.clone(),
                 component_artifact_base: args.component_artifact_base.clone(),
-                drain: Arc::clone(&service_drain),
+                drain: Arc::clone(&workload_drain),
             }));
     if let Some(starts) = args.max_concurrent_starts {
         control_builder = control_builder.with_max_concurrent_starts(starts);
@@ -1721,7 +1721,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Err(error) = started {
         let _ = stop_queue.send(true);
         wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
-            let _ = service_drain
+            let _ = workload_drain
                 .stop(
                     &native_host,
                     local_materializer.as_deref(),
@@ -1733,11 +1733,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 Some(handler) => handler.stop().await.context("stop HTTP admission"),
                 None => Ok(()),
             };
+            let component_result = workload_drain
+                .stop_components(&native_host, async {
+                    if let Some(connections) = &ingress_connections {
+                        connections.drained().await;
+                    }
+                })
+                .await;
             let native_result = normalize_explicit_ingress_stop(
                 native_cleanup.await,
                 had_ingress && explicit_stop.is_ok(),
             );
-            explicit_stop.and(native_result)
+            explicit_stop.and(component_result).and(native_result)
         })
         .await?;
 
@@ -1796,11 +1803,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         };
         let queue_enabled = queue.is_some();
         let had_ingress = ingress_handler.is_some();
+        let draining_connections = ingress_connections.clone();
         let stop_ingress = async move {
-            // The materializer stops before admission closes, because closing
-            // native ingress also ends host control and the operator's stop
-            // must still reach it. Past its bound the drain goes on.
-            if let Err(error) = service_drain
+            // Keep control reachable for operator stops before ingress closes.
+            // Component replies report Stopping until HTTP drains (R20).
+            // Past the operator wait bound, the host drain goes on.
+            if let Err(error) = workload_drain
                 .stop(
                     &native_host,
                     local_materializer.as_deref(),
@@ -1808,16 +1816,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 )
                 .await
             {
-                tracing::warn!(%error, "materializer drain");
+                tracing::warn!(%error, "workload drain");
             }
-            match ingress_handler {
-                Some(handler) => {
-                    handler.stop().await.context("stop HTTP admission")?;
-                    handler.stopped().await;
-                    Ok(())
-                }
-                None => Ok(()),
+            if let Some(handler) = ingress_handler {
+                handler.stop().await.context("stop HTTP admission")?;
             }
+            workload_drain
+                .stop_components(&native_host, async {
+                    if let Some(connections) = &draining_connections {
+                        connections.drained().await;
+                    }
+                })
+                .await
         };
         stop_combined_after(
             stopped,
