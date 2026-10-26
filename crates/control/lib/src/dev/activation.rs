@@ -1018,6 +1018,10 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             event_identity.environment.clone(),
         ),
     ];
+    env.push((
+        "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS".to_owned(),
+        crate::release_chart::MATERIALIZER_DRAIN_BOUND_SECONDS.to_string(),
+    ));
     env.extend(
         crate::release_chart::TELEMETRY_VARIABLES.map(|(name, value)| {
             let value = if name == "OTEL_EXPORTER_OTLP_ENDPOINT" {
@@ -2706,6 +2710,10 @@ mod tests {
                 ("WAMN_EVT_ORG".to_owned(), "example".to_owned()),
                 ("WAMN_EVT_PROJECT".to_owned(), "fixture".to_owned()),
                 ("WAMN_EVT_ENV".to_owned(), "fixture-dev".to_owned()),
+                (
+                    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS".to_owned(),
+                    "10".to_owned(),
+                ),
                 (
                     "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
                     "http://127.0.0.1:41016".to_owned(),

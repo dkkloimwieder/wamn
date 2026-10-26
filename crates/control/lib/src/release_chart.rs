@@ -275,7 +275,18 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
 /// `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one budget of
 /// the host's shutdown sequence, from the same value as the pods'
 /// `terminationGracePeriodSeconds` (R20).
-const HOST_VARIABLES: [&str; 3] = ["WAMN_ORG", "WAMN_PROJECT", "WAMN_DRAIN_BOUND_SECONDS"];
+const HOST_VARIABLES: [&str; 4] = [
+    "WAMN_ORG",
+    "WAMN_PROJECT",
+    "WAMN_DRAIN_BOUND_SECONDS",
+    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
+];
+
+/// The materializer's grace: when its host drains, the host stops the
+/// materializer and answers the operator's stop within this time, before it
+/// closes admission. It must be shorter than the drain bound, so a host pod
+/// never leaves a materializer replica that the operator cannot stop.
+pub const MATERIALIZER_DRAIN_BOUND_SECONDS: u32 = 10;
 
 /// The host samples traces at their start and exports to the cluster's collector.
 /// The sampler keeps sampled parents and 10% of new traces (R5, R6).
@@ -293,10 +304,11 @@ pub const TELEMETRY_VARIABLES: [(&str, &str); 4] = [
 /// The host variables a host group body must not set: the derived ones, the
 /// telemetry and allocator residency ones, and the chart's environment
 /// variable, which the release replaces by argument.
-const REFUSED_VARIABLES: [&str; 11] = [
+const REFUSED_VARIABLES: [&str; 12] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
+    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_SERVICE_NAME",
     "OTEL_TRACES_SAMPLER",
@@ -351,6 +363,11 @@ fn applications_argument(
 
 /// Render the install values of one environment.
 pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
+    ensure!(
+        MATERIALIZER_DRAIN_BOUND_SECONDS < input.drain_bound_seconds,
+        "materializer_drain_bound_seconds ({MATERIALIZER_DRAIN_BOUND_SECONDS}) must be shorter than drain_bound_seconds ({})",
+        input.drain_bound_seconds
+    );
     let name = release_name(&input.org, &input.project, &input.env)?;
     let label = release_label(&input.manifest_digest)
         .context("the release manifest digest is not a sha256 digest")?;
@@ -387,6 +404,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         input.org.clone(),
         input.project.clone(),
         input.drain_bound_seconds.to_string(),
+        MATERIALIZER_DRAIN_BOUND_SECONDS.to_string(),
     ]) {
         variables.push(mapping([("name", variable.to_owned()), ("value", value)]));
     }
@@ -803,6 +821,7 @@ mod tests {
                 "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}, \
                  {name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
                  {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}, \
+                 {name: WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS, value: '10'}, \
                  {name: OTEL_EXPORTER_OTLP_ENDPOINT, \
                   value: 'http://otel-collector.platform.svc.cluster.local:4317'}, \
                  {name: OTEL_SERVICE_NAME, value: wamn-host}, \
@@ -924,6 +943,27 @@ mod tests {
             ["sql-application"],
             "the named application owns the imports even when another member has more"
         );
+    }
+
+    #[test]
+    fn values_refuse_a_materializer_bound_equal_to_or_above_the_host_bound() {
+        for host_bound in [
+            MATERIALIZER_DRAIN_BOUND_SECONDS,
+            MATERIALIZER_DRAIN_BOUND_SECONDS - 1,
+        ] {
+            let mut input = input();
+            input.drain_bound_seconds = host_bound;
+            let error = values(&input).expect_err("materializer must stop before its host");
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "materializer_drain_bound_seconds (10) must be shorter than drain_bound_seconds ({host_bound})"
+                )
+            );
+        }
+        let mut input = input();
+        input.drain_bound_seconds = 30;
+        assert!(values(&input).is_ok(), "the rollback policy remains valid");
     }
 
     #[test]

@@ -93,6 +93,16 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS")]
     pub drain_bound_seconds: u64,
 
+    /// The materializer's grace, which the release chart renders: the time to
+    /// stop materializer services and answer the operator's stop before the
+    /// host closes ingress. It must be shorter than the drain bound.
+    #[arg(
+        long,
+        env = "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
+        default_value = "10"
+    )]
+    pub materializer_drain_bound_seconds: u64,
+
     #[arg(long = "scheduler-nats-tls-ca")]
     pub scheduler_nats_tls_ca: Option<PathBuf>,
 
@@ -918,6 +928,10 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.materializer_drain_bound_seconds < args.drain_bound_seconds,
+        "materializer_drain_bound_seconds must be shorter than drain_bound_seconds"
+    );
     let startup_started = Instant::now();
     let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
     tracing::info!(
@@ -1654,6 +1668,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .start()
         .await
         .context("failed to start native host")?;
+    let service_drain = Arc::new(commands::ServiceDrain::default());
+    let local_materializer = local_workload
+        .as_ref()
+        .and_then(|(_, materializer)| materializer.as_ref())
+        .map(|materializer| materializer.workload_id.clone());
     let mut control_builder =
         AttachedHostControl::builder(Arc::clone(&native_host), Arc::new(scheduler_nats_client))
             .with_host_group(args.host_group.clone())
@@ -1662,6 +1681,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 postgres: Arc::clone(&postgres),
                 operations: operations.clone(),
                 component_artifact_base: args.component_artifact_base.clone(),
+                drain: Arc::clone(&service_drain),
             }));
     if let Some(starts) = args.max_concurrent_starts {
         control_builder = control_builder.with_max_concurrent_starts(starts);
@@ -1701,6 +1721,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Err(error) = started {
         let _ = stop_queue.send(true);
         wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
+            let _ = service_drain
+                .stop(
+                    &native_host,
+                    local_materializer.as_deref(),
+                    Duration::from_secs(args.materializer_drain_bound_seconds),
+                )
+                .await;
             let had_ingress = ingress_handler.is_some();
             let explicit_stop = match ingress_handler.as_ref() {
                 Some(handler) => handler.stop().await.context("stop HTTP admission"),
@@ -1770,6 +1797,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let queue_enabled = queue.is_some();
         let had_ingress = ingress_handler.is_some();
         let stop_ingress = async move {
+            // The materializer stops before admission closes, because closing
+            // native ingress also ends host control and the operator's stop
+            // must still reach it. Past its bound the drain goes on.
+            if let Err(error) = service_drain
+                .stop(
+                    &native_host,
+                    local_materializer.as_deref(),
+                    Duration::from_secs(args.materializer_drain_bound_seconds),
+                )
+                .await
+            {
+                tracing::warn!(%error, "materializer drain");
+            }
             match ingress_handler {
                 Some(handler) => {
                     handler.stop().await.context("stop HTTP admission")?;

@@ -269,6 +269,12 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // observability.md R6: the host exports to the cluster's collector, each
     // variable once.
     let variables = host["env"].as_sequence().expect("host variables");
+    let materializer_bounds: Vec<&Value> = variables
+        .iter()
+        .filter(|variable| variable["name"] == "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS")
+        .collect();
+    assert_eq!(materializer_bounds.len(), 1);
+    assert_eq!(materializer_bounds[0]["value"].as_str(), Some("10"));
     // Owner ruling 2026-10-21: count guest growth, keep the chart's 64Mi request.
     assert_eq!(
         host["resources"]["requests"]["memory"].as_str(),
