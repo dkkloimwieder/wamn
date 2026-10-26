@@ -43,6 +43,9 @@ mod business_fixture;
 mod local_business;
 
 #[cfg(test)]
+mod local_case2;
+
+#[cfg(test)]
 mod local_feed;
 
 #[cfg(test)]

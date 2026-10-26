@@ -117,10 +117,15 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
         let driver = match scenario {
             "release" | "old-entry" => "bench/release.mjs",
             "take-offline" => "bench/take-offline.mjs",
+            "case2" => "bench/case2.mjs",
             _ => "bench/outbox.mjs",
         };
         let output = tokio::time::timeout(
-            std::time::Duration::from_secs(if scenario == "take-offline" { 900 } else { 180 }),
+            std::time::Duration::from_secs(if matches!(scenario, "take-offline" | "case2") {
+                900
+            } else {
+                180
+            }),
             tokio::process::Command::new("node")
                 .arg(driver)
                 .arg(scenario)
@@ -155,11 +160,15 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
             return Ok(());
         }
         let ids: Vec<String> = serde_json::from_value(outcome["ids"].clone())?;
-        let expected = if scenario == "offline" { 3 } else { 1 };
+        let expected = if matches!(scenario, "offline" | "case2") {
+            3
+        } else {
+            1
+        };
         anyhow::ensure!(ids.len() == expected, "created ids: {outcome}");
         let rows = admin
             .query(
-                "SELECT id::text, packaging_code, row_version FROM wms.packaging WHERE id::text <> $1",
+                "SELECT id::text, packaging_code, row_version, location_id::text FROM wms.packaging WHERE id::text <> $1",
                 &[&PACKAGING_ID],
             )
             .await?;
@@ -176,9 +185,14 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
                 "lost-reply" => code == "LOST-REPLY",
                 "release" => code == "RELEASE",
                 "old-entry" => code == "R2",
+                "case2" => ["CASE2-1", "CASE2-2", "CASE2-3"].contains(&code.as_str()),
                 _ => unreachable!("the test names a supported case"),
             };
             anyhow::ensure!(valid_code, "the stored packaging code is {code}");
+            if scenario == "case2" {
+                let location: String = row.get(3);
+                anyhow::ensure!(location == LOCATION_A_ID, "row {id} uses the selected location");
+            }
         }
         Ok::<_, anyhow::Error>(())
     }

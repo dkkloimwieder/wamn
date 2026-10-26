@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import { For, Show, createMemo, createSignal, createUniqueId, onCleanup, untrack } from "solid-js";
 import { liveRows, outboxStatus, type Outbox, type OutboxEntry, type ShellResult } from "@wfe/sync";
 import type { packagingCollection } from "./packaging-feed";
 import { orderedIds, type StatusFilter } from "./order";
@@ -25,6 +25,7 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
   const [currentAt, setCurrentAt] = createSignal(props.offline?.packaging.currentAt() ?? c.utils.currentAt());
   const [locationAt, setLocationAt] = createSignal<string>();
   const [locationCount, setLocationCount] = createSignal(0);
+  const [locations, setLocations] = createSignal(props.offline?.location?.c);
   const [missing, setMissing] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [result, setResult] = createSignal<OfflineResult>();
@@ -33,6 +34,7 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
     setCurrentAt(props.offline?.packaging.currentAt() ?? c.utils.currentAt());
     setLocationAt(props.offline?.location?.currentAt());
     setLocationCount(props.offline?.location?.c.size ?? 0);
+    setLocations(props.offline?.location?.c);
     const local = props.offline ? props.offline.packaging.local()
       : source.status() === "loading" ? undefined : source.status() === "ready" || Object.keys(current).length > 0;
     setMissing(needsConnection(navigator.onLine, local));
@@ -80,7 +82,7 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
         </Show>
       </Show>
       <Show when={source.status() === "ready" || currentAt() !== undefined || Object.keys(current).length > 0}>
-        <CreatePackaging create={writes.create} />
+        <CreatePackaging create={writes.create} locations={locations()} />
         <PackagingView
           label="Packaging"
           source={{ ...source, ids, get: (id) => writes.rows[id] }}
@@ -104,7 +106,24 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
   );
 }
 
-function CreatePackaging(props: { create: (request: PackagingDraft) => Promise<void> }) {
+type Locations = NonNullable<ReturnType<typeof packagingOffline>["location"]>["c"];
+
+function LocationPicker(props: { collection: Locations }) {
+  const id = createUniqueId();
+  const rows = liveRows(props.collection);
+  const ids = createMemo(() => Object.keys(rows).sort((a, b) => rows[a]!.locationCode.localeCompare(rows[b]!.locationCode)));
+  return (
+    <>
+      <label for={id}>Location</label>
+      <select id={id} name="locationId" required>
+        <option value="">Select a location</option>
+        <For each={ids()}>{(id) => <option value={id}>{rows[id]!.locationCode}</option>}</For>
+      </select>
+    </>
+  );
+}
+
+function CreatePackaging(props: { create: (request: PackagingDraft) => Promise<void>; locations?: Locations }) {
   const [busy, setBusy] = createSignal(false);
   const [message, setMessage] = createSignal("");
   return (
@@ -136,9 +155,9 @@ function CreatePackaging(props: { create: (request: PackagingDraft) => Promise<v
       <label>
         Packaging code <input name="packagingCode" required />
       </label>
-      <label>
-        Location id <input name="locationId" required />
-      </label>
+      <Show when={props.locations} keyed fallback={<label>Location id <input name="locationId" required /></label>}>
+        {(collection) => <LocationPicker collection={collection} />}
+      </Show>
       <label>
         Type{" "}
         <select name="type">
