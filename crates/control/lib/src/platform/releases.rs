@@ -38,6 +38,7 @@ pub(super) async fn apply(
             capture_output: true,
             arguments: vec![
                 "publish-release".into(),
+                "/inputs/environment.k".into(),
                 "--database-url".into(),
                 "$(WAMN_PG_ADMIN_URL)".into(),
                 "--control-database-url".into(),
@@ -54,9 +55,14 @@ pub(super) async fn apply(
                 "wamn_run".into(),
                 "--artifact-base".into(),
                 registry.artifact_base.clone(),
-                "--applications".into(),
-                serde_json::to_string(&environment.applications)?,
             ],
+            files: [(
+                "environment.k".into(),
+                std::fs::read_to_string(&path)
+                    .with_context(|| format!("read {}", path.display()))?,
+            )]
+            .into(),
+            environment: [("WAMN_KCL".into(), "/usr/local/bin/kcl".into())].into(),
             ..JobRequest::default()
         };
         let mut artifacts = Vec::new();

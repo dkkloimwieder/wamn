@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use wamn_catalog::PackageCoordinate;
+use wamn_control::environment::document::EnvironmentDocument;
 use wamn_control::package_artifact::PackageRegistry;
 use wamn_control::publish_release::{self, PublishReleaseRequest, parse_package};
 use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
@@ -15,9 +16,8 @@ use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 /// `push-package` pushed under the tag `<package_id>-<version>`.
 #[derive(Debug, Args)]
 pub struct PublishReleaseArgs {
-    /// Application map compiled from environment.k.
-    #[arg(long, value_parser = parse_applications)]
-    pub applications: wamn_catalog::EnvironmentApplications,
+    /// The environment.k document.
+    pub file: PathBuf,
     /// Application to publish; omitted when the map names one application.
     #[arg(long)]
     pub application: Option<String>,
@@ -91,13 +91,18 @@ pub struct TerminalizeEffectUncertainArgs {
     pub correlation_id: String,
 }
 
-/// Parse the application map compiled from an environment document.
-pub fn parse_applications(value: &str) -> Result<wamn_catalog::EnvironmentApplications, String> {
-    serde_json::from_str(value).map_err(|error| error.to_string())
-}
-
 /// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
+    let environment = EnvironmentDocument::compile(&args.file)?;
+    anyhow::ensure!(
+        environment.org == args.org
+            && environment.env == args.environment
+            && format!(
+                "{}--{}--{}",
+                environment.org, environment.project, environment.env
+            ) == args.tenant,
+        "the environment document does not match --org, --tenant and --environment"
+    );
     // The release repository is the one `env apply` pulls from, named once
     // for the platform (`environment::Platform::from_env`).
     let release_artifact_base = std::env::var("WAMN_RELEASE_ARTIFACT_BASE")
@@ -110,7 +115,7 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     };
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
-            applications: args.applications,
+            applications: environment.applications,
             application: args.application,
             database_url: args.database_url,
             control_database_url: args.control_database_url,
@@ -160,10 +165,9 @@ mod tests {
         args: PublishReleaseArgs,
     }
 
-    const PUBLISH: [&str; 22] = [
+    const PUBLISH: [&str; 21] = [
         "publish-release",
-        "--applications",
-        r#"{"orders":{"packages":["orders"]}}"#,
+        "environment.k",
         "--database-url",
         "postgres://publish.invalid/env",
         "--control-database-url",
@@ -201,15 +205,26 @@ mod tests {
             args.application.is_none(),
             "one application needs no selector"
         );
-        assert_eq!(
-            args.applications["orders"].packages,
-            ["orders".to_owned()].into()
-        );
+        assert_eq!(args.file, PathBuf::from("environment.k"));
         assert!(
-            PublishProbe::try_parse_from(&PUBLISH[..19]).is_err(),
+            PublishProbe::try_parse_from(&PUBLISH[..18]).is_err(),
             "publish-release parsed with no package artifact base"
         );
+        let mut selected = PUBLISH.to_vec();
+        selected.extend(["--application", "orders"]);
+        assert_eq!(
+            PublishProbe::try_parse_from(selected)
+                .unwrap()
+                .args
+                .application
+                .as_deref(),
+            Some("orders")
+        );
+        let mut missing_file = PUBLISH.to_vec();
+        missing_file.remove(1);
+        assert!(PublishProbe::try_parse_from(missing_file).is_err());
         for retired in [
+            ["--applications", r#"{"orders":{"packages":["orders"]}}"#],
             ["--package-manifest", "apps/orders/generated/wamn.json"],
             ["--attachments", "apps/orders/publication/attachments.json"],
         ] {

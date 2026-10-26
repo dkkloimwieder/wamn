@@ -221,21 +221,22 @@ Each `--package ID@VERSION` is the artifact under the tag `ID-VERSION` in `--art
 A package with no artifact in the registry refuses, and the publish writes nothing.
 The release takes each package's `wamn.json`, attachments and component descriptors from its artifact.
 For an overlay, repeat `--package` for the exact selected package set.
-Platform release Jobs pass the `applications` map from `environment.k` to publication.
-For a direct `publish-release` call, pass that compiled map as JSON through `--applications`.
+Platform release Jobs mount the selected authored document at `/inputs/environment.k`.
+`publish-release` reads the file argument, compiles it, and takes its `applications` map.
+The document must match `--org`, `--tenant` and `--environment`.
 A map with one application needs no `--application` selector.
 For a map with multiple applications, pass the application name through `--application`.
 Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
 
 ```bash
 WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
+  deploy/gcp/environments/"$TENANT".k \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
   --org "$ORG" \
   --tenant "$TENANT" --environment "$ENVIRONMENT" \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
-  --applications '{"wamn_receiving":{"packages":["wamn_receiving"]}}' \
   --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
 
 wamn-ctl qualify-release \
