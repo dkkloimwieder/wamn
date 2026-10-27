@@ -1,5 +1,6 @@
 Each plan describes work or decisions for its subject. [Architecture](../architecture/README.md) describes current behavior. Beads records implementation status.
 
+- [Authored views](authored-views.md): views in package schemas for reports, narrow reads, and query feeds.
 - [CDC reader slot](cdc-reader-slot.md): replication slot ownership.
 - [Component pull](component-pull.md): digest-addressed component loading.
 - [Delivery](delivery.md): CI integration and conditional test extensions.

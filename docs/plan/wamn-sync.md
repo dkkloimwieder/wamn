@@ -9,7 +9,7 @@ The platform supplies the mechanism, and sync-bench tests it through take-offlin
 
 The platform scope includes:
 
-- A generated change feed through each eligible model's list route.
+- A change feed on each list read that a sync screen uses, generated or authored.
 - Browser collections and live queries, with a Solid 2 adapter in `@wfe/sync`.
 - A durable outbox, ordered replay, and refusal handling.
 - A cached shell and storage support for Chrome on PCs and tablets.
@@ -21,10 +21,11 @@ Native applications, automatic conflict merging, server-side incremental views, 
 
 | Term | Meaning |
 | --- | --- |
-| change feed | The list read's mode that returns changed rows and a continuation cursor. |
+| change feed | The list read's mode that returns changed result rows and a continuation cursor. |
+| root | The model whose id keys each result row of a feeding query. |
 | cursor | An opaque string that the client returns unchanged. |
 | snapshot | Rows and a feed cursor from a list statement. |
-| collection | Browser rows for one model and scope, keyed by id in `@tanstack/db`. |
+| collection | Browser result rows of one query and argument set, keyed by root key in `@tanstack/db`. |
 | live query | A query whose result updates when its input collections change. |
 | adapter | The `@wfe/sync` code that exposes collections as Solid stores. |
 | outbox | The durable local queue of operation calls awaiting upload or resolution. |
@@ -336,7 +337,7 @@ wamn supplies:
 
 | Section | Owner |
 | --- | --- |
-| Change feed (host) | wamn host and generator |
+| Query feed (host) | wamn host and generator |
 | Browser store and live queries | `@wfe/sync`, with wamn's `Feed`, version accessor, and scope key |
 | Solid 2 adapter | `@wfe/sync` |
 | Writes | `@wfe/sync` queue, with wamn's send mapping, ids, numbers, and refusal panel |
@@ -345,27 +346,177 @@ wamn supplies:
 | Release compatibility | Ordinary host validation and wamn's shell reload rule |
 | Generator and bindings | wamn |
 
-## Change feed (host)
+## Query feed (host)
 
-See [the change feed](../architecture/execution.md#change-feed) for the list contract, opaque cursor, snapshot handoff, paging, and retention refusals.
+A feed belongs to a query, not to a model.
+It returns the changed result rows of that query.
+Joins stay in PostgreSQL, and the browser never joins tables.
 
-Epic 5 defines explicit feed refusal and opt-out.
+### Unit and root
+
+Every list read that a sync screen uses can carry a feed, whether the read is generated or authored.
+The feed returns rows of that query's result.
+The browser holds those result rows, and it never holds raw joined tables for a screen.
+
+Each feeding query names its root model.
+The root is the model whose id keys the result.
+The query returns one result row per root key, and the key of a result row is the root's id.
+A query that can return two rows for one root key, or a row without a root key, cannot carry a feed.
+
+For an authored read, the root is the model of its `lists` declaration.
+[`manifest.rs`](../../crates/schema/generator/src/manifest.rs), `ListDeclaration`, already names that model and the key field.
+The key field must be the root's id, and a feed needs one key field.
+An authored feeding read selects from one view, as [Read set and linking columns](#read-set-and-linking-columns) states.
+
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| One unit | A feed belongs to one query and returns that query's result rows | Generated contract test for a generated read and an authored read |
+| One row per root | Each result row has a root key, and no two rows share one | Build refusal test for a query with a nullable or repeated key |
+
+### Contract
+
+[The change feed](../architecture/execution.md#change-feed) owns the list contract, the `changes` variant, and the client helper.
+The query feed keeps that contract and changes three facts:
+
+- An authored read gets the same `page` and `changes` variants as a generated read.
+- `id` in a `changes` row is the root key of a result row.
+- The list keeps one permission row for both variants, as it does today.
+
+### changes(cursor)
+
+One `changes` call runs one statement, so every step reads one snapshot.
+The statement has three steps.
+
+1. It finds the affected root keys. For every table that the query reads, it takes the history entries in the cursor window. The window, paging, and visibility rules are the rules of the current feed in [`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`.
+2. It maps each entry to root keys. A root table entry maps through its `row_key`. A joined table entry maps through the view's linking column for that table. A deleted joined row, or an update that changes a foreign key, also maps through the foreign key in its history `before` image.
+3. It runs the query's own statement again, restricted to `root.id = any($affected)`. A returned key is an upsert. An affected key that the statement does not return is a deletion.
+
+A changed row of a joined table has its own history entry.
+So each entry maps through the current rows on its path and its own `before` image.
+A key that leaves the query's filters is not returned, so it is a deletion.
+
+The cursor, `next_cursor`, `complete`, and 304 rules stay as they are.
+Paging counts root keys, not history entries.
+Root keys page by `(transaction, key)`, where the transaction is the greatest one among the key's entries in the window.
+If the cursor transaction is at or below the pruning watermark of any history table that the query reads, `cursor_expired` applies.
+
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| One snapshot | Key mapping and the restricted run read one snapshot | Host test with a write that commits between two feed calls |
+| Joined change | A change to any joined row returns its root key with the new result | Host test that updates, inserts, and deletes a joined row |
+| Moved join | An update that moves a joined row returns the old and the new root key | Host test that changes a line's purchase order |
+| Deletion | An affected key that the restricted run does not return is a deletion | Host test for a deleted root and a root that leaves the filters |
+| Expiry | Pruning of any table that the query reads expires an older cursor | Retention test on a joined table |
+
+### Cursor and snapshot handoff
+
+[The change feed](../architecture/execution.md#change-feed) owns the opaque cursor and the snapshot handoff.
+The query feed changes three facts:
+
+- The cursor names the query instead of the model.
+- A cut page adds its last row's root key.
+- An authored read's page gets the same outer row with the snapshot xmin.
+
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| Opaque cursor | The cursor round-trips unchanged and refuses another query | `feed::encode` and `feed::decode` tests |
+
+### Row version
+
+The `row_version` of a result row is the snapshot xmin of the statement that read it.
+A list page and a `changes` call both supply it, from the same `SNAPSHOT_XMIN` value that supplies the cursor.
+
+A later statement sees every commit that an earlier statement saw.
+The browser runs startup, pulls, and refills one at a time.
+So a row from a later read is never older than a held row, even with two equal xmin values.
+If the new version is equal or greater, the browser replaces the held row. It ignores a lower version.
+
+The two example rules fail:
+
+- The greatest transaction id among the participating rows does not grow with commit order. A transaction with a lower id can commit later, so a newer result can carry an equal or lower value.
+- A counter per result needs a stored counter for each root key and a write to it on every joined change. That is a server-side view, and it puts every joined write behind one root row lock.
+
+The outbox accepts a write as landed without a version comparison.
+A joined write, such as a receipt line, has no root revision that the browser can expect.
+A write lands after two events: its send succeeds, and a `changes` call that starts after the reply ends with `complete`.
+That call runs after the commit, so it returns every result row that the write changed.
+A revision column stays only as the write guard for operations that declare one.
+Bead `wamn-3phv6` plans this rule in `@wfe/sync`, and wamn does not edit that package.
+
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| Version order | A row from a later read replaces a held row. A lower version never does | Collection batch test with equal and lower versions |
+| Confirmation | A write lands only after a successful send and a complete `changes` call that starts after the reply | `recordWrite` adapter test with a write to a joined row |
+
+### Read set and linking columns
+
+The host needs, for each feeding query, the tables that it reads and how each table links to the root.
+
+A generated list read reads one table, the model's table, with no join.
+[`sql.rs`](../../crates/schema/generator/src/sql.rs), `query`, writes `FROM <table> AS model` and nothing else.
+[`manifest.rs`](../../crates/schema/generator/src/manifest.rs), `ModelDeclaration::feed_revision`, has the model.
+Its read set is the root table, and it has no links.
+
+An authored feeding read selects from one authored view, with its own filters.
+A query that joins puts its join in that view.
+[Authored views](authored-views.md#feed-on-a-view) owns the view rules: the root, the linking columns, the shapes that can feed, and the build refusals.
+The view's base tables, from `pg_depend`, are the read set.
+Each linking column of the view links its table to the root.
+
+The host does not parse an authored statement's joins.
+An authored feeding read that names any relation other than one view refuses, naming the relation.
+
+The restricted run wraps an authored statement as `SELECT * FROM (<statement>) AS result WHERE result.<key> = any($n)`.
+The build refuses a feed on an authored statement that groups, uses window functions, or carries `LIMIT`, because the wrapper changes their result.
+[`sql_lex.rs`](../../crates/schema/generator/src/sql_lex.rs), `groups_or_windows`, already detects the first two.
+
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| Read set | The feed reads history for exactly the base tables of the read's view, or the model's table | Generator test that compares the feed statement with the profile |
+| One view | An authored feeding read selects from one view and nothing else | Generator refusal test for an authored feed that joins |
+
+### Scoping
+
+A query feed covers exactly the query's own filters and arguments.
+The restricted run applies them, so a key outside them is a deletion.
+No client-side scope rules remain.
+A collection's scope is the query's argument set.
+
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| Scope | Feed rows match the query's filters, and a row that leaves them is a deletion | Host test that changes a filtered column |
+
+### Prerequisites and build refusal
+
+A feeding query needs:
+
+- History on every table that it reads, with retention.
+- A unique root id in each result row.
+- A link to the root for every joined table, as [Authored views](authored-views.md#feed-on-a-view) states.
+
+The build refuses a feed on a query that reads a table without history, and names that table.
+A feed needs no revision column, because the row version is the statement's snapshot xmin.
+
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| History | The build refuses a feed that reads a table without history, naming it | Generator refusal test |
 
 ### Delivery and authorization
 
 The package polls changes every `pollMs`, default 10000, and also responds to its trigger.
-wamn has no model-version `moved` read, because no per-model version table exists and unchanged changes cost a 304.
-The optional generic `Feed.moved` member remains part of the package surface.
+wamn has no query-version `moved` read, because unchanged changes cost a 304.
+The optional generic `Feed.moved` member stays part of the package surface.
 The bench's offline wrapper uses it only to suppress network reads while offline.
 
 [`http-route/src/entry.rs`](../../apps/platform/ingress/http-route/src/entry.rs), `changes_etag`, derives a weak ETag from the returned cursor and route release.
 [`http-route/src/lib.rs`](../../apps/platform/ingress/http-route/src/lib.rs), `feed_cache_control`, preserves the list's cache scope and adds `no-cache`.
 A matching ETag produces 304.
-The list route supplies authentication and authorization for both result variants.
+The read's route supplies authentication and authorization for both result variants.
 
 [`data_access.rs`](../../crates/schema/generator/src/data_access.rs), `FEED_HISTORY_COLUMNS`, limits feed SELECT grants to `transaction_id`, `row_key`, `type`, and `before`.
-`derive_data_access_overlay_for_manifest` emits those grants for eligible models.
+`derive_data_access_overlay_for_manifest` emits those grants for the history table of every table that a feeding query reads.
 [`record-history.sql`](../../deploy/sql/record-history.sql), `wamn_history.create_history_table`, adds an index on `transaction_id`.
+Each linking column needs an index on its base column, because the key mapping looks up root rows by it.
 
 [`packaging-feed.ts`](../../web/sync-bench/src/packaging-feed.ts), `packagingFeed`, reads every list page up to its cap.
 It keeps the first page's feed cursor, which covers changes between page reads.
@@ -373,14 +524,44 @@ It reports `complete: false` when the cap stops a fill with more pages available
 The default `RECORD_CAP` is 1000.
 The bench's take-offline path requests the full selected set and the whole location reference collection.
 
+| Rule | Invariant | Test |
+| --- | --- | --- |
+| Unchanged feed | Empty changes keep the cursor and support a matching weak ETag | Route 304 test |
+| Feed privileges | The feed reads only its four granted history columns of each table read, through an indexed transaction range | Application-role SQL execution |
+
+### Removed rules
+
+The query feed removes these rules:
+
+- The model-level `feed = true` and `feed = false`. A per-query `feed` setting replaces them.
+- The client-side join path. Screens no longer join collections in `@tanstack/db`.
+- Every rule that assumes one collection per model. A model can appear in many query results.
+
+### Cost and measurement
+
+These costs are an inference, not a measurement.
+With no changes, the statement does one indexed `transaction_id` range read per table read, finds nothing, and the route answers 304.
+With a few changed rows, it adds one indexed lookup per join hop and one restricted run over a few keys.
+With many changed rows, the page limit bounds each call to 100 root keys.
+So each call does at most one restricted run over 100 keys.
+If PostgreSQL pushes the key predicate into the statement, the restricted run costs about as much as the query for those keys.
+
+The first query to measure is `receiving.load_receipt_screen` over the view `receiving.receipt_screen_line`, the order lines with their order and item.
+[Authored views](authored-views.md#receipt-screen) defines that view.
+Collect these numbers:
+
+- `changes` latency with 0, 10, and 1,000 changed rows, on lines, on orders, and on items.
+- The plan (`EXPLAIN (ANALYZE, BUFFERS)`) of the restricted run, to show whether the key predicate reaches the joins.
+
+
 ## Browser store and live queries
 
 ### Collection
 
-A collection covers one model, generated shape digest, and canonical scope.
+A collection covers one query, generated shape digest, and canonical argument set.
 [`names.ts`](../../web/runtime/src/sync/names.ts), `collectionKey`, encodes those three values.
-[`packaging-feed.ts`](../../web/sync-bench/src/packaging-feed.ts), `canonicalJson` and `packagingKey`, make equal scopes share a key.
-Rows use `id` as their collection key.
+[`packaging-feed.ts`](../../web/sync-bench/src/packaging-feed.ts), `canonicalJson` and `packagingKey`, make equal argument sets share a key.
+Rows use the root key as their collection key.
 
 [`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `shape_digest`, hashes generated row names, contract types, nested fields, and nullability in stable order.
 `emit_model` exports each model's `*_SHAPE_DIGEST`.
@@ -416,7 +597,8 @@ A failed save changes no status.
 
 ### Live queries
 
-Screens build queries through `from`, `where`, `join`, `groupBy`, aggregates, and `orderBy` in `@tanstack/db`.
+Screens build queries over one query feed collection through `from`, `where`, `groupBy`, aggregates, and `orderBy` in `@tanstack/db`.
+A screen never joins two collections, because PostgreSQL owns joins.
 The engine updates results from change batches.
 A query result is also a keyed collection, so both read adapters accept it.
 
@@ -514,6 +696,7 @@ The wait reads the authoritative collection, never the optimistic overlay.
 [`solid.ts`](../../web/wfe/packages/sync/src/solid.ts), `confirmed`, requires a successful send to remove the entry and the collection to hold its id.
 If `expected` supplies a version, the collection's version must be greater.
 The collection's accessor reads both versions.
+A query feed confirms a write by the rule in [Row version](#row-version), not by this comparison.
 Refusal of a new write throws `OutboxRefused`, and discard throws `OutboxDiscarded`.
 Either rejection ends the action and reverts its guess.
 Restored refusals keep their tentative rows until discard or successful resubmission.
@@ -737,6 +920,10 @@ Epic 5 adds these declarations:
 
 ```text
 model receipt {
+  operations.query.feed = false
+}
+
+projection receiving.load_receipt_screen {
   feed = true
 }
 
@@ -750,7 +937,9 @@ screen receiving.lines {
 }
 ```
 
-`feed` defaults true for an eligible list model, with `false` as the explicit opt-out.
+`feed` belongs to one list read, generated or authored, as [Query feed](#query-feed-host) states.
+It defaults on for a generated list read and off for an authored read.
+An authored read turns it on with `feed = true`, and its view must pass the shape check in [Authored views](authored-views.md#feed-on-a-view).
 `append_only` declares whether a prior refusal holds later entries for that record.
 `offline` selects application-defined offline wiring without promising whole-application coverage.
 `read` selects `liveRows` or `liveList` under the read-shape rule.
@@ -763,19 +952,20 @@ screen receiving.lines {
 | Snapshot cursor | List SQL | xmin from the list statement itself |
 | Client binding | `client_ts.rs`, `emit_operation` and `write_changes` | List and changes helpers with signal forwarding |
 | Shape digest | `client_ts.rs`, `shape_digest` and `emit_model` | Stable row shape hash |
-| Collection factory, Epic 5 | Generated components | Feed paging, cap, scope key, version accessor, and persistence |
+| Collection factory, Epic 5 | Generated components | Feed paging, cap, argument key, version accessor, and persistence, for each feeding query |
 | Write helper, Epic 5 | Generated components | Outbox and `recordWrite` wiring for the model |
 
 ### Emitted per screen
 
-Epic 5 emits the query over the screen's collections from its fields, filters, sort, and references.
+Epic 5 binds each screen to the collection of one feeding query.
+The screen sorts, filters, and groups that query's result rows, and joins nothing.
 An application-selected offline screen declares the collections and references that its action fills.
 The generated action reports completion only after those chosen sets are complete and durable.
 
 ### Build refusal rules
 
-Epic 5 refuses an enabled feed without its required history and revision inputs.
-A model can opt out through `feed = false`.
+Epic 5 refuses a feed by the rules in [Prerequisites and build refusal](#prerequisites-and-build-refusal).
+A list read opts out through `feed = false`.
 An append-only operation cannot also declare a revision guard.
 Receiving and WMS regenerate from their definitions with no hand edits to generated files.
 
@@ -786,24 +976,18 @@ Each row names a measurable rule and its test boundary.
 | Rule | Invariant | Test |
 | --- | --- | --- |
 | One operation | Page and changes use one list permission row | Generated contract and route assertions |
-| Snapshot handoff | Rows and cursor come from one statement. Later commits remain reachable despite transaction allocation order | Host list, overlapping transactions, and feed drain |
-| Feed paging | Below-xmin rows page by transaction and id. Visible rows above xmin fill one complete page | Host and `Changes::new` tests |
-| Feed collapse | Each feed page contains one current result per id | History updates followed by a feed read |
-| Opaque cursor | The cursor round-trips unchanged and rejects another model | `feed::encode` and `feed::decode` tests |
-| Unchanged feed | Empty changes retain the cursor and support a matching weak ETag | Route 304 test |
+| Feed paging | Below-xmin rows page by transaction and root key. Visible rows above xmin fill one complete page | Host and `Changes::new` tests |
+| Feed collapse | Each feed page contains one current result per root key | History updates followed by a feed read |
 | Retention | Only bounded retention can expire an older cursor | Retention and `cursor_expired` cases |
-| Feed privileges | The feed reads only its four granted history columns through an indexed transaction range | Application-role SQL execution |
 | List cap | A capped fill reports incomplete if more pages exist | `packagingFeed` paging test |
 | Saved first paint | Saved rows render before fetch resolves | Adapter test with blocked fetch |
 | Serialized reads | Startup, pull, and refill never overlap | Controlled feed promises |
 | Saved updates | Saves debounce after list and change pages, then flush on cleanup | Persistence timing test |
 | Shape cleanup | Unknown digests remove rows without altering outbox entries | `rowsPersistence` storage test |
-| Version rule | Equal or lower upsert versions do not overwrite a row | Collection batch test |
 | Delete delivery | A deletion removes a stored row | Fake feed test |
 | Durable recording | Enqueue resolves only after the put commits | IndexedDB reload test |
 | Replay recovery | Stored sending entries become pending under the lock | Reopen and shared-database tests |
 | Replay order | One record sends in sequence. Other records can progress after its refusal | Controlled sender test |
-| Confirmation | Both successful send and authoritative row are required, with a greater version when expected | `recordWrite` adapter tests |
 | Refusal and discard | Typed errors reject the action and revert its guess | `OutboxRefused` and `OutboxDiscarded` tests |
 | Immutable correction | A new entry keeps the id and commits before the refused entry disappears | `packagingWrites` correction test |
 | Abort forwarding | Closing an outbox aborts the binding's fetch | Sender, binding, and transport tests |
@@ -824,7 +1008,7 @@ Each row names a measurable rule and its test boundary.
 | A live-query float sum is exact only for int32-range totals | The measurement sums integer `row_version`. `@tanstack/db` accepts no custom aggregates | Decimal or larger totals require a separate exact calculation |
 | Generated list pages accept 1–100 rows | `generate/validation.rs`, `validate_query`, fixes the minimum and maximum | A 20,000-row reference fill takes about 200 requests |
 | Retention covers the expected outage and recovery window | Retention declarations and host retention tests | Expired cursors require a fresh list |
-| A feed needs a generated list, history, and a revision | `ModelDeclaration::feed_revision` | Ineligible models get no feed until Epic 5 supplies explicit refusal and opt-out |
+| A feeding query reads only tables with history, and its rows have a unique root id | [Prerequisites and build refusal](#prerequisites-and-build-refusal) | The build refuses the feed and names the table |
 | The selected read shape fits the screen's memory budget | Measure the screen with its selected rows | The application reduces its local set or uses ordinary pages |
 | Keyed Solid projections preserve row identity | Adapter tests against the pinned runtime | The adapter needs a correction before adoption |
 | Host request identity deduplicates a resend | Send one entry twice and assert one effect | Replay cannot claim effective single application |
@@ -840,7 +1024,7 @@ Each item waits for a consumer:
 - A native application.
 - The local target consuming the same feed contract for its projections.
 - Background Sync registration as an enhancement to replay.
-- Query-driven partial sync beyond the current scope model.
+- Partial sync of a query's result beyond the query's own filters.
 - Shared optimistic state across users, including presence and live cursors.
 - A request-shape hash if ordinary validation cannot distinguish incompatible meanings.
 
@@ -848,7 +1032,7 @@ Each item waits for a consumer:
 
 | Epic | Repo | Scope | Done when |
 | --- | --- | --- | --- |
-| 5. Generator | wamn | Manifest fields, collection and screen emission, feed opt-out, and build refusal | Receiving and WMS regenerate without hand edits. Refusal cases fail at build. |
+| 5. Generator | wamn | Manifest fields, query feeds, collection and screen emission, feed opt-out, and build refusal | Receiving and WMS regenerate without hand edits. Refusal cases fail at build. |
 
 ## Read-shape rule
 
