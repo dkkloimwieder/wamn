@@ -433,13 +433,13 @@ After A8, no later commit changes platform code that compiles into a guest. So t
 **A12. Final build and pins.** On the final commit, run `tools/build-components all` once. It must pass the router pin with no edit. Record the sha256 of every guest that wamn-dev takes: `receiving.wasm`, `wms.wasm`, `label_render.wasm`, `blob_put.wasm`, `jsonata_expression.wasm`, `http_route.wasm`, `materializer.wasm` (`docs/history/gcp-install-history.md` §3.9, §3.20, §5.3). Then check the tree:
 
 ```bash
-git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!tests/sweeps' ':!docs/history/kind-to-type.md' ':!docs/plan/platform-ui.md' ':!crates/schema/control/src/run_plane/type_column.rs' ':!crates/schema/control/src/run_plane/tests.rs' ':!crates/schema/control/src/run_plane/observation.rs' ':!crates/control/lib/src/reconcile_run_plane.rs' ':!crates/control/lib/tests/run_plane_live/type_columns.rs' ':!deploy/sql/migrations/system/0003_kind_to_type.sql' ':!crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit'
+git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!docs/history/evidence/sweeps' ':!docs/history/kind-to-type.md' ':!docs/plan/platform-ui.md' ':!crates/schema/control/src/run_plane/type_column.rs' ':!crates/schema/control/src/run_plane/tests.rs' ':!crates/schema/control/src/run_plane/observation.rs' ':!crates/control/lib/src/reconcile_run_plane.rs' ':!crates/control/lib/tests/run_plane_live/type_columns.rs' ':!deploy/sql/migrations/system/0003_kind_to_type.sql' ':!crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit'
 git grep -h -o '"kind":"' -- 'apps/*/generated/*'
 ```
 
 Both print nothing. The two plan files name the old words on purpose, and so do the `TypeColumnCutover` code, its tests and the system migration `0003_kind_to_type.sql`, which rename the old columns, and the history comment of the router delivery WIT, whose bytes the router pin covers. The §1.7 counts of the renamed rows are 0, and the rows that stay (§1.6) keep their counts.
 
-**Frozen evidence that stays.** `docs/history/`, the dated digest tables of `docs/operations/gcp.md` (§2.4), and `tests/sweeps/*.log` (§4.5) are not edited. New records go below the old ones.
+**Frozen evidence that stays.** `docs/history/`, the dated digest tables of `docs/operations/gcp.md` (§2.4), and `docs/history/evidence/sweeps/*.log` (§4.5) are not edited. New records go below the old ones.
 
 ### 3.2 wamn-dev order
 
@@ -1758,7 +1758,7 @@ The Rust references of §1.4 (220 at `3ad0ce5cd`) and the bare `kind` columns fa
 
 The five snapshot groups are the 22 tracked files that name the table outside `.beads`, `docs/history` and this file (`git grep -l release_manifest_v3_snapshots -- ':!.beads' ':!docs/history' ':!docs/history/kind-to-type.md'`). After A7 that command prints nothing.
 
-The `tests/sweeps/*.log` files that name `principal_kind` are records of past runs and stay.
+The `docs/history/evidence/sweeps/*.log` files that name `principal_kind` are records of past runs and stay.
 
 ### 4.6 CDC
 
@@ -1985,7 +1985,7 @@ Refusal at runtime. After the new hosts start, start one host process with an ol
 
 Drain. The records of §3.2 "Drain" hold each answer of the open-run query, each settled run id with the answer of `terminalize-effect-uncertain`, and two empty answers before B1. After B10, the open-run query with `effective_release_id = 1` added prints nothing on both databases.
 
-**Fixtures and frozen evidence.** §2.4 lists what is regenerated. The proof is that the regenerating commit changes those files and the tests above pass on it. `docs/history/`, `tests/sweeps/*.log` and the dated digest table at `docs/operations/gcp.md:1184` stay as written.
+**Fixtures and frozen evidence.** §2.4 lists what is regenerated. The proof is that the regenerating commit changes those files and the tests above pass on it. `docs/history/`, `docs/history/evidence/sweeps/*.log` and the dated digest table at `docs/operations/gcp.md:1184` stay as written.
 
 ## 6. `*ErrorKind` families
 

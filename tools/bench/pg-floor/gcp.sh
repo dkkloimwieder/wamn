@@ -22,7 +22,7 @@ version=$(sed -n 's/^version: //p' deploy/platform/release/Chart.yaml)
 test -n "$version"
 umask 077
 work=$(mktemp -d "${TMPDIR:-/var/tmp}/gcp-pg.XXXXXXXX")
-output="$repository/tests/bench/gcp-pg-$version.json"
+output="$repository/docs/history/evidence/bench/gcp-pg-$version.json"
 if ((concurrency != 16 || duration != 60)); then output="$work/gcp-pg-$version.json"; fi
 # A second run on one platform version names its own result file.
 output=${OUTPUT:-$output}

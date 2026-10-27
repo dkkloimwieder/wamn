@@ -454,7 +454,7 @@ The filter `cluster::` selects the cluster journeys and the plain tests of the c
 
 Record the start and end time of each run, and time its build apart from its tests.
 
-Keep one sweep log per epic closeout in the repository, at `tests/sweeps/<epic>-<commit>.log`.
+Keep one sweep log per epic closeout in the repository, at `docs/history/evidence/sweeps/<epic>-<commit>.log`.
 `<epic>` is the Beads id of the epic, and `<commit>` is the short hash of the commit that the sweep ran on.
 Set `WAMN_RESULTS` outside the checkout, so that the run writes nothing into the tree.
 After the sweep ends, copy `$WAMN_RESULTS/workspace.log` to that path.

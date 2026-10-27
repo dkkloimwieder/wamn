@@ -42,8 +42,6 @@ EXCLUDED = (
     "docs/history/",
     # The plan that describes the rename.
     "docs/plan/platform-config.md",
-    # Recorded sweep results.
-    "tests/sweeps/",
     # The tracker export.
     ".beads/",
     # The submodule; its owner renames it.
