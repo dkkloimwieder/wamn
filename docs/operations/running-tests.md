@@ -89,6 +89,7 @@ The application READMEs identify additional tests and binary owners.
 Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 `tools/repo-lint run` runs the source guard, formatting, and Clippy across all three workspaces, and then the repository policy lints of the `repo-policy` binary.
 It reports each command and returns a nonzero status if any command fails.
+The policy lints reject duplicate numeric prefixes among `NNNN_[a-z0-9_]+.sql` files within each directory under `deploy/sql/migrations`.
 
 ## What a test asserts
 
