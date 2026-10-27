@@ -30,6 +30,9 @@ data:
       server_tokens off;
       access_log /dev/stdout;
       error_log /dev/stderr;
+      # CoreDNS and GKE expose cluster DNS through this Service.
+      # https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/
+      resolver kube-dns.kube-system.svc.cluster.local;
 {{- range $applications }}
 {{- $host := required "Set host of each application to its public host name." .host }}
 {{- $api := required "Set api of each application to the URL of the http Service of its release." .api }}
@@ -40,9 +43,12 @@ data:
         ssl_certificate_key /etc/wamn-edge/tls/tls.key;
 
         # The router reads the release from the Host header, so it passes
-        # unchanged. The trailing slash removes /api.
+        # unchanged. The rewrite removes /api and preserves the query string.
         location /api/ {
-          proxy_pass {{ trimSuffix "/" $api }}/;
+          set $api_upstream {{ trimSuffix "/" $api }};
+          rewrite ^/api/(.*)$ /$1 break;
+          proxy_pass $api_upstream;
+          proxy_redirect {{ trimSuffix "/" $api }}/ /api/;
           proxy_http_version 1.1;
           proxy_set_header Host $host;
         }

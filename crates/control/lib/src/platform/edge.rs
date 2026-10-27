@@ -330,6 +330,60 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires: helm"]
+    fn proxy_chart_resolves_declared_routes_at_request_time() {
+        wamn_test_postgres::require_prerequisites(&["helm"]);
+        let document = document();
+        let environment = serde_json::from_value(json!({
+            "org": "acme", "project": "wms", "env": "partial", "target": "test",
+            "release": "none", "route_host": "partial.example.com", "policy": "default",
+            "applications": {}
+        }))
+        .unwrap();
+        let routes = routes(&document, &[environment]).unwrap();
+        let values = proxy_values(&document, &routes);
+        let output = std::process::Command::new("helm")
+            .args(["template", NEG])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/platform/edge"))
+            .args(["--namespace", "edge", "--set-json", &values.to_string()])
+            .output()
+            .expect("render edge chart");
+        assert!(
+            output.status.success(),
+            "helm template: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let objects = serde_yaml::Deserializer::from_slice(&output.stdout)
+            .map(Value::deserialize)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let config = objects
+            .iter()
+            .find(|object| object["kind"] == "ConfigMap")
+            .unwrap()["data"]["nginx.conf"]
+            .as_str()
+            .unwrap();
+        assert!(config.contains("resolver kube-dns.kube-system.svc.cluster.local;"));
+        for (host, release) in &routes {
+            let server = config
+                .split("  server {")
+                .find(|server| server.contains(&format!("server_name {host};")))
+                .unwrap();
+            assert!(server.contains(&format!(
+                "set $api_upstream http://{release}-http.hosts.svc.cluster.local;"
+            )));
+            assert!(server.contains("rewrite ^/api/(.*)$ /$1 break;"));
+            assert!(server.contains("proxy_pass $api_upstream;"));
+            assert!(!server.contains("proxy_pass $api_upstream/"));
+            assert!(server.contains("proxy_set_header Host $host;"));
+            assert!(server.contains("proxy_pass https://identity.identity.svc.cluster.local;"));
+            assert!(server.contains("proxy_ssl_verify on;"));
+            assert!(server.contains("proxy_pass http://wamn-edge-web.edge.svc.cluster.local;"));
+            assert!(server.contains("location = /healthz {\n      return 200;"));
+        }
+    }
+
+    #[test]
     fn neg_status_requires_the_https_group_and_a_zone() {
         assert!(neg_zones(&json!({})).is_err());
         let mut status =
