@@ -22,7 +22,7 @@ export function $PREFIXFeed(transport: Transport, cap: number = RECORD_CAP): Fee
   return {
     async list(scope, signal) {
       const rows: $ROWRow[] = [];
-      let complete = true;
+      let complete: boolean;
       let cursor: string | undefined;
       let page: string | undefined;
       for (;;) {

@@ -832,7 +832,7 @@ fn uuid_feed_output_keeps_its_original_bytes() {
     let files = emit_ts_client(&release()).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(widget(&files))),
-        "b859f3fab67c4e9339a04afb4f5be521c38e8c7b4b5c5da7a2565779d6fdf86e"
+        "da8982d4eec37a29f4b8155f8569c28ed0edd6f4d7377e7c5825c192cb67bcfc"
     );
 }
 

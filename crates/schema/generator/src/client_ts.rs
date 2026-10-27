@@ -1050,6 +1050,20 @@ fn write_interface(
     sort: Option<&SortIr>,
     carrier: Carrier,
 ) -> Result<(), ClientTsError> {
+    // An empty interface admits any value, even a string, so a shape without
+    // members is any object.
+    if fields.iter().all(|field| {
+        field
+            .path
+            .rsplit('.')
+            .next()
+            .unwrap_or(&field.path)
+            .trim_end_matches("[]")
+            .is_empty()
+    }) {
+        writeln!(source, "export type {name} = object;").expect("write");
+        return Ok(());
+    }
     writeln!(source, "export interface {name} {{").expect("write");
     let mut nested = Vec::new();
     for field in fields {
