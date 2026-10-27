@@ -90,8 +90,8 @@ impl PatClient {
             .as_deref()
             .context("PAT issuance requires --pat-client-key")?;
 
-        // Upstream errors can contain paths, URLs, or certificate material.
-        // This credential boundary exposes only fixed diagnostic text.
+        // Credential errors can contain paths or certificate material.
+        // Keep their diagnostics fixed; strip URLs from HTTP errors below.
         let mut identity_pem = std::fs::read(cert_path)
             .map_err(|_| anyhow::anyhow!("PAT client certificate read failed"))?;
         identity_pem.push(b'\n');
@@ -118,7 +118,8 @@ impl PatClient {
         }
         let http = builder
             .build()
-            .map_err(|_| anyhow::anyhow!("PAT HTTPS client creation failed"))?;
+            .map_err(reqwest::Error::without_url)
+            .context("PAT HTTPS client creation failed")?;
         Ok(Self { http, endpoint })
     }
 
@@ -142,7 +143,8 @@ impl PatClient {
             .body(body)
             .send()
             .await
-            .map_err(|_| anyhow::anyhow!("PAT issuance transport failed. {UNCERTAIN_ISSUANCE}"))?;
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| format!("PAT issuance transport failed. {UNCERTAIN_ISSUANCE}"))?;
         anyhow::ensure!(
             response.status() == reqwest::StatusCode::CREATED,
             "PAT issuer returned an unsuccessful response. {UNCERTAIN_ISSUANCE}"
@@ -157,7 +159,8 @@ impl PatClient {
         while let Some(chunk) = response
             .chunk()
             .await
-            .map_err(|_| anyhow::anyhow!("PAT issuer response read failed. {UNCERTAIN_ISSUANCE}"))?
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| format!("PAT issuer response read failed. {UNCERTAIN_ISSUANCE}"))?
         {
             anyhow::ensure!(
                 chunk.len() <= MAX_RESPONSE_BYTES - body.len(),
@@ -278,12 +281,14 @@ pub async fn send_invitation(
         .body(invitation_body(principal_id)?)
         .send()
         .await
-        .map_err(|_| anyhow::anyhow!("invitation transport failed; the request was not retried"))?;
+        .map_err(reqwest::Error::without_url)
+        .context("invitation transport failed; the request was not retried")?;
     let status = response.status().as_u16();
     let bytes = response
         .bytes()
         .await
-        .map_err(|_| anyhow::anyhow!("invitation reply read failed"))?;
+        .map_err(reqwest::Error::without_url)
+        .context("invitation reply read failed")?;
     anyhow::ensure!(
         bytes.len() <= MAX_RESPONSE_BYTES,
         "invitation reply exceeds the size limit"
@@ -351,14 +356,14 @@ pub async fn create_user(
         .body(user_body(email, display_name)?)
         .send()
         .await
-        .map_err(|_| {
-            anyhow::anyhow!("user request transport failed; the request was not retried")
-        })?;
+        .map_err(reqwest::Error::without_url)
+        .context("user request transport failed; the request was not retried")?;
     let status = response.status();
     let bytes = response
         .bytes()
         .await
-        .map_err(|_| anyhow::anyhow!("user reply read failed"))?;
+        .map_err(reqwest::Error::without_url)
+        .context("user reply read failed")?;
     anyhow::ensure!(
         bytes.len() <= MAX_RESPONSE_BYTES,
         "user reply exceeds the size limit"
@@ -725,6 +730,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closed_port_preserves_connect_failure_without_url_or_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let token = response()["token"].as_str().unwrap().to_owned();
+        // Bypass endpoint validation to exercise URL stripping with a secret query.
+        let client = PatClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .retry(reqwest::retry::never())
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .unwrap(),
+            endpoint: Url::parse(&format!("https://{address}/pats?token={token}")).unwrap(),
+        };
+        let error = client
+            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("PAT issuance transport failed. {UNCERTAIN_ISSUANCE}")
+        );
+        let source = error.downcast_ref::<reqwest::Error>().unwrap();
+        assert!(source.is_connect());
+        assert!(source.url().is_none());
+        assert!(error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::ConnectionRefused)
+        }));
+        for diagnostic in [format!("{error:#}"), format!("{error:?}")] {
+            assert!(diagnostic.to_lowercase().contains("connection refused"));
+            assert!(!diagnostic.contains("https://"));
+            assert!(!diagnostic.contains("?token="));
+            assert!(!diagnostic.contains(&token));
+            assert!(!diagnostic.contains(PAT_TOKEN_PREFIX));
+        }
+    }
+
+    #[tokio::test]
     async fn https_issuance_refuses_wrong_server_certificate() {
         let fixture = https_fixture("wrong.example", |_| String::new()).await;
         let error = PatClient::new(&fixture.args)
@@ -772,6 +818,9 @@ mod tests {
                 "{response_kind}"
             );
             if response_kind == "truncated" {
+                let source = error.downcast_ref::<reqwest::Error>().unwrap();
+                assert!(source.is_decode());
+                assert!(source.url().is_none());
                 assert_eq!(
                     error.to_string(),
                     "PAT issuer response read failed. A PAT can exist without a returned token. The request was not retried."
