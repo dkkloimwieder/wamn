@@ -152,6 +152,27 @@ pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
 
 /// Admit a manual fixture run through the application host route.
 pub async fn start_workflow(
+    work: &Path,
+    environment: &WorkflowEnvironment<'_>,
+    application: &str,
+    workflow_id: &str,
+    input: &Value,
+    key: &str,
+) -> anyhow::Result<String> {
+    let (project, task) = connect_owned(environment.project_url).await?;
+    let result = wamn_gate_harness::run_check::check(
+        work,
+        "start_workflow",
+        &project,
+        start_workflow_inner(&project, environment, application, workflow_id, input, key),
+    )
+    .await;
+    task.abort();
+    result
+}
+
+async fn start_workflow_inner(
+    project: &tokio_postgres::Client,
     environment: &WorkflowEnvironment<'_>,
     application: &str,
     workflow_id: &str,
@@ -166,7 +187,6 @@ pub async fn start_workflow(
         AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
     };
 
-    let (project, task) = connect_owned(environment.project_url).await?;
     project
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
@@ -184,7 +204,6 @@ pub async fn start_workflow(
         "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id=$1 AND manifest_digest=$2",
         &[&environment.tenant, &environment.digest],
     ).await?.get(0);
-    task.abort();
     let release = Arc::new(
         wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
             &bytes,
@@ -259,7 +278,8 @@ pub async fn start_workflow(
     let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
         anyhow::bail!("workflow.start failed: {:?}", report.outcome);
     };
-    let body: Value = serde_json::from_str(&body)?;
+    let body: Value =
+        serde_json::from_str(&body).with_context(|| format!("workflow.start response: {body}"))?;
     body[0]["value"]["run_id"]
         .as_str()
         .map(str::to_owned)
@@ -271,6 +291,27 @@ pub async fn start_workflow(
 /// session issuer, so its release cannot serve them. The run records the
 /// served release, so the deployed executor claims it.
 pub async fn admit_workflow(
+    work: &Path,
+    environment: &WorkflowEnvironment<'_>,
+    application: &str,
+    workflow_id: &str,
+    input: &Value,
+    key: &str,
+) -> anyhow::Result<String> {
+    let (project, task) = connect_owned(environment.project_url).await?;
+    let result = wamn_gate_harness::run_check::check(
+        work,
+        "admit_workflow",
+        &project,
+        admit_workflow_inner(&project, environment, application, workflow_id, input, key),
+    )
+    .await;
+    task.abort();
+    result
+}
+
+async fn admit_workflow_inner(
+    project: &tokio_postgres::Client,
     environment: &WorkflowEnvironment<'_>,
     application: &str,
     workflow_id: &str,
@@ -282,12 +323,10 @@ pub async fn admit_workflow(
         WamnPostgresConfig,
     };
 
-    let (project, task) = connect_owned(environment.project_url).await?;
     let bytes: Vec<u8> = project.query_one(
         "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id=$1 AND manifest_digest=$2",
         &[&environment.tenant, &environment.digest],
     ).await?.get(0);
-    task.abort();
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::default().with_class(
@@ -351,7 +390,7 @@ pub async fn admit_workflow(
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let ManualRunAdmitted::Queued { run_id } = admitted else {
-        anyhow::bail!("the fixture key {key} admitted no new run");
+        anyhow::bail!("the fixture key {key} admitted no new run: {admitted:?}");
     };
     Ok(run_id)
 }
@@ -870,6 +909,7 @@ pub async fn exercise(
             Err(error),
         ),
     }
+    run.retain_failure_diagnostics(connector).await?;
     environment::delete::delete(&platform, &scope, true).await?;
     run.run("docker", &["rm", "-f", &format!("{}-events", run.cluster)])
         .await?;
@@ -1178,6 +1218,24 @@ async fn assert_schema_triggers(
     broker: &event_broker::EventBroker,
     reader: &mut Child,
 ) -> anyhow::Result<()> {
+    let work = run.work.clone();
+    wamn_gate_harness::run_check::check(
+        &work,
+        "integration_assert_schema_triggers",
+        project,
+        assert_schema_triggers_inner(run, project, workflows, events, broker, reader),
+    )
+    .await
+}
+
+async fn assert_schema_triggers_inner(
+    run: &mut Run,
+    project: &tokio_postgres::Client,
+    workflows: &WorkflowEnvironment<'_>,
+    events: &environment::EventBroker,
+    broker: &event_broker::EventBroker,
+    reader: &mut Child,
+) -> anyhow::Result<()> {
     let triggers = [
         (CONSUMER, "item", "capture-item"),
         ("wamn_integration", "setting", "capture-setting"),
@@ -1352,6 +1410,22 @@ async fn assert_schema_triggers(
 }
 
 async fn assertions(
+    run: &Run,
+    project: &tokio_postgres::Client,
+    tenant: &str,
+    digest: &str,
+    reader: &mut Child,
+) -> anyhow::Result<Value> {
+    wamn_gate_harness::run_check::check(
+        &run.work,
+        "integration_assertions",
+        project,
+        assertions_inner(run, project, tenant, digest, reader),
+    )
+    .await
+}
+
+async fn assertions_inner(
     run: &Run,
     project: &tokio_postgres::Client,
     tenant: &str,

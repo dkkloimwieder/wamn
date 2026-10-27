@@ -333,6 +333,10 @@ pub(super) async fn capture_failure(
         ),
         ("failure-pods.json", vec!["get", "pods", "-o", "json"]),
         (
+            "failure-workloads.json",
+            vec!["get", "workloads,workloaddeployments", "-o", "json"],
+        ),
+        (
             "failure-http-service.json",
             vec!["get", "service", &service, "-o", "json"],
         ),

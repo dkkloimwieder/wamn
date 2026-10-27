@@ -236,6 +236,21 @@ pub(super) fn render_host(
 }
 
 pub(super) async fn released_routes(
+    project: &Client,
+    document: &JourneyDocument,
+    store: &AmazonS3,
+    evidence: &Path,
+) -> anyhow::Result<()> {
+    wamn_gate_harness::run_check::check(
+        evidence,
+        "wms_released_routes",
+        project,
+        released_routes_inner(document, store, evidence),
+    )
+    .await
+}
+
+async fn released_routes_inner(
     document: &JourneyDocument,
     store: &AmazonS3,
     evidence: &Path,
@@ -297,6 +312,20 @@ async fn labels(store: &AmazonS3) -> anyhow::Result<Vec<Value>> {
 }
 
 pub(super) async fn partial_completion(
+    document: &mut JourneyDocument,
+    project: &Client,
+    evidence: &Path,
+) -> anyhow::Result<()> {
+    wamn_gate_harness::run_check::check(
+        evidence,
+        "wms_partial_completion",
+        project,
+        partial_completion_inner(document, project, evidence),
+    )
+    .await
+}
+
+async fn partial_completion_inner(
     document: &mut JourneyDocument,
     project: &Client,
     evidence: &Path,

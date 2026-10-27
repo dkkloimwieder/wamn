@@ -36,6 +36,21 @@ async fn requests(run: &Run) -> anyhow::Result<Vec<Value>> {
 }
 
 async fn completed(
+    run: &Run,
+    project: &tokio_postgres::Client,
+    wiring: &str,
+    count: usize,
+) -> anyhow::Result<Vec<Value>> {
+    wamn_gate_harness::run_check::check(
+        &run.work,
+        "netsuite_completed",
+        project,
+        completed_inner(project, wiring, count),
+    )
+    .await
+}
+
+async fn completed_inner(
     project: &tokio_postgres::Client,
     wiring: &str,
     count: usize,
@@ -61,13 +76,29 @@ async fn completed(
 }
 
 async fn wait(
+    run: &Run,
+    project: &tokio_postgres::Client,
+    wiring: &str,
+    count: usize,
+) -> anyhow::Result<Vec<Value>> {
+    wamn_gate_harness::run_check::check(
+        &run.work,
+        "netsuite_wait",
+        project,
+        wait_inner(run, project, wiring, count),
+    )
+    .await
+}
+
+async fn wait_inner(
+    run: &Run,
     project: &tokio_postgres::Client,
     wiring: &str,
     count: usize,
 ) -> anyhow::Result<Vec<Value>> {
     let deadline = Instant::now() + Duration::from_secs(360);
     loop {
-        let runs = completed(project, wiring, count).await?;
+        let runs = completed(run, project, wiring, count).await?;
         if !runs.is_empty() {
             return Ok(runs);
         }
@@ -84,7 +115,21 @@ pub async fn assertions(
     project: &tokio_postgres::Client,
     workflows: &WorkflowEnvironment<'_>,
 ) -> anyhow::Result<Value> {
-    let pulls = wait(project, "netsuite_pull", 1).await?;
+    wamn_gate_harness::run_check::check(
+        &run.work,
+        "netsuite_assertions",
+        project,
+        assertions_inner(run, project, workflows),
+    )
+    .await
+}
+
+async fn assertions_inner(
+    run: &Run,
+    project: &tokio_postgres::Client,
+    workflows: &WorkflowEnvironment<'_>,
+) -> anyhow::Result<Value> {
+    let pulls = wait(run, project, "netsuite_pull", 1).await?;
     // One pull is enough. The admin disables the schedule, so no later pull
     // adds requests to the log.
     super::integration::disable_schedule(workflows, "netsuite", "netsuite_pull").await?;
@@ -168,7 +213,7 @@ pub async fn assertions(
         );
     }
     project.execute("INSERT INTO rest_consumer_fixture.item (key,name) VALUES ('push-one','Pushed customer')", &[]).await?;
-    let pushes = wait(project, "netsuite_push", 1).await?;
+    let pushes = wait(run, project, "netsuite_push", 1).await?;
     // An event trigger is a workflow row, so the run names it by its wiring
     // id and records its CDC delivery as the invoker.
     ensure!(
@@ -207,6 +252,7 @@ pub async fn assertions(
     )
     .await?;
     let replay = super::integration::start_workflow(
+        &run.work,
         workflows,
         "netsuite",
         &document.wiring_id,
@@ -214,7 +260,7 @@ pub async fn assertions(
         "netsuite-fixture-redelivery",
     )
     .await?;
-    wait(project, &document.wiring_id, 1).await?;
+    wait(run, project, &document.wiring_id, 1).await?;
     let records = requests(run).await?;
     let records: Vec<_> = records
         .into_iter()

@@ -13,6 +13,7 @@ pub mod ceiling;
 pub mod delivery;
 pub mod environment;
 pub mod journey;
+pub mod run_check;
 pub mod session_issuer;
 
 use std::path::PathBuf;

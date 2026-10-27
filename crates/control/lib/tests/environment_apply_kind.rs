@@ -256,6 +256,23 @@ impl Run {
         self.record(check, command, observed, if pass { "pass" } else { "fail" });
     }
 
+    async fn retain_failure_diagnostics(&mut self, name: &str) -> anyhow::Result<()> {
+        if self.report.iter().any(|row| row["result"] == "fail") {
+            let observed = diagnostics(&self.work.join("kubeconfig")).await;
+            std::fs::write(
+                self.work.join(format!("rollout-{name}-failure.json")),
+                serde_json::to_vec_pretty(&observed)?,
+            )?;
+            self.record(
+                "diagnostics before environment deletion",
+                "",
+                observed,
+                "info",
+            );
+        }
+        Ok(())
+    }
+
     /// The number of revisions in `helm history` of `name`.
     async fn revisions(&self, name: &str) -> anyhow::Result<usize> {
         let history = self
@@ -1593,6 +1610,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     Ok(())
     }.await;
     run.collect("4 HTTP connections and triggers", result);
+    run.retain_failure_diagnostics("http").await?;
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;
@@ -2363,6 +2381,9 @@ async fn diagnostics(kubeconfig: &Path) -> Value {
         "deployments,workloaddeployments,workloads,pods",
     ])
     .await;
+    let workloads = kubectl(&["get", "workloads,workloaddeployments", "-A", "-o", "json"]).await;
+    let workloads: Value =
+        serde_json::from_str(&workloads).unwrap_or_else(|_| json!({"error": workloads}));
     let pods: Value = serde_json::from_str(&kubectl(&["get", "pods", "-A", "-o", "json"]).await)
         .unwrap_or(Value::Null);
     let mut logs = serde_json::Map::new();
@@ -2387,7 +2408,7 @@ async fn diagnostics(kubeconfig: &Path) -> Value {
             logs.insert(format!("{namespace}/{name}/{container}"), entry);
         }
     }
-    json!({"events": lines(events), "describe": lines(described), "logs": logs})
+    json!({"events": lines(events), "describe": lines(described), "workloads": workloads, "logs": logs})
 }
 
 /// Publish one pinned HTTP entry and record its members in both fixture releases.

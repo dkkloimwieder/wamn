@@ -495,6 +495,21 @@ pub async fn assert_triggers(
     database: &tokio_postgres::Client,
     environment: &super::integration::WorkflowEnvironment<'_>,
 ) -> anyhow::Result<()> {
+    let work = run.work.clone();
+    wamn_gate_harness::run_check::check(
+        &work,
+        "assert_triggers",
+        database,
+        assert_triggers_inner(run, database, environment),
+    )
+    .await
+}
+
+async fn assert_triggers_inner(
+    run: &mut Run,
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
+) -> anyhow::Result<()> {
     for document in [wiring()?, signed_wiring()?, paged_wiring()?]
         .into_iter()
         .chain(oauth_wirings()?)
@@ -511,15 +526,24 @@ pub async fn assert_triggers(
         .await?;
     }
     let (unsigned_status, unsigned_body) =
-        run_manual(database, environment, "http-send", "unsigned").await?;
+        run_manual(&run.work, database, environment, "http-send", "unsigned").await?;
     let observed = request_log(run).await?;
-    run.collect(
-        "4 HTTP unsigned request",
-        assert_observed_request(unsigned_status, &unsigned_body, &observed),
-    );
-    let result = async {
-        let (status, body) =
-            run_manual(database, environment, "http-signed-send", "signed").await?;
+    let result =
+        wamn_gate_harness::run_check::check(&run.work, "unsigned_request", database, async {
+            assert_observed_request(unsigned_status, &unsigned_body, &observed)
+        })
+        .await;
+    run.collect("4 HTTP unsigned request", result);
+    let work = run.work.clone();
+    let result = wamn_gate_harness::run_check::check(&work, "signed_request", database, async {
+        let (status, body) = run_manual(
+            &run.work,
+            database,
+            environment,
+            "http-signed-send",
+            "signed",
+        )
+        .await?;
         let observed = request_log(run).await?;
         let records = request_records(&observed)?;
         let signed: Vec<_> = records
@@ -548,7 +572,7 @@ pub async fn assert_triggers(
         );
 
         Ok(())
-    }
+    })
     .await;
     run.collect("4 HTTP signed request", result);
     let result = assert_oauth(run, database, environment).await;
@@ -562,14 +586,7 @@ pub async fn assert_triggers(
     let document = scheduled_wiring()?;
     super::integration::enable_schedule(environment, PACKAGE, &document, SCHEDULE, &[]).await?;
     let first_due = super::integration::next_minute(Utc::now());
-    let result = tokio::time::timeout(
-        Duration::from_secs(240),
-        scheduled_runs(database, environment.tenant, first_due),
-    )
-    .await;
-    let result = result
-        .context("schedule did not complete two due moments within 240 seconds")
-        .and_then(std::convert::identity);
+    let result = scheduled_runs(&run.work, database, environment.tenant, first_due).await;
     run.pass("an enabled schedule workflow starts exactly one run per due key as the workflow user with its role",
         "author and enable the schedule workflow; SELECT schedule runs from wamn_run.runs",
         json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
@@ -579,14 +596,37 @@ pub async fn assert_triggers(
 }
 
 async fn run_manual(
+    work: &std::path::Path,
     database: &tokio_postgres::Client,
     environment: &super::integration::WorkflowEnvironment<'_>,
     workflow: &str,
     key: &str,
 ) -> anyhow::Result<(u16, String)> {
-    let id =
-        super::integration::admit_workflow(environment, PACKAGE, workflow, &json!({"id":1}), key)
-            .await?;
+    wamn_gate_harness::run_check::check(
+        work,
+        "run_manual",
+        database,
+        run_manual_inner(work, database, environment, workflow, key),
+    )
+    .await
+}
+
+async fn run_manual_inner(
+    work: &std::path::Path,
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
+    workflow: &str,
+    key: &str,
+) -> anyhow::Result<(u16, String)> {
+    let id = super::integration::admit_workflow(
+        work,
+        environment,
+        PACKAGE,
+        workflow,
+        &json!({"id":1}),
+        key,
+    )
+    .await?;
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
     loop {
         let row = database
@@ -620,6 +660,23 @@ async fn run_manual(
 /// The runs of the schedule workflow at its first two due moments from
 /// `first_due`, once both completed.
 async fn scheduled_runs(
+    work: &std::path::Path,
+    database: &tokio_postgres::Client,
+    tenant: &str,
+    first_due: chrono::DateTime<Utc>,
+) -> anyhow::Result<Value> {
+    wamn_gate_harness::run_check::check(work, "scheduled_runs", database, async {
+        tokio::time::timeout(
+            Duration::from_secs(240),
+            scheduled_runs_inner(database, tenant, first_due),
+        )
+        .await
+        .context("schedule did not complete two due moments within 240 seconds")?
+    })
+    .await
+}
+
+async fn scheduled_runs_inner(
     database: &tokio_postgres::Client,
     tenant: &str,
     first_due: chrono::DateTime<Utc>,
@@ -685,11 +742,27 @@ async fn assert_oauth(
     database: &tokio_postgres::Client,
     environment: &super::integration::WorkflowEnvironment<'_>,
 ) -> anyhow::Result<()> {
+    let work = run.work.clone();
+    wamn_gate_harness::run_check::check(
+        &work,
+        "assert_oauth",
+        database,
+        assert_oauth_inner(run, database, environment),
+    )
+    .await
+}
+
+async fn assert_oauth_inner(
+    run: &mut Run,
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
+) -> anyhow::Result<()> {
     for (index, route) in ["oauth2", "oauth2", "oauth1", "oauth1"]
         .into_iter()
         .enumerate()
     {
         let (status, body) = run_manual(
+            &run.work,
             database,
             environment,
             &format!("http-{route}"),
@@ -747,7 +820,23 @@ async fn assert_paged(
     database: &tokio_postgres::Client,
     environment: &super::integration::WorkflowEnvironment<'_>,
 ) -> anyhow::Result<()> {
-    let (status, body) = run_manual(database, environment, "http-pages", "pages").await?;
+    let work = run.work.clone();
+    wamn_gate_harness::run_check::check(
+        &work,
+        "assert_paged",
+        database,
+        assert_paged_inner(run, database, environment),
+    )
+    .await
+}
+
+async fn assert_paged_inner(
+    run: &mut Run,
+    database: &tokio_postgres::Client,
+    environment: &super::integration::WorkflowEnvironment<'_>,
+) -> anyhow::Result<()> {
+    let (status, body) =
+        run_manual(&run.work, database, environment, "http-pages", "pages").await?;
     let items: Value = serde_json::from_str(&body)?;
     let pages: Vec<_> = request_records(&request_log(run).await?)?
         .into_iter()

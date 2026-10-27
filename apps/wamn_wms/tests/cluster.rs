@@ -616,7 +616,7 @@ async fn run_created(
         // The movement_label workflow runs on the materializer's delivery of
         // the move's row event, so the materializer serves before any move.
         role_placed(&environment, "materializer", &hosts).await?;
-        application::released_routes(&document, &store, evidence).await?;
+        application::released_routes(project.as_ref(), &document, &store, evidence).await?;
         if partial_completion {
             checked(
                 Command::new(lifecycle)
