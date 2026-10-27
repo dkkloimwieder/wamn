@@ -1534,7 +1534,7 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// Every grant on schema `wamn_history` and its functions, except the grants
+/// Every grant on schema `wamn_history`, its functions, and its watermark table, except the grants
 /// of the owner, from the server ACLs.
 fn history_grants(url: &str) -> String {
     psql(
@@ -1549,7 +1549,12 @@ fn history_grants(url: &str) -> String {
            SELECT p.proname || ' ' || acl.grantee::regrole::text || ' ' || acl.privilege_type \
              FROM pg_catalog.pg_proc p, pg_catalog.aclexplode(p.proacl) acl \
             WHERE p.pronamespace = 'wamn_history'::regnamespace \
-              AND acl.grantee <> p.proowner) entries",
+              AND acl.grantee <> p.proowner \
+           UNION ALL \
+           SELECT c.relname || ' ' || acl.grantee::regrole::text || ' ' || acl.privilege_type \
+             FROM pg_catalog.pg_class c, pg_catalog.aclexplode(c.relacl) acl \
+            WHERE c.oid = 'wamn_history.pruning_watermarks'::regclass \
+              AND acl.grantee <> c.relowner) entries",
     )
 }
 
@@ -1571,7 +1576,8 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
         "wamn_history wamn_db_owner CREATE",
         "wamn_history wamn_db_owner USAGE",
     ];
-    const APP_GRANTS: [&str; 3] = [
+    const APP_GRANTS: [&str; 4] = [
+        "pruning_watermarks wamn_app SELECT",
         "row_image wamn_app EXECUTE",
         "timestamptz_image wamn_app EXECUTE",
         "wamn_history wamn_app USAGE",

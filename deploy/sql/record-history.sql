@@ -37,6 +37,15 @@ END $db_owner$;
 CREATE SCHEMA IF NOT EXISTS wamn_history;
 REVOKE ALL ON SCHEMA wamn_history FROM PUBLIC;
 
+-- The highest transaction id removed from each history table. A table has no
+-- row until pruning removes an entry. The relation OID distinguishes a new
+-- history table from a dropped table with the same name.
+CREATE TABLE IF NOT EXISTS wamn_history.pruning_watermarks (
+    history_table regclass PRIMARY KEY,
+    transaction_id bigint NOT NULL
+);
+REVOKE ALL ON TABLE wamn_history.pruning_watermarks FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION wamn_history.stamp_row()
 RETURNS trigger
 LANGUAGE plpgsql

@@ -450,6 +450,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0040_connection_mode.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0040_connection_mode.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0041_history_pruning_watermarks.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0041_history_pruning_watermarks.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

@@ -1754,8 +1754,13 @@ fn retention_grants_on(history: &str) -> Vec<String> {
         format!("column inventory.{history}.changed_at SELECT"),
         format!("column inventory.{history}.position SELECT"),
         format!("column inventory.{history}.row_key SELECT"),
+        format!("column inventory.{history}.transaction_id SELECT"),
         format!("relation inventory.{history} DELETE"),
+        "relation wamn_history.pruning_watermarks INSERT".to_owned(),
+        "relation wamn_history.pruning_watermarks SELECT".to_owned(),
+        "relation wamn_history.pruning_watermarks UPDATE".to_owned(),
         "schema inventory.inventory USAGE".to_owned(),
+        "schema wamn_history.wamn_history USAGE".to_owned(),
     ]
 }
 

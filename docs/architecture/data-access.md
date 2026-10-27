@@ -838,7 +838,9 @@ The transaction takes the audit retention advisory lock before it reads `pg_trig
 apply-package takes the same lock before it reconciles the log triggers, so a retention change waits for a running delete.
 The cutoff is `transaction_timestamp()` less n days, in UTC.
 The verb deletes an entry older than the cutoff only when no earlier entry of the same row is at or after the cutoff.
-It therefore removes a prefix of the history of a row, never an interior entry, and it writes no marker.
+It therefore removes a prefix of the history of a row, never an interior entry, and it writes no marker in the history table.
+In the same statement, it raises the row of the history table in `wamn_history.pruning_watermarks` to the highest transaction id that it removed.
+The change feed reads that watermark to find an expired cursor.
 
 apply-package owns the grants of the role.
 It grants them in the transaction that reconciles the log triggers.

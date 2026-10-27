@@ -2700,7 +2700,7 @@ fn a_logged_list_read_gets_its_change_feed() {
         "AND (entry.transaction_id < bound.feed_end\n               OR (entry.transaction_id < bound.feed_max\n                   AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))",
         "FROM gadget_history AS entry",
         "LEFT JOIN gadget AS model ON model.id = changed.change_id",
-        "min(entry.transaction_id)",
+        "$3::int8 <= watermark.transaction_id",
     ] {
         assert!(changes.contains(part), "{part}:\n{changes}");
     }
@@ -2756,7 +2756,7 @@ fn a_logged_list_read_gets_its_change_feed() {
         json!(["before", "row_key", "transaction_id", "type"])
     );
 
-    // An unlimited retention prunes nothing, so no cursor expires.
+    // The watermark still applies if a previously pruned table becomes unlimited.
     let unlimited = generated("unlimited");
     let changes = std::str::from_utf8(
         unlimited
@@ -2765,7 +2765,10 @@ fn a_logged_list_read_gets_its_change_feed() {
             .bytes(),
     )
     .unwrap();
-    assert!(!changes.contains("min(entry.transaction_id)"), "{changes}");
+    assert!(
+        changes.contains("wamn_history.pruning_watermarks"),
+        "{changes}"
+    );
 
     // A model that keeps no log has no history table and no feed.
     let unlogged = generated("none");

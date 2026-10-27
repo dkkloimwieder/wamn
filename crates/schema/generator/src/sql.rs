@@ -260,8 +260,8 @@ const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8
 /// transaction and id order. Each row carries the live row when it is still
 /// in the scope of the list's filters. Otherwise it is a deletion, and it
 /// carries the revision the delete entry left. The outer row carries the
-/// snapshot xmin, and whether the cursor is older than the oldest entry the
-/// retention keeps, even when no entry changed.
+/// snapshot xmin, and whether pruning removed a transaction at or above the
+/// cursor xmin, even when no entry remains.
 ///
 /// The binds are the list's filters and search, then the cursor transaction,
 /// the cursor id and the limit.
@@ -270,7 +270,6 @@ pub(crate) fn changes(
     operation: &OperationDeclaration,
     revision: &str,
     tombstoned: bool,
-    bounded_retention: bool,
 ) -> String {
     let key_cast = key_cast(table);
     let (predicates, next_bind) = scope_predicates(table, operation, tombstoned);
@@ -286,11 +285,9 @@ pub(crate) fn changes(
         )
         .collect::<Vec<_>>()
         .join("\n            AND ");
-    let expired = if bounded_retention {
-        format!("${transaction}::int8 < (SELECT min(entry.transaction_id) FROM {history} AS entry)")
-    } else {
-        "false".to_owned()
-    };
+    let expired = format!(
+        "EXISTS (SELECT FROM wamn_history.pruning_watermarks AS watermark WHERE watermark.history_table = '{history}'::regclass AND ${transaction}::int8 <= watermark.transaction_id)"
+    );
     format!(
         "SELECT
     bound.feed_end,
@@ -583,18 +580,16 @@ mod tests {
                         assert!(page.contains(&format!("($1::{cast} IS NULL OR (model.id, model.id) {comparison} ($1::{cast}, $2::{cast}))")), "{page}");
                     }
                 }
-                for bounded in [false, true] {
-                    let feed = changes(&table, &operation, "version", tombstoned, bounded);
-                    for expected in [
-                        format!("(entry.row_key->>'id')::{cast} AS change_id"),
-                        format!("GROUP BY (entry.row_key->>'id')::{cast}\n"),
-                        format!("WHERE $2::{cast} IS NULL\n"),
-                        format!(
-                            "(changed.change_transaction, changed.change_id) > ($1::int8, $2::{cast})"
-                        ),
-                    ] {
-                        assert!(feed.contains(&expected), "{feed} lacks {expected}");
-                    }
+                let feed = changes(&table, &operation, "version", tombstoned);
+                for expected in [
+                    format!("(entry.row_key->>'id')::{cast} AS change_id"),
+                    format!("GROUP BY (entry.row_key->>'id')::{cast}\n"),
+                    format!("WHERE $2::{cast} IS NULL\n"),
+                    format!(
+                        "(changed.change_transaction, changed.change_id) > ($1::int8, $2::{cast})"
+                    ),
+                ] {
+                    assert!(feed.contains(&expected), "{feed} lacks {expected}");
                 }
             }
         }

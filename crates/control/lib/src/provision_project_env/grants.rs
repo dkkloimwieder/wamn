@@ -353,9 +353,10 @@ fn verify_retention_grants(role: &str, database: &str, grants: &[RoleAcl]) -> an
 /// The exact audit retention grant set, measured against `pg_trigger`
 /// (`wamn-emtx.13`).
 ///
-/// The role holds schema `USAGE`, `DELETE`, and `SELECT` on the three read
+/// The role holds schema `USAGE`, `DELETE`, and `SELECT` on the four read
 /// columns of each history table whose `wamn_record_history_log` argument is
-/// `P<n>D`, and nothing else in the database. `retention_targets` lists those
+/// `P<n>D`. With any target, it also holds the pruning watermark grants.
+/// `retention_targets` lists those
 /// history tables as `(schema, history table)`, from the same query that the
 /// retention verb runs. So a grant on an `unlimited` history table, a wider
 /// grant, and a missing grant all refuse. A reserved schema or `platform`
@@ -367,6 +368,22 @@ pub(super) fn verify_audit_retention_grants(
     retention_targets: &[(String, String)],
 ) -> anyhow::Result<()> {
     let mut expected = BTreeSet::new();
+    if !retention_targets.is_empty() {
+        expected.insert((
+            "schema".to_string(),
+            "wamn_history".to_string(),
+            "wamn_history".to_string(),
+            "USAGE".to_string(),
+        ));
+        for privilege in ["SELECT", "INSERT", "UPDATE"] {
+            expected.insert((
+                "relation".to_string(),
+                "wamn_history".to_string(),
+                "pruning_watermarks".to_string(),
+                privilege.to_string(),
+            ));
+        }
+    }
     for (schema, history) in retention_targets {
         expected.insert((
             "schema".to_string(),

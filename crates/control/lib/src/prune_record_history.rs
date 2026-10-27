@@ -7,8 +7,8 @@
 //!
 //! **Role:** the verb connects as a scoped `wamn_audit_retention` credential
 //! generation and refuses any other login. apply-package grants that role
-//! `DELETE` and `SELECT (row_key, position, changed_at)` only on the history
-//! tables that the verb prunes.
+//! `DELETE` and `SELECT (row_key, position, changed_at, transaction_id)` on the history
+//! tables that the verb prunes. It also grants the watermark read and write.
 //!
 //! Each relation runs in its own transaction. The transaction binds
 //! `wamn:audit-retention` as the actor and the operation, and it takes the audit
@@ -19,7 +19,8 @@
 //! The cutoff is the transaction timestamp less n days, in UTC. An entry older
 //! than the cutoff goes only when no earlier entry of its row is at or after the
 //! cutoff. So the verb removes a prefix of the history of a row, never an
-//! interior entry, and it writes no marker. The daily schedule
+//! interior entry. It advances the pruning watermark in the same transaction.
+//! The daily schedule
 //! (`deploy/platform/audit-retention.example.yaml`) sets the retention precision.
 
 use anyhow::{Context as _, bail};
@@ -31,7 +32,7 @@ use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleScope,
     bind_platform_principal_sql, workload_generation_role,
 };
-use wamn_pg_core::{Identifier, QualifiedName};
+use wamn_pg_core::{Identifier, QualifiedName, quote_literal};
 
 /// Inputs of one record history retention run.
 #[derive(Debug)]
@@ -190,10 +191,11 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
             Identifier::new(history.as_str())?,
         )
         .quoted();
-        let removed = transaction
-            .execute(&prune_history_sql(&table), &[&days])
+        let removed: i64 = transaction
+            .query_one(&prune_history_sql(&table), &[&days])
             .await
-            .with_context(|| format!("prune {schema}.{history}"))?;
+            .with_context(|| format!("prune {schema}.{history}"))?
+            .get(0);
         transaction
             .commit()
             .await
@@ -202,25 +204,34 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
             schema: schema.clone(),
             history,
             days,
-            removed,
+            removed: u64::try_from(removed).expect("a deleted row count is nonnegative"),
         });
         last = Some((schema, relation));
     }
 }
 
-/// The delete of the expired prefix of each row in one history table.
+/// Delete expired prefixes and advance the watermark in one statement.
 ///
 /// `$1` is the retention in days. An entry goes when its `changed_at` is before
 /// the cutoff and no entry of the same row with an earlier position is at or
 /// after the cutoff.
 fn prune_history_sql(table: &str) -> String {
     format!(
-        "DELETE FROM {table} AS entry \
+        "WITH removed AS (DELETE FROM {table} AS entry \
           USING (SELECT transaction_timestamp() - make_interval(days => $1) AS at) AS cutoff \
           WHERE entry.changed_at < cutoff.at \
             AND NOT EXISTS (SELECT FROM {table} AS earlier \
                              WHERE earlier.row_key = entry.row_key \
                                AND earlier.position < entry.position \
-                               AND earlier.changed_at >= cutoff.at)"
+                               AND earlier.changed_at >= cutoff.at) \
+          RETURNING entry.transaction_id), \
+          watermark AS (INSERT INTO wamn_history.pruning_watermarks AS current \
+                         (history_table, transaction_id) \
+                       SELECT {table_literal}::regclass, max(transaction_id) FROM removed \
+                       HAVING count(*) > 0 \
+                       ON CONFLICT (history_table) DO UPDATE \
+                         SET transaction_id = greatest(current.transaction_id, EXCLUDED.transaction_id)) \
+          SELECT count(*) FROM removed",
+        table_literal = quote_literal(table),
     )
 }

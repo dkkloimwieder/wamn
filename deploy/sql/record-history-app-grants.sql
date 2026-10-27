@@ -13,3 +13,4 @@
 GRANT USAGE ON SCHEMA wamn_history TO wamn_app;
 GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_app;
 GRANT EXECUTE ON FUNCTION wamn_history.timestamptz_image(timestamptz) TO wamn_app;
+GRANT SELECT ON TABLE wamn_history.pruning_watermarks TO wamn_app;

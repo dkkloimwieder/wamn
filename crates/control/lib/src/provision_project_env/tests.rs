@@ -688,7 +688,7 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
     let mut exact = vec![role_acl("schema", "orders", "orders", "USAGE")];
     for history in ["widget_history", "widget_tag_history"] {
         exact.push(role_acl("relation", "orders", history, "DELETE"));
-        for column in ["row_key", "position", "changed_at"] {
+        for column in ["row_key", "position", "changed_at", "transaction_id"] {
             exact.push(role_acl(
                 "column",
                 "orders",
@@ -696,6 +696,15 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
                 "SELECT",
             ));
         }
+    }
+    exact.push(role_acl("schema", "wamn_history", "wamn_history", "USAGE"));
+    for privilege in ["SELECT", "INSERT", "UPDATE"] {
+        exact.push(role_acl(
+            "relation",
+            "wamn_history",
+            "pruning_watermarks",
+            privilege,
+        ));
     }
     let verify = |rows: &[RoleAcl], targets: &[(String, String)]| {
         verify_audit_retention_grants("wamn_audit_retention", "project-db", rows, targets)
@@ -725,7 +734,7 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
     let reserved = vec![("platform".to_string(), "user_history".to_string())];
     let mut platform = vec![role_acl("schema", "platform", "platform", "USAGE")];
     platform.push(role_acl("relation", "platform", "user_history", "DELETE"));
-    for column in ["row_key", "position", "changed_at"] {
+    for column in ["row_key", "position", "changed_at", "transaction_id"] {
         platform.push(role_acl(
             "column",
             "platform",

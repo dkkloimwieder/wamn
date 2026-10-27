@@ -20,8 +20,9 @@ use crate::workload_role::AUDIT_RETENTION_ROLE;
 pub const AUDIT_RETENTION_LOCK_SQL: &str =
     "SELECT pg_advisory_xact_lock(hashtextextended('wamn.audit-retention', 0))";
 
-/// The history table columns that the retention delete reads.
-pub const AUDIT_RETENTION_READ_COLUMNS: [&str; 3] = ["row_key", "position", "changed_at"];
+/// The history table columns that pruning reads and returns.
+pub const AUDIT_RETENTION_READ_COLUMNS: [&str; 4] =
+    ["row_key", "position", "changed_at", "transaction_id"];
 
 /// Each relation of the current database whose log keeps its entries for n days.
 ///
@@ -66,7 +67,9 @@ SELECT log.schema_name, log.relation_name, log.history_name, log.days
 ///
 /// The role holds schema `USAGE`, `DELETE`, and `SELECT` on
 /// [`AUDIT_RETENTION_READ_COLUMNS`] of each history table that
-/// [`AUDIT_RETENTION_TARGETS_SQL`] returns, and nothing else. The block revokes
+/// [`AUDIT_RETENTION_TARGETS_SQL`] returns. With any target, it also holds schema
+/// `USAGE` and `SELECT`, `INSERT`, and `UPDATE` on the pruning watermarks.
+/// The block revokes
 /// every privilege that the role holds on a schema or a relation, and then
 /// grants the exact set. A database without the role gets no change, like the
 /// run plane repair of the `wamn_run_retention` grants. The caller runs the block in the transaction that
@@ -123,6 +126,10 @@ pub fn reconcile_audit_retention_grants_sql() -> String {
              EXECUTE format('GRANT DELETE, SELECT ({read_columns}) ON TABLE %I.%I TO %I', \
                             target.schema_name, target.history_name, role_name); \
            END LOOP; \
+           IF FOUND THEN \
+             EXECUTE format('GRANT USAGE ON SCHEMA wamn_history TO %I', role_name); \
+             EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE wamn_history.pruning_watermarks TO %I', role_name); \
+           END IF; \
          END $audit_retention_grants$;",
         role = quote_literal(AUDIT_RETENTION_ROLE),
         targets = AUDIT_RETENTION_TARGETS_SQL.trim(),

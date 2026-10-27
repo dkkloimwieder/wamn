@@ -402,8 +402,10 @@ Rows beyond that page wait until xmin advances.
 An empty page returns the incoming cursor unchanged.
 Repeated rows are expected, and the browser ignores equal or lower versions on upsert.
 
-`cursor_expired` applies only under `P<n>D` retention, when the cursor predates the oldest retained entry.
-[`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`, emits that predicate only for bounded retention.
+`cursor_expired` applies when the cursor transaction is at or below the pruning watermark of the history table (`wamn_history.pruning_watermarks`).
+`prune-record-history` raises that watermark in the statement that deletes, so the rule holds after pruning removes every entry.
+A table that pruning never touched has no watermark and never expires a cursor.
+[`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`, emits the predicate.
 [`generate/data.rs`](../../crates/schema/generator/src/generate/data.rs), `emit_feed`, turns it into the ordinary refusal.
 
 ### Delivery and authorization

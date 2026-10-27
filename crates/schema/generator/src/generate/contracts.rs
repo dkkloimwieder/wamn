@@ -599,13 +599,9 @@ fn emit_operation_sql(
         }
         // The change feed is the last statement of the list read.
         if let Some(revision) = feed {
-            // A retention of `P<n>D` prunes entries, so a cursor can expire.
-            let bounded = model
-                .log_retention()
-                .is_some_and(|retention| retention.starts_with('P'));
             statements.push((
                 format!("generated/sql/{model_name}/{CHANGES_STATEMENT}.sql"),
-                sql::changes(table, operation, revision, tombstoned, bounded),
+                sql::changes(table, operation, revision, tombstoned),
             ));
         }
         let mut paths = Vec::with_capacity(statements.len());

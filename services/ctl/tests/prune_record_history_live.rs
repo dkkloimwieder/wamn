@@ -380,14 +380,20 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
         .collect::<Vec<_>>();
     let mut expected = Vec::new();
     for history in ["parcel_history", "shipment_history"] {
-        for column in ["changed_at", "position", "row_key"] {
+        for column in ["changed_at", "position", "row_key", "transaction_id"] {
             expected.push(format!("column {SCHEMA}.{history}.{column} SELECT"));
         }
     }
     for history in ["parcel_history", "shipment_history"] {
         expected.push(format!("relation {SCHEMA}.{history} DELETE"));
     }
+    for privilege in ["INSERT", "SELECT", "UPDATE"] {
+        expected.push(format!(
+            "relation wamn_history.pruning_watermarks {privilege}"
+        ));
+    }
     expected.push(format!("schema {SCHEMA}.{SCHEMA} USAGE"));
+    expected.push("schema wamn_history.wamn_history USAGE".to_owned());
     assert_eq!(grants, expected, "the audit retention grants");
     let edges: i64 = admin
         .query_one(

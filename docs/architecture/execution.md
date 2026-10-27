@@ -1086,4 +1086,4 @@ A cut page below xmin continues after its last transaction and id.
 Any returned row at or above xmin sets `next_cursor` to xmin without an id and `complete` to true.
 These rows repeat on later calls until xmin advances, and the client ignores an equal `row_version`.
 An empty page keeps its incoming cursor, so an unchanged feed still answers 304.
-A cursor of another model, or one that does not decode, refuses with `invalid_input` on `cursor`. A cursor older than the oldest entry a `P<n>D` retention keeps refuses with `cursor_expired`.
+A cursor of another model, or one that does not decode, refuses with `invalid_input` on `cursor`. A cursor whose transaction is at or below the pruning watermark of the history table refuses with `cursor_expired`, because pruning removed a change that the cursor did not see.
