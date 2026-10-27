@@ -38,9 +38,10 @@ COPY apps ./apps
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
-# tools/bench is a workspace member, so Cargo needs its manifest to load the
-# workspace.
+# tools/bench and tools/submodule-check are workspace members, so Cargo needs
+# their manifests to load the workspace.
 COPY tools/bench ./tools/bench
+COPY tools/submodule-check ./tools/submodule-check
 # The copied .cargo/config.toml carries the clang/mold linker settings the
 # toolchain stage installs above, and NO rustc-wrapper: this stage and
 # component-toolchain both inherit this file, and a wrapper naming a binary
