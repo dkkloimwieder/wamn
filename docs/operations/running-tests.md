@@ -81,7 +81,8 @@ It records no permanent result.
 `tools/test-changes` is the broad check before integration.
 
 `tools/train-run REF [--base BASE]` tests a committed revision in a fresh detached worktree at `/var/tmp/wamn-train/worktree`.
-Its default base is the merge base of `REF` and `main`.
+Its default base is the merge base of `REF` and `origin/main`.
+If `origin/main` is absent, it uses local `main`.
 If that worktree already exists, the tool refuses and names its path.
 It initializes submodules and reuses `$HOME/.cache/wamn-target/train` between trains.
 The fixed worktree path keeps compiled source paths valid between trains.

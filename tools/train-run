@@ -13,7 +13,13 @@ fi
 readonly tools="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly repository="$(git -C "$tools/.." rev-parse --show-toplevel)"
 ref=$(git -C "$repository" rev-parse --verify "$ref^{commit}") || wamn_fail 'REF is not a commit'
-if [[ -z $base ]]; then base=$(git -C "$repository" merge-base "$ref" main); fi
+if [[ -z $base ]]; then
+  base_branch=main
+  if git -C "$repository" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+    base_branch=origin/main
+  fi
+  base=$(git -C "$repository" merge-base "$ref" "$base_branch")
+fi
 base=$(git -C "$repository" rev-parse --verify "$base^{commit}") || wamn_fail 'base is not a commit'
 readonly worktree='/var/tmp/wamn-train/worktree'
 if [[ -e $worktree ]] && git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then

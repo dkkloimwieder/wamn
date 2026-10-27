@@ -91,6 +91,14 @@ impl Fixture {
             &fixture.root.join(required),
             &fs::read_to_string(repository_root().join(required)).unwrap(),
         );
+        fixture.write(
+            "tools/test-changes-suites.json",
+            &fs::read_to_string(repository_root().join("tools/test-changes-suites.json")).unwrap(),
+        );
+        executable(
+            &fixture.root.join("tools/repo-lint"),
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$WAMN_FAKE_QUALITY_LOG\"\n",
+        );
         executable(&fixture.directory.join("fake cargo"), FAKE_CARGO);
         executable(&fixture.directory.join("docker"), FAKE_GUEST_BUILD);
         fs::create_dir(fixture.directory.join("metadata")).unwrap();
@@ -255,6 +263,10 @@ impl Fixture {
             .env("WAMN_FAKE_ROOT", &self.root)
             .env("WAMN_FAKE_METADATA", self.directory.join("metadata"))
             .env("WAMN_FAKE_CARGO_LOG", self.directory.join("cargo calls"))
+            .env(
+                "WAMN_FAKE_QUALITY_LOG",
+                self.directory.join("quality calls"),
+            )
             .env("DOCKER", self.directory.join("docker"))
             .env("WAMN_FAKE_GUEST_LOG", self.directory.join("guest calls"))
             .env("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -368,27 +380,51 @@ fn executable(path: &Path, source: &str) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
-#[test]
-fn documentation_and_beads_changes_select_nothing() {
-    let fixture = Fixture::new();
-    fixture.write("docs/readme.md", "changed\n");
-    fixture.write(".beads/issues.jsonl", "{}\n");
+fn assert_quality_only(fixture: &Fixture) {
     let output = fixture.tool(&["dry-run"]);
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(stdout.lines().last(), Some("selected: nothing"), "{stdout}");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 4, "{stdout}");
+    assert!(lines[0].starts_with("working-directory: "), "{stdout}");
+    assert!(lines[1].starts_with("base: "), "{stdout}");
+    assert_eq!(lines[2], "suites: quality");
+    assert!(
+        lines[3].starts_with("repo-lint: ") && lines[3].ends_with("/tools/repo-lint run"),
+        "{stdout}"
+    );
+    assert!(!fixture.directory.join("cargo calls").exists());
+    assert!(!fixture.directory.join("quality calls").exists());
+    let output = fixture.tool(&["run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.directory.join("quality calls")).unwrap(),
+        "run\n"
+    );
     assert!(!fixture.directory.join("cargo calls").exists());
 }
 
 #[test]
-fn a_root_markdown_change_selects_nothing() {
+fn documentation_and_beads_changes_select_quality() {
+    let fixture = Fixture::new();
+    fixture.write("docs/readme.md", "changed\n");
+    fixture.write(".beads/issues.jsonl", "{}\n");
+    assert_quality_only(&fixture);
+}
+
+#[test]
+fn a_root_markdown_change_selects_quality() {
     let fixture = Fixture::new();
     fixture.write("README.md", "changed\n");
-    let output = fixture.tool(&["dry-run"]);
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(stdout.lines().last(), Some("selected: nothing"), "{stdout}");
-    assert!(!fixture.directory.join("cargo calls").exists());
+    assert_quality_only(&fixture);
 }
 
 #[test]
@@ -479,7 +515,10 @@ fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
         let fixture = Fixture::new();
         fixture.write(path, "changed shared interface\n");
         let mut expected = vec![
-            fixture.command("Cargo.toml", &["--workspace", "--features", "wamn-ctl/ops"]),
+            fixture.command(
+                "Cargo.toml",
+                &["--workspace", "--features", "wamn-control/ops,wamn-ctl/ops"],
+            ),
             fixture.command("apps/Cargo.toml", &["--workspace"]),
         ];
         if no_std {
@@ -491,7 +530,7 @@ fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
 
 #[test]
 fn workspace_files_and_unowned_inputs_run_the_full_command() {
-    let root_full = ["--workspace", "--features", "wamn-ctl/ops"];
+    let root_full = ["--workspace", "--features", "wamn-control/ops,wamn-ctl/ops"];
     let fixture = Fixture::new();
     fixture.write("Cargo.lock", "changed\n");
     fixture.write("apps/platform/no-std/Cargo.lock", "changed\n");
@@ -540,12 +579,16 @@ fn dry_run_prints_the_commands_without_running_tests() {
     assert!(!fixture.directory.join("cargo calls").exists());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 3, "{stdout}");
+    assert_eq!(lines.len(), 5, "{stdout}");
     assert!(lines[0].starts_with("working-directory: "), "{stdout}");
     assert!(lines[1].starts_with("base: "), "{stdout}");
     assert!(
-        lines[2].starts_with("root (full: \"Cargo.lock\"): ")
-            && lines[2].ends_with(" --no-fail-fast --workspace --features wamn-ctl/ops"),
+        lines[2] == "suites: quality"
+            && lines[3].starts_with("repo-lint: ")
+            && lines[4].starts_with("root (full: \"Cargo.lock\"): ")
+            && lines[4].ends_with(
+                " --no-fail-fast --workspace --features wamn-control/ops\\,wamn-ctl/ops"
+            ),
         "{stdout}"
     );
 }
@@ -568,9 +611,12 @@ fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).unwrap();
         let lines = stdout.lines().collect::<Vec<_>>();
-        assert_eq!(lines.len(), 3, "{stdout}");
+        assert_eq!(lines.len(), 5, "{stdout}");
         assert!(
-            lines[2].starts_with("root: ") && lines[2].ends_with(ending),
+            lines[2] == "suites: quality"
+                && lines[3].starts_with("repo-lint: ")
+                && lines[4].starts_with("root: ")
+                && lines[4].ends_with(ending),
             "{stdout}"
         );
     }
@@ -580,8 +626,8 @@ fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.lines().nth(2).is_some_and(|line| line.ends_with(
-            " --workspace --features wamn-ctl/ops\\,demo-tests/cluster -- --ignored --test-threads=1"
+        stdout.lines().nth(4).is_some_and(|line| line.ends_with(
+            " --workspace --features wamn-control/ops\\,wamn-ctl/ops\\,demo-tests/cluster -- --ignored --test-threads=1"
         )),
         "{stdout}"
     );
@@ -706,10 +752,12 @@ fn a_dry_run_prints_the_guest_builds_and_a_failed_build_fails_the_run() {
     assert!(!fixture.directory.join("guest calls").exists());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 5, "{stdout}");
+    assert_eq!(lines.len(), 7, "{stdout}");
     assert!(
-        lines[4].starts_with("guests (Dockerfile component-builder): ")
-            && lines[4].contains(" build --target component-builder "),
+        lines[2] == "suites: quality"
+            && lines[3].starts_with("repo-lint: ")
+            && lines[6].starts_with("guests (Dockerfile component-builder): ")
+            && lines[6].contains(" build --target component-builder "),
         "{stdout}"
     );
 

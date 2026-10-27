@@ -36,7 +36,9 @@ set -euo pipefail
 if [[ ${1:-} == -C ]]; then shift 2; fi
 case "$*" in
   'rev-parse --show-toplevel') printf '%s\n' "$FAKE_STATE/repo" ;;
-  rev-parse*|merge-base*) echo fake-commit ;;
+  'rev-parse --verify --quiet refs/remotes/origin/main') [[ ${FAKE_NO_ORIGIN:-false} != true ]] ;;
+  merge-base*) printf '%s\n' "$*" > "$FAKE_STATE/base"; echo fake-commit ;;
+  rev-parse*) echo fake-commit ;;
   diff*) printf '%s\0' "$FAKE_PATH" ;;
   ls-files*) : ;;
   'worktree add --detach '*)
@@ -121,7 +123,7 @@ grep -q 'target/apps' "$fixture/output"
 printf 'path rules, prekind filters, isolated guest paths: PASS\n'
 
 export FAKE_FAIL_INPUT=true
-if run_case docs/change.md run; then exit 1; fi
+if run_case crates/control/lib/src/change.rs run; then exit 1; fi
 ! grep -q '^cargo test ' "$fixture/calls"
 unset FAKE_FAIL_INPUT
 run_case crates/platform/runtime/src/change.rs run
@@ -183,6 +185,15 @@ for FAKE_WEB in '' web; do
   if [[ $FAKE_WEB == web ]]; then grep -q 'pnpm .*install --offline' "$fixture/calls"
   else ! grep -q '^pnpm ' "$fixture/calls"; fi
 done
+for FAKE_NO_ORIGIN in false true; do
+  export FAKE_NO_ORIGIN
+  "$fixture/repo/tools/train-run" HEAD > "$fixture/output" 2>&1
+  if [[ $FAKE_NO_ORIGIN == true ]]; then expected_base=main
+  else expected_base=origin/main; fi
+  [[ $(cat "$fixture/base") == "merge-base fake-commit $expected_base" ]]
+  [[ ! -d $fixture/train-worktree && -f $fixture/train-target/kept ]]
+done
+unset FAKE_NO_ORIGIN
 export FAKE_TEST_STATUS=7
 if "$fixture/repo/tools/train-run" HEAD > "$fixture/output" 2>&1; then exit 1; fi
 worktree=$(cat "$fixture/worktree")
@@ -194,4 +205,4 @@ grep -q 'kept worktree and logs:' "$fixture/output"
 if "$fixture/repo/tools/train-run" HEAD > "$fixture/output" 2>&1; then exit 1; fi
 grep -qF "worktree already exists: $worktree" "$fixture/output"
 [[ -f $worktree/retained && -f $fixture/train-target/kept && ! -s $fixture/calls ]]
-printf 'fixed train paths, target reuse, web install, cleanup, retained worktree refusal: PASS\n'
+printf 'fixed train paths, target reuse, published base, web install, cleanup, retained worktree refusal: PASS\n'

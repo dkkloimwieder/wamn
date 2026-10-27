@@ -47,20 +47,20 @@ readonly -a WAMN_COMPONENT_FORMAT=(
   fmt --manifest-path "$WAMN_COMPONENT_MANIFEST" --all -- --check
 )
 readonly -a WAMN_ROOT_CLIPPY=(
-  clippy --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline --workspace
+  clippy --manifest-path "$WAMN_ROOT_MANIFEST" --locked --workspace
   --all-targets -- -D warnings
 )
 readonly -a WAMN_COMPONENT_NATIVE_CLIPPY=(
-  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline --workspace
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
   --exclude connection-http-standard
   --all-targets -- -D warnings
 )
 readonly -a WAMN_CONNECTION_HTTP_NATIVE_CLIPPY=(
-  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
   --package connection-http-standard -- -D warnings
 )
 readonly -a WAMN_CONNECTION_HTTP_WASM_CLIPPY=(
-  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
   --package connection-http-standard --target wasm32-wasip2 -- -D warnings
 )
 # connection-http-standard is excluded for the same reason the native leg
@@ -68,7 +68,7 @@ readonly -a WAMN_CONNECTION_HTTP_WASM_CLIPPY=(
 # --workspace build unifies features so that std links in and duplicates the
 # panic_impl lang item (E0152). It keeps its own leg above and below instead.
 readonly -a WAMN_COMPONENT_WASM_CLIPPY=(
-  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline --workspace
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
   --exclude connection-http-standard
   --target wasm32-wasip2 -- -D warnings
 )
@@ -82,18 +82,18 @@ readonly -a WAMN_NO_STD_FORMAT=(
   fmt --manifest-path "$WAMN_NO_STD_MANIFEST" --all -- --check
 )
 readonly -a WAMN_NO_STD_NATIVE_CLIPPY=(
-  clippy --manifest-path "$WAMN_NO_STD_MANIFEST" --locked --offline --workspace
+  clippy --manifest-path "$WAMN_NO_STD_MANIFEST" --locked --workspace
   -- -D warnings
 )
 readonly -a WAMN_NO_STD_WASM_CLIPPY=(
-  clippy --manifest-path "$WAMN_NO_STD_MANIFEST" --locked --offline --workspace
+  clippy --manifest-path "$WAMN_NO_STD_MANIFEST" --locked --workspace
   --target wasm32-wasip2 -- -D warnings
 )
 
 # The repository policy lints: checks of source and repository files, which
 # are lints rather than tests (docs/operations/running-tests.md).
 readonly -a WAMN_REPOSITORY_POLICY=(
-  run --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline --quiet
+  run --manifest-path "$WAMN_ROOT_MANIFEST" --locked --quiet
   --package wamn-conformance-tests --bin repo-policy -- "$WAMN_REPOSITORY_ROOT"
 )
 

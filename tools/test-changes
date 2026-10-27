@@ -203,8 +203,11 @@ if [[ -z "$WAMN_PLAN" && -n "$WAMN_NAME" ]]; then
 fi
 
 # Path rules supplement Cargo edges, including readers outside their package.
-WAMN_SUITES="$(jq -r --argjson paths "$(jq -n '$ARGS.positional' --args -- "${WAMN_CHANGED[@]}")" '
-  [.[] | . as $rule | select(any($paths[]; test($rule.path))) | .suites[]]
+WAMN_PACKAGES="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs '[.[] | . as $md
+  | .packages[] | select(.id | IN($md.workspace_members[])) | .name] | unique')"
+WAMN_SUITES="$(jq -r --argjson members "$WAMN_PACKAGES" --argjson paths "$(jq -n '$ARGS.positional' --args -- "${WAMN_CHANGED[@]}")" '
+  [.[] | . as $rule | select(any($paths[]; test($rule.path)))
+    | select(.package == null or (.package | IN($members[]))) | .suites[]]
   | unique | .[]' "$WAMN_TOOL_DIRECTORY/test-changes-suites.json")"
 declare -a WAMN_SELECTED_PACKAGES=()
 mapfile -t WAMN_SELECTED_PACKAGES < <(awk -F '\t' '$1 == 0 {print $4}' <<<"$WAMN_PLAN" | tr ' ' '\n')
@@ -220,7 +223,7 @@ wamn_suite_selected() { grep -qxF -- "$1" <<<"$WAMN_SUITES"; }
 if [[ "$WAMN_CLUSTER" != true ]] && wamn_package_selected wamn-runtime; then
   WAMN_SUITES+=$'\njetstream'
 fi
-printf 'suites: %s\n' "$(tr '\n' ' ' <<<"$WAMN_SUITES")"
+printf 'suites: %s\n' "$(paste -sd ' ' <<<"$WAMN_SUITES")"
 
 failed=0
 wamn_step() {
@@ -290,7 +293,7 @@ wamn_application() {
 if wamn_suite_selected quality; then
   mapfile -t input_sources < <(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs -r '
     .[] | . as $md | .packages[] | select(.id | IN($md.workspace_members[]))
-    | .manifest_path, .targets[].src_path')
+    | .manifest_path, .targets[].src_path? // empty')
   for source in "${input_sources[@]}"; do
     directory="${source%/*}"
     while [[ "$directory" == "$WAMN_REPOSITORY_ROOT/apps/"* ]]; do
@@ -302,7 +305,9 @@ if wamn_suite_selected quality; then
     done
   done
   # Native tests also include generated fixture files at compile time.
-  need_fixture=true
+  if jq -e 'index("wamn-fixture-package") != null' <<<"$WAMN_PACKAGES" >/dev/null; then
+    need_fixture=true
+  fi
 fi
 if [[ "$need_fixture" == true ]]; then
   wamn_application apps/platform_fixture
