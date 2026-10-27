@@ -172,6 +172,47 @@ pub(crate) fn relation_access(
     Ok(access)
 }
 
+/// Extend direct relation access with view dependencies for effect review.
+/// Grant derivation uses `relation_access` without this expansion.
+pub(crate) fn profile_relation_access(
+    sql: &[u8],
+    relations: &BTreeMap<String, BTreeSet<String>>,
+    views: &BTreeMap<String, crate::profile::ViewRelation>,
+) -> Result<BTreeMap<String, RelationAccess>, &'static str> {
+    let mut relations = relations.clone();
+    relations.extend(
+        views
+            .iter()
+            .map(|(name, view)| (name.clone(), view.columns.clone())),
+    );
+    let mut access = relation_access(sql, &relations)?;
+    let tokens = tokens(sql);
+    let depths = depths(&tokens)?;
+    for statement in 0..tokens.len() {
+        if !matches!(identifier(&tokens[statement]), Some("select" | "update")) {
+            continue;
+        }
+        let depth = depths[statement];
+        let end = statement_end(&depths, statement, depth);
+        for relation in
+            physical_select_relations(&tokens, &depths, statement, end, depth, &relations)
+        {
+            let Some(view) = views.get(&relation) else {
+                continue;
+            };
+            access.entry(relation).or_default();
+            for (table, columns) in &view.base_tables {
+                access
+                    .entry(table.clone())
+                    .or_default()
+                    .select_fields
+                    .extend(columns.iter().cloned());
+            }
+        }
+    }
+    Ok(access)
+}
+
 /// The relation that the token at `index` names as a whole-row function
 /// argument, if it names one.
 ///
@@ -1238,6 +1279,103 @@ mod tests {
             "item".to_owned(),
             ["id".to_owned(), "status".to_owned()].into_iter().collect(),
         )])
+    }
+
+    #[test]
+    fn a_view_read_resolves_its_base_tables() {
+        let views = BTreeMap::from([(
+            "item_summary".to_owned(),
+            crate::profile::ViewRelation {
+                columns: BTreeSet::from(["id".to_owned()]),
+                base_tables: BTreeMap::from([(
+                    "item".to_owned(),
+                    BTreeSet::from(["id".to_owned(), "status".to_owned()]),
+                )]),
+            },
+        )]);
+        for sql in [
+            b"SELECT id FROM item_summary".as_slice(),
+            b"SELECT summary.id FROM item_summary AS summary",
+            b"SELECT summary.id FROM item JOIN item_summary AS summary ON summary.id = item.id",
+            b"WITH summary AS (SELECT id FROM item_summary) SELECT id FROM summary",
+        ] {
+            let observed = profile_relation_access(sql, &relations(), &views).unwrap();
+            assert_eq!(
+                observed,
+                BTreeMap::from([
+                    (
+                        "item".to_owned(),
+                        RelationAccess {
+                            select_fields: BTreeSet::from(["id".to_owned(), "status".to_owned()]),
+                            ..RelationAccess::default()
+                        }
+                    ),
+                    (
+                        "item_summary".to_owned(),
+                        RelationAccess {
+                            select_fields: BTreeSet::from(["id".to_owned()]),
+                            ..RelationAccess::default()
+                        }
+                    ),
+                ])
+            );
+        }
+        for sql in [
+            b"SELECT 1 FROM item_summary".as_slice(),
+            b"SELECT count(*) FROM item_summary",
+        ] {
+            let observed = profile_relation_access(sql, &relations(), &views).unwrap();
+            assert_eq!(
+                observed["item"].select_fields,
+                BTreeSet::from(["id".to_owned(), "status".to_owned()])
+            );
+            assert_eq!(observed["item_summary"], RelationAccess::default());
+        }
+        assert_eq!(
+            profile_relation_access(
+                b"UPDATE item SET status = $1 FROM item_summary AS summary WHERE item.id = summary.id",
+                &relations(),
+                &views,
+            ).unwrap()["item"],
+            RelationAccess {
+                select_fields: BTreeSet::from(["id".to_owned(), "status".to_owned()]),
+                update_fields: BTreeSet::from(["status".to_owned()]),
+                ..RelationAccess::default()
+            }
+        );
+        let mut direct = relations();
+        direct.insert(
+            "item_summary".to_owned(),
+            views["item_summary"].columns.clone(),
+        );
+        assert_eq!(
+            relation_access(b"SELECT id FROM item_summary", &direct).unwrap(),
+            BTreeMap::from([(
+                "item_summary".to_owned(),
+                RelationAccess {
+                    select_fields: BTreeSet::from(["id".to_owned()]),
+                    ..RelationAccess::default()
+                }
+            ),])
+        );
+    }
+
+    #[test]
+    fn plain_table_access_stays_exact() {
+        let sql = b"UPDATE item SET status = $1 WHERE id = $2 RETURNING status";
+        let expected = BTreeMap::from([(
+            "item".to_owned(),
+            RelationAccess {
+                select_fields: BTreeSet::from(["id".to_owned(), "status".to_owned()]),
+                update_fields: BTreeSet::from(["status".to_owned()]),
+                ..RelationAccess::default()
+            },
+        )]);
+        assert_eq!(relation_access(sql, &relations()).unwrap(), expected);
+        assert_eq!(
+            profile_relation_access(sql, &relations(), &BTreeMap::new()).unwrap(),
+            expected
+        );
     }
 
     #[test]

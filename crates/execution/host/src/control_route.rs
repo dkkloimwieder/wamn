@@ -1155,14 +1155,39 @@ async fn write_application(
 const RELEASE_SQL: &str =
     "SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1 LIMIT 1";
 
-/// The columns of each table of the environment's application schemas, by
-/// table name, as the release's unqualified SQL names them. The platform
-/// schemas hold no application table.
-const RELATION_COLUMNS_SQL: &str = "SELECT c.relname::text, a.attname::text \
+/// The table and view columns of the environment's application schemas,
+/// with each view's base table columns, in one catalog snapshot.
+const RELATION_COLUMNS_SQL: &str = "WITH RECURSIVE view_dependencies AS ( \
+     SELECT rewrite.ev_class AS view_oid, dependency.refobjid AS relation_oid, \
+            dependency.refobjsubid AS column_number \
+     FROM pg_catalog.pg_rewrite AS rewrite \
+     JOIN pg_catalog.pg_depend AS dependency \
+       ON dependency.classid = 'pg_rewrite'::regclass AND dependency.objid = rewrite.oid \
+      AND dependency.refclassid = 'pg_class'::regclass \
+      AND dependency.refobjid <> rewrite.ev_class \
+     WHERE rewrite.rulename = '_RETURN' \
+     UNION \
+     SELECT parent.view_oid, dependency.refobjid, dependency.refobjsubid \
+     FROM view_dependencies AS parent \
+     JOIN pg_catalog.pg_rewrite AS rewrite ON rewrite.ev_class = parent.relation_oid \
+     JOIN pg_catalog.pg_depend AS dependency \
+       ON dependency.classid = 'pg_rewrite'::regclass AND dependency.objid = rewrite.oid \
+      AND dependency.refclassid = 'pg_class'::regclass \
+      AND dependency.refobjid <> rewrite.ev_class \
+     WHERE rewrite.rulename = '_RETURN' \
+     ) \
+     SELECT c.relname::text, a.attname::text, c.relkind = 'v', \
+            base.relname::text, base_column.attname::text \
      FROM pg_catalog.pg_class AS c \
      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
      JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid \
-     WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped \
+     LEFT JOIN view_dependencies AS dependency ON dependency.view_oid = c.oid \
+     LEFT JOIN pg_catalog.pg_class AS base \
+       ON base.oid = dependency.relation_oid AND base.relkind IN ('r', 'p') \
+     LEFT JOIN pg_catalog.pg_attribute AS base_column \
+       ON base_column.attrelid = base.oid AND base_column.attnum = dependency.column_number \
+      AND base_column.attnum > 0 AND NOT base_column.attisdropped \
+     WHERE c.relkind IN ('r', 'p', 'v') AND a.attnum > 0 AND NOT a.attisdropped \
        AND n.nspname NOT IN ('information_schema', 'catalog', 'platform') \
        AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname NOT LIKE 'wamn\\_%'";
 
@@ -1191,11 +1216,26 @@ async fn release_profile(
             wamn_catalog::ServingManifest::from_canonical_bytes(&row.get::<_, Vec<u8>>(0))
                 .context("decode the release manifest")?;
         let mut relations = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+        let mut views = BTreeMap::<String, wamn_schema_generator::profile::ViewRelation>::new();
         for row in client.query(RELATION_COLUMNS_SQL, &[]).await? {
-            relations.entry(row.get(0)).or_default().insert(row.get(1));
+            if row.get::<_, bool>(2) {
+                let view = views.entry(row.get(0)).or_default();
+                view.columns.insert(row.get(1));
+                if let Some(table) = row.get::<_, Option<String>>(3) {
+                    let columns = view.base_tables.entry(table).or_default();
+                    if let Some(column) = row.get(4) {
+                        columns.insert(column);
+                    }
+                }
+            } else {
+                relations.entry(row.get(0)).or_default().insert(row.get(1));
+            }
         }
-        let profile =
-            wamn_schema_generator::profile::release_profile(&manifest.components, &relations);
+        let profile = wamn_schema_generator::profile::release_profile(
+            &manifest.components,
+            &relations,
+            &views,
+        );
         require_platform_rows(&client).await?;
         let mut roles = BTreeMap::new();
         for role in role_names(&client).await? {
