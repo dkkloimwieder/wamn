@@ -516,6 +516,7 @@ fn connection_http_guest() -> String {
       (field "idempotency-key" (option string))))
     (export "request" (type $request (eq $request')))
     (type $response' (record
+      (field "external-system" (option string))
       (field "status" u16)
       (field "headers" (list $header))
       (field "body" (list u8))))

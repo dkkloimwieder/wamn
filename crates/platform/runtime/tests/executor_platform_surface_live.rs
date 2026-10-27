@@ -279,9 +279,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
               WHERE tenant_id='{TENANT}' AND environment='{ENVIRONMENT}'; \
              INSERT INTO catalog.connection_bindings \
                (tenant_id,manifest_digest,component_digest,store_alias, \
-                environment,instance_id,binding_status,validation_status,validation_hash) \
+                environment,instance_id,package_id,binding_status,validation_status, \
+                validation_hash) \
              SELECT '{TENANT}',manifest_digest,'{component_digest}','a-store', \
-                    '{ENVIRONMENT}','instance-a','active','valid','{validation_hash}' \
+                    '{ENVIRONMENT}','instance-a','{PACKAGE_ID}','active','valid', \
+                    '{validation_hash}' \
                FROM catalog.releases; \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id,expected_environment,durability_class) \
