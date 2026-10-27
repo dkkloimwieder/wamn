@@ -153,11 +153,13 @@ pub fn stage_sqlx_verifier(
         );
         let fixtures = bind_fixtures(&map)?;
         let mut calls = String::new();
+        let mut verifier_rows = String::new();
         let mut operation_offsets = BTreeMap::<String, usize>::new();
         let mut accessor_names = BTreeSet::new();
         for accessor in accessors {
             let name = string(accessor, "name")?;
             let row = string(accessor, "row")?;
+            let row = verifier_row(&map, accessor, row, &mut verifier_rows)?;
             accessor_names.insert(name);
             let path = statement_path(&map, accessor, &mut operation_offsets)?;
             let source = match Path::new(path).strip_prefix("generated") {
@@ -222,6 +224,12 @@ pub fn stage_sqlx_verifier(
             &native_root.join(format!("{stem}.rs")),
             &verifier_root.join(format!("generated/native-verifier/{stem}.rs")),
         )?;
+        if !verifier_rows.is_empty() {
+            fs::OpenOptions::new()
+                .append(true)
+                .open(verifier_root.join(format!("generated/native-verifier/{stem}.rs")))?
+                .write_all(verifier_rows.as_bytes())?;
+        }
         modules.push((stem, calls));
     }
     ensure!(
@@ -254,6 +262,39 @@ fn accessors(map: &Value) -> Option<&Vec<Value>> {
     map.get("wamn_accessors")
         .or_else(|| map.pointer("/wamn_api/accessors"))?
         .as_array()
+}
+
+fn verifier_row(map: &Value, accessor: &Value, row: &str, source: &mut String) -> Result<String> {
+    let Some(columns) = accessor.get("sqlx_view_columns").and_then(Value::as_array) else {
+        return Ok(row.to_owned());
+    };
+    let fields = map
+        .get("native_rows")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.iter().find(|entry| entry["name"] == row))
+        .and_then(|entry| entry["fields"].as_array())
+        .context("view verifier row fields")?;
+    let verifier = format!("{row}Sqlx");
+    // PostgreSQL supplies no view nullability evidence. Keep table fields exact.
+    writeln!(source, "#[derive(Debug)]\npub struct {verifier} {{")?;
+    for field in fields {
+        let name = string(field, "name")?;
+        let column = crate::manifest::authored_name(name);
+        let ty = string(field, "type")?;
+        let ty = if columns.iter().any(|value| value == column) && !ty.starts_with("Option<") {
+            format!("Option<{ty}>")
+        } else {
+            ty.to_owned()
+        };
+        let name = if column == name {
+            name.to_owned()
+        } else {
+            format!("r#{column}")
+        };
+        writeln!(source, "    pub {name}: {ty},")?;
+    }
+    source.push_str("}\n");
+    Ok(verifier)
 }
 
 fn bind_fixtures(map: &Value) -> Result<BTreeMap<&str, Vec<(&str, &str)>>> {
@@ -418,4 +459,34 @@ fn replace_metadata(source: &Path, destination: &Path) -> Result<()> {
         fs::remove_dir_all(backup)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn verifier_carrier_changes_only_view_columns() {
+        let map = json!({"native_rows": [{"name": "ReportRow", "fields": [
+            {"name": "id", "type": "uuid::Uuid"},
+            {"name": "label", "type": "String"},
+            {"name": "note", "type": "Option<String>"},
+            {"name": "table_note", "type": "String"}
+        ]}]});
+        let accessor = json!({"sqlx_view_columns": ["label", "note"]});
+        let mut source = String::new();
+        let row = verifier_row(&map, &accessor, "ReportRow", &mut source).unwrap();
+        assert_eq!(row, "ReportRowSqlx");
+        assert!(source.contains("pub id: uuid::Uuid,"), "{source}");
+        assert!(source.contains("pub label: Option<String>,"), "{source}");
+        assert!(source.contains("pub note: Option<String>,"), "{source}");
+        assert!(source.contains("pub table_note: String,"), "{source}");
+        let mut source = String::new();
+        assert_eq!(
+            verifier_row(&map, &json!({}), "ReportRow", &mut source).unwrap(),
+            "ReportRow"
+        );
+        assert!(source.is_empty());
+    }
 }

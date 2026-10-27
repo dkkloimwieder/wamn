@@ -319,7 +319,52 @@ async fn pass_one_and_two(
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
         files.insert(relative.to_owned(), file.bytes().to_vec());
     }
+    record_view_columns(&mut files, &described)?;
     Ok((canonical, files))
+}
+
+fn record_view_columns(
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+    described: &BTreeMap<String, DescribedStatement>,
+) -> Result<()> {
+    for (path, bytes) in files {
+        if !path.starts_with("source-map") {
+            continue;
+        }
+        let mut map: Value = serde_json::from_slice(bytes)?;
+        let columns = map
+            .get("statements")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(name, statement)| {
+                let description = described.get(statement.get("path")?.as_str()?)?;
+                let columns = description
+                    .columns
+                    .iter()
+                    .filter(|column| column.view_column)
+                    .map(|column| column.name.clone())
+                    .collect::<Vec<_>>();
+                (!columns.is_empty()).then(|| (name.clone(), columns))
+            })
+            .collect::<BTreeMap<_, _>>();
+        if columns.is_empty() {
+            continue;
+        }
+        if let Some(accessors) = map.get_mut("wamn_accessors").and_then(Value::as_array_mut) {
+            for accessor in accessors {
+                if let Some(columns) = accessor
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .and_then(|name| columns.get(name))
+                {
+                    accessor["sqlx_view_columns"] = serde_json::to_value(columns)?;
+                }
+            }
+        }
+        *bytes = canonical_json_bytes(&map);
+    }
+    Ok(())
 }
 
 /// One warning for each allowed sort of a paged query without its
@@ -528,6 +573,8 @@ fn with_placeholder_types(authored: &Value) -> Value {
 /// says the column can be null; when SQLx does not know, as for an
 /// expression, the declaration stands. Every refusal of the package is
 /// reported at once.
+/// View columns carry no nullability evidence, so their declarations stand too.
+/// An undeclared view value is nullable because PostgreSQL gives no evidence.
 fn apply_statement_types(
     manifest: &mut Value,
     described: &BTreeMap<String, DescribedStatement>,
@@ -588,7 +635,7 @@ fn apply_statement_types(
                         Value::Bool(column.nullable != Some(false)),
                     );
                 }
-                Some(Some(false)) if column.nullable == Some(true) => refusals.push(format!(
+                Some(Some(false)) if column.nullable == Some(true) && !column.view_column => refusals.push(format!(
                     "{at}: row value {name} is declared not null, and SQLx says its column can be null; declare it nullable"
                 )),
                 Some(Some(_)) => {}
@@ -1160,6 +1207,7 @@ mod tests {
                     name: "quantity".to_owned(),
                     type_name: "INT8".to_owned(),
                     nullable,
+                    view_column: false,
                 }],
             },
         )])
@@ -1233,6 +1281,54 @@ mod tests {
                 .contains("quantity is declared int32, and the statement gives int64"),
             "{error:#}"
         );
+    }
+
+    #[test]
+    fn view_columns_keep_declared_nullability_and_require_the_reported_type() {
+        for nullable in [false, true] {
+            let mut description = described(Some(true));
+            description.values_mut().next().unwrap().columns[0].view_column = true;
+            let mut document = manifest(nullable, Some("int64"));
+            apply_statement_types(&mut document, &description).expect("accept a view column");
+            assert_eq!(
+                document["custom_operations"]["adjust"]["statements"]["select_quantity"]["row"][0]
+                    ["nullable"],
+                nullable
+            );
+            let mut document = manifest(nullable, Some("text"));
+            let error = apply_statement_types(&mut document, &description).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("quantity is declared text, and the statement gives int64"),
+                "{error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_column_evidence_reaches_only_its_statement_accessor() {
+        let path = PathBuf::from("source-map/adjust.json");
+        let mut files = BTreeMap::from([(
+            path.clone(),
+            serde_json::to_vec(&json!({
+                "statements": {
+                    "select_quantity": {"path": "command/adjust/select_quantity.sql"},
+                    "table_read": {"path": "query/table.sql"}
+                },
+                "wamn_accessors": [{"name": "select_quantity"}, {"name": "table_read"}]
+            }))
+            .unwrap(),
+        )]);
+        let mut description = described(Some(true));
+        description.values_mut().next().unwrap().columns[0].view_column = true;
+        record_view_columns(&mut files, &description).unwrap();
+        let map: Value = serde_json::from_slice(&files[&path]).unwrap();
+        assert_eq!(
+            map["wamn_accessors"][0]["sqlx_view_columns"],
+            json!(["quantity"])
+        );
+        assert!(map["wamn_accessors"][1].get("sqlx_view_columns").is_none());
     }
 
     #[test]

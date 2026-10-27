@@ -33,6 +33,8 @@ pub(crate) struct DescribedColumn {
     /// SQLx's answer: `Some(false)` cannot be null, `Some(true)` can be null,
     /// `None` unknown, as for an expression.
     pub(crate) nullable: Option<bool>,
+    /// The prepared column's relation OID names a view.
+    pub(crate) view_column: bool,
 }
 
 /// Describe each statement of `corpus` against the database at `database_url`.
@@ -46,6 +48,18 @@ pub(crate) async fn describe_statements(
     let mut connection = sqlx::PgConnection::connect(database_url)
         .await
         .context("connect to the verification database to describe statements")?;
+    let views: Vec<sqlx::postgres::types::Oid> = sqlx::query_scalar(
+        AssertSqlSafe(
+            "SELECT c.oid FROM pg_catalog.pg_class c \
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+            JOIN pg_catalog.pg_views v ON v.schemaname = n.nspname AND v.viewname = c.relname"
+                .to_owned(),
+        )
+        .into_sql_str(),
+    )
+    .fetch_all(&mut connection)
+    .await
+    .context("read view identities for statement descriptions")?;
     let mut described = BTreeMap::new();
     for (path, bytes) in corpus {
         let sql =
@@ -68,6 +82,7 @@ pub(crate) async fn describe_statements(
                 name: column.name().to_owned(),
                 type_name: column.type_info().name().to_owned(),
                 nullable: *nullable,
+                view_column: column.relation_id().is_some_and(|id| views.contains(&id)),
             })
             .collect();
         described.insert(

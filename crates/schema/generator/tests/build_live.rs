@@ -282,6 +282,200 @@ async fn statement_types_are_derived_and_nullability_only_widens() {
     );
 }
 
+fn projection_view_workspace(name: &str) -> Workspace {
+    let workspace = Workspace::new(name);
+    let migration = workspace.package().join("migrations/0001_initial.sql");
+    let mut sql = fs::read_to_string(&migration).unwrap();
+    sql.push_str("\nCREATE VIEW inventory.widget_screen AS SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM inventory.widget;\n");
+    fs::write(migration, sql).unwrap();
+    fs::write(
+        workspace.package().join("query/widget_list.sql"),
+        "SELECT id, code, edit_version, attributes FROM widget_screen ORDER BY id;\n",
+    )
+    .unwrap();
+    workspace
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn projection_view_keeps_non_null_and_nullable_declarations() {
+    for nullable in [false, true] {
+        let database = wamn_test_postgres::database();
+        let workspace = projection_view_workspace(if nullable {
+            "view-nullable"
+        } else {
+            "view-required"
+        });
+        if nullable {
+            workspace.edit_manifest(
+                "row = [manifest.uuid(\"id\"), manifest.text(\"code\"), manifest.int32(\"edit_version\"), manifest.Value {name = \"attributes\", type = \"json\", nullable = False}]",
+                "row = [manifest.nullable(manifest.uuid(\"id\")), manifest.nullable(manifest.text(\"code\")), manifest.nullable(manifest.int32(\"edit_version\")), manifest.nullable(manifest.json(\"attributes\"))]",
+            );
+        } else {
+            workspace.edit_manifest(
+                "row = [manifest.uuid(\"id\"), manifest.text(\"code\"), manifest.int32(\"edit_version\"), manifest.Value {name = \"attributes\", type = \"json\", nullable = False}]",
+                "row = [manifest.Value {name = \"id\", type = \"uuid\", nullable = False}, manifest.Value {name = \"code\", type = \"text\", nullable = False}, manifest.Value {name = \"edit_version\", type = \"int32\", nullable = False}, manifest.Value {name = \"attributes\", type = \"json\", nullable = False}]",
+            );
+        }
+        let output_root = workspace.root.join("target/wamn");
+        generate_package(&BuildRequest::new(
+            &workspace.package(),
+            &output_root,
+            database.url(),
+        ))
+        .await
+        .expect("generate the projection over a migrated view");
+        let output = package_output(&output_root, wamn_fixture_package::PACKAGE_ID);
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
+        let projection = &manifest["custom_operations"]["widget.list"];
+        assert_eq!(projection["statements"]["list"]["row"][1]["type"], "text");
+        for field in projection["statements"]["list"]["row"].as_array().unwrap() {
+            assert_eq!(field["nullable"], nullable, "{field}");
+        }
+        assert_eq!(projection["relations"][0]["table"], "widget_screen");
+        assert_eq!(
+            projection["relations"][0]["select_fields"],
+            serde_json::json!(["attributes", "code", "edit_version", "id"])
+        );
+        let rows = fs::read_to_string(output.join("wamn/widget_list.rs")).unwrap();
+        assert!(
+            rows.contains(if nullable {
+                "pub code: Option<String>,"
+            } else {
+                "pub code: String,"
+            }),
+            "{rows}"
+        );
+        let map: Value =
+            serde_json::from_slice(&fs::read(output.join("source-map/widget_list.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            map["wamn_accessors"][0]["sqlx_view_columns"],
+            serde_json::json!(["id", "code", "edit_version", "attributes"])
+        );
+        database.execute(&["CREATE SCHEMA inventory"]).unwrap();
+        for migration in ["0001_initial.sql", "0002_counter.sql"] {
+            let sql =
+                fs::read_to_string(workspace.package().join("migrations").join(migration)).unwrap();
+            database.execute(&[&sql]).unwrap();
+        }
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .unwrap();
+        let verifier = workspace.root.join("verifier");
+        wamn_schema_generator::stage_sqlx_verifier(&workspace.package(), &verifier, repository)
+            .expect("stage the view projection verifier");
+        let source = fs::read_to_string(verifier.join("src/lib.rs")).unwrap();
+        let source = source
+            .lines()
+            .filter(|line| {
+                !line.trim_start().starts_with("let _ =") || line.contains("native::widget_list::")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            source.contains("native::widget_list::ListRowSqlx"),
+            "{source}"
+        );
+        fs::write(verifier.join("src/lib.rs"), &source).unwrap();
+        let manifest =
+            PackageManifest::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
+        let url = wamn_schema_generator::package_database_url(database.url(), &manifest).unwrap();
+        let compile = || {
+            std::process::Command::new("cargo")
+                .current_dir(&verifier)
+                .args(["check", "--lib", "--locked", "--offline"])
+                .env("DATABASE_URL", &url)
+                .env("SQLX_OFFLINE", "false")
+                .output()
+                .expect("compile the staged view projection macro")
+        };
+        fs::write(
+            verifier.join("src/lib.rs"),
+            source.replace("::ListRowSqlx", "::ListRow"),
+        )
+        .unwrap();
+        let original = compile();
+        assert_eq!(
+            original.status.success(),
+            nullable,
+            "original SQLx carrier: {}",
+            String::from_utf8_lossy(&original.stderr)
+        );
+        fs::write(verifier.join("src/lib.rs"), source).unwrap();
+        let result = compile();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let workspace = projection_view_workspace("view-undeclared");
+    let database = wamn_test_postgres::database();
+    let output_root = workspace.root.join("target/wamn");
+    generate_package(&BuildRequest::new(
+        &workspace.package(),
+        &output_root,
+        database.url(),
+    ))
+    .await
+    .expect("generate an undeclared view value as nullable");
+    let manifest: Value = serde_json::from_slice(
+        &fs::read(package_output(&output_root, wamn_fixture_package::PACKAGE_ID).join("wamn.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        statement(&manifest, "widget.list", "list")["row"][1]["nullable"],
+        true
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn projection_view_refuses_a_wrong_declared_type_and_names_the_field() {
+    let workspace = projection_view_workspace("view-wrong-type");
+    workspace.edit_manifest(
+        "manifest.text(\"code\"), manifest.int32(\"edit_version\")",
+        "manifest.int32(\"code\"), manifest.int32(\"edit_version\")",
+    );
+    let database = wamn_test_postgres::database();
+    let error = generate_package(&BuildRequest::new(
+        &workspace.package(),
+        &workspace.root.join("target/wamn"),
+        database.url(),
+    ))
+    .await
+    .expect_err("refuse a projection whose declared type differs from its view column");
+    assert!(
+        format!("{error:#}").contains("code is declared int32, and the statement gives text"),
+        "{error:#}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn projection_view_does_not_hide_nullable_table_columns() {
+    let workspace = projection_view_workspace("view-with-table");
+    workspace.edit_manifest(
+        "manifest.text(\"code\"), manifest.int32(\"edit_version\")",
+        "manifest.Value {name = \"code\", type = \"text\", nullable = False}, manifest.int32(\"edit_version\")",
+    );
+    fs::write(workspace.package().join("query/widget_list.sql"),
+        "SELECT screen.id, widget.note AS code, screen.edit_version, screen.attributes FROM widget_screen AS screen JOIN widget ON widget.id = screen.id ORDER BY screen.id;\n").unwrap();
+    let database = wamn_test_postgres::database();
+    let error = generate_package(&BuildRequest::new(
+        &workspace.package(),
+        &workspace.root.join("target/wamn"),
+        database.url(),
+    ))
+    .await
+    .expect_err("a view read must keep the nullable table-column refusal");
+    assert!(
+        format!("{error:#}").contains("row value code is declared not null"),
+        "{error:#}"
+    );
+}
+
 /// A changed base component must invalidate its pin even when its manifest
 /// and the overlay's inputs still match the current build.
 #[tokio::test(flavor = "current_thread")]
