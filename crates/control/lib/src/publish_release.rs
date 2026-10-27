@@ -3140,7 +3140,15 @@ mod manifest_push {
         expected_bytes: &[u8],
         expected_digest: &ManifestDigest,
     ) -> Result<bool, ReleaseManifestPushError> {
-        let (manifest, _) = match client.pull_image_manifest(reference, auth).await {
+        let deadline = tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT;
+        let (manifest, _) = match wamn_package_artifact::registry_pull::retry(
+            reference,
+            deadline,
+            || client.pull_image_manifest(reference, auth),
+            |error| error,
+        )
+        .await
+        {
             Ok(found) => found,
             Err(source) if artifact_is_absent(&source) => return Ok(false),
             Err(source) => {
@@ -3159,18 +3167,17 @@ mod manifest_push {
             reference,
         )?;
 
-        let mut body = Vec::new();
-        client
-            .pull_blob(reference, verified.layer, &mut body)
-            .await
-            .map_err(|source| {
-                ReleaseManifestPushError::with_source(
-                    ReleaseManifestPushErrorType::Transport,
-                    "release-manifest-artifact-body-unavailable",
-                    format!("pull release-manifest body {reference}"),
-                    source,
-                )
-            })?;
+        let body =
+            wamn_package_artifact::registry_pull::blob(client, reference, verified.layer, deadline)
+                .await
+                .map_err(|source| {
+                    ReleaseManifestPushError::with_source(
+                        ReleaseManifestPushErrorType::Transport,
+                        "release-manifest-artifact-body-unavailable",
+                        format!("pull release-manifest body {reference}"),
+                        source,
+                    )
+                })?;
         if body != expected_bytes {
             return Err(conflict(
                 reference,
@@ -3178,18 +3185,21 @@ mod manifest_push {
             ));
         }
 
-        let mut config = Vec::new();
-        client
-            .pull_blob(reference, verified.config, &mut config)
-            .await
-            .map_err(|source| {
-                ReleaseManifestPushError::with_source(
-                    ReleaseManifestPushErrorType::Transport,
-                    "release-manifest-artifact-config-unavailable",
-                    format!("pull release-manifest config {reference}"),
-                    source,
-                )
-            })?;
+        let config = wamn_package_artifact::registry_pull::blob(
+            client,
+            reference,
+            verified.config,
+            deadline,
+        )
+        .await
+        .map_err(|source| {
+            ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Transport,
+                "release-manifest-artifact-config-unavailable",
+                format!("pull release-manifest config {reference}"),
+                source,
+            )
+        })?;
         if config != RELEASE_MANIFEST_CONFIG_BYTES {
             return Err(conflict(
                 reference,

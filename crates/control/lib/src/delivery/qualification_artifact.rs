@@ -273,6 +273,7 @@ pub async fn lookup(
     image_set: &BTreeMap<String, String>,
 ) -> anyhow::Result<Option<FoundQualification>> {
     let tag = qualification_tag(release_digest, image_set)?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     let repository = Repository::open(releases, &tag)?;
     let Some((bytes, digest)) = repository.manifest().await? else {
         return Ok(None);
@@ -304,12 +305,14 @@ pub async fn lookup(
     );
     let descriptor: oci_client::manifest::OciDescriptor = serde_json::from_value(layer.clone())
         .with_context(|| format!("read the layer of qualification {}", repository.reference))?;
-    let mut payload = Vec::new();
-    repository
-        .client
-        .pull_blob(&repository.reference, &descriptor, &mut payload)
-        .await
-        .with_context(|| format!("pull qualification {}", repository.reference))?;
+    let payload = wamn_package_artifact::registry_pull::blob(
+        &repository.client,
+        &repository.reference,
+        &descriptor,
+        deadline,
+    )
+    .await
+    .with_context(|| format!("pull qualification {}", repository.reference))?;
     ensure!(
         sha256_digest(&payload) == descriptor.digest,
         "the payload of qualification {} does not hash to {}",

@@ -4,7 +4,7 @@
 //! component fact and explicit registry configuration; the source derives the
 //! immutable reference, verifies the manifest and both blobs, and returns only
 //! component bytes checked against that fact. It owns no catalog read, cache,
-//! instance pool, router behavior, or retry policy. The source implements
+//! instance pool, or router behavior. The source implements
 //! [`ArtifactSource`] from `wamn-engine`, which holds the digest checks and the
 //! local file source.
 
@@ -31,7 +31,7 @@ use wamn_package_artifact::registry_credentials::{
     RegistryCredentialSource, RegistryCredentials, RegistryCredentialsError,
     read_registry_credentials,
 };
-use wamn_package_artifact::{ComponentArtifactCaError, read_ca_bundles};
+use wamn_package_artifact::{ComponentArtifactCaError, read_ca_bundles, registry_pull};
 
 use crate::registry_transport::transport_is_mismatched;
 
@@ -215,6 +215,7 @@ impl ArtifactSource for ComponentArtifactSource {
         &self,
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError> {
+        let deadline = tokio::time::Instant::now() + self.config.fetch_timeout;
         let artifact = self
             .config
             .base
@@ -231,17 +232,21 @@ impl ArtifactSource for ComponentArtifactSource {
         let auth = self.auth(artifact.registry(), &named).await?;
         let client = registry_client(&self.config)?;
 
-        let (manifest, _) = client
-            .pull_image_manifest(&reference, &auth)
-            .await
-            .map_err(|source| {
-                transport_error(
-                    &named,
-                    "component-artifact-manifest-unavailable",
-                    "component-artifact-manifest-invalid",
-                    &source,
-                )
-            })?;
+        let (manifest, _) = registry_pull::retry(
+            &reference,
+            deadline,
+            || client.pull_image_manifest(&reference, &auth),
+            |error| error,
+        )
+        .await
+        .map_err(|source| {
+            transport_error(
+                &named,
+                "component-artifact-manifest-unavailable",
+                "component-artifact-manifest-invalid",
+                &source,
+            )
+        })?;
         let descriptors = verify_manifest(
             &manifest,
             &component.component_digest,
@@ -249,18 +254,17 @@ impl ArtifactSource for ComponentArtifactSource {
             &named,
         )?;
 
-        let mut component_bytes = Vec::new();
-        client
-            .pull_blob(&reference, descriptors.component, &mut component_bytes)
-            .await
-            .map_err(|source| {
-                transport_error(
-                    &named,
-                    "component-artifact-body-unavailable",
-                    "component-artifact-body-transfer-mismatch",
-                    &source,
-                )
-            })?;
+        let component_bytes =
+            registry_pull::blob(&client, &reference, descriptors.component, deadline)
+                .await
+                .map_err(|source| {
+                    transport_error(
+                        &named,
+                        "component-artifact-body-unavailable",
+                        "component-artifact-body-transfer-mismatch",
+                        &source,
+                    )
+                })?;
         verify_component_body(
             &component_bytes,
             descriptors.component.size,
@@ -268,9 +272,7 @@ impl ArtifactSource for ComponentArtifactSource {
             &named,
         )?;
 
-        let mut config_bytes = Vec::new();
-        client
-            .pull_blob(&reference, descriptors.config, &mut config_bytes)
+        let config_bytes = registry_pull::blob(&client, &reference, descriptors.config, deadline)
             .await
             .map_err(|source| {
                 transport_error(
@@ -296,6 +298,7 @@ impl ArtifactSource for ComponentArtifactSource {
         &self,
         reference: &str,
     ) -> Result<VerifiedEntry, ComponentArtifactFetchError> {
+        let deadline = tokio::time::Instant::now() + self.config.fetch_timeout;
         validate_composed_entry_path(reference)
             .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
         let digest = reference
@@ -315,17 +318,21 @@ impl ArtifactSource for ComponentArtifactSource {
         let auth = self.auth(registry, &named).await?;
         let client = registry_client(&self.config)?;
         // The client checks the manifest against the digest in the reference.
-        let (manifest, _) = client
-            .pull_image_manifest(&entry, &auth)
-            .await
-            .map_err(|source| {
-                transport_error(
-                    &named,
-                    "composed-entry-manifest-unavailable",
-                    "composed-entry-manifest-invalid",
-                    &source,
-                )
-            })?;
+        let (manifest, _) = registry_pull::retry(
+            &entry,
+            deadline,
+            || client.pull_image_manifest(&entry, &auth),
+            |error| error,
+        )
+        .await
+        .map_err(|source| {
+            transport_error(
+                &named,
+                "composed-entry-manifest-unavailable",
+                "composed-entry-manifest-invalid",
+                &source,
+            )
+        })?;
         let [layer] = manifest.layers.as_slice() else {
             return Err(ComponentArtifactFetchError::mismatched(
                 &named,
@@ -338,9 +345,7 @@ impl ArtifactSource for ComponentArtifactSource {
                 "composed-entry-layer-media-type-mismatch",
             ));
         }
-        let mut bytes = Vec::new();
-        client
-            .pull_blob(&entry, layer, &mut bytes)
+        let bytes = registry_pull::blob(&client, &entry, layer, deadline)
             .await
             .map_err(|source| {
                 transport_error(
@@ -508,6 +513,60 @@ mod tests {
             )],
             ..OciImageManifest::default()
         }
+    }
+
+    #[tokio::test]
+    async fn registry_pull_retries_transient_answers_only() {
+        let body = b"component-bytes";
+        let component = admitted(body);
+        let config = component_artifact_config_bytes(&component);
+        let manifest =
+            serde_json::to_vec(&manifest(&component, body.len().try_into().unwrap())).unwrap();
+        for (status, attempts) in [(503, 2), (404, 1), (504, 4), (401, 1), (403, 1), (429, 2)] {
+            let mut responses = vec![(status, Vec::new())];
+            if attempts == 2 {
+                responses.extend([
+                    (200, manifest.clone()),
+                    (200, body.to_vec()),
+                    (200, config.clone()),
+                ]);
+            }
+            let server = registry_pull::test_server::Server::start(responses).await;
+            let source = ComponentArtifactSource::new(
+                ComponentArtifactSourceConfig::new(
+                    &format!("{}/components", server.reference.registry()),
+                    true,
+                    Duration::from_secs(30),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let result = source.pull_verified(&component).await;
+            if attempts == 2 {
+                assert_eq!(result.unwrap(), body);
+                assert_eq!(server.requests(), 4);
+            } else {
+                assert!(result.is_err());
+                assert_eq!(server.requests(), attempts);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_pull_does_not_retry_manifest_decode_errors() {
+        let server =
+            registry_pull::test_server::Server::start(vec![(200, b"not json".to_vec())]).await;
+        let source = ComponentArtifactSource::new(
+            ComponentArtifactSourceConfig::new(
+                &format!("{}/components", server.reference.registry()),
+                true,
+                Duration::from_secs(3),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(source.pull_verified(&admitted(b"component")).await.is_err());
+        assert_eq!(server.requests(), 1);
     }
 
     #[test]

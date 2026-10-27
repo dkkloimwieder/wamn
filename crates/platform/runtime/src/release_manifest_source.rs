@@ -35,6 +35,7 @@ use wamn_engine::component_admission::component_digest;
 use wamn_package_artifact::registry_credentials::{
     RegistryCredentialSource, read_registry_credentials,
 };
+use wamn_package_artifact::registry_pull;
 
 use crate::registry_transport::transport_is_mismatched;
 use crate::release_manifest_artifact::verify_release_manifest_artifact_layout;
@@ -278,6 +279,7 @@ impl ReleaseManifestSource {
         &self,
         manifest_digest: &str,
     ) -> Result<Vec<u8>, ReleaseManifestFetchError> {
+        let deadline = tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT;
         let artifact = self
             .base
             .reference(manifest_digest)
@@ -303,23 +305,27 @@ impl ReleaseManifestSource {
             &self.ca_bundles,
         )?;
 
-        let (manifest, _) = client
-            .pull_image_manifest(&reference, &auth)
-            .await
-            .map_err(|source| {
-                if transport_is_mismatched(&source) {
-                    // Reuses the layout check's literal: the registry contradicts the envelope.
-                    ReleaseManifestFetchError::mismatched(
-                        &named,
-                        "release-manifest-artifact-envelope-mismatch",
-                    )
-                } else {
-                    ReleaseManifestFetchError::unavailable(
-                        &named,
-                        "release-manifest-artifact-manifest-unavailable",
-                    )
-                }
-            })?;
+        let (manifest, _) = registry_pull::retry(
+            &reference,
+            deadline,
+            || client.pull_image_manifest(&reference, &auth),
+            |error| error,
+        )
+        .await
+        .map_err(|source| {
+            if transport_is_mismatched(&source) {
+                // Reuses the layout check's literal: the registry contradicts the envelope.
+                ReleaseManifestFetchError::mismatched(
+                    &named,
+                    "release-manifest-artifact-envelope-mismatch",
+                )
+            } else {
+                ReleaseManifestFetchError::unavailable(
+                    &named,
+                    "release-manifest-artifact-manifest-unavailable",
+                )
+            }
+        })?;
         // The config blob is the frozen empty document and its digest is pinned
         // by the layout check, so there is nothing a second round trip could
         // learn. Only the layer carries content.
@@ -332,9 +338,7 @@ impl ReleaseManifestSource {
             ));
         }
 
-        let mut canonical_bytes = Vec::new();
-        client
-            .pull_blob(&reference, blobs.layer, &mut canonical_bytes)
+        let canonical_bytes = registry_pull::blob(&client, &reference, blobs.layer, deadline)
             .await
             .map_err(|source| {
                 if transport_is_mismatched(&source) {

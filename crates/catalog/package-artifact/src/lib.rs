@@ -18,6 +18,7 @@
 //! so it stays small; the artifact reference rule is in `wamn-catalog`.
 
 pub mod registry_credentials;
+pub mod registry_pull;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -314,10 +315,25 @@ impl Repository {
     /// When the registry cannot be read, or the bytes do not hash to the
     /// digest it reports or to the digest the reference names.
     pub async fn manifest(&self) -> anyhow::Result<Option<(Vec<u8>, String)>> {
-        match self
-            .client
-            .pull_manifest_raw(&self.reference, &self.auth, &[OCI_IMAGE_MEDIA_TYPE])
+        self.manifest_before(tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT)
             .await
+    }
+
+    async fn manifest_before(
+        &self,
+        deadline: tokio::time::Instant,
+    ) -> anyhow::Result<Option<(Vec<u8>, String)>> {
+        match registry_pull::retry(
+            &self.reference,
+            deadline,
+            || async {
+                self.client
+                    .pull_manifest_raw(&self.reference, &self.auth, &[OCI_IMAGE_MEDIA_TYPE])
+                    .await
+            },
+            |error| error,
+        )
+        .await
         {
             Ok((bytes, digest)) => {
                 ensure!(
@@ -344,7 +360,8 @@ impl Repository {
     /// When the reference holds no package artifact, or a layer cannot be
     /// pulled or does not hash to its digest.
     pub async fn pull(&self) -> anyhow::Result<Option<(String, Vec<PackedLayer>)>> {
-        let Some((bytes, digest)) = self.manifest().await? else {
+        let deadline = tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT;
+        let Some((bytes, digest)) = self.manifest_before(deadline).await? else {
             return Ok(None);
         };
         let manifest: OciImageManifest = serde_json::from_slice(&bytes).with_context(|| {
@@ -357,15 +374,17 @@ impl Repository {
         );
         let mut layers = Vec::new();
         for layer in &manifest.layers {
-            layers.push(self.pull_layer(layer).await?);
+            layers.push(self.pull_layer(layer, deadline).await?);
         }
         Ok(Some((digest, layers)))
     }
 
-    async fn pull_layer(&self, layer: &OciDescriptor) -> anyhow::Result<PackedLayer> {
-        let mut bytes = Vec::new();
-        self.client
-            .pull_blob(&self.reference, layer, &mut bytes)
+    async fn pull_layer(
+        &self,
+        layer: &OciDescriptor,
+        deadline: tokio::time::Instant,
+    ) -> anyhow::Result<PackedLayer> {
+        let bytes = registry_pull::blob(&self.client, &self.reference, layer, deadline)
             .await
             .with_context(|| format!("pull a layer of package artifact {}", self.reference))?;
         ensure!(

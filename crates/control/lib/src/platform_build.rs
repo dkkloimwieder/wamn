@@ -13,13 +13,14 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use wamn_execution_contract::canonical_json_bytes;
+use wamn_package_artifact::registry_pull;
 
 use crate::release_chart::{ImageSet, QualificationImages, stamp};
 
@@ -258,13 +259,22 @@ pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBu
     let receipt = ui_receipt(&request.repository)?;
     let insecure = loopback(&request.registry);
     stamp_from_registry(request, &receipt, output, async |reference: &str| {
-        let (_, digest) = wash_runtime::oci::pull_component(
-            reference,
-            wash_runtime::oci::OciConfig {
-                insecure,
-                ..wash_runtime::oci::OciConfig::default()
+        let parsed = reference.parse()?;
+        let (_, digest) = registry_pull::retry(
+            &parsed,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            || async {
+                wash_runtime::oci::pull_component(
+                    reference,
+                    wash_runtime::oci::OciConfig {
+                        insecure,
+                        ..wash_runtime::oci::OciConfig::default()
+                    },
+                    wash_runtime::oci::OciPullPolicy::Always,
+                )
+                .await
             },
-            wash_runtime::oci::OciPullPolicy::Always,
+            |error: &anyhow::Error| error.as_ref(),
         )
         .await?;
         Ok(digest)
@@ -486,14 +496,22 @@ impl Components for OciComponents {
 
     async fn manifest(&mut self, reference: &str) -> anyhow::Result<(Vec<u8>, String)> {
         let (client, parsed, auth) = self.client(reference)?;
-        let (manifest, _) = client
-            .pull_manifest_raw(
-                &parsed,
-                &auth,
-                &[oci_client::manifest::OCI_IMAGE_MEDIA_TYPE],
-            )
-            .await
-            .with_context(|| format!("read the manifest of {reference}"))?;
+        let (manifest, _) = registry_pull::retry(
+            &parsed,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            || async {
+                client
+                    .pull_manifest_raw(
+                        &parsed,
+                        &auth,
+                        &[oci_client::manifest::OCI_IMAGE_MEDIA_TYPE],
+                    )
+                    .await
+            },
+            |error| error,
+        )
+        .await
+        .with_context(|| format!("read the manifest of {reference}"))?;
         let value: serde_json::Value =
             serde_json::from_slice(&manifest).context("parse the role manifest")?;
         let media_type = value["mediaType"]
@@ -1400,6 +1418,22 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[tokio::test]
+    async fn registry_manifest_retries_transient_answers_only() {
+        for (status, attempts) in [(503, 2), (404, 1), (504, 4), (401, 1), (403, 1), (429, 2)] {
+            let mut responses = vec![(status, Vec::new())];
+            if attempts == 2 {
+                responses.push((200, br#"{"schemaVersion":2}"#.to_vec()));
+            }
+            let server = registry_pull::test_server::Server::start(responses).await;
+            let result = OciComponents { insecure: true }
+                .manifest(&server.reference.whole())
+                .await;
+            assert_eq!(result.is_ok(), attempts == 2, "status {status}");
+            assert_eq!(server.requests(), attempts, "status {status}");
+        }
+    }
 
     /// The platform version of the test requests.
     const VERSION: &str = "0.1.7";

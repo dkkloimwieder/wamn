@@ -6289,6 +6289,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "wamn-catalog",
  "wamn-execution-contract",
 ]

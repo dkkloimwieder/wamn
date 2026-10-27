@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
+use wamn_package_artifact::registry_pull;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -91,10 +92,19 @@ pub(super) async fn publish(
     // these bytes. Each push writes a new config creation time, so a repeat
     // push to a mutable tag returns a new manifest digest and a new release
     // (wamn-uhjx2). Reuse the present manifest, and push only when it is absent.
-    let digest = match wash_runtime::oci::pull_component(
-        &reference,
-        config(),
-        wash_runtime::oci::OciPullPolicy::Always,
+    let parsed = reference.parse()?;
+    let digest = match registry_pull::retry(
+        &parsed,
+        tokio::time::Instant::now() + Duration::from_secs(30),
+        || async {
+            wash_runtime::oci::pull_component(
+                &reference,
+                config(),
+                wash_runtime::oci::OciPullPolicy::Always,
+            )
+            .await
+        },
+        |error: &anyhow::Error| error.as_ref(),
     )
     .await
     {

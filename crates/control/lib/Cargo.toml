@@ -93,6 +93,7 @@ wamn-test-postgres = { workspace = true }
 
 [dev-dependencies]
 wamn-gate-harness = { workspace = true }
+wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
 wamn-workflow = { workspace = true }
