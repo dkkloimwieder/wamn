@@ -81,7 +81,7 @@ pub fn host_route_client_output_root(repository_root: &Path) -> PathBuf {
 }
 
 /// Whether `directory` lies directly below a `target/wamn` directory.
-fn is_build_output(directory: &Path) -> bool {
+pub(crate) fn is_build_output(directory: &Path) -> bool {
     let Some(wamn) = directory.parent() else {
         return false;
     };

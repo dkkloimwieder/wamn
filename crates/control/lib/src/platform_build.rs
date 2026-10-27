@@ -210,6 +210,24 @@ fn builds_platform(args: &[String]) -> bool {
     false
 }
 
+fn check_package_outputs(repository: &Path) -> anyhow::Result<()> {
+    let outputs = repository.join("apps/target/wamn");
+    for entry in
+        std::fs::read_dir(&outputs).with_context(|| format!("read {}", outputs.display()))?
+    {
+        let output = entry?.path();
+        if output.is_dir()
+            && output
+                .file_name()
+                .is_none_or(|name| name != wamn_catalog::host_route_package())
+        {
+            let source = wamn_schema_generator::receipt::source_root(&output)?;
+            wamn_schema_generator::receipt::read_current(&source, &output)?;
+        }
+    }
+    Ok(())
+}
+
 /// Build every platform image and role component, then push them, then stamp
 /// them into a copy of the release chart at `request.out`. A failed build
 /// pushes nothing. Every image is tagged with the chart version and pinned by
@@ -230,6 +248,7 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         "{} does not exist; run `wamn build` on the apps first",
         apps_target.display()
     );
+    check_package_outputs(&request.repository)?;
     let processes = process_list()?;
     if build_location(
         &processes,
@@ -2132,8 +2151,10 @@ mod tests {
         assert_eq!(components.pushed.len(), 2, "{:?}", components.pushed);
         // Only the runner reads the package outputs.
         std::fs::write(
-            checkout.0.join("apps/target/wamn/wamn_wms/build.json"),
-            r#"{"changed":true}"#,
+            checkout
+                .0
+                .join("apps/target/wamn/wamn_wms/client-ts/index.ts"),
+            "export const changed = true;",
         )
         .unwrap();
         components.pushed.clear();

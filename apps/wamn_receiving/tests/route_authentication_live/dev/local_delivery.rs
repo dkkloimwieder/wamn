@@ -622,6 +622,7 @@ impl SavedSource {
         outputs.push(PathBuf::from(MIGRATIONS));
         for package in ["wamn_receiving", "client_acme_receiving"] {
             let package = PathBuf::from("apps").join(package);
+            wamn_schema_generator::receipt::check_current(&repository.join(&package))?;
             for relative in [
                 wamn_schema_generator::output_root(&package),
                 package.join("tests/.sqlx"),

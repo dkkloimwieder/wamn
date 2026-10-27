@@ -621,10 +621,16 @@ impl ClientContractIr {
         // Generation writes the route entries of the generated operations
         // beside it, under `generated/publication/`.
         let root = crate::route_schema::package_root_of(attachments);
+        let files = crate::route_schema::PackageFiles::open(root).map_err(|error| {
+            ClientIrError::new(
+                ClientIrErrorType::UnreadableProjection,
+                format!("{error:#}"),
+            )
+        })?;
         let routes = route_index(
             attachments,
-            &mut |file| crate::route_schema::read_generated_publication(root, file),
-            &mut |reference| crate::route_schema::read_from_package(root, reference),
+            &mut |file| files.publication(file),
+            &mut |reference| files.schema(reference),
         )?;
         Self::project(package, contracts, &routes)
     }
@@ -647,6 +653,19 @@ impl ClientContractIr {
         contracts: &Path,
         routes: &BTreeMap<String, RouteIr>,
     ) -> Result<Self, ClientIrError> {
+        if let Some(output) = contracts
+            .parent()
+            .filter(|output| crate::output::is_build_output(output))
+        {
+            crate::receipt::source_root(output)
+                .and_then(|source| crate::receipt::read_current(&source, output))
+                .map_err(|error| {
+                    ClientIrError::new(
+                        ClientIrErrorType::UnreadableProjection,
+                        format!("{error:#}"),
+                    )
+                })?;
+        }
         let mut modules: BTreeMap<String, BTreeMap<String, OperationParts>> = BTreeMap::new();
         let mut cursor = None;
 

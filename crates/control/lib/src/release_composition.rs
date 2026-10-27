@@ -106,7 +106,13 @@ pub fn select_component_artifacts(
             .keys()
             .next()
             .expect("one package component was required above");
-        selected.push(built_component(package, component)?);
+        wamn_schema_generator::receipt::check_current(&package.root)
+            .map_err(|source| CompositionError::owner("read the package build", source))?;
+        let receipt = wamn_schema_generator::receipt::read(&wamn_schema_generator::output_root(
+            &package.root,
+        ))
+        .map_err(|source| CompositionError::owner("read the package build", source))?;
+        selected.push(built_component(package, component, &receipt)?);
     }
     Ok(selected)
 }
@@ -117,11 +123,13 @@ pub fn select_palette_artifacts(
 ) -> Result<Vec<SelectedPaletteArtifact>, CompositionError> {
     let mut selected = Vec::new();
     for package in packages {
+        wamn_schema_generator::receipt::check_current(&package.root)
+            .map_err(|source| CompositionError::owner("read the package build", source))?;
         let receipt = wamn_schema_generator::receipt::read(&wamn_schema_generator::output_root(
             &package.root,
         ))
         .map_err(|source| CompositionError::owner("read the package build", source))?;
-        for entry in receipt.outputs.components {
+        for entry in &receipt.outputs.components {
             if package.manifest.components.contains_key(&entry.name) {
                 continue;
             }
@@ -130,7 +138,7 @@ pub fn select_palette_artifacts(
                     |source| CompositionError::owner("find palette declaration", source),
                 )?;
             selected.push(SelectedPaletteArtifact {
-                artifact: built_component(package, &entry.name)?,
+                artifact: built_component(package, &entry.name, &receipt)?,
                 declaration,
             });
         }
@@ -143,10 +151,9 @@ pub fn select_palette_artifacts(
 fn built_component(
     package: &PackageInput,
     component: &str,
+    receipt: &wamn_schema_generator::receipt::BuildReceipt,
 ) -> Result<SelectedComponentArtifact, CompositionError> {
     let output = wamn_schema_generator::output_root(&package.root);
-    let receipt = wamn_schema_generator::receipt::read(&output)
-        .map_err(|source| CompositionError::owner("read the package build", source))?;
     let entry = receipt
         .outputs
         .components

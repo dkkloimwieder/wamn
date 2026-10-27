@@ -215,6 +215,16 @@ impl PackageRoot {
                 source,
             )
         })?;
+        wamn_schema_generator::receipt::check_current(&root).map_err(|source| {
+            FilesystemInvalidationError {
+                source: Some(source.into()),
+                ..FilesystemInvalidationError::new(
+                    FilesystemInvalidationErrorType::PackageRoot,
+                    &root,
+                    "cannot read current package build",
+                )
+            }
+        })?;
         let manifest_path = wamn_schema_generator::package_manifest_path(&root);
         let manifest_bytes = fs::read(&manifest_path).map_err(|source| {
             FilesystemInvalidationError::with_source(
@@ -239,6 +249,9 @@ impl PackageRoot {
     }
 
     fn refresh_authored_inputs(&mut self) {
+        if wamn_schema_generator::receipt::check_current(&self.root).is_err() {
+            return;
+        }
         let manifest_path = wamn_schema_generator::package_manifest_path(&self.root);
         let Ok(bytes) = fs::read(manifest_path) else {
             return;
@@ -864,7 +877,7 @@ mod tests {
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
             fs::write(
                 self.package().join("wamn.json"),
-                wamn_fixture_package::manifest_bytes(),
+                crate::test_support::fixture_manifest(),
             )
             .expect("write package manifest");
             fs::write(self.package().join("query/widget_list.sql"), "SELECT 1")

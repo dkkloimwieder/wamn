@@ -762,6 +762,7 @@ impl Run {
             .collect();
         let mut packages = Vec::new();
         for root in &roots {
+            wamn_schema_generator::receipt::check_current(root)?;
             let path = wamn_schema_generator::package_manifest_path(root);
             let manifest = wamn_schema_generator::PackageManifest::from_slice(
                 &fs::read(&path).with_context(|| format!("read {}", path.display()))?,

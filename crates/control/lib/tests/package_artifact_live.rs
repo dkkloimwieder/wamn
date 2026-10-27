@@ -30,6 +30,67 @@ fn apps() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps")
 }
 
+#[tokio::test]
+async fn push_package_refuses_stale_output_before_reading_its_manifest() -> anyhow::Result<()> {
+    use wamn_schema_generator::receipt;
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let package = scratch.path().join("apps/package");
+    let output = wamn_schema_generator::output_root(&package);
+    std::fs::create_dir_all(&package)?;
+    std::fs::create_dir_all(&output)?;
+    std::fs::write(package.join("wamn.k"), "# original package\n")?;
+    std::fs::write(output.join("wamn.json"), "invalid manifest")?;
+    let built = receipt::BuildReceipt {
+        schema: receipt::RECEIPT_SCHEMA.to_owned(),
+        package: receipt::ReceiptPackage {
+            id: "package".into(),
+            version: "1.0.0".into(),
+        },
+        inputs: receipt::ReceiptInputs {
+            digest: receipt::input_digest(&package)?,
+            files: std::collections::BTreeMap::new(),
+        },
+        dependencies: Vec::new(),
+        generator: receipt::ReceiptGenerator {
+            id: "generator".into(),
+            toolchain: "toolchain".into(),
+            sqlx: "0.9.0".into(),
+        },
+        outputs: receipt::ReceiptOutputs {
+            manifest: "sha256:fixture".into(),
+            files: std::collections::BTreeMap::new(),
+            components: Vec::new(),
+            web: None,
+        },
+    };
+    std::fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes())?;
+    std::fs::write(package.join("wamn.k"), "# edited package\n")?;
+    let inputs = receipt::input_digest(&package)?;
+    let error = push_package(&PushPackageRequest {
+        package: package.clone(),
+        registry: PackageRegistry {
+            artifact_base: "127.0.0.1:1/packages".into(),
+            registry_auth_file: scratch.path().join("absent-auth.json"),
+            insecure_registry: true,
+            oci_ca_paths: Vec::new(),
+        },
+        component_artifact_base: "127.0.0.1:1/components".into(),
+    })
+    .await
+    .expect_err("a stale package was accepted");
+    let error = format!("{error:#}");
+    for detail in [
+        package.to_str().unwrap(),
+        &built.inputs.digest,
+        &inputs,
+        "is stale",
+        "wamn build",
+    ] {
+        assert!(error.contains(detail), "{error}");
+    }
+    Ok(())
+}
+
 /// A running registry and its inputs.
 struct Fixture {
     local: LocalRegistry,
@@ -153,6 +214,7 @@ async fn push_repeat_fetch_and_refusals() {
     assert!(!unpacked.exists(), "the unpacked package is removed");
 
     let descriptor = fixture.pulled_descriptor(&first.tag, "receiving").await;
+    wamn_schema_generator::receipt::check_current(&package).unwrap();
     let built = std::fs::read(apps().join("target/wamn/wamn_receiving/components/receiving.wasm"))
         .expect("read the built receiving component");
     assert_eq!(
@@ -202,8 +264,11 @@ async fn a_tag_that_holds_another_digest_refuses_before_any_push() {
     let wms = push_package(&fixture.request(apps().join("wamn_wms")))
         .await
         .expect("push WMS");
-    let built = receipt::read(&apps().join("target/wamn/wamn_receiving"))
-        .expect("read the Receiving build");
+    let built = receipt::read_current(
+        &apps().join("wamn_receiving"),
+        &apps().join("target/wamn/wamn_receiving"),
+    )
+    .expect("read the Receiving build");
     let tag = format!("{}-{}", built.package.id, built.package.version);
     let receiving_tag = Repository::open(&fixture.registry, &tag).expect("open the tag");
     let (wms_manifest, _) = Repository::open(&fixture.registry, &wms.tag)
@@ -324,6 +389,7 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
         use wamn_schema_generator::receipt;
         let output = copy.join("target/wamn/wamn_receiving");
         std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+        receipt::check_current(&apps().join("wamn_receiving")).unwrap();
         let copied = Command::new("cp")
             .arg("-r")
             .arg(apps().join("target/wamn/wamn_receiving"))
@@ -332,7 +398,7 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
             .expect("run cp");
         assert!(copied.success(), "copy the Receiving build");
         let wms_output = apps().join("target/wamn/wamn_wms");
-        let jsonata = receipt::read(&wms_output)
+        let jsonata = receipt::read_current(&apps().join("wamn_wms"), &wms_output)
             .expect("read the WMS build")
             .outputs
             .components

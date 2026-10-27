@@ -160,6 +160,8 @@ mod tests {
     use super::*;
 
     fn fixture_manifest() -> Vec<u8> {
+        wamn_schema_generator::receipt::check_current(&wamn_fixture_package::package_root())
+            .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::manifest_bytes()
     }
 

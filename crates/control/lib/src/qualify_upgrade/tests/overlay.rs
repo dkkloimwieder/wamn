@@ -27,14 +27,26 @@ fn copy_tree(source: &Path, target: &Path) {
 }
 
 fn compile(root: &Path) {
-    wamn_schema_generator::write_compiled_manifest(root).unwrap();
+    crate::test_support::compile_package(root);
 }
 
 async fn build_owner(owner: &Path, overlay: &Path, database_url: &str) {
     use wamn_schema_generator::build::{BuildRequest, default_output_root, generate_package};
 
+    let manifest = PackageManifest::from_slice(
+        &fs::read(wamn_schema_generator::package_manifest_path(owner)).unwrap(),
+    )
+    .unwrap();
+    // Base readers resolve the package id beside the overlay source tree.
+    let source = overlay.parent().unwrap().join(&manifest.package.id);
+    if source != owner {
+        if source.exists() {
+            fs::remove_dir_all(&source).unwrap();
+        }
+        copy_tree(owner, &source);
+    }
     generate_package(&BuildRequest::new(
-        owner,
+        &source,
         &default_output_root(overlay),
         database_url,
     ))
@@ -43,6 +55,7 @@ async fn build_owner(owner: &Path, overlay: &Path, database_url: &str) {
 }
 
 fn frozen_predecessor(source: &Path, target: &Path) {
+    wamn_schema_generator::receipt::check_current(source).unwrap();
     let output = |root: &Path, path: &str| match Path::new(path).strip_prefix("generated") {
         Ok(relative) => wamn_schema_generator::output_root(root).join(relative),
         Err(_) => root.join(path),
@@ -71,18 +84,21 @@ fn frozen_predecessor(source: &Path, target: &Path) {
             fs::copy(output(source, &statement.path), path).unwrap();
         }
     }
+    crate::test_support::write_receipt(target);
 }
 
 async fn overlay_fixture(name: &str) -> OverlayFixture {
     let mut base = fixture(name, false).await;
     let predecessor = base.root.join("overlay-predecessor");
     let overlay = wamn_fixture_package::overlay_root();
+    wamn_schema_generator::receipt::check_current(&overlay).unwrap();
     copy_tree(&overlay, &predecessor);
     // The copy takes the overlay's build output too, which lies outside it.
     copy_tree(
         &wamn_schema_generator::output_root(&overlay),
         &wamn_schema_generator::output_root(&predecessor),
     );
+    crate::test_support::write_receipt(&predecessor);
     crate::apply_package::apply_package(apply_request(base.source_database.url(), &predecessor))
         .await
         .unwrap();
@@ -110,7 +126,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     )
     .unwrap();
     let base_manifest =
-        PackageManifest::from_slice(&wamn_fixture_package::manifest_bytes()).unwrap();
+        PackageManifest::from_slice(&crate::test_support::fixture_manifest()).unwrap();
     let catalog =
         wamn_schema_generator::introspect_package(base.source_database.url(), &predecessor)
             .await
@@ -134,6 +150,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     )
     .await
     .unwrap();
+    crate::test_support::write_receipt(&predecessor);
     let operations =
         crate::component_admission::load_package_statement_facts(&predecessor, &overlay_manifest)
             .unwrap()
@@ -209,6 +226,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
+    crate::test_support::write_receipt(&candidate);
     OverlayFixture {
         base,
         predecessor,
@@ -274,6 +292,7 @@ async fn nontransactional_candidate_statements_are_named_before_mutation() {
             format!("ALTER TABLE inventory.widget_maker ADD COLUMN note text;\n{statement}\n"),
         )
         .unwrap();
+        crate::test_support::write_receipt(&fixture.base.root.join("candidate"));
         let qualification = overlay_request(&fixture, "nontransactional.json");
         let result = qualification.result.clone();
         let refused = qualify_upgrade(qualification).await.unwrap_err();
@@ -391,10 +410,13 @@ async fn qualification_refuses_input_changes_before_publication() {
         let mut qualification = overlay_request(&fixture, &format!("changed-{name}.json"));
         qualification.predecessor_packages[0] = fixture_root(&predecessor);
         let result = qualification.result.clone();
+        let rebuilt = fixture.predecessor.clone();
         let error = qualify_upgrade_before_publication(qualification, move || {
             for (path, bytes) in changes {
                 fs::write(path, bytes).unwrap();
             }
+            // Simulate a completed rebuild while qualification is in progress.
+            crate::test_support::write_receipt(&rebuilt);
         })
         .await
         .unwrap_err();
@@ -404,6 +426,7 @@ async fn qualification_refuses_input_changes_before_publication() {
         for (path, bytes) in restore {
             fs::write(path, bytes).unwrap();
         }
+        crate::test_support::write_receipt(&fixture.predecessor);
     }
 }
 
@@ -593,6 +616,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut changed = migration_bytes.clone();
     changed.extend_from_slice(b"\n");
     fs::write(&migration, changed).unwrap();
+    crate::test_support::write_receipt(&fixture.predecessor);
     let error = qualify_upgrade(overlay_request(
         &fixture,
         "original-migration-mismatch.json",
@@ -606,6 +630,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         "{error:#}"
     );
     fs::write(&migration, migration_bytes).unwrap();
+    crate::test_support::write_receipt(&fixture.predecessor);
     assert!(
         !fixture
             .base
@@ -709,6 +734,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         "CREATE INDEX CONCURRENTLY upgrade_widget_code ON inventory.widget(code);\n",
     )
     .unwrap();
+    crate::test_support::write_receipt(&fixture.base.root.join("candidate"));
     let error = qualify_upgrade(overlay_request(&fixture, "nontransactional.json"))
         .await
         .unwrap_err();
@@ -716,6 +742,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         .is_some_and(|error| error.error_type() == wamn_schema_introspection::migration_policy::MigrationPolicyErrorType::NontransactionalOperation)), "{error:#}");
     assert!(format!("{error:#}").contains("CONCURRENTLY"), "{error:#}");
     fs::write(&fixture.base.suffix, suffix).unwrap();
+    crate::test_support::write_receipt(&fixture.base.root.join("candidate"));
     assert!(!fixture.base.root.join("nontransactional.json").exists());
     assert_eq!(state(&mut fixture.base.source).await, original);
 }
@@ -826,6 +853,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await;
     wamn_schema_generator::materialize_package_from_catalog(&projected, &predecessor).unwrap();
+    crate::test_support::write_receipt(&predecessor);
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: original_package_roots.clone(),
         database_url: fixture.base.source_database.url().to_owned(),
@@ -842,6 +870,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await
     .unwrap();
+    crate::test_support::write_receipt(&predecessor);
     fixture.base.source.batch_execute(
         "BEGIN; SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
          set_config('app.operation', 'admin:seed-second-overlay', true); \
@@ -929,6 +958,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await;
     wamn_schema_generator::materialize_package_from_catalog(&projected, &candidate).unwrap();
+    crate::test_support::write_receipt(&candidate);
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: successor_package_roots.clone(),
         database_url: generation.url().to_owned(),
@@ -945,6 +975,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await
     .unwrap();
+    crate::test_support::write_receipt(&candidate);
     let mut request = overlay_request(&fixture, "two-accepted.json");
     request.predecessor_packages = original_package_roots;
     request.presented_packages = successor_package_roots.clone();

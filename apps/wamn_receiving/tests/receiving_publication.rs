@@ -108,10 +108,16 @@ fn authored(
 
 /// One generated publication file of the package.
 fn generated(file: &str) -> Value {
+    let publication = publication_root();
+    let package = publication
+        .parent()
+        .expect("publication belongs to a package");
+    wamn_schema_generator::receipt::check_current(package)
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let output = Path::new(file)
         .strip_prefix("generated")
         .expect("a generated publication file lies under generated/");
-    read_json(&wamn_schema_generator::output_root(&publication_root().join("..")).join(output))
+    read_json(&wamn_schema_generator::output_root(package).join(output))
 }
 
 /// The authored attachments with the generated route entries.
@@ -155,6 +161,8 @@ fn declaration() -> ComponentDeclaration {
 
 #[test]
 fn package_owned_inputs_declare_the_exact_twelve_route_closure() {
+    wamn_schema_generator::receipt::check_current(&repository_root().join("apps/wamn_receiving"))
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let package_manifest = read_json(&wamn_schema_generator::package_manifest_path(
         &repository_root().join("apps/wamn_receiving"),
     ));

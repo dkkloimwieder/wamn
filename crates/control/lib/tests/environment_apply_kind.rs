@@ -911,6 +911,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
 
     // The package and the release, pushed from this machine.
     let package = repository.join("apps").join(PACKAGE);
+    wamn_schema_generator::receipt::check_current(&package)?;
     let built: Value = serde_json::from_slice(
         &std::fs::read(wamn_schema_generator::output_root(&package).join("wamn.json"))
             .context("read the fixture package's build output; run wamn build apps/edge_device")?,
@@ -2511,7 +2512,7 @@ fn fixture_http_entry(
 )> {
     let package = repository.join("apps").join(PACKAGE);
     let output = wamn_schema_generator::output_root(&package);
-    let receipt = wamn_schema_generator::receipt::read(&output)?;
+    let receipt = wamn_schema_generator::receipt::read_current(&package, &output)?;
     let component = receipt
         .outputs
         .components

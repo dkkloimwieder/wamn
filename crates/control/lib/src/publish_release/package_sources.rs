@@ -22,6 +22,17 @@ pub(super) fn read_package_manifests(
     let mut manifests = BTreeMap::new();
     let mut contracts = BTreeMap::new();
     for path in paths {
+        if let Some(root) = wamn_schema_generator::manifest_package_root(path) {
+            wamn_schema_generator::receipt::check_current(root).map_err(|error| {
+                PublishManifestError {
+                    source: Some(error.into()),
+                    ..PublishManifestError::new(
+                        PublishManifestErrorType::PackageManifest,
+                        format!("read current package build {}", path.display()),
+                    )
+                }
+            })?;
+        }
         let bytes = std::fs::read(path).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
@@ -170,6 +181,13 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             error,
         )
     };
+    wamn_schema_generator::receipt::check_current(root).map_err(|error| PublishManifestError {
+        source: Some(error.into()),
+        ..PublishManifestError::new(
+            PublishManifestErrorType::PackageManifest,
+            format!("read current package build {}", root.display()),
+        )
+    })?;
     let contracts = wamn_schema_generator::output_root(root).join("contracts");
     let models = match std::fs::read_dir(&contracts) {
         Ok(models) => models,
@@ -407,7 +425,8 @@ mod backfill_tests {
     fn publish_parses_backfill_and_applies_declared_statement_checks() {
         let root =
             std::env::temp_dir().join(format!("wamn-backfill-admission-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
+        // This is a handwritten admission document, with no generated contracts.
+        std::fs::create_dir_all(root.join("generated")).unwrap();
         let path = root.join("wamn.json");
         let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
             "../../tests/fixtures/apply_package/base/wamn.json"

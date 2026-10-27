@@ -44,6 +44,8 @@ fn repository() -> PathBuf {
 /// The component of `apps/edge_device` that its `wamn build` compiled. Run
 /// `wamn build apps/edge_device` first.
 fn device_component() -> PathBuf {
+    wamn_schema_generator::receipt::check_current(&repository().join("apps/edge_device"))
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let path = repository().join("apps/target/wamn/edge_device/components/device.wasm");
     assert!(path.is_file(), "run wamn build apps/edge_device first");
     path
@@ -161,6 +163,7 @@ async fn publish_through_publish_release(
     project: &str,
 ) -> anyhow::Result<wamn_catalog::ManifestDigest> {
     let package = repository().join("apps/edge_device");
+    wamn_schema_generator::receipt::check_current(&package)?;
     let tenant = project_env_tenant(ORG, PROJECT, environment);
     let manifest = wamn_schema_generator::PackageManifest::from_slice(
         &std::fs::read(wamn_schema_generator::package_manifest_path(&package))

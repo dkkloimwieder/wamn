@@ -84,17 +84,28 @@ struct Built {
 pub async fn build_components(request: &BuildRequest, package: &str) -> Result<BuildReceipt> {
     let package_root = request.package_root.as_path();
     let output = package_output(&request.output_root, package);
+    let mut receipt = receipt::read_current(package_root, &output)?;
     let manifest = PackageManifest::from_slice(
         &fs::read(output.join(COMPILED_MANIFEST_NAME))
             .context("read the built wamn.json; run wamn build first")?,
     )
     .context("parse the built wamn.json")?;
-    let mut receipt = receipt::read(&output)?;
     let workspace = crate::output::package_workspace(package_root);
     if !workspace.join("Cargo.toml").is_file() {
         return Ok(receipt);
     }
-    let bases = base_components(&request.output_root, &manifest)?;
+    let compiler_output = crate::output_root(package_root);
+    if compiler_output != output {
+        receipt::read_current(package_root, &compiler_output)?;
+    }
+    for dependency in manifest.base_dependencies.values() {
+        let root = crate::output::dependency_root(package_root, &dependency.package);
+        let compiler_output = crate::output_root(&root);
+        if compiler_output != package_output(&request.output_root, &dependency.package) {
+            receipt::read_current(&root, &compiler_output)?;
+        }
+    }
+    let bases = base_components(package_root, &request.output_root, &manifest)?;
     let repository = workspace.join("..");
     let rustflags = guest_rustflags(&repository).await?;
     let virtualization: Virtualization = read_json(&repository.join(VIRTUALIZATION))?;
@@ -425,13 +436,15 @@ async fn run_tool(mut command: Command, partial: &Path, output: &Path, what: &st
 
 /// Resolve the built base components and check their bytes against the pins.
 pub(crate) fn base_components(
+    package_root: &Path,
     output_root: &Path,
     manifest: &PackageManifest,
 ) -> Result<Vec<PathBuf>> {
     let mut bases = Vec::new();
     for dependency in manifest.base_dependencies.values() {
         let base_output = package_output(output_root, &dependency.package);
-        let base_receipt = receipt::read(&base_output).with_context(|| {
+        let base_root = crate::output::dependency_root(package_root, &dependency.package);
+        let base_receipt = receipt::read_current(&base_root, &base_output).with_context(|| {
             format!(
                 "read the build of base {}; build it first",
                 dependency.package
@@ -598,6 +611,8 @@ fn palette_declaration(workspace: &Path, name: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     struct Scratch(PathBuf);
@@ -616,6 +631,58 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create the scratch directory");
         Scratch(root)
+    }
+
+    #[tokio::test]
+    async fn a_custom_output_cannot_hide_stale_macro_inputs() {
+        let scratch = scratch("macro-inputs");
+        let package = scratch.0.join("package");
+        let selected = scratch.0.join("selected");
+        let output = selected.join("package");
+        let compiler_output = crate::output_root(&package);
+        for directory in [&package, &output, &compiler_output] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        fs::write(scratch.0.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(package.join("wamn.k"), "# package\n").unwrap();
+        fs::write(
+            output.join(COMPILED_MANIFEST_NAME),
+            br#"{
+            "package": {"id": "package", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "policy", "state": "satisfied"},
+            "models": {}, "connections": {}, "components": {}
+        }"#,
+        )
+        .unwrap();
+        let mut built = BuildReceipt {
+            schema: receipt::RECEIPT_SCHEMA.to_owned(),
+            package: receipt::ReceiptPackage {
+                id: "package".into(),
+                version: "1.0.0".into(),
+            },
+            inputs: receipt::inputs(&package).unwrap(),
+            dependencies: Vec::new(),
+            generator: receipt::generator(),
+            outputs: receipt::ReceiptOutputs {
+                manifest: "sha256:manifest".into(),
+                files: BTreeMap::new(),
+                components: Vec::new(),
+                web: None,
+            },
+        };
+        fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes()).unwrap();
+        built.inputs.digest = "sha256:old".into();
+        fs::write(
+            compiler_output.join(receipt::RECEIPT_FILE),
+            built.to_bytes(),
+        )
+        .unwrap();
+        let error = build_components(&BuildRequest::new(&package, &selected, ""), "package")
+            .await
+            .expect_err("stale macro inputs were accepted");
+        let error = format!("{error:#}");
+        assert!(error.contains("is stale"), "{error}");
+        assert!(error.contains("sha256:old"), "{error}");
     }
 
     #[test]

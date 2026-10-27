@@ -397,6 +397,9 @@ A change to these generator inputs makes every package stale without a version b
 If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
 It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
+Every reader of `apps/target/wamn` calls `wamn_schema_generator::receipt::read_current` first, as `push-package` does.
+If the package has no `build.json`, or its `inputs.digest` differs from the package tree, the reader refuses and tells you to run `wamn build`.
+Before Cargo compiles the components, `wamn build` makes the same comparison for the package and each base package.
 For a package that has a `web/` directory, the build then runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web`.
 Run `pnpm install` at the repository root first.
 `build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.

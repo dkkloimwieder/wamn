@@ -209,6 +209,9 @@ async fn the_jsonata_node_shapes_a_row_through_the_queue() -> anyhow::Result<()>
         env!("CARGO_MANIFEST_DIR"),
         "/../../../apps/target/wamn/wamn_wms/components/jsonata.wasm"
     );
+    wamn_schema_generator::receipt::check_current(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_wms"),
+    )?;
     let bytes = std::fs::read(path)
         .map_err(|error| anyhow::anyhow!("read {path}; run wamn build apps/wamn_wms: {error}"))?;
     super::run_automation(super::Mode::Jsonata(bytes)).await

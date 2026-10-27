@@ -28,7 +28,7 @@ const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql"
 fn package_version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         let manifest: serde_json::Value =
-            serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
+            serde_json::from_slice(&crate::test_support::fixture_manifest())
                 .expect("the compiled fixture manifest is JSON");
         manifest["package"]["version"]
             .as_str()

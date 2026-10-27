@@ -186,11 +186,10 @@ mod tests {
         let files =
             Files(std::env::temp_dir().join(format!("wamn-abandon-stage-{}", std::process::id())));
         std::fs::create_dir(&files.0).unwrap();
-        std::fs::create_dir(files.0.join("migrations")).unwrap();
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+        crate::test_support::copy_schema_fixture(&files.0);
+        let fixture = &files.0;
         let original = super::super::read_package_root(
-            &crate::package_artifact::fixture_package_root(&fixture).unwrap(),
+            &crate::package_artifact::fixture_package_root(fixture).unwrap(),
         )
         .unwrap();
         let predecessor = qualify_upgrade::identity_from_directory(&original).unwrap();

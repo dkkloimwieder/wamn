@@ -35,6 +35,17 @@ fn package_owners(
 ) -> Result<BTreeMap<String, wamn_schema_generator::OperationOwners>, PublishManifestError> {
     let mut owners = BTreeMap::new();
     for path in package_manifests {
+        if let Some(root) = wamn_schema_generator::manifest_package_root(path) {
+            wamn_schema_generator::receipt::check_current(root).map_err(|error| {
+                PublishManifestError {
+                    source: Some(error.into()),
+                    ..PublishManifestError::new(
+                        PublishManifestErrorType::PackageManifest,
+                        format!("read current package build {}", path.display()),
+                    )
+                }
+            })?;
+        }
         let bytes = std::fs::read(path).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
@@ -67,6 +78,16 @@ fn resolve_generated_input_schemas(
     }
     let mut roots = BTreeMap::new();
     for path in package_manifests {
+        let root = wamn_schema_generator::manifest_package_root(path)
+            .unwrap_or_else(|| std::path::Path::new(""));
+        let files =
+            wamn_schema_generator::route_schema::PackageFiles::open(root).map_err(|error| {
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::PackageManifest,
+                    format!("read current package build {}", path.display()),
+                    error,
+                )
+            })?;
         let bytes = std::fs::read(path).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
@@ -82,9 +103,7 @@ fn resolve_generated_input_schemas(
                     error,
                 )
             })?;
-        let root = wamn_schema_generator::manifest_package_root(path)
-            .unwrap_or_else(|| std::path::Path::new(""));
-        roots.insert(manifest.package.id, root.to_owned());
+        roots.insert(manifest.package.id, files);
     }
     for (attachment_id, attachment) in attachments {
         if !named(attachment) {
@@ -102,9 +121,7 @@ fn resolve_generated_input_schemas(
         wamn_schema_generator::route_schema::resolve_attachment(
             attachment_id,
             attachment,
-            &mut |reference| {
-                wamn_schema_generator::route_schema::read_from_package(root, reference)
-            },
+            &mut |reference| root.schema(reference),
         )
         .map_err(|error| {
             PublishManifestError::with_source(

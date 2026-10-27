@@ -16,6 +16,8 @@ pub fn repository() -> PathBuf {
 }
 
 pub fn manifest(package: &Path) -> Value {
+    wamn_schema_generator::receipt::check_current(package)
+        .unwrap_or_else(|error| panic!("{error:#}"));
     serde_json::from_slice(
         &std::fs::read(wamn_schema_generator::output_root(package).join("wamn.json")).unwrap(),
     )

@@ -159,10 +159,57 @@ fn checked(reference: &str) -> Result<&str, RouteSchemaError> {
 /// [`RouteSchemaError`] when the reference leaves the generated route schemas,
 /// or the file is unreadable or not JSON.
 pub fn read_from_package(package_root: &Path, reference: &str) -> Result<Value, RouteSchemaError> {
-    let file = Path::new(checked(reference)?)
-        .strip_prefix("generated")
-        .expect("a checked reference lies under generated/routes/");
-    read_json(&crate::output_root(package_root).join(file))
+    PackageFiles::open(package_root)?.schema(reference)
+}
+
+/// Generated schemas and publication files of one current package build.
+#[derive(Debug)]
+pub struct PackageFiles<'a> {
+    root: &'a Path,
+}
+
+impl<'a> PackageFiles<'a> {
+    /// Check the package once before reading its generated files.
+    ///
+    /// # Errors
+    ///
+    /// When workspace output has no current build receipt.
+    pub fn open(root: &'a Path) -> Result<Self, RouteSchemaError> {
+        crate::receipt::check_current(root).map_err(|error| RouteSchemaError {
+            source: Some(error.into()),
+            ..RouteSchemaError::new(RouteSchemaErrorType::Read, &root.display().to_string(), "")
+        })?;
+        Ok(Self { root })
+    }
+
+    /// Read one generated route schema from this package.
+    ///
+    /// # Errors
+    ///
+    /// When the reference is invalid or the schema is unreadable.
+    pub fn schema(&self, reference: &str) -> Result<Value, RouteSchemaError> {
+        let file = Path::new(checked(reference)?)
+            .strip_prefix("generated")
+            .expect("a checked reference lies under generated/routes/");
+        read_json(&crate::output_root(self.root).join(file))
+    }
+
+    /// Read a generated publication file, or `None` when it is absent.
+    ///
+    /// # Errors
+    ///
+    /// When an existing file is unreadable or is not JSON.
+    pub fn publication(&self, file: &str) -> Result<Option<Value>, RouteSchemaError> {
+        let path = match Path::new(file).strip_prefix("generated") {
+            Ok(output) => crate::output_root(self.root).join(output),
+            Err(_) => self.root.join(file),
+        };
+        if path.exists() {
+            read_json(&path).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 fn read_json(path: &Path) -> Result<Value, RouteSchemaError> {
@@ -302,15 +349,7 @@ pub fn read_generated_publication(
     package_root: &Path,
     file: &str,
 ) -> Result<Option<Value>, RouteSchemaError> {
-    let path = match Path::new(file).strip_prefix("generated") {
-        Ok(output) => crate::output_root(package_root).join(output),
-        Err(_) => package_root.join(file),
-    };
-    if path.exists() {
-        read_json(&path).map(Some)
-    } else {
-        Ok(None)
-    }
+    PackageFiles::open(package_root)?.publication(file)
 }
 
 /// Parse a generated attachment document. `None` is an empty map.
@@ -409,6 +448,7 @@ fn duplicate(subject: &str) -> RouteSchemaError {
 pub fn read_package_attachments(
     package_root: &Path,
 ) -> Result<BTreeMap<String, ServingAttachment>, RouteSchemaError> {
+    let files = PackageFiles::open(package_root)?;
     let path = package_root.join("publication/attachments.json");
     let subject = path.display().to_string();
     let document = crate::operation_reference::read_authored_document(
@@ -421,14 +461,9 @@ pub fn read_package_attachments(
     })?;
     merge_attachments(
         &mut attachments,
-        generated_attachments(read_generated_publication(
-            package_root,
-            GENERATED_ATTACHMENTS,
-        )?)?,
+        generated_attachments(files.publication(GENERATED_ATTACHMENTS)?)?,
     )?;
-    resolve_attachments(&mut attachments, &mut |reference| {
-        read_from_package(package_root, reference)
-    })?;
+    resolve_attachments(&mut attachments, &mut |reference| files.schema(reference))?;
     Ok(attachments)
 }
 

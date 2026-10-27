@@ -462,6 +462,8 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
         .expect("copy one package migration");
     }
 
+    wamn_schema_generator::receipt::check_current(source)
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let manifest_bytes = std::fs::read(wamn_schema_generator::package_manifest_path(source))
         .expect("read package manifest");
     let manifest_bytes = match bump {

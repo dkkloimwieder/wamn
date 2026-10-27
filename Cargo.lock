@@ -5934,6 +5934,7 @@ dependencies = [
  "wamn-engine",
  "wamn-run-state",
  "wamn-run-state-sqlite",
+ "wamn-schema-generator",
  "wamn-session",
  "wash-runtime",
 ]
@@ -6746,6 +6747,7 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
+ "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",

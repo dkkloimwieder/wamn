@@ -128,6 +128,7 @@ fn application_manifests(
     packages
         .iter()
         .map(|package| {
+            wamn_schema_generator::receipt::check_current(&repository.join("apps").join(package))?;
             let path = wamn_schema_generator::package_manifest_path(
                 &repository.join("apps").join(package),
             );

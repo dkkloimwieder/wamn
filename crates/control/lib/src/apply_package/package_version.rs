@@ -214,6 +214,10 @@ pub fn read_package_root(root: &PackageRoot) -> anyhow::Result<PackageDirectory>
 pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     let artifact_digest = None;
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    // A hand-written source manifest does not consume package build output.
+    if manifest_path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
+        wamn_schema_generator::receipt::check_current(root)?;
+    }
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let migrations_path = root.join("migrations");

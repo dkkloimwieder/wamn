@@ -250,8 +250,9 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
     // An input port can name its package's generated route schema instead of
     // copying it, so the reference resolves against the package it belongs to.
+    let files = wamn_schema_generator::route_schema::PackageFiles::open(&args.package)?;
     wamn_schema_generator::route_schema::resolve_declaration(&mut document, &mut |reference| {
-        wamn_schema_generator::route_schema::read_from_package(&args.package, reference)
+        files.schema(reference)
     })
     .with_context(|| {
         format!(
@@ -369,6 +370,12 @@ fn load_package_statements(
     manifest: &wamn_schema_generator::PackageManifest,
     component: Option<&AdmittedComponent>,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
+    wamn_schema_generator::receipt::check_current(package_root).map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorType::StatementContractInvalid,
+            format!("{error:#}"),
+        )
+    })?;
     wamn_schema_generator::validate_operation_vocabulary(manifest).map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementContractInvalid,
@@ -1228,6 +1235,7 @@ mod tests {
         roots.sort();
         let mut statements = 0;
         for root in &roots {
+            wamn_schema_generator::receipt::check_current(root).unwrap();
             let manifest_path = wamn_schema_generator::package_manifest_path(root);
             let bytes = std::fs::read(&manifest_path).unwrap_or_else(|error| {
                 panic!(

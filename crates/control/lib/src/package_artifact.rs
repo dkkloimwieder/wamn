@@ -152,6 +152,7 @@ struct DescriptorFile {
 /// descriptor layers, which differs from the pushed digest, and an unpacked
 /// artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
+    wamn_schema_generator::receipt::check_current(root)?;
     let descriptors = descriptor_files(root)?
         .into_iter()
         .map(|(descriptor, bytes)| DescriptorFile {
@@ -531,6 +532,7 @@ struct SourceComponent {
 fn source_components(
     root: &Path,
     manifest: &PackageManifest,
+    receipt: &wamn_schema_generator::receipt::BuildReceipt,
 ) -> anyhow::Result<Vec<SourceComponent>> {
     let wired = wiring_components(root)?;
     let mut templates = BTreeMap::new();
@@ -563,15 +565,6 @@ fn source_components(
         );
     }
     let output = wamn_schema_generator::output_root(root);
-    let receipt = wamn_schema_generator::receipt::read(&output)
-        .with_context(|| format!("read the build of {}; run wamn build first", root.display()))?;
-    let inputs = wamn_schema_generator::receipt::input_digest(root)?;
-    ensure!(
-        receipt.inputs.digest == inputs,
-        "the build of {} is stale: build.json records inputs {}, and the tree is {inputs}; run wamn build again",
-        root.display(),
-        receipt.inputs.digest
-    );
     templates
         .into_iter()
         .map(|(name, template)| {
@@ -764,6 +757,10 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
         root.display()
     );
+    let receipt = wamn_schema_generator::receipt::read_current(
+        root,
+        &wamn_schema_generator::output_root(root),
+    )?;
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -793,7 +790,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     let mut publication = BTreeMap::new();
     let mut descriptors = Vec::new();
     let mut components = Vec::new();
-    for source in source_components(root, &manifest)? {
+    for source in source_components(root, &manifest, &receipt)? {
         let (document, platform_packages) = match &source.template {
             ComponentTemplate::Owned(template) => (
                 render_declaration_document(template, ADMISSION_TENANT)?,
@@ -1302,6 +1299,10 @@ mod tests {
     }
 
     fn receiving_manifest() -> Vec<u8> {
+        wamn_schema_generator::receipt::check_current(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
+        )
+        .unwrap();
         std::fs::read(wamn_schema_generator::package_manifest_path(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
         ))
@@ -1520,12 +1521,23 @@ mod tests {
         remove(&root);
     }
 
+    fn current_source_components(
+        root: &Path,
+        manifest: &PackageManifest,
+    ) -> anyhow::Result<Vec<SourceComponent>> {
+        let receipt = wamn_schema_generator::receipt::read_current(
+            root,
+            &wamn_schema_generator::output_root(root),
+        )?;
+        source_components(root, manifest, &receipt)
+    }
+
     #[test]
     fn the_build_refuses_a_stale_receipt_or_a_missing_component() {
         let root = package_tree("index");
         let manifest = manifest(&root);
 
-        let listed = source_components(&root, &manifest).unwrap();
+        let listed = current_source_components(&root, &manifest).unwrap();
         assert_eq!(
             listed
                 .iter()
@@ -1544,7 +1556,10 @@ mod tests {
         assert_eq!(store_alias.as_deref(), Some("labels"));
 
         write(&root, "migrations/0002_more.sql", b"SELECT 2;\n");
-        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
+        let error = format!(
+            "{:#}",
+            current_source_components(&root, &manifest).unwrap_err()
+        );
         assert!(error.contains("is stale"), "{error}");
 
         write(
@@ -1553,7 +1568,10 @@ mod tests {
             b"{\"nodes\": {\"a\": {\"component\": \"jsonata\"}}}\n",
         );
         write_receipt(&root);
-        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
+        let error = format!(
+            "{:#}",
+            current_source_components(&root, &manifest).unwrap_err()
+        );
         assert!(error.contains("records no component jsonata"), "{error}");
 
         write(
@@ -1561,7 +1579,11 @@ mod tests {
             "publication/wirings/shape.json",
             b"{\"nodes\": {\"a\": {\"component\": \"label-render\"}}}\n",
         );
-        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
+        write_receipt(&root);
+        let error = format!(
+            "{:#}",
+            current_source_components(&root, &manifest).unwrap_err()
+        );
         assert!(
             error.contains("0 platform declarations name component label-render"),
             "{error}"
@@ -1583,7 +1605,10 @@ mod tests {
                 .join(wamn_schema_generator::receipt::RECEIPT_FILE),
         )
         .unwrap();
-        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
+        let error = format!(
+            "{:#}",
+            current_source_components(&root, &manifest).unwrap_err()
+        );
         assert!(error.contains("run wamn build first"), "{error}");
         remove(&root);
     }
@@ -1596,9 +1621,10 @@ mod tests {
             "publication/wirings/other.json",
             b"{\"nodes\": {\"a\": {\"component\": \"blob-put\", \"params\": {\"store_alias\": \"archive\"}}}}\n",
         );
+        write_receipt(&root);
         let error = format!(
             "{:#}",
-            source_components(&root, &manifest(&root)).unwrap_err()
+            current_source_components(&root, &manifest(&root)).unwrap_err()
         );
         assert!(
             error.contains("palette component blob-put 2 store aliases"),

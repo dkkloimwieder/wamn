@@ -1417,7 +1417,7 @@ mod tests {
             .iter()
             .map(|(package, declared)| {
                 let mut manifest = wamn_schema_generator::PackageManifest::from_slice(
-                    &wamn_fixture_package::manifest_bytes(),
+                    &crate::test_support::fixture_manifest(),
                 )
                 .unwrap();
                 manifest.package.id = (*package).to_owned();

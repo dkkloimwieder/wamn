@@ -134,6 +134,7 @@ pub(super) async fn apply(
             .packages
             .iter()
             .map(|package| {
+                wamn_schema_generator::receipt::check_current(&repository.join(package))?;
                 let path = wamn_schema_generator::package_manifest_path(&repository.join(package));
                 Ok(wamn_schema_generator::PackageManifest::from_slice(
                     &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,

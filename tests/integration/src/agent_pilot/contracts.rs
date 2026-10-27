@@ -28,6 +28,7 @@ pub(super) fn files(directory: &Path) -> anyhow::Result<Vec<PathBuf>> {
 
 /// The directory that holds the generated contracts of the package at `root`.
 pub(super) fn generated(root: &Path) -> PathBuf {
+    wamn_schema_generator::receipt::check_current(root).unwrap_or_else(|error| panic!("{error:#}"));
     wamn_schema_generator::output_root(root).join("contracts")
 }
 

@@ -466,6 +466,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let device_descriptor = ComponentDescriptor::new(device.facts().clone(), Vec::new());
     let h = release(MANIFEST_H, version, Some(&device_descriptor))?;
     let mut facts = vec![device.facts().clone()];
+    wamn_schema_generator::receipt::check_current(&repository.join("apps").join(PACKAGE))?;
     let mut descriptors = Vec::new();
     std::fs::write(
         local_component_path(directory, device.component_digest())?,

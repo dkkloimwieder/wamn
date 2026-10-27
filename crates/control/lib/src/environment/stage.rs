@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {
         let mut base = wamn_schema_generator::PackageManifest::from_slice(
-            &wamn_fixture_package::manifest_bytes(),
+            &crate::test_support::fixture_manifest(),
         )
         .unwrap();
         base.package.id = "base".into();

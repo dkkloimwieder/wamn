@@ -558,6 +558,7 @@ pub async fn exercise(
     let manifests: Vec<wamn_schema_generator::PackageManifest> = roots
         .iter()
         .map(|root| {
+            wamn_schema_generator::receipt::check_current(root)?;
             Ok(serde_json::from_slice(&std::fs::read(
                 wamn_schema_generator::package_manifest_path(root),
             )?)?)

@@ -2566,6 +2566,8 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// fold then shows the row at each retained position.
 #[test]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
+    wamn_schema_generator::receipt::check_current(&wamn_fixture_package::package_root())
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(

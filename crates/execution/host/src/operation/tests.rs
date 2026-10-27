@@ -39,6 +39,8 @@ fn admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary() {
 
 #[test]
 fn a_custom_read_refuses_a_caller_without_its_grant() {
+    wamn_schema_generator::receipt::check_current(&wamn_fixture_package::package_root())
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let tokens = wamn_control_provision::operation_grants::operation_grant_tokens(
         &wamn_fixture_package::manifest_bytes(),
     )

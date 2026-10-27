@@ -544,6 +544,7 @@ pub(super) fn input_files(
             "{} does not exist; run `wamn build` on the apps first",
             context.display()
         );
+        super::check_package_outputs(repository)?;
         let all = |_: &Path| Some(true);
         let mut context_files = BTreeMap::new();
         walk(repository, context, &all, &mut context_files)?;
@@ -690,7 +691,8 @@ pub(super) mod tests {
             (".cargo/config.toml", "\n"),
             ("apps/Cargo.toml", "[workspace]\n"),
             ("apps/Cargo.lock", "version = 4\n"),
-            ("apps/target/wamn/wamn_wms/build.json", "{}"),
+            ("apps/wamn_wms/wamn.k", "# fixture"),
+            ("apps/target/wamn/wamn_wms/client-ts/index.ts", "export {};"),
             ("deploy/sql/run.sql", "create table run ();"),
             (
                 "deploy/platform/release/Chart.yaml",
@@ -710,9 +712,41 @@ pub(super) mod tests {
             );
             write(&format!("{directory}/src/lib.rs"), source);
         }
+        write_package_receipt(&repository);
         let root = metadata(&repository, ROOT);
         let apps = metadata(&repository, APPS);
         (repository, root, apps)
+    }
+
+    fn write_package_receipt(repository: &Path) {
+        use wamn_schema_generator::receipt;
+        let root = repository.join("apps/wamn_wms");
+        let output = wamn_schema_generator::output_root(&root);
+        std::fs::create_dir_all(&output).unwrap();
+        let built = receipt::BuildReceipt {
+            schema: receipt::RECEIPT_SCHEMA.to_owned(),
+            package: receipt::ReceiptPackage {
+                id: "wamn_wms".into(),
+                version: "0.1.0".into(),
+            },
+            inputs: receipt::ReceiptInputs {
+                digest: receipt::input_digest(&root).unwrap(),
+                files: BTreeMap::new(),
+            },
+            dependencies: Vec::new(),
+            generator: receipt::ReceiptGenerator {
+                id: "generator".into(),
+                toolchain: "toolchain".into(),
+                sqlx: "0.9.0".into(),
+            },
+            outputs: receipt::ReceiptOutputs {
+                manifest: "sha256:fixture".into(),
+                files: BTreeMap::new(),
+                components: Vec::new(),
+                web: None,
+            },
+        };
+        std::fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes()).unwrap();
     }
 
     /// The input hash of every target of `repository`.
@@ -764,7 +798,10 @@ pub(super) mod tests {
             ["runner"]
         );
         assert_eq!(
-            change("apps/target/wamn/wamn_wms/build.json", "{\"a\":1}"),
+            change(
+                "apps/target/wamn/wamn_wms/client-ts/index.ts",
+                "export const a = 1;"
+            ),
             ["runner"]
         );
         // A file that a package includes from outside its directory counts.

@@ -11,6 +11,38 @@ use wamn_schema_generator::{
     COMPILED_MANIFEST, compile_manifest, package_manifest_path, write_compiled_manifest,
 };
 
+fn write_receipt(root: &Path) {
+    use wamn_schema_generator::receipt;
+    let built = receipt::BuildReceipt {
+        schema: receipt::RECEIPT_SCHEMA.to_owned(),
+        package: receipt::ReceiptPackage {
+            id: "fixture".into(),
+            version: "1.0.0".into(),
+        },
+        inputs: receipt::ReceiptInputs {
+            digest: receipt::input_digest(root).unwrap(),
+            files: std::collections::BTreeMap::new(),
+        },
+        dependencies: Vec::new(),
+        generator: receipt::ReceiptGenerator {
+            id: "generator".into(),
+            toolchain: "toolchain".into(),
+            sqlx: "0.9.0".into(),
+        },
+        outputs: receipt::ReceiptOutputs {
+            manifest: "sha256:fixture".into(),
+            files: std::collections::BTreeMap::new(),
+            components: Vec::new(),
+            web: None,
+        },
+    };
+    std::fs::write(
+        wamn_schema_generator::output_root(root).join(receipt::RECEIPT_FILE),
+        built.to_bytes(),
+    )
+    .unwrap();
+}
+
 struct Package(PathBuf);
 
 impl Package {
@@ -398,26 +430,25 @@ fn the_compiled_bytes_are_two_space_json_in_schema_order() {
 }
 
 #[test]
-fn an_edited_wamn_k_reaches_the_compiled_file_before_a_reader_reads_it() {
+fn an_edited_wamn_k_refuses_the_compiled_file_until_a_build() {
     let package = Package::new(&source("", ""));
     let compiled = package_manifest_path(package.root());
     write_compiled_manifest(package.root()).expect("write the compiled wamn.json");
     let written: Value =
         serde_json::from_slice(&std::fs::read(&compiled).expect("read")).expect("JSON");
     assert_eq!(written, package.compile());
+    write_receipt(package.root());
 
     std::fs::write(
         package.root().join("wamn.k"),
         source("            field_owners = {note = \"fixture\"}", ""),
     )
     .expect("edit wamn.k");
-    write_compiled_manifest(package.root()).expect("write the edited manifest");
+    let error = write_compiled_manifest(package.root()).expect_err("stale output refuses");
+    assert!(format!("{error:#}").contains("is stale"));
     let read: Value =
         serde_json::from_slice(&std::fs::read(&compiled).expect("read")).expect("JSON");
-    assert_eq!(
-        read["models"]["widget"]["field_owners"],
-        json!({"note": "fixture"})
-    );
+    assert_eq!(read, written);
 
     let unauthored = package.root().join("generated");
     write_compiled_manifest(&unauthored).expect("a package without wamn.k is unchanged");
@@ -425,7 +456,7 @@ fn an_edited_wamn_k_reaches_the_compiled_file_before_a_reader_reads_it() {
 }
 
 #[test]
-fn a_compiled_file_keeps_its_derived_relations_until_wamn_k_changes() {
+fn a_current_compiled_file_keeps_its_derived_relations_and_an_edit_refuses() {
     let package = Package::new(&source("", ""));
     let path = package_manifest_path(package.root());
     let authored = String::from_utf8(compile_manifest(package.root()).expect("compile wamn.k"))
@@ -439,6 +470,7 @@ fn a_compiled_file_keeps_its_derived_relations_until_wamn_k_changes() {
     assert_ne!(derived, authored);
     std::fs::create_dir_all(path.parent().expect("generated/")).expect("create generated/");
     std::fs::write(&path, &derived).expect("write generated/wamn.json");
+    write_receipt(package.root());
     write_compiled_manifest(package.root()).expect("keep generated/wamn.json");
     assert_eq!(
         std::fs::read_to_string(&path).expect("read generated/wamn.json"),
@@ -450,10 +482,9 @@ fn a_compiled_file_keeps_its_derived_relations_until_wamn_k_changes() {
         source("            field_owners = {note = \"fixture\"}", ""),
     )
     .expect("edit wamn.k");
-    write_compiled_manifest(package.root()).expect("write the edited manifest");
-    let written: Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("JSON");
-    assert_eq!(written, package.compile());
+    let error = write_compiled_manifest(package.root()).expect_err("stale output refuses");
+    assert!(format!("{error:#}").contains("is stale"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), derived);
 }
 
 #[test]

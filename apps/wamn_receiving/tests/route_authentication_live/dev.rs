@@ -178,6 +178,7 @@ pub(super) fn declared_dev_data_access_grants()
 -> anyhow::Result<BTreeSet<(String, String, String, String)>> {
     let mut expected = BTreeSet::new();
     for package in JOURNEY_PACKAGES {
+        wamn_schema_generator::receipt::check_current(&journey_package_root(package))?;
         let path = wamn_schema_generator::output_root(&journey_package_root(package))
             .join("platform-policy/data-access.json");
         let policy = read_json(&path)?;

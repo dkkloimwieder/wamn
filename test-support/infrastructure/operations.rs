@@ -13,11 +13,12 @@ use wamn_schema_generator::{OperationOwners, package_manifest_path, resolve_oper
 
 /// The manifest of one repository package, by its package id.
 fn owners(package_id: &str) -> OperationOwners {
-    let path = package_manifest_path(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps")
-            .join(package_id),
-    );
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps")
+        .join(package_id);
+    wamn_schema_generator::receipt::check_current(&root)
+        .unwrap_or_else(|error| panic!("{error:#}"));
+    let path = package_manifest_path(&root);
     let bytes =
         std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     OperationOwners::from_slice(&bytes)

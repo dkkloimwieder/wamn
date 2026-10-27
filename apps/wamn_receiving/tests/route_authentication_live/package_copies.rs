@@ -157,15 +157,11 @@ async fn an_edited_copy_builds_in_the_test_owned_workspace() -> anyhow::Result<(
     let database = wamn_test_postgres::database();
     build(&root, &["wamn_receiving"], database.url()).await?;
     let output = wamn_schema_generator::output_root(&base);
-    let receipt = wamn_schema_generator::receipt::read(&output)?;
+    let receipt = wamn_schema_generator::receipt::read_current(&base, &output)?;
     ensure!(
-        receipt.inputs.digest == wamn_schema_generator::receipt::input_digest(&base)?
-            && receipt
-                .outputs
-                .components
-                .iter()
-                .any(|component| component.name == "receiving"
-                    && output.join(&component.path).is_file()),
+        receipt.outputs.components.iter().any(
+            |component| component.name == "receiving" && output.join(&component.path).is_file()
+        ),
         "the copy's build is current and records its component"
     );
     Ok(())

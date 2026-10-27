@@ -11,6 +11,7 @@ use crate::{GenerateError, GenerateErrorType, PackageManifest};
 /// records each manifest’s digest. Release resolution checks the package
 /// artifact pin.
 pub(crate) fn load_base_manifests(
+    package_root: &Path,
     output_root: &Path,
     manifest: &PackageManifest,
 ) -> Result<Vec<PackageManifest>> {
@@ -19,8 +20,11 @@ pub(crate) fn load_base_manifests(
         .values()
         .map(|dependency| {
             let output = crate::build::package_output(output_root, &dependency.package);
-            let receipt = crate::receipt::read(&output)
-                .with_context(|| format!("build the base package {} first", dependency.package))?;
+            let receipt = crate::receipt::read_current(
+                &crate::output::dependency_root(package_root, &dependency.package),
+                &output,
+            )
+            .with_context(|| format!("build the base package {} first", dependency.package))?;
             let bytes = fs::read(output.join(crate::authoring::COMPILED_MANIFEST_NAME))
                 .with_context(|| format!("read the manifest of base {}", dependency.package))?;
             ensure!(

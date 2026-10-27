@@ -137,13 +137,12 @@ pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> 
 ///
 /// Generation writes the same file with the members it derives, such as each
 /// custom operation's relations, and a file whose other members equal the
-/// compile is left as it is. A package without `wamn.k` is left unchanged. A reader that runs before
-/// generation calls this first, so it reads the manifest of the current
-/// `wamn.k` from the file (wamn-vgsl).
+/// compile is left as it is. A package without `wamn.k` is left unchanged.
+/// Existing workspace output must have a current build receipt before it is read.
 ///
 /// # Errors
 ///
-/// When [`compile_manifest`] refuses, or the file cannot be written.
+/// When [`compile_manifest`] refuses, existing workspace output is stale, or the file cannot be written.
 pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     if !is_authored(package_root) {
         return Ok(());
@@ -154,6 +153,9 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     // members it derived. The values are compared, not the bytes: `wamn build`
     // writes the file in canonical JSON, and the compile is indented.
     let compiled: Value = serde_json::from_slice(&bytes).context("parse the compiled manifest")?;
+    if path.is_file() {
+        crate::receipt::check_current(package_root)?;
+    }
     let current = fs::read(&path)
         .ok()
         .and_then(|written| without_derived_members(&written).ok())

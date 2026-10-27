@@ -1289,7 +1289,17 @@ pub fn resolve_dev_packages(
 }
 
 pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
-    // An edited wamn.k reaches generated/wamn.json before any reader reads it.
+    let path = wamn_schema_generator::package_manifest_path(root);
+    // A hand-written source manifest does not consume package build output.
+    if path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
+        wamn_schema_generator::receipt::check_current(root).map_err(|source| {
+            DevPackageError::manifest(
+                DevPackageErrorType::ManifestInvalid,
+                root.join(wamn_schema_generator::receipt::RECEIPT_FILE),
+                source,
+            )
+        })?;
+    }
     wamn_schema_generator::write_compiled_manifest(root).map_err(|source| {
         DevPackageError::manifest(
             DevPackageErrorType::ManifestInvalid,
@@ -1297,7 +1307,6 @@ pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevP
             source,
         )
     })?;
-    let path = wamn_schema_generator::package_manifest_path(root);
     let bytes = fs::read(&path).map_err(|source| {
         DevPackageError::manifest(DevPackageErrorType::ManifestRead, path.clone(), source)
     })?;
@@ -1681,6 +1690,8 @@ pub(crate) mod tests {
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
+        wamn_schema_generator::receipt::check_current(&wamn_fixture_package::overlay_root())
+            .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::overlay_manifest_bytes()
     }
 
@@ -1930,7 +1941,7 @@ pub(crate) mod tests {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         // Resolution must not overwrite the live fixture's derived manifest.
         let overlay = TempPackage::with_manifest(&overlay_manifest());
-        let base = TempPackage::with_manifest(&wamn_fixture_package::manifest_bytes());
+        let base = TempPackage::with_manifest(&crate::test_support::fixture_manifest());
         let overlay_root = overlay.root().to_path_buf();
         let base_root = base.root().to_path_buf();
         let ignored_root = overlay_root.clone();
@@ -2004,7 +2015,7 @@ pub(crate) mod tests {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         // Resolution must not overwrite the live fixture's derived manifest.
         let overlay = TempPackage::with_manifest(&overlay_manifest());
-        let base = TempPackage::with_manifest(&wamn_fixture_package::manifest_bytes());
+        let base = TempPackage::with_manifest(&crate::test_support::fixture_manifest());
         let overlay_root = overlay.root().to_path_buf();
         let base_root = base.root().to_path_buf();
         let expected = wamn_schema_generator::PackageManifest::from_slice(&overlay_manifest())

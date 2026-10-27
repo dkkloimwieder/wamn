@@ -21,6 +21,7 @@ pub(super) fn preflight(args: &super::up::DevUpRequest) -> anyhow::Result<()> {
     crate::platform_build::platform_ui_digest(&args.platform_ui)?;
     for package in &args.packages {
         if package.join("web").is_dir() {
+            wamn_schema_generator::receipt::check_current(package)?;
             let dist = wamn_schema_generator::output_root(package).join("web");
             anyhow::ensure!(
                 dist.join("index.html").is_file(),

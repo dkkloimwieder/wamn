@@ -28,6 +28,7 @@ async fn settings_and_delivery_outcomes_use_only_application_grants() -> anyhow:
         &[],
     )?;
     client.batch_execute(std::str::from_utf8(&bytes)?).await?;
+    wamn_schema_generator::receipt::check_current(&package)?;
     let overlay = DataAccessOverlay::from_slice(&std::fs::read(
         wamn_schema_generator::output_root(&package).join("platform-policy/data-access.json"),
     )?)?;

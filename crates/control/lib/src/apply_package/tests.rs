@@ -23,7 +23,8 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         )
         .await
         .unwrap();
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+    let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
+    crate::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
@@ -36,6 +37,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     .expect("apply the package fixture");
 
     let mut directory = read_package_directory(&shipped).unwrap();
+    std::fs::remove_dir_all(&shipped).unwrap();
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&directory.manifest_bytes).unwrap();
     manifest["models"]
@@ -48,6 +50,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         std::env::temp_dir().join(format!("wamn-local-configuration-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("migrations")).unwrap();
+    std::fs::create_dir_all(root.join("generated")).unwrap();
     std::fs::write(root.join("wamn.json"), &directory.manifest_bytes).unwrap();
     for migration in &directory.migrations {
         std::fs::write(root.join(&migration.relative_path), &migration.bytes).unwrap();
@@ -215,7 +218,8 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
             .grants("apply-drops--fixture--dev", "principal")
             .is_ok()
     );
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+    let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
+    crate::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),

@@ -126,13 +126,14 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
         )
         .unwrap();
     }
-    wamn_schema_generator::write_compiled_manifest(&candidate).unwrap();
+    crate::test_support::compile_package(&candidate);
     apply_qualification_package(apply_request(generation_database.url(), &candidate))
         .await
         .unwrap();
     wamn_schema_generator::materialize_package_verified(generation_database.url(), &candidate)
         .await
         .unwrap();
+    crate::test_support::write_receipt(&candidate);
     Fixture {
         source,
         source_database,
@@ -145,6 +146,7 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
 }
 
 fn predecessor_manifest(root: &Path) -> ServingManifest {
+    wamn_schema_generator::receipt::check_current(root).unwrap();
     let manifest = PackageManifest::from_slice(
         &fs::read(wamn_schema_generator::package_manifest_path(root)).unwrap(),
     )
@@ -353,11 +355,13 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
     let mut edited = original_prefix.clone();
     edited.push(b'\n');
     fs::write(&prefix, edited).unwrap();
+    crate::test_support::write_receipt(&fixture.root.join("candidate"));
     let error = qualify_upgrade(request(&fixture, "prefix.json"))
         .await
         .unwrap_err();
     assert!(format!("{error:#}").contains("prefix"), "{error:#}");
     fs::write(&prefix, original_prefix).unwrap();
+    crate::test_support::write_receipt(&fixture.root.join("candidate"));
 
     assert!(!fixture.root.join("prefix.json").exists());
     assert_eq!(state(&mut fixture.source).await, original);
@@ -451,6 +455,7 @@ async fn copied_suffix_retains_rows_and_rolls_back_failed_execution() {
         "ALTER TABLE inventory.widget_maker ADD COLUMN note text;\n",
     )
     .unwrap();
+    crate::test_support::write_receipt(&package);
     let error = apply_qualification_package(apply_request(scratch.url(), &package))
         .await
         .unwrap_err();
@@ -463,6 +468,7 @@ async fn copied_suffix_retains_rows_and_rolls_back_failed_execution() {
     );
     assert_eq!(state(&mut copy).await, original_copy);
     fs::remove_file(failure).unwrap();
+    crate::test_support::write_receipt(&package);
     let outcome = apply_qualification_package(apply_request(scratch.url(), &package))
         .await
         .unwrap();

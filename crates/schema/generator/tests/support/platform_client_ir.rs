@@ -50,7 +50,8 @@ impl ReleaseFiles {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        let contracts = root.join("contracts");
+        // This fixture projects files in memory onto disk, not a workspace package build.
+        let contracts = root.join("generated/contracts");
         for (relative, bytes) in fixture::contracts(&fixture::generate_fixture()) {
             let path = contracts.join(relative);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -82,8 +83,9 @@ impl ReleaseFiles {
             r#"{"package": {"id": "platform_fixture", "version": "2.1.0"}}"#,
         )
         .unwrap();
+        std::fs::create_dir_all(root.join("publication")).unwrap();
         Self {
-            attachments: root.join("attachments.json"),
+            attachments: root.join("publication/attachments.json"),
             root,
             contracts,
             published,
@@ -425,6 +427,8 @@ fn paging_and_closed_values_reach_the_platform_ir() {
 /// projected too. `materialize_package check` holds the bytes.
 #[test]
 fn each_fixture_route_projects_a_direct_client_route() {
+    wamn_schema_generator::receipt::check_current(&wamn_fixture_package::package_root())
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let package = wamn_fixture_package::package_root();
     let publication = package.join("publication");
     let mut attachments: BTreeMap<String, Value> =

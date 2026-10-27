@@ -116,6 +116,7 @@ pub fn stage_sqlx_verifier(
     verifier_root: &Path,
     repository_root: &Path,
 ) -> Result<SqlxVerifier> {
+    crate::receipt::check_current(package_root)?;
     if verifier_root.exists() {
         fs::remove_dir_all(verifier_root).context("clear staged SQLx verifier")?;
     }

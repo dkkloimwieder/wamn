@@ -169,6 +169,75 @@ pub fn read(package_output: &Path) -> Result<BuildReceipt> {
     Ok(receipt)
 }
 
+/// Read a build whose inputs still match its package tree.
+/// `package_root` names the source tree, not its build output directory.
+///
+/// # Errors
+///
+/// When the build receipt is missing or invalid, or the package inputs differ.
+pub fn read_current(package_root: &Path, output_dir: &Path) -> Result<BuildReceipt> {
+    let receipt = read(output_dir).with_context(|| {
+        format!(
+            "read the build of {}; run wamn build first",
+            package_root.display()
+        )
+    })?;
+    let inputs = input_digest(package_root)?;
+    ensure!(
+        receipt.inputs.digest == inputs,
+        "the build of {} is stale: build.json records inputs {}, and the tree is {inputs}; run wamn build again",
+        package_root.display(),
+        receipt.inputs.digest
+    );
+    Ok(receipt)
+}
+
+/// Refuse workspace build output without a receipt that matches its package source.
+///
+/// Unpacked artifacts and local fixtures keep their own `generated` directory.
+/// They do not consume workspace build output.
+///
+/// # Errors
+///
+/// When workspace output has no current build receipt.
+pub fn check_current(package_root: &Path) -> Result<()> {
+    let output = crate::output_root(package_root);
+    if crate::output::is_build_output(&output) {
+        if crate::output::is_build_output(package_root) {
+            read_current(&source_root(package_root)?, &output)?;
+        } else {
+            read_current(package_root, &output)?;
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a workspace build directory to its package source root.
+///
+/// # Errors
+///
+/// When the path does not name `<workspace>/target/wamn/<package>`.
+pub fn source_root(output: &Path) -> Result<PathBuf> {
+    ensure!(
+        crate::output::is_build_output(output),
+        "{} is not a workspace package output under target/wamn",
+        output.display()
+    );
+    let workspace = output
+        .ancestors()
+        .nth(3)
+        .filter(|path| !path.as_os_str().is_empty())
+        .with_context(|| format!("{} has no package workspace parent", output.display()))?;
+    let package = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("{} has no UTF-8 package name", output.display()))?;
+    Ok(crate::output::dependency_root(
+        &workspace.join(package),
+        package,
+    ))
+}
+
 /// The input digest of the package at `package_root`, as `build.json` records it.
 ///
 /// # Errors
@@ -420,6 +489,71 @@ fn input_files(package_root: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_root_refuses_short_paths_and_resolves_nested_packages() {
+        for path in ["", "/", "package", "wamn/package", "target/wamn/package"] {
+            assert!(source_root(Path::new(path)).is_err(), "{path}");
+        }
+        let scratch = scratch("source-root");
+        let package = scratch.0.join("apps/platform/package");
+        fs::create_dir_all(&package).unwrap();
+        assert_eq!(
+            source_root(&scratch.0.join("apps/target/wamn/package")).unwrap(),
+            package
+        );
+        let package = scratch.0.join("apps/package");
+        fs::create_dir_all(&package).unwrap();
+        assert_eq!(
+            source_root(&scratch.0.join("apps/target/wamn/package")).unwrap(),
+            package
+        );
+    }
+
+    #[test]
+    fn read_current_requires_matching_inputs_and_a_receipt() {
+        let scratch = scratch("current");
+        let package = scratch.0.join("apps/package");
+        let output = crate::output_root(&package);
+        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        fs::write(package.join("wamn.k"), "original").unwrap();
+        let missing = read_current(&package, &output).unwrap_err();
+        assert!(format!("{missing:#}").contains("build.json"));
+        let receipt = BuildReceipt {
+            schema: RECEIPT_SCHEMA.to_owned(),
+            package: ReceiptPackage {
+                id: "package".to_owned(),
+                version: "1.0.0".to_owned(),
+            },
+            inputs: inputs(&package).unwrap(),
+            dependencies: Vec::new(),
+            generator: generator(),
+            outputs: ReceiptOutputs {
+                manifest: sha256(b"manifest"),
+                files: BTreeMap::new(),
+                components: Vec::new(),
+                web: None,
+            },
+        };
+        fs::write(output.join(RECEIPT_FILE), receipt.to_bytes()).unwrap();
+        assert_eq!(read_current(&package, &output).unwrap(), receipt);
+        check_current(&package).unwrap();
+        check_current(&output).unwrap();
+        fs::write(package.join("wamn.k"), "edited").unwrap();
+        let error = read_current(&package, &output).unwrap_err().to_string();
+        for detail in [
+            package.to_str().unwrap(),
+            &receipt.inputs.digest,
+            &input_digest(&package).unwrap(),
+            "wamn build",
+        ] {
+            assert!(error.contains(detail), "{error}");
+        }
+        fs::remove_file(package.join("wamn.k")).unwrap();
+        let error = check_current(&package).unwrap_err().to_string();
+        assert!(error.contains("is stale"), "{error}");
+    }
 
     #[test]
     fn generator_changes_make_identical_package_inputs_stale() {

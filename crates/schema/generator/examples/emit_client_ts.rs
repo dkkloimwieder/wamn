@@ -33,6 +33,7 @@ fn main() -> Result<()> {
         );
     }
     for package in packages {
+        wamn_schema_generator::receipt::check_current(&package)?;
         let output = wamn_schema_generator::output_root(&package);
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(output.join("wamn.json"))?)?;

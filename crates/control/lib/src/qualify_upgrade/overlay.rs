@@ -95,6 +95,8 @@ pub(super) fn validate_transition(
                 "overlay successor changes its immutable migration stream"
             );
             let mut contracts = BTreeMap::new();
+            wamn_schema_generator::receipt::check_current(&predecessor_base.root.path)?;
+            wamn_schema_generator::receipt::check_current(&candidate_base.root.path)?;
             for operation in &pin.operations {
                 let sealed = wamn_schema_generator::canonical_operation_identity(base, operation)?;
                 ensure!(

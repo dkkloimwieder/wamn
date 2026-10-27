@@ -18,6 +18,8 @@ fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application()
     wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT"]);
     let route = PathBuf::from(std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").unwrap());
     let component = repository().join("apps/target/wamn/edge_device/components/device.wasm");
+    wamn_schema_generator::receipt::check_current(&repository().join("apps/edge_device"))
+        .unwrap_or_else(|error| panic!("{error:#}"));
     assert!(component.is_file(), "run wamn build apps/edge_device first");
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("edge-bundle-entry-{}", std::process::id()));

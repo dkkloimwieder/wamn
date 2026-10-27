@@ -550,6 +550,8 @@ pub(crate) fn catalog_with_unread_table() -> CatalogIr {
 /// # Panics
 /// Panics when the fixture application's manifest is not valid JSON.
 pub(crate) fn manifest() -> Value {
+    wamn_schema_generator::receipt::check_current(&wamn_fixture_package::package_root())
+        .unwrap_or_else(|error| panic!("{error:#}"));
     serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
         .expect("the fixture application manifest is JSON")
 }

@@ -129,6 +129,9 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
             continue;
         };
         if receipt.inputs.digest != digest
+            // A receipt written before the web build must not make an unfinished build current.
+            || (request.package_root.join("web/package.json").is_file()
+                && receipt.outputs.web.is_none())
             || !receipt
                 .outputs
                 .files
@@ -143,11 +146,14 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
                 web_digest(&output.join(WEB_OUTPUT)).as_ref().ok() != Some(digest)
             })
             || !receipt.dependencies.iter().all(|dependency| {
-                crate::receipt::read(&package_output(&request.output_root, &dependency.id))
-                    .is_ok_and(|base| {
-                        base.package.version == dependency.version
-                            && base.outputs.manifest == dependency.digest
-                    })
+                crate::receipt::read_current(
+                    &crate::output::dependency_root(&request.package_root, &dependency.id),
+                    &package_output(&request.output_root, &dependency.id),
+                )
+                .is_ok_and(|base| {
+                    base.package.version == dependency.version
+                        && base.outputs.manifest == dependency.digest
+                })
             })
         {
             continue;
@@ -169,7 +175,11 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
             }) {
                 continue;
             }
-            crate::components::base_components(&request.output_root, &manifest)?;
+            crate::components::base_components(
+                &request.package_root,
+                &request.output_root,
+                &manifest,
+            )?;
         }
         return Ok(Some(receipt));
     }
@@ -194,8 +204,9 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
     let provisional =
         PackageManifest::from_slice(&serde_json::to_vec(&with_placeholder_types(&authored))?)
             .context("parse the authored manifest")?;
-    let dependencies = dependencies(&request.output_root, &provisional)?;
-    let bases = crate::inheritance::load_base_manifests(&request.output_root, &provisional)?;
+    let dependencies = dependencies(package_root, &request.output_root, &provisional)?;
+    let bases =
+        crate::inheritance::load_base_manifests(package_root, &request.output_root, &provisional)?;
 
     let database = VerificationDatabase::create(&request.database_url).await?;
     let built = pass_one_and_two(
@@ -210,14 +221,8 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
     let (canonical, files) = built?;
 
     let package_output = package_output(&request.output_root, &provisional.package.id);
-    let mut outputs = write_outputs(&package_output, &canonical, &files)?;
-    crate::materialize::materialize_client_consumers(
-        package_root,
-        &provisional.package.id,
-        &package_output.join("client-ts"),
-    )?;
-    outputs.web = build_web(package_root, &package_output).await?;
-    let receipt = BuildReceipt {
+    let outputs = write_outputs(&package_output, &canonical, &files)?;
+    let mut receipt = BuildReceipt {
         schema: RECEIPT_SCHEMA.to_owned(),
         package: ReceiptPackage {
             id: provisional.package.id.clone(),
@@ -229,6 +234,14 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
         outputs,
     };
     let path = package_output.join(RECEIPT_FILE);
+    // Client copying and the web build read generated output, so its receipt must exist first.
+    fs::write(&path, receipt.to_bytes()).with_context(|| format!("write {}", path.display()))?;
+    crate::materialize::materialize_client_consumers(
+        package_root,
+        &provisional.package.id,
+        &package_output.join("client-ts"),
+    )?;
+    receipt.outputs.web = build_web(package_root, &package_output).await?;
     fs::write(&path, receipt.to_bytes()).with_context(|| format!("write {}", path.display()))?;
     Ok(receipt)
 }
@@ -411,13 +424,20 @@ fn authored_manifest(package_root: &Path) -> Result<Vec<u8>> {
 }
 
 /// The base packages of an overlay, from the receipts of their builds.
-fn dependencies(output_root: &Path, manifest: &PackageManifest) -> Result<Vec<ReceiptDependency>> {
+fn dependencies(
+    package_root: &Path,
+    output_root: &Path,
+    manifest: &PackageManifest,
+) -> Result<Vec<ReceiptDependency>> {
     manifest
         .base_dependencies
         .values()
         .map(|dependency| {
-            let base = crate::receipt::read(&package_output(output_root, &dependency.package))
-                .with_context(|| format!("build the base package {} first", dependency.package))?;
+            let base = crate::receipt::read_current(
+                &crate::output::dependency_root(package_root, &dependency.package),
+                &package_output(output_root, &dependency.package),
+            )
+            .with_context(|| format!("build the base package {} first", dependency.package))?;
             ensure!(
                 base.package.id == dependency.package && base.package.version == dependency.version,
                 "the base build is {} {}, and the package pins {} {}",
@@ -986,6 +1006,12 @@ mod tests {
             .await
             .expect("replace a missing output");
         assert!(output.join(COMPILED_MANIFEST_NAME).is_file());
+        fs::create_dir(package.join("web")).unwrap();
+        fs::write(package.join("web/package.json"), "{}").unwrap();
+        let mut unfinished = crate::receipt::read(&output).unwrap();
+        unfinished.inputs.digest = crate::receipt::input_digest(&package).unwrap();
+        fs::write(output.join(RECEIPT_FILE), unfinished.to_bytes()).unwrap();
+        assert!(current_build(&request).unwrap().is_none());
         fs::remove_dir_all(root).unwrap();
     }
 

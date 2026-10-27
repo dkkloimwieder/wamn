@@ -207,6 +207,7 @@ fn declared_consumers<'a>(
     let manifests = roots
         .into_iter()
         .map(|root| {
+            wamn_schema_generator::receipt::check_current(root)?;
             let path = wamn_schema_generator::package_manifest_path(root);
             Ok(wamn_schema_generator::PackageManifest::from_slice(
                 &fs::read(path)?,

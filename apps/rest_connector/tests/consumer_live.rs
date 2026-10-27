@@ -326,6 +326,7 @@ pub async fn install(
     let packages = roots
         .iter()
         .map(|root| {
+            wamn_schema_generator::receipt::check_current(root)?;
             Ok(PackageRoot {
                 path: root.clone(),
                 artifact_digest: Some(

@@ -182,6 +182,7 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
     let artifacts = root.path().join("components");
     std::fs::create_dir(&artifacts)?;
     let manifest = wamn_schema_generator::package_manifest_path(&overlay_package_root());
+    wamn_schema_generator::receipt::check_current(&overlay_package_root())?;
     let template = overlay_package_root()
         .join("publication/components")
         .join(format!("{OVERLAY_COMPONENT}.json.in"));

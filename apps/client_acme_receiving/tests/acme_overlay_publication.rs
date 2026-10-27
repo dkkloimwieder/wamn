@@ -196,6 +196,8 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
 
 #[test]
 fn the_private_receipt_handler_has_no_package_registration() {
+    wamn_schema_generator::receipt::check_current(&package_root())
+        .unwrap_or_else(|error| panic!("{error:#}"));
     let manifest = read_json(&wamn_schema_generator::package_manifest_path(
         &package_root(),
     ));

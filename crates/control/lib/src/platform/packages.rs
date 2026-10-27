@@ -32,6 +32,7 @@ pub(super) fn read(repository: &Path, environment: &Path) -> anyhow::Result<Vec<
         .into_iter()
         .map(|root| {
             let root = repository.join(root);
+            wamn_schema_generator::receipt::check_current(&root)?;
             let path = wamn_schema_generator::package_manifest_path(&root);
             let manifest = PackageManifest::from_slice(
                 &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,

@@ -434,6 +434,7 @@ fn generate_package(
 ) -> Result<crate::GeneratedPackage> {
     let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
     let bases = crate::inheritance::load_base_manifests(
+        package_root,
         &crate::build::default_output_root(package_root),
         &manifest,
     )?;
@@ -479,6 +480,7 @@ fn statement_corpus(
 ) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
     let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
     let bases = crate::inheritance::load_base_manifests(
+        package_root,
         &crate::build::default_output_root(package_root),
         &manifest,
     )?;
@@ -594,6 +596,7 @@ fn load_compiled_manifest(
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
     let bases = crate::inheritance::load_base_manifests(
+        package_root,
         &crate::build::default_output_root(package_root),
         &manifest,
     )?;
@@ -801,6 +804,11 @@ pub fn materialize_client_consumers(package_root: &Path, app: &str, source: &Pat
         wamn: Clients,
     }
 
+    if let Some(output) = source.parent()
+        && crate::output::is_build_output(output)
+    {
+        crate::receipt::read_current(package_root, output)?;
+    }
     let package_root = std::path::absolute(package_root)?;
     let Some(repository) = package_root
         .ancestors()

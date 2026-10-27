@@ -384,6 +384,8 @@ async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
     let _ = fs::remove_dir_all(&output_root);
     for package in ["wamn_receiving", "client_acme_receiving"] {
         let source = package_output(&built, package);
+        receipt::read_current(&apps.join(package), &source)
+            .expect("read the current package build");
         for (path, bytes) in snapshot(&source) {
             let target = package_output(&output_root, package).join(path);
             fs::create_dir_all(target.parent().unwrap()).expect("create an output directory");
