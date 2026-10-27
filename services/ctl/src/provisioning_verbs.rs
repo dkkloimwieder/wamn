@@ -1228,6 +1228,11 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         )
         .await?
     } else {
+        if record.is_some() {
+            eprintln!(
+                "WAMN_AUTH_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
+            );
+        }
         wamn_platform_identity::auth_changes::AuthChanges::default()
     };
     let provisioned = provision_org::provision_org_with_changes(
