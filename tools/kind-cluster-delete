@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# stdout names leftover resources. Exit 2 means leftovers, 3 means inspection failed.
+set -euo pipefail
+cluster=${1:?kind cluster name}
+shift
+case "$cluster" in ''|wamn) printf 'Refusing kind cluster name: %s\n' "$cluster" >&2; exit 64 ;; esac
+
+# Three deletes of up to 120 s each, 2 + 4 seconds of backoff, and bounded
+# final reads. A delete under heavy load can take more than a minute.
+for attempt in 1 2 3; do
+  if timeout --kill-after=5s 120s kind delete cluster --name "$cluster" "$@" >&2; then
+    break
+  fi
+  printf 'kind delete failed for %s (attempt %s/3)\n' "$cluster" "$attempt" >&2
+  if ((attempt < 3)); then sleep "$((attempt * 2))"; fi
+done
+
+status=0
+clusters=$(timeout --kill-after=1s 5s kind get clusters) || status=3
+containers=$(timeout --kill-after=1s 5s docker ps -a \
+  --filter "label=io.x-k8s.kind.cluster=$cluster" --format '{{.Names}}') || status=3
+leftovers=
+while IFS= read -r name; do
+  [[ $name != "$cluster" ]] || leftovers=$name
+done <<< "$clusters"
+if [[ -n $containers ]]; then leftovers+="${leftovers:+$'\n'}$containers"; fi
+if [[ -n $leftovers ]]; then
+  printf 'Leftover kind resources for %s:\n%s\n' "$cluster" "$leftovers" >&2
+  printf '%s\n' "$leftovers"
+  ((status != 0)) || status=2
+fi
+if ((status == 3)); then printf 'Cannot inspect all kind resources for %s\n' "$cluster" >&2; fi
+exit "$status"

@@ -132,15 +132,15 @@ capture_cluster() {
 }
 
 cleanup() {
-  local status=$? cleanup_failed=false
+  local status=$? cleanup_failed=false teardown_status=0 teardown_leftovers=
   trap - EXIT HUP INT TERM
   set +e
   capture_cluster || cleanup_failed=true
   if [[ "$cluster_owned" == true ]]; then
-    run timeout 120s kind delete cluster --name "$cluster" >>"$evidence_dir/cleanup.log" 2>&1 || cleanup_failed=true
-    clusters=$(kind get clusters 2>>"$evidence_dir/cleanup.log") || cleanup_failed=true
-    [[ -z $(printf '%s\n' "$clusters" | awk -v name="$cluster" '$0 == name { print }') ]] || cleanup_failed=true
-    docker container inspect "$cluster-control-plane" >/dev/null 2>&1 && cleanup_failed=true
+    teardown_leftovers=$(run bash "$script_dir/kind-cluster-delete" "$cluster" --kubeconfig "$kubeconfig" \
+      2>>"$evidence_dir/cleanup.log") || teardown_status=$?
+    if ((teardown_status != 0 && teardown_status != 2)); then cleanup_failed=true; fi
+    if [[ -n $teardown_leftovers ]]; then printf 'Leftover kind resources:\n%s\n' "$teardown_leftovers" >&2; fi
   fi
   if [[ "$identity_owned" == true ]] && docker image inspect "$identity_image" >/dev/null 2>&1; then
     run docker image rm "$identity_image" >>"$evidence_dir/cleanup.log" 2>&1 || cleanup_failed=true
@@ -158,8 +158,9 @@ cleanup() {
   [[ "$completed" == true && "$cleanup_failed" == false ]] || { ((status != 0)) || status=1; }
   jq -n --arg source "$head" --arg cluster "$cluster" --argjson exit "$status" \
     --argjson cleanup_failed "$cleanup_failed" --argjson completed "$completed" \
+    --arg teardown_leftovers "$teardown_leftovers" \
     --argjson session_exchange "$session_exchange" --argjson session_completed "$session_completed" \
-    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_tested",expiry_outage:"not_tested"}
+    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,teardown_leftovers:($teardown_leftovers | split("\n") | map(select(length > 0))),exit_code:$exit,token_admission:"not_tested",expiry_outage:"not_tested"}
       + (if $session_exchange then {session_exchange_completed:$session_completed,host_admission:"not_tested"} else {} end)' \
     >"$evidence_dir/journey-verdict.json"
   printf 'IDENTITY-JWKS journey exit=%s cleanup_failed=%s evidence=%s\n' "$status" "$cleanup_failed" "$evidence_dir"

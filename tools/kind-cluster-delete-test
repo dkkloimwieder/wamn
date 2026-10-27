@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Offline teardown tests. Every kind and Docker invocation uses a fake command.
+set -euo pipefail
+tools=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+fixture=$(mktemp -d "${TMPDIR:-/tmp}/wamn-kind-teardown-test.XXXXXXXX")
+trap 'rm -rf -- "$fixture"' EXIT
+mkdir "$fixture/bin" "$fixture/work"
+export PATH="$fixture/bin:$PATH" FAKE_STATE="$fixture" FAKE_CLUSTER=wamn-teardown-test
+
+cat > "$fixture/bin/kind" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $* == delete\ cluster\ --name\ * ]]; then
+  count=$(cat "$FAKE_STATE/attempts")
+  echo "$((count + 1))" > "$FAKE_STATE/attempts"
+  case "$FAKE_CASE" in
+    immediate) exit 0 ;;
+    retry) ((count > 0)) && exit 0 ;;
+  esac
+  echo 'could not kill container: tried to kill container, but did not receive an exit event' >&2
+  exit 1
+elif [[ $* == 'get clusters' ]]; then
+  case "$FAKE_CASE" in
+    leftovers) echo "$FAKE_CLUSTER" ;;
+    inspection) exit 1 ;;
+  esac
+else
+  exit 64
+fi
+FAKE
+cat > "$fixture/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_STATE/docker-calls"
+case "$*" in
+  "ps -a --filter label=io.x-k8s.kind.cluster=$FAKE_CLUSTER --format {{.Names}}")
+    case "$FAKE_CASE" in
+      leftovers|container-only) echo "$FAKE_CLUSTER-control-plane" ;;
+      inspection) exit 1 ;;
+    esac ;;
+  "container inspect $FAKE_CLUSTER-"*) [[ ${FAKE_RESOURCE_FAILURE:-false} == true ]] ;;
+  "rm --force --volumes $FAKE_CLUSTER-"*) [[ ${FAKE_RESOURCE_FAILURE:-false} != true ]] || exit 2 ;;
+  'container ls --all --format {{.Names}}') printf '%s\n' "$FAKE_CLUSTER-control-plane" "$FAKE_CLUSTER-postgres" ;;
+  "volume inspect $FAKE_CLUSTER-registry-data"|"volume rm $FAKE_CLUSTER-registry-data") exit 0 ;;
+  'image ls --format {{.Repository}}:{{.Tag}}') echo "example:$FAKE_CLUSTER-receiving" ;;
+  "image rm example:$FAKE_CLUSTER-receiving") exit 0 ;;
+  *) exit 64 ;;
+esac
+FAKE
+cat > "$fixture/bin/sleep" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FAKE_STATE/backoffs"
+FAKE
+chmod +x "$fixture/bin/"*
+
+run_case() {
+  export FAKE_CASE=$1
+  local expected_status=$2 expected_attempts=$3 status=0
+  echo 0 > "$fixture/attempts"
+  : > "$fixture/backoffs"
+  bash "$tools/kind-cluster-delete" "$FAKE_CLUSTER" --kubeconfig "$fixture/work/kubeconfig" \
+    > "$fixture/output" 2> "$fixture/errors" || status=$?
+  [[ $status == "$expected_status" && $(cat "$fixture/attempts") == "$expected_attempts" ]]
+  case "$FAKE_CASE" in
+    leftovers) printf '%s\n' "$FAKE_CLUSTER" "$FAKE_CLUSTER-control-plane" > "$fixture/expected" ;;
+    container-only) printf '%s\n' "$FAKE_CLUSTER-control-plane" > "$fixture/expected" ;;
+    *) : > "$fixture/expected" ;;
+  esac
+  cmp "$fixture/expected" "$fixture/output"
+  case "$expected_attempts" in
+    1) [[ ! -s $fixture/backoffs ]] ;;
+    2) [[ $(cat "$fixture/backoffs") == 2 ]] ;;
+    3) [[ $(cat "$fixture/backoffs") == $'2\n4' ]] ;;
+  esac
+  printf '%s: exit=%s attempts=%s leftovers=%s\n' "$FAKE_CASE" "$status" "$expected_attempts" \
+    "$(paste -sd, "$fixture/output")"
+}
+run_case retry 0 2
+run_case leftovers 2 3
+run_case immediate 0 1
+run_case gone 0 3
+run_case container-only 2 3
+run_case inspection 3 3
+
+# Lifecycle scripts preserve the warning and still remove every sidecar.
+for runner in receiving-cluster-journey-run wms-cluster-journey-run rc-gate-run; do
+  export FAKE_CASE=leftovers FAKE_RESOURCE_FAILURE=false
+  echo 0 > "$fixture/attempts"
+  : > "$fixture/docker-calls"
+  bash "$tools/$runner" remove "$FAKE_CLUSTER" "$fixture/work" > "$fixture/output" 2> "$fixture/errors"
+  [[ $(cat "$fixture/work/kind-teardown-leftovers") == $'wamn-teardown-test\nwamn-teardown-test-control-plane' ]]
+  suffixes=(postgres nats)
+  if [[ $runner != rc-gate-run ]]; then suffixes+=(registry minio); fi
+  if [[ $runner == wms-cluster-journey-run ]]; then suffixes+=(demo-proxy); fi
+  for suffix in "${suffixes[@]}"; do
+    rg -q "^container inspect $FAKE_CLUSTER-$suffix$" "$fixture/docker-calls"
+  done
+  export FAKE_RESOURCE_FAILURE=true
+  status=0
+  bash "$tools/$runner" remove "$FAKE_CLUSTER" "$fixture/work" > "$fixture/output" 2> "$fixture/errors" || status=$?
+  [[ $status == 1 ]]
+  printf '%s: leftover-only exit=0; sidecar-failure exit=%s\n' "$runner" "$status"
+done
+
+export FAKE_CLUSTER=wamn-delivery-teardowntest FAKE_RESOURCE_FAILURE=false
+for FAKE_CASE in immediate leftovers; do
+  export FAKE_CASE
+  echo 0 > "$fixture/attempts"
+  : > "$fixture/docker-calls"
+  status=0
+  TMPDIR="$fixture/work" bash "$tools/delivery-owned" remove-kept "$FAKE_CLUSTER" \
+    > "$fixture/output" 2> "$fixture/errors" || status=$?
+  expected=0
+  if [[ $FAKE_CASE == leftovers ]]; then expected=2; fi
+  [[ $status == "$expected" ]]
+  for action in "rm --force --volumes $FAKE_CLUSTER-postgres" \
+    "volume rm $FAKE_CLUSTER-registry-data" "image rm example:$FAKE_CLUSTER-receiving"; do
+    rg -q -F -x -- "$action" "$fixture/docker-calls"
+  done
+  printf 'remove-kept %s: exit=%s other cleanup retained\n' "$FAKE_CASE" "$status"
+done
+export FAKE_CLUSTER=wamn-teardown-test
+
+# Exercise the identity EXIT handler alone, without running its cluster cases.
+sed -n '/^cleanup() {$/,/^trap cleanup EXIT$/p' "$tools/identity-jwks-journey-run" \
+  | sed '$d' > "$fixture/identity-cleanup"
+export FAKE_CASE=leftovers FAKE_RESOURCE_FAILURE=false
+for case_status in 0 7; do
+  evidence_dir="$fixture/identity-$case_status"
+  mkdir "$evidence_dir"
+  work_dir=$(mktemp -d /tmp/wamn-identity-jwks.XXXXXXXX)
+  status=0
+  bash -c '
+    set -euo pipefail
+    script_dir=$1; evidence_dir=$2; work_dir=$3
+    cluster=$FAKE_CLUSTER; kubeconfig=$work_dir/kubeconfig
+    cluster_owned=true; identity_owned=false; gates_owned=false
+    head=fake; completed=true; session_exchange=false; session_completed=false
+    capture_cluster() { return 0; }
+    run() { "$@"; }
+    source "$4"
+    set +e
+    (exit "$5")
+    cleanup
+  ' bash "$tools" "$evidence_dir" "$work_dir" "$fixture/identity-cleanup" "$case_status" \
+    > "$fixture/output" 2> "$fixture/errors" || status=$?
+  [[ $status == "$case_status" && ! -d $work_dir ]]
+  jq -e --argjson status "$case_status" \
+    '.exit_code == $status and .completed and (.cleanup_failed == false)
+      and .teardown_leftovers == ["wamn-teardown-test", "wamn-teardown-test-control-plane"]' \
+    "$evidence_dir/journey-verdict.json" >/dev/null
+  printf 'identity cleanup: cases-exit=%s run-exit=%s result records leftovers\n' "$case_status" "$status"
+done

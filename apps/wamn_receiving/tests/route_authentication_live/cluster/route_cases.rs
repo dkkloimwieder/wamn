@@ -352,6 +352,7 @@ pub(super) async fn finish(
         serde_json::to_vec_pretty(&json!({
             "cluster":cluster.resources.name,"passed":result.is_ok(),
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
+            "teardown_leftovers":cluster.resources.teardown_leftovers,
         }))?,
     )?;
     result?;

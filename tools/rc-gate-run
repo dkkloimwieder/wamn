@@ -47,7 +47,9 @@ case "${1-}" in
   remove)
     cluster=$2; work=$3; shift 3
     status=0
-    KUBECONFIG="$work/kubeconfig" kind delete cluster --name "$cluster" || status=1
+    leftovers=$(KUBECONFIG="$work/kubeconfig" bash "$(dirname -- "${BASH_SOURCE[0]}")/kind-cluster-delete" "$cluster") || status=$?
+    printf '%s' "$leftovers" > "$work/kind-teardown-leftovers" || status=1
+    if ((status == 2)); then status=0; fi
     for container in "$cluster-postgres" "$cluster-nats"; do
       if docker container inspect "$container" >/dev/null 2>&1; then docker rm --force --volumes "$container" >/dev/null || status=1; fi
     done

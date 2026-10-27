@@ -44,13 +44,20 @@ struct ClusterGuard {
 
 impl Drop for ClusterGuard {
     fn drop(&mut self) {
-        match Command::new("kind")
-            .args(["delete", "cluster", "--name", &self.name])
+        match Command::new("bash")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tools/kind-cluster-delete"))
+            .arg(&self.name)
             .stdin(Stdio::null())
-            .status()
+            .output()
         {
-            Ok(status) if status.success() => {}
-            Ok(status) => eprintln!("delete kind cluster {} exited {status}", self.name),
+            Ok(output) => {
+                eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                let _ = std::fs::write(
+                    Path::new("/var/tmp").join(&self.name).join("kind-teardown.json"),
+                    json!({"exit_code":output.status.code(),
+                        "teardown_leftovers":String::from_utf8_lossy(&output.stdout).lines().collect::<Vec<_>>()}).to_string(),
+                );
+            }
             Err(error) => eprintln!("delete kind cluster {}: {error}", self.name),
         }
         match Command::new("docker")

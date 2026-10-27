@@ -44,7 +44,7 @@ if [[ $action == remove-kept ]]; then
   kept=${2:?kept delivery cluster name}
   [[ $kept =~ ^wamn-delivery-[a-z0-9]{1,24}$ ]] || { printf 'A kept delivery cluster name is required.\n' >&2; exit 64; }
   status=0
-  kind delete cluster --name "$kept" || status=$?
+  bash "$repository/tools/kind-cluster-delete" "$kept" || status=$?
   for container in $(docker container ls --all --format '{{.Names}}'); do
     [[ $container == "$kept"-* ]] || continue
     docker rm --force --volumes "$container" || status=$?

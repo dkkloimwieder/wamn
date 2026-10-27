@@ -99,8 +99,9 @@ struct Owned {
 impl Drop for Owned {
     fn drop(&mut self) {
         if self.cluster_created {
-            let _ = Command::new("kind")
-                .args(["delete", "cluster", "--name", &self.cluster, "--kubeconfig"])
+            let _ = Command::new("bash")
+                .arg(repository_root().join("tools/kind-cluster-delete"))
+                .args([&self.cluster, "--kubeconfig"])
                 .arg(self.work.join("kubeconfig"))
                 .status();
         }

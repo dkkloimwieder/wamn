@@ -21,6 +21,7 @@ pub(super) struct Resources {
     pub repository: PathBuf,
     pub work: PathBuf,
     pub evidence: PathBuf,
+    pub teardown_leftovers: Vec<String>,
     pub name: String,
     pub lifecycle: PathBuf,
     pub host_image: String,
@@ -72,6 +73,7 @@ pub(super) async fn prepare(
         repository: repository.to_owned(),
         work,
         evidence: evidence.to_owned(),
+        teardown_leftovers: Vec::new(),
         host_image: super::super::delivery::image_reference(&candidate.images.host)?,
         gates_image: gates_image
             .then(|| super::super::delivery::image_reference(&candidate.qualification.gates))
@@ -105,6 +107,7 @@ pub(super) fn delivery(repository: &Path, work: &Path, evidence: &Path, name: &s
         repository: repository.to_owned(),
         work: work.to_owned(),
         evidence: evidence.to_owned(),
+        teardown_leftovers: Vec::new(),
         name: name.to_owned(),
         lifecycle: repository.join("tools/receiving-cluster-journey-run"),
         host_image: format!("wamn-host:{name}"),
@@ -397,6 +400,17 @@ pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
                 .arg(&cluster.work),
         )
         .await?;
+        cluster.teardown_leftovers =
+            fs::read_to_string(cluster.work.join("kind-teardown-leftovers"))?
+                .lines()
+                .map(str::to_owned)
+                .collect();
+        if !cluster.teardown_leftovers.is_empty() {
+            eprintln!(
+                "Receiving leftover kind resources: {:?}",
+                cluster.teardown_leftovers
+            );
+        }
         cluster.owned = false;
     }
     for action in ["docker-version", "clusters", "containers", "images"] {
@@ -404,7 +418,14 @@ pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
             checked(Command::new(&cluster.lifecycle).args([action, &cluster.name])).await?;
         if action != "docker-version" {
             ensure!(
-                !String::from_utf8_lossy(&output).contains(&cluster.name),
+                !String::from_utf8_lossy(&output).lines().any(|line| {
+                    let name = line.trim_matches('"');
+                    name.contains(&cluster.name)
+                        && !cluster
+                            .teardown_leftovers
+                            .iter()
+                            .any(|leftover| leftover == name)
+                }),
                 "an owned Receiving resource remains after cleanup"
             );
         }
@@ -428,8 +449,12 @@ impl Drop for Resources {
                 .arg(&self.name)
                 .arg(&self.work)
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::inherit())
                 .status();
+            let _ = fs::copy(
+                self.work.join("kind-teardown-leftovers"),
+                self.evidence.join("kind-teardown-leftovers"),
+            );
             if !status.is_ok_and(|status| status.success()) {
                 eprintln!(
                     "Receiving cleanup failed for {}; private files remain at {}",

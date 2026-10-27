@@ -96,6 +96,7 @@ pub async fn run(args: RcArgs) -> anyhow::Result<()> {
             "passed":result.is_ok() && cleanup.is_ok() && unchanged.is_ok(),
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
             "cleanup":cleanup.as_ref().err().map(|error| format!("{error:#}")),
+            "teardown_leftovers":cleanup.as_ref().ok(),
             "source_changed":unchanged.as_ref().err().map(|error| format!("{error:#}")),
             "selected_tests":["socket-test","trace-test"],
             "socket_test_completed":resources.evidence.join("socket-test-verdict.json").is_file(),

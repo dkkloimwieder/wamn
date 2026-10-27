@@ -412,10 +412,24 @@ impl Run {
                     .await;
             }
         }
-        let _ = Command::new("kind")
-            .args(["delete", "cluster", "--name", &self.cluster])
+        match Command::new("bash")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tools/kind-cluster-delete"))
+            .arg(&self.cluster)
+            .arg("--kubeconfig")
+            .arg(self.work.join("kubeconfig"))
             .output()
-            .await;
+            .await
+        {
+            Ok(output) => {
+                eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                let _ = std::fs::write(
+                    self.work.join("kind-teardown.json"),
+                    json!({"exit_code":output.status.code(),
+                        "teardown_leftovers":String::from_utf8_lossy(&output.stdout).lines().collect::<Vec<_>>()}).to_string(),
+                );
+            }
+            Err(error) => eprintln!("delete kind cluster {}: {error}", self.cluster),
+        }
         let _ = Command::new("docker")
             .args([
                 "rm",

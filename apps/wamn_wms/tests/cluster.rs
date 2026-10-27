@@ -97,7 +97,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     // session issuer from this image, as the Receiving cases do.
     let identity_image = crate::delivery::image_reference(&candidate.qualification.identity)?;
     let lifecycle = repository.join("tools/wms-cluster-journey-run");
-    deployment::preflight(&lifecycle, &cluster, &image).await?;
+    deployment::preflight(&lifecycle, &cluster, &image, &[]).await?;
     // WAMN_WMS_EVIDENCE_DIR names an existing parent directory. The parent is
     // the system temporary directory when the variable is not set.
     let parent =
@@ -230,7 +230,16 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             .arg(work.path()),
     )
     .await;
-    let absent = deployment::preflight(&lifecycle, &cluster, &image).await;
+    let teardown_leftovers: Vec<String> =
+        fs::read_to_string(work.path().join("kind-teardown-leftovers"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+    if !teardown_leftovers.is_empty() {
+        eprintln!("WMS leftover kind resources: {teardown_leftovers:?}");
+    }
+    let absent = deployment::preflight(&lifecycle, &cluster, &image, &teardown_leftovers).await;
     let work_path = work.path().to_path_buf();
     drop(work);
     let private_files_removed = !work_path.exists();
@@ -243,7 +252,8 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             "startup":matches!(case, Case::Startup),"demo":browser,
             "failure_capture":failure_capture.as_ref().err().map(|error|format!("{error:#}")),
             "failure":match &run { Ok(Err(error)) => Some(format!("{error:#}")), Err(_) => Some("test panicked".to_owned()), _ => None },
-            "resource_cleanup":removed.is_ok() && absent.is_ok(),
+            "resource_cleanup":removed.is_ok() && absent.is_ok() && teardown_leftovers.is_empty(),
+            "teardown_leftovers":teardown_leftovers,
             "private_files_removed":private_files_removed,
         }),
     )?;

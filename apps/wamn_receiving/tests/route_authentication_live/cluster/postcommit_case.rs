@@ -42,6 +42,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             "schema":"wamn-receiving-postcommit/v1",
             "verdict":if result.is_ok() { "pass" } else { "fail" },
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
+            "teardown_leftovers":cluster.resources.teardown_leftovers,
             "passing_arms":if result.is_ok() { vec!["unchanged-overlay-routes", "schema-requirements-observed",
                 "duplicate-handler-delivery", "retry-exhaustion-advisory", "independent-event-progress"] } else { Vec::new() },
         }))?,

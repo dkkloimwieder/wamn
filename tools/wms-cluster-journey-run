@@ -119,10 +119,13 @@ case "$action" in
     status=0
     kubeconfig=()
     [[ -z $work ]] || kubeconfig=(--kubeconfig "$work/kubeconfig")
-    kind delete cluster --name "$cluster" "${kubeconfig[@]}" || status=$?
+    leftovers=$(bash "$(dirname -- "${BASH_SOURCE[0]}")/kind-cluster-delete" "$cluster" "${kubeconfig[@]}") || status=$?
+    if [[ -n $work ]]; then printf '%s' "$leftovers" > "$work/kind-teardown-leftovers" || status=1; fi
+    # Leftovers are reported by the Rust caller without failing passing cases.
+    if ((status == 2)); then status=0; fi
     for suffix in postgres registry nats minio demo-proxy; do
       if docker container inspect "$cluster-$suffix" >/dev/null 2>&1; then
-        docker rm --force --volumes "$cluster-$suffix" || status=$?
+        docker rm --force --volumes "$cluster-$suffix" || status=1
       fi
     done
     exit "$status"

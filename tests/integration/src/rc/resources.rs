@@ -187,7 +187,8 @@ pub(super) async fn diagnostics(resources: &Resources) {
     }
 }
 
-pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<()> {
+pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<Vec<String>> {
+    let mut teardown_leftovers = Vec::new();
     if resources.owned {
         recorded(
             resources,
@@ -201,6 +202,13 @@ pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<()> {
                 .arg(&resources.postgres_image),
         )
         .await?;
+        teardown_leftovers = fs::read_to_string(resources.work.join("kind-teardown-leftovers"))?
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        if !teardown_leftovers.is_empty() {
+            eprintln!("RC leftover kind resources: {teardown_leftovers:?}");
+        }
         let clusters = recorded(
             resources,
             "cleanup-clusters",
@@ -210,7 +218,8 @@ pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<()> {
         ensure!(
             !String::from_utf8_lossy(&clusters)
                 .lines()
-                .any(|line| line == CLUSTER),
+                .any(|line| line == CLUSTER
+                    && !teardown_leftovers.iter().any(|leftover| leftover == line)),
             "RC cluster survived cleanup"
         );
         let containers = recorded(
@@ -251,8 +260,9 @@ pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<()> {
     save(
         resources,
         "cleanup.json",
-        &json!({"passed":true,"cluster":CLUSTER,"images":"exact","containers":["wamn-rc-postgres","wamn-rc-nats"]}),
-    )
+        &json!({"passed":teardown_leftovers.is_empty(),"cluster":CLUSTER,"teardown_leftovers":teardown_leftovers,"images":"exact","containers":["wamn-rc-postgres","wamn-rc-nats"]}),
+    )?;
+    Ok(teardown_leftovers)
 }
 
 impl Drop for Resources {
@@ -267,8 +277,12 @@ impl Drop for Resources {
                 .arg(&self.postgres_image)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::inherit())
                 .status();
+            let _ = fs::copy(
+                self.work.join("kind-teardown-leftovers"),
+                self.evidence.join("kind-teardown-leftovers"),
+            );
         }
         let _ = fs::remove_dir_all(&self.work);
     }

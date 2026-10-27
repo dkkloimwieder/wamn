@@ -14,18 +14,27 @@ use wamn_gate_harness::journey::JourneyDocument;
 
 use super::bootstrap::{self, BootstrapFiles};
 
-pub(super) async fn preflight(lifecycle: &Path, cluster: &str, image: &str) -> anyhow::Result<()> {
+pub(super) async fn preflight(
+    lifecycle: &Path,
+    cluster: &str,
+    image: &str,
+    teardown_leftovers: &[String],
+) -> anyhow::Result<()> {
     checked(Command::new(lifecycle).args(["docker-version", cluster])).await?;
     let clusters = checked(Command::new(lifecycle).args(["clusters", cluster])).await?;
     ensure!(
         !String::from_utf8(clusters)?
             .lines()
-            .any(|name| name == cluster),
+            .any(|name| name == cluster
+                && !teardown_leftovers.iter().any(|leftover| leftover == name)),
         "the requested kind cluster already exists"
     );
     let containers = checked(Command::new(lifecycle).args(["containers", cluster])).await?;
     for line in String::from_utf8(containers)?.lines() {
         let name: String = serde_json::from_str(line)?;
+        if teardown_leftovers.contains(&name) {
+            continue;
+        }
         ensure!(
             ![
                 "postgres",
