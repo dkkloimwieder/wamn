@@ -80,7 +80,7 @@ function App() {
   const rows = makeRows(size, seed);
   const random = seeded(seed + 1000);
   // The page keeps its own copy of the rows to draw changes from.
-  const current = new Map(rows.map((row) => [row.id, row]));
+  const current = new Map<string | number, PackagingRow>(rows.map((row) => [row.id, row]));
   let next = size;
   const mounted: Mounted[] = [];
 

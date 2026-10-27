@@ -53,7 +53,7 @@ describe("shapes A and B", () => {
     expect(shown(b.totals().total)).toBe(exactSum(rows.map((row) => row.rowVersion)));
 
     const random = seeded(3);
-    const current = new Map(rows.map((row) => [row.id, row]));
+    const current = new Map<string | number, PackagingRow>(rows.map((row) => [row.id, row]));
     for (let batch = 0; batch < 3; batch++) {
       const changes = randomChanges([...current.values()], random, 1_000 + batch * 20);
       for (const change of changes)
