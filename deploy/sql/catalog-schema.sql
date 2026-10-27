@@ -1,3 +1,8 @@
+-- Package and release facts carry the four NOT NULL record history stamps.
+-- Their triggers use wamn_history.stamp_row(), installed by CATALOG_SCHEMA_SQL.
+-- Package application binds wamn:apply-package; environment and connection
+-- provisioning bind wamn:provisioning. These tables keep no history log.
+
 CREATE TABLE catalog.packages (
     tenant_id          text        NOT NULL CHECK (tenant_id <> ''),
     package_id         text        NOT NULL,
@@ -6,6 +11,10 @@ CREATE TABLE catalog.packages (
     registered_at      timestamptz NOT NULL DEFAULT now(),
     -- NULL: wamn dev applied a working tree. Release verbs refuse that row.
     artifact_digest    text,
+    created_at         timestamptz NOT NULL,
+    created_by         uuid        NOT NULL,
+    updated_at         timestamptz NOT NULL,
+    updated_by         uuid        NOT NULL,
     CONSTRAINT packages_pkey PRIMARY KEY (tenant_id, package_id, package_version),
     CONSTRAINT packages_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
@@ -27,6 +36,11 @@ CREATE TABLE catalog.packages (
         CHECK (artifact_digest IS NULL OR artifact_digest ~ '^sha256:[0-9a-f]{64}$')
 );
 
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.packages
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
 CREATE UNIQUE INDEX packages_one_successor_per_version
     ON catalog.packages (tenant_id, package_id, predecessor_version)
     WHERE predecessor_version IS NOT NULL;
@@ -39,6 +53,10 @@ CREATE TABLE catalog.package_migrations (
     relative_path   text        NOT NULL CHECK (relative_path ~ '^migrations/[0-9]{4}_[a-z0-9_]+\.sql$'),
     sha256          text        NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
     applied_at      timestamptz NOT NULL DEFAULT now(),
+    created_at      timestamptz NOT NULL,
+    created_by      uuid        NOT NULL,
+    updated_at      timestamptz NOT NULL,
+    updated_by      uuid        NOT NULL,
     CONSTRAINT package_migrations_pkey
         PRIMARY KEY (tenant_id, package_id, package_version, ordinal),
     CONSTRAINT package_migrations_path_key
@@ -47,6 +65,11 @@ CREATE TABLE catalog.package_migrations (
         FOREIGN KEY (tenant_id, package_id, package_version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version)
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.package_migrations
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Definition identity is independent from the OID-keyed application entity
 -- map: shared relations retain their source package while fields and named
@@ -64,6 +87,10 @@ CREATE TABLE catalog.package_definition_owners (
     owner_package_id       text    NOT NULL
         CHECK (owner_package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     client_field_extensible boolean NOT NULL DEFAULT false,
+    created_at             timestamptz NOT NULL,
+    created_by             uuid        NOT NULL,
+    updated_at             timestamptz NOT NULL,
+    updated_by             uuid        NOT NULL,
     CONSTRAINT package_definition_owners_pkey PRIMARY KEY (
         tenant_id, schema_name, relation_name, definition_type, definition_name
     ),
@@ -74,6 +101,11 @@ CREATE TABLE catalog.package_definition_owners (
         definition_type = 'relation' OR NOT client_field_extensible
     )
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.package_definition_owners
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE UNIQUE INDEX package_definition_owners_synchronization_function
     ON catalog.package_definition_owners (tenant_id, schema_name, definition_name)
@@ -89,10 +121,19 @@ CREATE TABLE catalog.releases (
     manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     canonical_bytes bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
     recorded_at     timestamptz NOT NULL DEFAULT now(),
+    created_at      timestamptz NOT NULL,
+    created_by      uuid        NOT NULL,
+    updated_at      timestamptz NOT NULL,
+    updated_by      uuid        NOT NULL,
     CONSTRAINT releases_pkey PRIMARY KEY (tenant_id, manifest_digest),
     CONSTRAINT releases_exact_hash
         CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.releases
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Immutable release membership is the sole package-coordinate seal. Both the
 -- release writer and the migration table serialize on the package rows, so
@@ -176,9 +217,18 @@ CREATE TABLE catalog.connection_requirements (
     store_alias      text  NOT NULL CHECK (store_alias <> ''),
     requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
     requirement_hash text  NOT NULL CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'),
+    created_at       timestamptz NOT NULL,
+    created_by       uuid        NOT NULL,
+    updated_at       timestamptz NOT NULL,
+    updated_by       uuid        NOT NULL,
     CONSTRAINT connection_requirements_pkey
         PRIMARY KEY (tenant_id, component_digest, store_alias)
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.connection_requirements
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE catalog.connection_instances (
     tenant_id        text        NOT NULL CHECK (tenant_id <> ''),
@@ -206,13 +256,21 @@ CREATE TABLE catalog.connection_generations (
     definition_hash      text        NOT NULL CHECK (definition_hash ~ '^sha256:[0-9a-f]{64}$'),
     -- NULL for a gcs blobstore, which signs with the host pod's service account.
     credential_set_handle text       CHECK (credential_set_handle <> ''),
-    created_at           timestamptz NOT NULL DEFAULT now(),
+    created_at           timestamptz NOT NULL,
+    created_by           uuid        NOT NULL,
+    updated_at           timestamptz NOT NULL,
+    updated_by           uuid        NOT NULL,
     CONSTRAINT connection_generations_pkey
         PRIMARY KEY (tenant_id, environment, instance_id, generation),
     CONSTRAINT connection_generations_instance_fkey
         FOREIGN KEY (tenant_id, environment, instance_id)
         REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.connection_generations
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 ALTER TABLE catalog.connection_instances
     ADD CONSTRAINT connection_instances_active_generation_fkey
@@ -234,6 +292,10 @@ CREATE TABLE catalog.connection_bindings (
     validation_status    text        NOT NULL CHECK (validation_status IN ('valid', 'invalid')),
     validation_hash      text        NOT NULL CHECK (validation_hash ~ '^sha256:[0-9a-f]{64}$'),
     bound_at             timestamptz NOT NULL DEFAULT now(),
+    created_at           timestamptz NOT NULL,
+    created_by           uuid        NOT NULL,
+    updated_at           timestamptz NOT NULL,
+    updated_by           uuid        NOT NULL,
     CONSTRAINT connection_bindings_pkey
         PRIMARY KEY (tenant_id, manifest_digest, component_digest, store_alias, package_id),
     CONSTRAINT connection_bindings_release_fkey
@@ -247,6 +309,11 @@ CREATE TABLE catalog.connection_bindings (
         FOREIGN KEY (tenant_id, environment, instance_id)
         REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.connection_bindings
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE FUNCTION catalog.guard_connection_instance_update()
 RETURNS trigger
@@ -283,9 +350,18 @@ CREATE TABLE catalog.wiring_tombstones (
     wiring_id   text        NOT NULL CHECK (wiring_id <> ''),
     retired_at  timestamptz NOT NULL DEFAULT now(),
     reason      text        NOT NULL CHECK (reason <> ''),
+    created_at  timestamptz NOT NULL,
+    created_by  uuid        NOT NULL,
+    updated_at  timestamptz NOT NULL,
+    updated_by  uuid        NOT NULL,
     CONSTRAINT wiring_tombstones_pkey
         PRIMARY KEY (tenant_id, package_id, environment, wiring_id)
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.wiring_tombstones
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- One version of one workflow of an environment (docs/plan/workflows.md R8).
 -- The control connection writes it after `author_workflow` gates the graph
@@ -380,6 +456,10 @@ CREATE TABLE catalog.package_upgrade_qualifications (
     recorded_at                 timestamptz NOT NULL DEFAULT now(),
     package_artifact_digest     text        NOT NULL
         CHECK (package_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    created_at                  timestamptz NOT NULL,
+    created_by                  uuid        NOT NULL,
+    updated_at                  timestamptz NOT NULL,
+    updated_by                  uuid        NOT NULL,
     CONSTRAINT package_upgrade_qualifications_pkey
         PRIMARY KEY (tenant_id, package_id, candidate_package_version),
     CONSTRAINT package_upgrade_qualifications_package_fkey
@@ -391,6 +471,11 @@ CREATE TABLE catalog.package_upgrade_qualifications (
     CONSTRAINT package_upgrade_qualifications_exact_hash
         CHECK (result_sha256 = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.package_upgrade_qualifications
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Stage progress survives committed batches before the package version advances.
 CREATE TABLE catalog.package_upgrade_stages (
@@ -404,8 +489,17 @@ CREATE TABLE catalog.package_upgrade_stages (
     package_artifact_digest    text NOT NULL CHECK (package_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
     predecessor_release_digest text NOT NULL CHECK (predecessor_release_digest ~ '^sha256:[0-9a-f]{64}$'),
     evidence_digest            text NOT NULL CHECK (evidence_digest ~ '^sha256:[0-9a-f]{64}$'),
+    created_at           timestamptz NOT NULL,
+    created_by           uuid        NOT NULL,
+    updated_at           timestamptz NOT NULL,
+    updated_by           uuid        NOT NULL,
     CONSTRAINT package_upgrade_stages_pkey PRIMARY KEY (tenant_id, package_id, package_version)
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.package_upgrade_stages
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE FUNCTION catalog.guard_package_upgrade_stage_change()
 RETURNS trigger
@@ -451,11 +545,20 @@ CREATE TABLE catalog.package_floors (
     package_id  text        NOT NULL,
     version     text        NOT NULL,
     recorded_at timestamptz NOT NULL DEFAULT now(),
+    created_at  timestamptz NOT NULL,
+    created_by  uuid        NOT NULL,
+    updated_at  timestamptz NOT NULL,
+    updated_by  uuid        NOT NULL,
     CONSTRAINT package_floors_pkey PRIMARY KEY (tenant_id, package_id),
     CONSTRAINT package_floors_package_fkey
         FOREIGN KEY (tenant_id, package_id, version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version)
 );
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.package_floors
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Tenant floors are one mechanism applied to the complete current relation
 -- set. The server catalog, rather than checked-in SQL text, shows the result.

@@ -253,6 +253,13 @@ mod tests {
             .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await
             .unwrap();
+        client
+            .batch_execute(&format!(
+                "SELECT set_config('app.user_id', '{}', false)",
+                wamn_control_provision::PlatformComponent::ApplyPackage.principal_id()
+            ))
+            .await
+            .unwrap();
         client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version,artifact_digest) VALUES ($1,$2,$3,$4,$5)",
             &[&TENANT,&predecessor.package_id,&predecessor.package_version,&predecessor.predecessor_version,&predecessor.artifact_digest]).await.unwrap();
         for migration in &predecessor.migrations {
@@ -327,6 +334,18 @@ mod tests {
             assert_eq!(abandoned.installed_version, predecessor.package_version);
             assert_eq!(abandoned.cursor, json!({"id":1}));
             assert_eq!(abandoned.completed_batches, 1);
+            let row = client
+                .query_one(
+                    "SELECT created_by::text,updated_by::text FROM catalog.package_upgrade_stages",
+                    &[],
+                )
+                .await
+                .unwrap();
+            let actor = wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string();
+            assert_eq!(row.get::<_, String>(0), actor);
+            assert_eq!(row.get::<_, String>(1), actor);
         }
         let rows = client
             .query("SELECT id,converted FROM retained ORDER BY id", &[])

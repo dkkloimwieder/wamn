@@ -22,6 +22,7 @@ async fn register(
     predecessor: Option<&str>,
 ) -> anyhow::Result<bool> {
     let tx = client.transaction().await?;
+    crate::apply_package::bind_apply_package_principal(&tx).await?;
     let inserted = register_package(
         &tx,
         TENANT,
@@ -102,6 +103,9 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
                 _ => "3.0.0",
             };
             let tx = first.transaction().await.unwrap();
+            crate::apply_package::bind_apply_package_principal(&tx)
+                .await
+                .unwrap();
             assert!(
                 register_package(
                     &tx,
@@ -132,6 +136,9 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
         // Exact retries of older versions remain valid after a successor is installed.
         assert!(!register(&mut first, "1.0.0", &hash, None).await.unwrap());
         let tx = first.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         assert!(
             register_package(
                 &tx,

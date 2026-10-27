@@ -76,6 +76,14 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
     assert_eq!(result.migrations_applied, 2);
     let owners: i64 = fixture.source.query_one("SELECT count(*) FROM catalog.package_definition_owners WHERE tenant_id=$1 AND owner_package_id='platform_fixture' AND schema_name='inventory' AND relation_name='widget_tag' AND definition_type IN ('synchronization_function','synchronization_trigger')", &[&TENANT]).await.unwrap().get(0);
     assert_eq!(owners, 2);
+    let stamped: bool = fixture.source.query_one(
+        "SELECT bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at) FROM catalog.package_definition_owners WHERE definition_type IN ('synchronization_function','synchronization_trigger')",
+        &[&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()],
+    ).await.unwrap().get(0);
+    assert!(
+        stamped,
+        "synchronization ownership stamps wamn:apply-package"
+    );
     let retained = fixture
         .source
         .query_one(

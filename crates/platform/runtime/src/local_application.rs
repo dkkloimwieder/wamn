@@ -871,7 +871,7 @@ mod tests {
         );
         let definition = serde_json::json!({"primary-authority":"https://example.invalid","tls-verification":"verify-authority"});
         let definition_hash = crate::connection_generation::definition_hash(&definition);
-        client.batch_execute("BEGIN; SELECT set_config('app.tenant','tenant-a',true); INSERT INTO catalog.connection_instances(tenant_id,environment,instance_id,requirement_type,contract,org_connection_name) VALUES ('tenant-a','dev','erp','http','wamn:connection/http@0.1.0','erp')").await.unwrap();
+        client.batch_execute("BEGIN; SELECT set_config('app.tenant','tenant-a',true), set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true), set_config('app.operation','admin:seed-local-binding',true); INSERT INTO catalog.connection_instances(tenant_id,environment,instance_id,requirement_type,contract,org_connection_name) VALUES ('tenant-a','dev','erp','http','wamn:connection/http@0.1.0','erp')").await.unwrap();
         client
             .execute(
                 wamn_schema_control::connections::insert_connection_generation_sql(),

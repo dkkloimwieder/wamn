@@ -246,6 +246,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tokio_postgres::NoTls;
+    use wamn_test_infrastructure::record_history::assert_stamp;
 
     fn identity(version: &str) -> StageIdentity {
         StageIdentity {
@@ -276,7 +277,8 @@ mod tests {
             .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await
             .unwrap();
-        let catalog = "SELECT jsonb_build_object(            'columns', (SELECT jsonb_agg(jsonb_build_array(attname,format_type(atttypid,atttypmod),attnotnull) ORDER BY attnum) FROM pg_attribute WHERE attrelid='catalog.package_upgrade_stages'::regclass AND attnum>0 AND NOT attisdropped),            'constraints', (SELECT jsonb_agg(pg_get_constraintdef(oid) ORDER BY conname) FROM pg_constraint WHERE conrelid='catalog.package_upgrade_stages'::regclass),            'policies', (SELECT jsonb_agg(jsonb_build_array(polname,polroles,pg_get_expr(polqual,polrelid),pg_get_expr(polwithcheck,polrelid)) ORDER BY polname) FROM pg_policy WHERE polrelid='catalog.package_upgrade_stages'::regclass),            'security', (SELECT jsonb_build_array(relrowsecurity,relforcerowsecurity,relowner::regrole::text,relacl::text) FROM pg_class WHERE oid='catalog.package_upgrade_stages'::regclass),            'triggers', (SELECT jsonb_agg(pg_get_triggerdef(oid) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='catalog.package_upgrade_stages'::regclass AND NOT tgisinternal))";
+        let catalog = "SELECT jsonb_build_object(            'columns', (SELECT jsonb_agg(jsonb_build_array(attname,format_type(atttypid,atttypmod),attnotnull) ORDER BY attnum) FROM pg_attribute WHERE attrelid='catalog.package_upgrade_stages'::regclass AND attnum>0 AND NOT attisdropped AND attname NOT IN ('created_at','created_by','updated_at','updated_by')),            'constraints', (SELECT jsonb_agg(pg_get_constraintdef(oid) ORDER BY conname) FROM pg_constraint WHERE conrelid='catalog.package_upgrade_stages'::regclass AND NOT (contype='n' AND conkey && ARRAY(SELECT attnum FROM pg_attribute WHERE attrelid=conrelid AND attname IN ('created_at','created_by','updated_at','updated_by')))),            'policies', (SELECT jsonb_agg(jsonb_build_array(polname,polroles,pg_get_expr(polqual,polrelid),pg_get_expr(polwithcheck,polrelid)) ORDER BY polname) FROM pg_policy WHERE polrelid='catalog.package_upgrade_stages'::regclass),            'security', (SELECT jsonb_build_array(relrowsecurity,relforcerowsecurity,relowner::regrole::text,relacl::text) FROM pg_class WHERE oid='catalog.package_upgrade_stages'::regclass),            'triggers', (SELECT jsonb_agg(pg_get_triggerdef(oid) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='catalog.package_upgrade_stages'::regclass AND NOT tgisinternal AND tgname <> 'wamn_record_history_stamp'))";
+        // Historical migrations retain their prior carrier; stamps belong to fresh databases.
         let fresh: Value = client.query_one(catalog, &[]).await.unwrap().get(0);
         client.batch_execute("DROP TABLE catalog.package_upgrade_stages; DROP FUNCTION catalog.guard_package_upgrade_stage_change(); DROP INDEX catalog.package_definition_owners_synchronization_function; ALTER TABLE catalog.package_upgrade_qualifications DROP COLUMN package_artifact_digest; ALTER TABLE catalog.connection_requirements ADD CONSTRAINT connection_requirements_component_fkey CHECK (true);").await.unwrap();
         for migration in [
@@ -291,6 +293,9 @@ mod tests {
         assert_eq!(fresh, migrated);
         let identity = identity("2.0.0");
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         open(&tx, "stage-test", &identity, &Value::Null)
             .await
             .unwrap();
@@ -305,6 +310,9 @@ mod tests {
             "DELETE FROM catalog.package_upgrade_stages",
         ] {
             let tx = client.transaction().await.unwrap();
+            crate::apply_package::bind_apply_package_principal(&tx)
+                .await
+                .unwrap();
             let error = tx.batch_execute(sql).await.unwrap_err();
             assert_eq!(
                 error.code(),
@@ -313,9 +321,15 @@ mod tests {
             tx.rollback().await.unwrap();
         }
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         complete(&tx, "stage-test", &identity).await.unwrap();
         tx.commit().await.unwrap();
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         let error = tx
             .batch_execute("UPDATE catalog.package_upgrade_stages SET status='in_progress'")
             .await
@@ -342,16 +356,44 @@ mod tests {
             .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await
             .unwrap();
+        client
+            .batch_execute(&format!(
+                "SELECT set_config('app.user_id', '{}', false)",
+                wamn_control_provision::PlatformComponent::ApplyPackage.principal_id()
+            ))
+            .await
+            .unwrap();
         client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false); INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('stage-test','fixture','1.0.0','sha256:' || repeat('c',64));").await.unwrap();
         let identity = identity("2.0.0");
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         let initial = open(&tx, "stage-test", &identity, &Value::Null)
             .await
             .unwrap();
         assert_eq!(initial.cursor, Value::Null);
         tx.commit().await.unwrap();
+        assert_stamp(
+            &client,
+            "catalog.package_upgrade_stages",
+            &format!(
+                "tenant_id = 'stage-test' AND package_version = '{}'",
+                identity.package_version
+            ),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+        )
+        .await;
 
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         open(&tx, "stage-test", &identity, &json!("ignored on resume"))
             .await
             .unwrap();
@@ -363,6 +405,9 @@ mod tests {
             .unwrap();
         tx.rollback().await.unwrap();
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         assert_eq!(
             open(&tx, "stage-test", &identity, &Value::Null)
                 .await
@@ -382,7 +427,25 @@ mod tests {
             .await
             .unwrap();
         tx.commit().await.unwrap();
+        assert_stamp(
+            &client,
+            "catalog.package_upgrade_stages",
+            &format!(
+                "tenant_id = 'stage-test' AND package_version = '{}'",
+                identity.package_version
+            ),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+        )
+        .await;
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         assert_eq!(
             open(&tx, "stage-test", &identity, &Value::Null)
                 .await
@@ -391,6 +454,21 @@ mod tests {
         );
         assert_eq!(committed.completed_batches, 1);
         tx.commit().await.unwrap();
+        assert_stamp(
+            &client,
+            "catalog.package_upgrade_stages",
+            &format!(
+                "tenant_id = 'stage-test' AND package_version = '{}'",
+                identity.package_version
+            ),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+        )
+        .await;
 
         for field in [
             "package_artifact_digest",
@@ -407,6 +485,9 @@ mod tests {
                 _ => changed.predecessor_version = "0.9.0".into(),
             }
             let tx = client.transaction().await.unwrap();
+            crate::apply_package::bind_apply_package_principal(&tx)
+                .await
+                .unwrap();
             assert!(
                 open(&tx, "stage-test", &changed, &Value::Null)
                     .await
@@ -417,10 +498,31 @@ mod tests {
             tx.rollback().await.unwrap();
         }
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         let abandoned = abandon(&tx, "stage-test", &identity).await.unwrap();
         assert_eq!(abandoned.cursor, committed.cursor);
         tx.commit().await.unwrap();
+        assert_stamp(
+            &client,
+            "catalog.package_upgrade_stages",
+            &format!(
+                "tenant_id = 'stage-test' AND package_version = '{}'",
+                identity.package_version
+            ),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+        )
+        .await;
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         assert!(
             open(&tx, "stage-test", &identity, &Value::Null)
                 .await
@@ -452,6 +554,9 @@ mod tests {
 
         let completed_identity = self::identity("3.0.0");
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         open(&tx, "stage-test", &completed_identity, &Value::Null)
             .await
             .unwrap();
@@ -462,7 +567,25 @@ mod tests {
             .await
             .unwrap();
         tx.commit().await.unwrap();
+        assert_stamp(
+            &client,
+            "catalog.package_upgrade_stages",
+            &format!(
+                "tenant_id = 'stage-test' AND package_version = '{}'",
+                completed_identity.package_version
+            ),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::ApplyPackage
+                .principal_id()
+                .to_string(),
+        )
+        .await;
         let tx = client.transaction().await.unwrap();
+        crate::apply_package::bind_apply_package_principal(&tx)
+            .await
+            .unwrap();
         assert_eq!(
             open(&tx, "stage-test", &completed_identity, &Value::Null)
                 .await
@@ -500,6 +623,9 @@ mod tests {
                 "ALTER TABLE catalog.package_upgrade_stages DISABLE ROW LEVEL SECURITY",
             ] {
                 let tx = client.transaction().await.unwrap();
+                crate::apply_package::bind_apply_package_principal(&tx)
+                    .await
+                    .unwrap();
                 tx.batch_execute(&format!("SET LOCAL ROLE {role}"))
                     .await
                     .unwrap();

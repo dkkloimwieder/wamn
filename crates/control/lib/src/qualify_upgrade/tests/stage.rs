@@ -86,7 +86,7 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
         "{error:#}"
     );
     let progress = fixture.source.query_one(
-        "SELECT status,cursor,completed_batches FROM catalog.package_upgrade_stages WHERE tenant_id=$1 AND package_id='platform_fixture' AND package_version=$2",
+        "SELECT status,cursor,completed_batches,created_by::text,updated_by::text FROM catalog.package_upgrade_stages WHERE tenant_id=$1 AND package_id='platform_fixture' AND package_version=$2",
         &[&TENANT, &CANDIDATE_VERSION],
     ).await.unwrap();
     assert_eq!(progress.get::<_, String>(0), "in_progress");
@@ -95,6 +95,11 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
         declaration["backfill"]["initial_cursor"]
     );
     assert_eq!(progress.get::<_, i64>(2), 2);
+    let actor = wamn_control_provision::PlatformComponent::ApplyPackage
+        .principal_id()
+        .to_string();
+    assert_eq!(progress.get::<_, String>(3), actor);
+    assert_eq!(progress.get::<_, String>(4), actor);
     assert_eq!(
         fixture
             .source
@@ -171,11 +176,13 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
     assert!(applied.changed);
     assert_eq!(applied.migrations_applied, 0);
     let progress = fixture.source.query_one(
-        "SELECT status,completed_batches FROM catalog.package_upgrade_stages WHERE tenant_id=$1 AND package_version=$2",
+        "SELECT status,completed_batches,created_by::text,updated_by::text FROM catalog.package_upgrade_stages WHERE tenant_id=$1 AND package_version=$2",
         &[&TENANT, &CANDIDATE_VERSION],
     ).await.unwrap();
     assert_eq!(progress.get::<_, String>(0), "completed");
     assert_eq!(progress.get::<_, i64>(1), 3);
+    assert_eq!(progress.get::<_, String>(2), actor);
+    assert_eq!(progress.get::<_, String>(3), actor);
     let repeated = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,

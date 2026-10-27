@@ -25,6 +25,10 @@ async fn connect(url: &str) -> Client {
     tokio::spawn(async move {
         let _ = connection.await;
     });
+    client.batch_execute(&format!(
+        "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-catalog-fixture', false)",
+        wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+    )).await.unwrap();
     client
 }
 

@@ -413,7 +413,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
     apply(
         &db_url,
         &format!(
-            "INSERT INTO catalog.packages \
+            "SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
+             INSERT INTO catalog.packages \
                (tenant_id, package_id, package_version, artifact_digest) \
              VALUES \
                ('t1', 'platform_fixture', '1.0.0', 'sha256:' || repeat('a', 64)), \

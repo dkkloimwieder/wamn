@@ -587,6 +587,7 @@ async fn seed_with_client(
         .await
         .context("claim the seeding tenant")?;
 
+    client.batch_execute("SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false)").await?;
     let package_manifest = serde_json::json!({
         "package": {"id": PACKAGE, "version": PACKAGE_VERSION},
         "models": {},

@@ -142,6 +142,7 @@ async fn fixture() -> Fixture {
         .await
         .expect("scope the control seed session");
 
+    project.batch_execute(&format!("SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-workflow-fixture', false)", PlatformComponent::Provisioning.principal_id())).await.unwrap();
     let manifest = release();
     let bytes = manifest.canonical_bytes();
     let digest = manifest.digest().as_str().to_owned();

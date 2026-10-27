@@ -218,6 +218,10 @@ async fn seed_typed(
     tenant: &str,
     requirement_type: RequirementType,
 ) -> Vec<ConnectionTarget> {
+    client.batch_execute(&format!(
+        "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-catalog-fixture', false)",
+        wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+    )).await.unwrap();
     client
         .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
             wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
@@ -336,6 +340,11 @@ async fn selected(url: &str, tenant: &str, target: &ConnectionTarget) -> Connect
 }
 
 async fn counts(client: &Client) -> (i64, i64) {
+    let stamped: bool = client.query_one(
+        "SELECT count(*) > 0 AND bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at) FROM catalog.connection_generations",
+        &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
+    ).await.unwrap().get(0);
+    assert!(stamped, "instance generations stamp wamn:provisioning");
     let row = client.query_one("SELECT (SELECT count(*) FROM catalog.connection_generations), (SELECT count(*) FROM catalog.connection_bindings)", &[]).await.unwrap();
     (row.get(0), row.get(1))
 }

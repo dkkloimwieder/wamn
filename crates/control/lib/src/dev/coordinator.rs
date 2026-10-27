@@ -1699,6 +1699,11 @@ async fn resolve_local_bindings(
     let result = async {
         client.batch_execute("BEGIN").await?;
         client
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await?;
+        client
             .query_one(
                 "SELECT set_config('app.tenant', $1, true)",
                 &[&config.activation_identity().tenant()],

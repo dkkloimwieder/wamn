@@ -35,6 +35,7 @@ use wamn_schema_control::connections::{
     ComponentConnectionRequirement, activate_connection_generation_sql,
     insert_component_connection_requirement_sql,
 };
+use wamn_test_infrastructure::record_history::assert_stamp;
 
 const TENANT: &str = "bind-connection-tenant--fixture--dev";
 const ENVIRONMENT: &str = "dev";
@@ -166,6 +167,10 @@ async fn admit_component(
 
 /// Provision the project and return the admitted components of the package.
 async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedComponent> {
+    project.batch_execute(&format!(
+        "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-connection-fixture', false)",
+        wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+    )).await.unwrap();
     // apply-package narrows migration authority to wamn_db_owner, a
     // CLUSTER-wide role. On a fresh server it does not exist; the sibling
     // fixture that omits this passes only where an earlier run left the role
@@ -603,6 +608,23 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert!(bound.validation_hash.starts_with("sha256:"));
     assert_ne!(bound.definition_hash, bound.validation_hash);
     assert_eq!(rows(&project).await, (1, 1, 1));
+    for relation in [
+        "catalog.connection_generations",
+        "catalog.connection_bindings",
+    ] {
+        assert_stamp(
+            &project,
+            relation,
+            &format!("tenant_id = '{TENANT}'"),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .await;
+    }
 
     // THE ROUND TRIP: the plugin loads the snapshot from the rows the verb
     // wrote and the blobstore resolver accepts it, returning what was bound.
@@ -687,6 +709,23 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(rebound.previous_generation, Some(1));
     assert_eq!(rebound.generation, 1);
     assert_eq!(rows(&project).await, (1, 1, 1));
+    for relation in [
+        "catalog.connection_generations",
+        "catalog.connection_bindings",
+    ] {
+        assert_stamp(
+            &project,
+            relation,
+            &format!("tenant_id = '{TENANT}'"),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .await;
+    }
 
     // A STALE ACTIVATION CHANGES NOTHING. The bind left generation 1 active at
     // revision 2. An activation that expects any other state matches no row,
@@ -741,6 +780,23 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .expect_err("invalid rotation refuses");
     assert_eq!(instance().await, current);
     assert_eq!(rows(&project).await, (1, 1, 1));
+    for relation in [
+        "catalog.connection_generations",
+        "catalog.connection_bindings",
+    ] {
+        assert_stamp(
+            &project,
+            relation,
+            &format!("tenant_id = '{TENANT}'"),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .await;
+    }
 
     project
         .execute(
@@ -761,6 +817,23 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .expect_err("a release without this component refuses");
     assert_eq!(instance().await, current);
     assert_eq!(rows(&project).await, (1, 1, 1));
+    for relation in [
+        "catalog.connection_generations",
+        "catalog.connection_bindings",
+    ] {
+        assert_stamp(
+            &project,
+            relation,
+            &format!("tenant_id = '{TENANT}'"),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .await;
+    }
 
     let pinned = CandidateConnectionBinding {
         read_only: false,
@@ -789,6 +862,23 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(rotated.previous_generation, Some(1));
     assert_eq!(rotated.generation, 2);
     assert_eq!(rows(&project).await, (1, 2, 1));
+    for relation in [
+        "catalog.connection_generations",
+        "catalog.connection_bindings",
+    ] {
+        assert_stamp(
+            &project,
+            relation,
+            &format!("tenant_id = '{TENANT}'"),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .await;
+    }
     let new_snapshot = snapshot_of().await;
     let new_binding = binding::resolve(&new_snapshot).expect("new selection resolves");
     assert_eq!(
@@ -849,6 +939,23 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         "{error:#}"
     );
     assert_eq!(rows(&project).await, (1, 2, 1));
+    for relation in [
+        "catalog.connection_generations",
+        "catalog.connection_bindings",
+    ] {
+        assert_stamp(
+            &project,
+            relation,
+            &format!("tenant_id = '{TENANT}'"),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .await;
+    }
     assert_eq!(instance().await.0, Some(2));
     drop(blocker);
     blocker_task.abort();

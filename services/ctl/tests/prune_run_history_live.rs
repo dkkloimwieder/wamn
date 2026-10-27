@@ -64,7 +64,7 @@ async fn provision(admin: &Client) {
         .expect("apply run-queue.sql");
     admin
         .batch_execute(&format!(
-            "SELECT set_config('app.user_id', '{}', false); \
+            "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
              INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
              VALUES ('{TENANT}', '{RELEASE_DIGEST}', '{{}}'), \
                     ('{OTHER_TENANT}', '{RELEASE_DIGEST}', '{{}}');",

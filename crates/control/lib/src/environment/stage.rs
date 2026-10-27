@@ -477,6 +477,12 @@ async fn materialize_requirements(
         .await
         .context("begin the connection requirement projection")?;
     transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor and operation")?;
+    transaction
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
         .await
         .context("claim the tenant")?;
@@ -563,6 +569,12 @@ pub async fn write_release(
         .await
         .context("begin the release cache write")?;
     transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor and operation")?;
+    transaction
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
         .await
         .context("claim the tenant")?;
@@ -591,6 +603,56 @@ mod tests {
     };
 
     use super::{apply_order, release_requirements, schema_request};
+
+    #[tokio::test]
+    async fn release_and_requirement_writers_stamp_provisioning_and_keep_exact_retries() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_project_state::test_database::tenant_platform();
+        database
+            .execute(&[&format!(
+                "BEGIN; {} COMMIT;",
+                wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
+            )])
+            .unwrap();
+        let manifest = ServingManifest {
+            composed_entry: None,
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release: ServingRelease {
+                packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
+            },
+            components: BTreeSet::from([component(
+                "blob-put",
+                &format!("sha256:{}", "a".repeat(64)),
+                &["store"],
+            )]),
+            routes: BTreeSet::new(),
+            attachments: BTreeMap::new(),
+            host_routes: BTreeSet::new(),
+        };
+        let digest = manifest.digest();
+        super::write_release(database.url(), "history", digest.as_str(), &manifest)
+            .await
+            .unwrap();
+        super::materialize_requirements(database.url(), "history", &manifest)
+            .await
+            .unwrap();
+        let sql = format!(
+            "SELECT count(*) = 2 AND bool_and(created_by = '{actor}' AND updated_by = '{actor}' AND created_at = updated_at) \
+             FROM (SELECT created_by, updated_by, created_at, updated_at FROM catalog.releases \
+                   UNION ALL SELECT created_by, updated_by, created_at, updated_at FROM catalog.connection_requirements) stamps",
+            actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+        );
+        assert_eq!(database.execute(&[&sql]).unwrap().trim(), "t");
+        let image = "SELECT to_jsonb(r)::text FROM catalog.releases r UNION ALL SELECT to_jsonb(r)::text FROM catalog.connection_requirements r ORDER BY 1";
+        let before = database.execute(&[image]).unwrap();
+        super::write_release(database.url(), "history", digest.as_str(), &manifest)
+            .await
+            .unwrap();
+        super::materialize_requirements(database.url(), "history", &manifest)
+            .await
+            .unwrap();
+        assert_eq!(database.execute(&[image]).unwrap(), before);
+    }
 
     #[test]
     fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {

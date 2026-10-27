@@ -846,6 +846,11 @@ mod tests {
             wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
         );
         target.batch_execute("BEGIN").await?;
+        target
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await?;
         crate::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant(),
@@ -878,6 +883,11 @@ mod tests {
         std::fs::remove_file(&input.definition)?;
         assert!(crate::bind_connection::read_local_instance(&input).is_err());
         target.batch_execute("BEGIN").await?;
+        target
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await?;
         crate::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant(),
@@ -887,6 +897,11 @@ mod tests {
         )
         .await?;
         target.batch_execute("COMMIT").await?;
+        let stamped: bool = target.query_one(
+            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.connection_generations",
+            &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
+        ).await?.get(0);
+        assert!(stamped, "local generations stamp wamn:provisioning");
         crate::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant(),
@@ -972,6 +987,11 @@ mod tests {
             0
         );
         target.batch_execute("BEGIN").await?;
+        target
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await?;
         crate::bind_connection::prepare_local_instance(
             &target,
             &identity.tenant(),
@@ -981,6 +1001,11 @@ mod tests {
         )
         .await?;
         target.batch_execute("COMMIT").await?;
+        let stamped: bool = target.query_one(
+            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.connection_generations",
+            &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
+        ).await?.get(0);
+        assert!(stamped, "local generations stamp wamn:provisioning");
         wamn_runtime::local_application::read_local_binding(
             &target,
             &identity.tenant(),

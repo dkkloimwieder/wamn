@@ -87,6 +87,13 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .unwrap();
+    client
+        .batch_execute(&format!(
+            "SELECT set_config('app.user_id', '{}', false)",
+            wamn_control_provision::PlatformComponent::ApplyPackage.principal_id()
+        ))
+        .await
+        .unwrap();
     client.batch_execute(
         "CREATE SCHEMA inventory; \
          CREATE TABLE inventory.widget (id int, note text); \
@@ -184,6 +191,11 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
         role, "postgres",
         "SQL proof restores the enclosing transaction's role"
     );
+    let stamped: bool = tx.query_one(
+        "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.package_upgrade_qualifications",
+        &[&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()],
+    ).await.unwrap().get(0);
+    assert!(stamped);
     tx.commit().await.unwrap();
 
     let mut changed = accepted.evidence.clone();

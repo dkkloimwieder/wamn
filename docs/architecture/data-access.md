@@ -939,6 +939,17 @@ The run plane stamps `environment_policies`, `run_queue`, `effect_attempts`, `ef
 The three effect tables still have no production append writer.
 Their stamps apply to administrative writes and future writers that bind an actor.
 
+### Catalog stamps
+
+The project catalog stamps `packages`, `package_migrations`, `package_definition_owners`, `releases`, `connection_requirements`, and `connection_generations`.
+It also stamps `connection_bindings`, `wiring_tombstones`, `package_upgrade_qualifications`, `package_upgrade_stages`, and `package_floors`.
+Each table carries the four stamp columns as `NOT NULL` with no default and a `wamn_record_history_stamp` trigger.
+These tables keep stamps only, with no history table.
+Package application binds `wamn:apply-package`, including migrations, definition ownership, accepted qualifications, and stage progress.
+Environment staging, connection administration, local development bindings, and floor recording bind `wamn:provisioning`, as the platform configuration projection does.
+`connection_instances` and `workflows` keep their existing metadata and carry no record history trigger.
+Project migration `0036_retire_released_workflows` removes `wirings` and `event_registrations`; fresh databases create neither table.
+
 ### System database
 
 The system database owns `registry.integrations`, the connector catalog, and `registry.target`, the deployment target identities.

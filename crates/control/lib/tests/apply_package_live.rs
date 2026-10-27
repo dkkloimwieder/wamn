@@ -24,6 +24,9 @@ async fn connect(url: &str) -> Client {
     tokio::spawn(async move {
         let _ = connection.await;
     });
+    client.batch_execute(&format!(
+        "SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', false), set_config('app.operation', 'admin:seed-package-fixture', false)"
+    )).await.unwrap();
     client
 }
 
@@ -70,6 +73,9 @@ async fn install(client: &Client) {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install production application authorization floor");
+    client.batch_execute(&format!(
+        "INSERT INTO platform.\"user\" (id,type,email,display_name) VALUES ('{FIXTURE_PRINCIPAL}','user','fixture@example.invalid','fixture')"
+    )).await.unwrap();
     client
         .batch_execute(
             "ALTER TABLE catalog.package_migrations \
@@ -773,7 +779,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-grant-residue-fixture', true); \
              INSERT INTO platform.\"user\" (id, type, email) \
-                 VALUES ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
+                 VALUES ('{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid') ON CONFLICT (id) DO NOTHING; \
              INSERT INTO platform.role (name) \
                  VALUES ('clerk'); \
              INSERT INTO platform.permission (role_name, permission) VALUES \
@@ -1605,6 +1611,17 @@ async fn record_history_triggers_follow_the_declaration() {
         "one stamp trigger for the relation that selects columns, none for [], \
          and the declared log trigger"
     );
+    for table in [
+        "packages",
+        "package_migrations",
+        "package_definition_owners",
+    ] {
+        let row = client.query_one(
+            &format!("SELECT count(*) > 0 AND bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at) FROM catalog.{table}"),
+            &[&PlatformComponent::ApplyPackage.principal_id().to_string()],
+        ).await.unwrap();
+        assert!(row.get::<_, bool>(0), "{table} stamps wamn:apply-package");
+    }
     // Spec test 11: the admin role row stamps wamn:apply-package.
     let grant_stamps = client
         .query_one(

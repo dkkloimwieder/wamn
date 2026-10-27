@@ -57,6 +57,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         .await
         .context("provision the production HTTP admitter surface and login")?;
 
+    admin.batch_execute("SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false)").await?;
     let component_digest = format!("sha256:{}", "a".repeat(64));
     let manifest = serde_json::json!({
         "release": {"packages": [{"package-id": PACKAGE, "package-version": "1.0.0"}]},

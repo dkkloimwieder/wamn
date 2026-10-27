@@ -446,6 +446,11 @@ async fn package_binding_backfill_preserves_each_release_owner_and_refuses_confl
     let database = wamn_project_state::test_database::tenant_platform();
     let mut client = connect(database.url()).await;
     let tx = client.transaction().await.unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
     tx.batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run; ALTER TABLE catalog.connection_bindings DROP CONSTRAINT connection_bindings_package_id_nonempty; ALTER TABLE catalog.connection_bindings ALTER COLUMN package_id SET DEFAULT '';").await.unwrap();
     let component = format!("sha256:{}", "a".repeat(64));
     let release = json!({"components":[

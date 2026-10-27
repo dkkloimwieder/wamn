@@ -168,6 +168,12 @@ pub async fn ensure_instance(instance: &ConnectionInstance) -> anyhow::Result<(O
             .execute(CLAIM_TENANT_SQL, &[&instance.tenant()])
             .await
             .context("claim the tenant for the connection instance transaction")?;
+        transaction
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await
+            .context("bind wamn:provisioning as the actor and operation")?;
         let generations =
             bind_generation(&transaction, instance, &descriptor, &instance.definition).await?;
         transaction
@@ -263,6 +269,12 @@ async fn bind_in(
         .execute(CLAIM_TENANT_SQL, &[&args.tenant()])
         .await
         .context("claim the tenant for the bind-connection transaction")?;
+    transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor and operation")?;
 
     let package_id = if package_id.is_empty() {
         let rows = transaction.query("SELECT component.value ->> 'package-id' FROM catalog.releases release CROSS JOIN LATERAL jsonb_array_elements(convert_from(release.canonical_bytes,'UTF8')::jsonb -> 'components') component(value) WHERE release.tenant_id=$1 AND release.manifest_digest=$2 AND component.value -> 'descriptor' ->> 'component-digest'=$3", &[&args.tenant(), &args.manifest_digest, &args.component_digest]).await?;

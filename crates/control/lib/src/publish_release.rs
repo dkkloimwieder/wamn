@@ -1828,6 +1828,13 @@ mod tests {
             .await
             .unwrap();
         tokio::spawn(connection);
+        client
+            .batch_execute(&format!(
+                "SELECT set_config('app.user_id', '{}', false)",
+                wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+            ))
+            .await
+            .unwrap();
         let mut manifests = BTreeMap::new();
         let mut components = ReleaseComponents::default();
         let mut packages = BTreeSet::new();

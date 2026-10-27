@@ -186,6 +186,12 @@ async fn record_floor(
         .await
         .context("begin the floor record")?;
     transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor and operation")?;
+    transaction
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
         .await
         .context("claim the tenant")?;
@@ -197,4 +203,35 @@ async fn record_floor(
         .commit()
         .await
         .context("commit the floor record")
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn floor_writer_stamps_provisioning_on_insert_and_advance() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_project_state::test_database::tenant_platform();
+        database.execute(&[&format!(
+            "BEGIN; {} INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version) VALUES ('history','fixture','1',NULL),('history','fixture','2','1'); COMMIT;",
+            wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
+        )]).unwrap();
+        let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+        for version in ["1", "2"] {
+            super::record_floor(database.url(), "history", "fixture", version)
+                .await
+                .unwrap();
+            let sql = format!(
+                "SELECT created_by = '{actor}' AND updated_by = '{actor}' AND version = '{version}' \
+                 AND created_at <= updated_at FROM catalog.package_floors"
+            );
+            assert_eq!(database.execute(&[&sql]).unwrap().trim(), "t");
+        }
+        assert_eq!(
+            database
+                .execute(&["SELECT created_at < updated_at FROM catalog.package_floors"])
+                .unwrap()
+                .trim(),
+            "t"
+        );
+    }
 }
