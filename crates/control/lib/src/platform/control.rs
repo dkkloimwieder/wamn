@@ -72,7 +72,7 @@ fn secret_access(namespace: &str, verbs: &[&str]) -> Access {
     }
 }
 
-fn provision_request(document: &ClusterDocument, image: &str) -> JobRequest {
+pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobRequest {
     JobRequest {
         name: format!("platform-control-credentials-{}", document.org),
         image: image.into(),

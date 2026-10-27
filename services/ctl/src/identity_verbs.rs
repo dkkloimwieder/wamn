@@ -55,6 +55,14 @@ pub struct IdentityIssuerArgs {
     pub secret_name: String,
 }
 
+// Environment contract for this verb as invoked by platform install Jobs.
+#[cfg(test)]
+pub(crate) const IDENTITY_ISSUER_INSTALL_ENV: crate::install_job_tests::Environment =
+    crate::install_job_tests::Environment {
+        required: &["WAMN_SYSTEM_ADMIN_URL"],
+        optional: &[],
+    };
+
 impl fmt::Debug for IdentityIssuerArgs {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -128,6 +136,23 @@ pub struct InviteArgs {
     #[command(flatten)]
     pub pat_issuer: PatIssuerArgs,
 }
+
+// Environment contract for this verb as invoked by platform install Jobs.
+#[cfg(test)]
+pub(crate) const INVITE_INSTALL_ENV: crate::install_job_tests::Environment =
+    crate::install_job_tests::Environment {
+        required: &[
+            "WAMN_SYSTEM_ADMIN_URL",
+            "WAMN_PAT_ISSUER",
+            "WAMN_PAT_CLIENT_CERT",
+            "WAMN_PAT_CLIENT_KEY",
+            "WAMN_AUTH_NATS_URL",
+            "WAMN_AUTH_NATS_TLS_CA",
+            "WAMN_AUTH_NATS_TLS_CERT",
+            "WAMN_AUTH_NATS_TLS_KEY",
+        ],
+        optional: &["WAMN_PAT_SERVER_CA", "WAMN_AUTH_NATS_TLS_SERVER_NAME"],
+    };
 
 /// Split `<project>/<env>`.
 fn parse_membership(value: &str) -> Result<(String, String), String> {

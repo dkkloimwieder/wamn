@@ -53,6 +53,20 @@ pub struct PublishReleaseArgs {
     pub oci_ca_paths: Vec<PathBuf>,
 }
 
+// Environment contract for this verb as invoked by platform install Jobs.
+#[cfg(test)]
+pub(crate) const PUBLISH_RELEASE_INSTALL_ENV: crate::install_job_tests::Environment =
+    crate::install_job_tests::Environment {
+        required: &[
+            "WAMN_PG_ADMIN_URL",
+            "WAMN_SYSTEM_ADMIN_URL",
+            "WAMN_REGISTRY_AUTH_FILE",
+            "WAMN_RELEASE_ARTIFACT_BASE",
+            "WAMN_COMPONENT_ARTIFACT_BASE",
+        ],
+        optional: &["WAMN_KCL", "WAMN_FLOW_HTTP_COMPONENT", "WASH_OCI_CA_PATHS"],
+    };
+
 /// Exact operator input; effect identity and asserted outcome are absent by construction.
 #[derive(Debug, Args)]
 pub struct TerminalizeEffectUncertainArgs {

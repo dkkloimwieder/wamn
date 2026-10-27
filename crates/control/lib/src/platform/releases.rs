@@ -33,33 +33,12 @@ pub(super) async fn apply(
             &environment.project,
             &environment.env,
         );
-        let mut request = JobRequest {
-            name: format!("platform-release-{tenant}"),
-            image: image.clone(),
-            capture_output: true,
-            arguments: vec![
-                "publish-release".into(),
-                "/inputs/environment.k".into(),
-                "--database-url".into(),
-                "$(WAMN_PG_ADMIN_URL)".into(),
-                "--control-database-url".into(),
-                "$(WAMN_SYSTEM_ADMIN_URL)".into(),
-                "--verified-publisher-principal".into(),
-                format!("wamn-management-author-{tenant}"),
-                "--run-schema".into(),
-                "wamn_run".into(),
-                "--artifact-base".into(),
-                registry.artifact_base.clone(),
-            ],
-            files: [(
-                "environment.k".into(),
-                std::fs::read_to_string(&path)
-                    .with_context(|| format!("read {}", path.display()))?,
-            )]
-            .into(),
-            environment: [("WAMN_KCL".into(), "/usr/local/bin/kcl".into())].into(),
-            ..JobRequest::default()
-        };
+        let mut request = request(
+            &tenant,
+            &std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
+            &image,
+            registry,
+        )?;
         let mut artifacts = Vec::new();
         for package in packages::read(repository, &path)? {
             let identity = &package.manifest.package;
@@ -78,15 +57,6 @@ pub(super) async fn apply(
             !artifacts.is_empty(),
             "environment {} names no package",
             path.display()
-        );
-        packages::registry_inputs(&mut request, registry)?;
-        request.environment.insert(
-            "WAMN_RELEASE_ARTIFACT_BASE".into(),
-            packages::artifact_base(registry, "releases")?,
-        );
-        request.environment.insert(
-            "WAMN_COMPONENT_ARTIFACT_BASE".into(),
-            packages::artifact_base(registry, "components")?,
         );
         prepared.push((path, environment, request, artifacts));
     }
@@ -111,4 +81,44 @@ pub(super) async fn apply(
         published.releases.push((path, environment, digest.into()));
     }
     Ok(published)
+}
+
+pub(super) fn request(
+    tenant: &str,
+    document: &str,
+    image: &str,
+    registry: &wamn_package_artifact::PackageRegistry,
+) -> anyhow::Result<JobRequest> {
+    let mut request = JobRequest {
+        name: format!("platform-release-{tenant}"),
+        image: image.into(),
+        capture_output: true,
+        arguments: vec![
+            "publish-release".into(),
+            "/inputs/environment.k".into(),
+            "--database-url".into(),
+            "$(WAMN_PG_ADMIN_URL)".into(),
+            "--control-database-url".into(),
+            "$(WAMN_SYSTEM_ADMIN_URL)".into(),
+            "--verified-publisher-principal".into(),
+            format!("wamn-management-author-{tenant}"),
+            "--run-schema".into(),
+            "wamn_run".into(),
+            "--artifact-base".into(),
+            registry.artifact_base.clone(),
+        ],
+        files: [("environment.k".into(), document.into())].into(),
+        environment: [("WAMN_KCL".into(), "/usr/local/bin/kcl".into())].into(),
+        ..JobRequest::default()
+    };
+    packages::registry_inputs(&mut request, registry)?;
+    request.environment.insert(
+        "WAMN_RELEASE_ARTIFACT_BASE".into(),
+        packages::artifact_base(registry, "releases")?,
+    );
+    request.environment.insert(
+        "WAMN_COMPONENT_ARTIFACT_BASE".into(),
+        packages::artifact_base(registry, "components")?,
+    );
+    Ok(request)
 }

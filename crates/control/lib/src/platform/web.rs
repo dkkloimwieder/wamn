@@ -40,8 +40,8 @@ pub(super) async fn apply(
             &environment,
             &document.buckets.web,
             &super::install::runner_image(directory)?,
+            registry,
         )?;
-        super::packages::registry_inputs(&mut request, registry)?;
         super::environments::chart_files(
             &directory.join("release-chart"),
             Path::new(""),
@@ -50,14 +50,6 @@ pub(super) async fn apply(
         request.files.insert(
             "kubeconfig".into(),
             super::environments::kubeconfig().to_string(),
-        );
-        request.environment.insert(
-            "WAMN_PACKAGE_ARTIFACT_BASE".into(),
-            registry.artifact_base.clone(),
-        );
-        request.environment.insert(
-            "WAMN_RELEASE_ARTIFACT_BASE".into(),
-            super::packages::artifact_base(registry, "releases")?,
         );
         let mut target = target.clone();
         target.namespace = "hosts".into();
@@ -78,10 +70,11 @@ pub(super) async fn apply(
     Ok(())
 }
 
-fn request(
+pub(super) fn request(
     environment: &EnvironmentDocument,
     bucket: &str,
     image: &str,
+    registry: &PackageRegistry,
 ) -> anyhow::Result<JobRequest> {
     let DeclaredRelease::Digest(digest) = &environment.release else {
         anyhow::bail!("web upload requires a declared release");
@@ -92,7 +85,7 @@ fn request(
         &environment.project,
         &environment.env,
     );
-    Ok(JobRequest {
+    let mut request = JobRequest {
         name: format!("platform-web-{tenant}"),
         image: image.into(),
         calls_kubernetes: true,
@@ -108,14 +101,9 @@ fn request(
             ("KUBECONFIG".into(), "/inputs/kubeconfig".into()),
             ("WAMN_RELEASE_NAMESPACE".into(), "hosts".into()),
             ("WAMN_RELEASE_CHART".into(), "/inputs".into()),
-            ("WAMN_AUTH_NATS_URL".into(), "nats://nats.platform.svc.cluster.local:4222".into()),
-            ("WAMN_AUTH_NATS_TLS_CA".into(), "/etc/wamn/auth-nats/ca.crt".into()),
-            ("WAMN_AUTH_NATS_TLS_CERT".into(), "/etc/wamn/auth-nats/tls.crt".into()),
-            ("WAMN_AUTH_NATS_TLS_KEY".into(), "/etc/wamn/auth-nats/tls.key".into()),
         ].into(),
         secret_mounts: vec![
             SecretMount { name: format!("wamn-registry-reader-{tenant}"), path: "/etc/wamn/registry-reader".into(), keys: vec!["url".into()] },
-            SecretMount { name: "wasmcloud-runtime-tls".into(), path: "/etc/wamn/auth-nats".into(), keys: ["ca.crt", "tls.crt", "tls.key"].map(str::to_owned).into() },
         ],
         permissions: vec![Access {
             namespace: "hosts".into(),
@@ -125,7 +113,18 @@ fn request(
             }],
         }],
         ..JobRequest::default()
-    })
+    };
+    job::auth_nats_inputs(&mut request, None)?;
+    super::packages::registry_inputs(&mut request, registry)?;
+    request.environment.insert(
+        "WAMN_PACKAGE_ARTIFACT_BASE".into(),
+        registry.artifact_base.clone(),
+    );
+    request.environment.insert(
+        "WAMN_RELEASE_ARTIFACT_BASE".into(),
+        super::packages::artifact_base(registry, "releases")?,
+    );
+    Ok(request)
 }
 
 pub(super) async fn platform_ui(
@@ -143,21 +142,7 @@ pub(super) async fn platform_ui(
     }
     let started = Instant::now();
     progress("4.19.1 Platform UI upload: starting")?;
-    let mut request = JobRequest {
-        name: format!("platform-ui-{}", document.org),
-        image: super::install::runner_image(directory)?,
-        service_account: Some("wamn-host".into()),
-        command: vec!["/bin/sh".into(), "-ec".into()],
-        arguments: vec![
-            "cd /inputs; exec /usr/local/bin/wamn web upload --platform-ui --org \"$ORG\" --bucket \"$BUCKET\"".into(),
-        ],
-        environment: [
-            ("ORG".into(), document.org.clone()),
-            ("BUCKET".into(), format!("gs://{}", document.buckets.web)),
-            ("WAMN_RELEASE_CHART".into(), "/inputs/chart".into()),
-        ].into(),
-        ..JobRequest::default()
-    };
+    let mut request = platform_ui_request(document, &super::install::runner_image(directory)?);
     for name in ["Chart.yaml", crate::platform_build::RECEIPT_FILE] {
         request.binary_files.insert(
             format!("chart/{name}"),
@@ -195,6 +180,24 @@ pub(super) async fn platform_ui(
         started.elapsed().as_secs_f64()
     ))?;
     Ok(())
+}
+
+pub(super) fn platform_ui_request(document: &ClusterDocument, image: &str) -> JobRequest {
+    JobRequest {
+        name: format!("platform-ui-{}", document.org),
+        image: image.into(),
+        service_account: Some("wamn-host".into()),
+        command: vec!["/bin/sh".into(), "-ec".into()],
+        arguments: vec![
+            "cd /inputs; exec /usr/local/bin/wamn web upload --platform-ui --org \"$ORG\" --bucket \"$BUCKET\"".into(),
+        ],
+        environment: [
+            ("ORG".into(), document.org.clone()),
+            ("BUCKET".into(), format!("gs://{}", document.buckets.web)),
+            ("WAMN_RELEASE_CHART".into(), "/inputs/chart".into()),
+        ].into(),
+        ..JobRequest::default()
+    }
 }
 
 #[cfg(test)]
@@ -245,7 +248,23 @@ mod tests {
             "target": "cloud", "route_host": "test.example.com", "policy": "dev", "applications": {}
         }))
         .unwrap();
-        let request = request(&environment, "test-web", "registry/runner@sha256:abc").unwrap();
+        let directory = std::env::temp_dir().join(format!("wamn-web-job-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let registry = PackageRegistry {
+            artifact_base: "registry/packages".into(),
+            registry_auth_file: directory.join("registry.json"),
+            insecure_registry: false,
+            oci_ca_paths: vec![],
+        };
+        std::fs::write(&registry.registry_auth_file, "{}").unwrap();
+        let request = request(
+            &environment,
+            "test-web",
+            "registry/runner@sha256:abc",
+            &registry,
+        )
+        .unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
         assert_eq!(request.service_account.as_deref(), Some("wamn-host"));
         assert!(request.arguments.contains(&"gs://test-web/clients".into()));
         assert!(request.arguments.contains(&environment.release.to_string()));

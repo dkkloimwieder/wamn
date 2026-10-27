@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
+use super::install::SecretData;
 use super::job::{self, Access, JobRequest, PolicyRule, SecretMount};
 
 const STATE: &str = "SELECT EXISTS (
@@ -88,9 +89,36 @@ pub(super) async fn apply(
         "f" => {}
         _ => anyhow::bail!("owner invitation state is not a boolean"),
     }
-    let request = JobRequest {
+    // The Job runs in the platform namespace, so it copies the ctl auth client
+    // like the package and environment Jobs.
+    let auth: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-ctl-auth-nats",
+    )
+    .await?
+    .context("missing Secret platform/wamn-ctl-auth-nats")?;
+    let request = request(document, &super::install::runner_image(directory)?, &auth)?;
+    job::run(
+        target,
+        directory,
+        &request,
+        &json!({"org": document.org}),
+        &[],
+    )
+    .await
+}
+
+pub(super) fn request(
+    document: &ClusterDocument,
+    image: &str,
+    auth: &SecretData,
+) -> anyhow::Result<JobRequest> {
+    let mut request = JobRequest {
         name: format!("platform-invite-{}", document.org),
-        image: super::install::runner_image(directory)?,
+        image: image.into(),
         command: vec!["/bin/sh".into(), "-ec".into()],
         arguments: vec![INVITE.into()],
         calls_kubernetes: true,
@@ -121,12 +149,6 @@ pub(super) async fn apply(
         }],
         ..JobRequest::default()
     };
-    job::run(
-        target,
-        directory,
-        &request,
-        &json!({"org": document.org}),
-        &[],
-    )
-    .await
+    job::auth_nats_inputs(&mut request, Some(auth))?;
+    Ok(request)
 }

@@ -46,63 +46,7 @@ pub(super) async fn apply(
         if initial {
             environment.release = DeclaredRelease::None;
         }
-        let tenant = wamn_control_registry::project_env_tenant(
-            &environment.org,
-            &environment.project,
-            &environment.env,
-        );
-        let mut request = JobRequest {
-            name: format!(
-                "platform-{}apply-{tenant}",
-                if initial { "first-" } else { "" }
-            ),
-            image: image.clone(),
-            arguments: vec!["env".into(), "apply".into(), "/inputs/environment.k".into()],
-            calls_kubernetes: true,
-            environment: [
-                ("KUBECONFIG".into(), "/inputs/kubeconfig".into()),
-                ("WAMN_KCL".into(), "/usr/local/bin/kcl".into()),
-                ("WAMN_RELEASE_NAMESPACE".into(), "hosts".into()),
-                ("WAMN_DATABASE_NAMESPACE".into(), "platform".into()),
-                ("WAMN_DATABASE_HOST".into(), DATABASE_HOST.into()),
-                ("WAMN_RELEASE_CHART".into(), "/inputs".into()),
-                (
-                    "WAMN_RELEASE_ARTIFACT_BASE".into(),
-                    format!("{}/releases", document.registry),
-                ),
-                (
-                    "WAMN_PACKAGE_ARTIFACT_BASE".into(),
-                    format!("{}/packages", document.registry),
-                ),
-                (
-                    "WAMN_REGISTRY_AUTH_FILE".into(),
-                    "/inputs/registry.json".into(),
-                ),
-                (
-                    "WAMN_AUTH_NATS_URL".into(),
-                    "nats://nats.platform.svc.cluster.local:4222".into(),
-                ),
-                (
-                    "WAMN_AUTH_NATS_TLS_SERVER_NAME".into(),
-                    "nats.platform.svc.cluster.local".into(),
-                ),
-                ("WAMN_AUTH_NATS_TLS_CA".into(), "/inputs/ca.crt".into()),
-                ("WAMN_AUTH_NATS_TLS_CERT".into(), "/inputs/tls.crt".into()),
-                ("WAMN_AUTH_NATS_TLS_KEY".into(), "/inputs/tls.key".into()),
-            ]
-            .into(),
-            files: [
-                ("environment.k".into(), environment.to_kcl()),
-                ("kubeconfig".into(), kubeconfig().to_string()),
-                ("registry.json".into(), "{}".into()),
-            ]
-            .into(),
-            permissions: permissions(),
-            ..JobRequest::default()
-        };
-        for key in ["ca.crt", "tls.crt", "tls.key"] {
-            request.files.insert(key.into(), secret_text(&auth, key)?);
-        }
+        let mut request = request(document, &environment, &image, initial, &auth)?;
         for name in ["Chart.yaml", "values.yaml"] {
             request.files.insert(
                 name.into(),
@@ -404,6 +348,61 @@ fn permissions() -> Vec<Access> {
             ],
         },
     ]
+}
+
+pub(super) fn request(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    initial: bool,
+    auth: &SecretData,
+) -> anyhow::Result<JobRequest> {
+    let tenant = wamn_control_registry::project_env_tenant(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+
+    let mut request = JobRequest {
+        name: format!(
+            "platform-{}apply-{tenant}",
+            if initial { "first-" } else { "" }
+        ),
+        image: image.into(),
+        arguments: vec!["env".into(), "apply".into(), "/inputs/environment.k".into()],
+        calls_kubernetes: true,
+        environment: [
+            ("KUBECONFIG".into(), "/inputs/kubeconfig".into()),
+            ("WAMN_KCL".into(), "/usr/local/bin/kcl".into()),
+            ("WAMN_RELEASE_NAMESPACE".into(), "hosts".into()),
+            ("WAMN_DATABASE_NAMESPACE".into(), "platform".into()),
+            ("WAMN_DATABASE_HOST".into(), DATABASE_HOST.into()),
+            ("WAMN_RELEASE_CHART".into(), "/inputs".into()),
+            (
+                "WAMN_RELEASE_ARTIFACT_BASE".into(),
+                format!("{}/releases", document.registry),
+            ),
+            (
+                "WAMN_PACKAGE_ARTIFACT_BASE".into(),
+                format!("{}/packages", document.registry),
+            ),
+            (
+                "WAMN_REGISTRY_AUTH_FILE".into(),
+                "/inputs/registry.json".into(),
+            ),
+        ]
+        .into(),
+        files: [
+            ("environment.k".into(), environment.to_kcl()),
+            ("kubeconfig".into(), kubeconfig().to_string()),
+            ("registry.json".into(), "{}".into()),
+        ]
+        .into(),
+        permissions: permissions(),
+        ..JobRequest::default()
+    };
+    job::auth_nats_inputs(&mut request, Some(auth))?;
+    Ok(request)
 }
 
 #[cfg(test)]

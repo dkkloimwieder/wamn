@@ -25,3 +25,6 @@ pub mod role_verbs;
 #[cfg(target_os = "linux")]
 pub mod web;
 pub mod workflow_verbs;
+
+#[cfg(test)]
+mod install_job_tests;

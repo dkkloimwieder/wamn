@@ -188,46 +188,7 @@ pub(super) async fn apply(
             let digest = pushed.digest;
             tags.push(tag.clone());
             artifacts.push(digest.clone());
-            let mut request = JobRequest {
-                name: format!(
-                    "platform-package-{}",
-                    &job::input_digest(&json!([tenant, tag]))[..24]
-                ),
-                image: image.clone(),
-                arguments: vec![
-                    "apply-package".into(),
-                    "--package-artifact".into(),
-                    tag,
-                    "--artifact-base".into(),
-                    registry.artifact_base.clone(),
-                    "--registry-auth-file".into(),
-                    "/inputs/registry.json".into(),
-                    "--org".into(),
-                    environment.org.clone(),
-                    "--project".into(),
-                    environment.project.clone(),
-                    "--environment".into(),
-                    environment.env.clone(),
-                ],
-                environment: [
-                    (
-                        "WAMN_AUTH_NATS_URL".into(),
-                        "nats://nats.platform.svc.cluster.local:4222".into(),
-                    ),
-                    (
-                        "WAMN_AUTH_NATS_TLS_SERVER_NAME".into(),
-                        "nats.platform.svc.cluster.local".into(),
-                    ),
-                    ("WAMN_AUTH_NATS_TLS_CA".into(), "/inputs/ca.crt".into()),
-                    ("WAMN_AUTH_NATS_TLS_CERT".into(), "/inputs/tls.crt".into()),
-                    ("WAMN_AUTH_NATS_TLS_KEY".into(), "/inputs/tls.key".into()),
-                ]
-                .into(),
-                ..JobRequest::default()
-            };
-            for key in ["ca.crt", "tls.crt", "tls.key"] {
-                request.files.insert(key.into(), secret_text(&auth, key)?);
-            }
+            let mut request = package_request(&tenant, tag, &environment, &image, registry, &auth)?;
             registry_inputs(&mut request, registry)?;
             changed |= job::run(
                 target,
@@ -237,19 +198,7 @@ pub(super) async fn apply(
                 &secrets,
             )
             .await?;
-            let mut request = JobRequest {
-                name: format!(
-                    "platform-replica-{}",
-                    &job::input_digest(&json!([tenant, identity.id]))[..24]
-                ),
-                image: image.clone(),
-                arguments: vec![
-                    "reconcile-replica-identity".into(),
-                    "--package".into(),
-                    "/inputs/package".into(),
-                ],
-                ..JobRequest::default()
-            };
+            let mut request = replica_request(&tenant, &identity.id, &image);
             let opened = open_package(registry, &identity.id, &identity.version).await?;
             let source = crate::apply_package::read_package_directory(opened.root())?;
             request.files.insert(
@@ -265,24 +214,7 @@ pub(super) async fn apply(
             replicas.push((request, digest));
         }
         if !tags.is_empty() {
-            let mut request = JobRequest {
-                name: format!("platform-package-access-{tenant}"),
-                image: image.clone(),
-                arguments: vec![
-                    "reconcile-package-data-access".into(),
-                    "--artifact-base".into(),
-                    registry.artifact_base.clone(),
-                    "--registry-auth-file".into(),
-                    "/inputs/registry.json".into(),
-                    "--org".into(),
-                    environment.org.clone(),
-                    "--project".into(),
-                    environment.project.clone(),
-                    "--environment".into(),
-                    environment.env.clone(),
-                ],
-                ..JobRequest::default()
-            };
+            let mut request = access_request(&tenant, &environment, &image, registry);
             for tag in &tags {
                 request
                     .arguments
@@ -310,4 +242,81 @@ pub(super) async fn apply(
         }
     }
     Ok(changed)
+}
+
+pub(super) fn package_request(
+    tenant: &str,
+    tag: String,
+    environment: &EnvironmentDocument,
+    image: &str,
+    registry: &PackageRegistry,
+    auth: &SecretData,
+) -> anyhow::Result<JobRequest> {
+    let mut request = JobRequest {
+        name: format!(
+            "platform-package-{}",
+            &job::input_digest(&json!([tenant, tag]))[..24]
+        ),
+        image: image.into(),
+        arguments: vec![
+            "apply-package".into(),
+            "--package-artifact".into(),
+            tag,
+            "--artifact-base".into(),
+            registry.artifact_base.clone(),
+            "--registry-auth-file".into(),
+            "/inputs/registry.json".into(),
+            "--org".into(),
+            environment.org.clone(),
+            "--project".into(),
+            environment.project.clone(),
+            "--environment".into(),
+            environment.env.clone(),
+        ],
+        ..JobRequest::default()
+    };
+    job::auth_nats_inputs(&mut request, Some(auth))?;
+    Ok(request)
+}
+
+pub(super) fn replica_request(tenant: &str, package: &str, image: &str) -> JobRequest {
+    JobRequest {
+        name: format!(
+            "platform-replica-{}",
+            &job::input_digest(&json!([tenant, package]))[..24]
+        ),
+        image: image.into(),
+        arguments: vec![
+            "reconcile-replica-identity".into(),
+            "--package".into(),
+            "/inputs/package".into(),
+        ],
+        ..JobRequest::default()
+    }
+}
+
+pub(super) fn access_request(
+    tenant: &str,
+    environment: &EnvironmentDocument,
+    image: &str,
+    registry: &PackageRegistry,
+) -> JobRequest {
+    JobRequest {
+        name: format!("platform-package-access-{tenant}"),
+        image: image.into(),
+        arguments: vec![
+            "reconcile-package-data-access".into(),
+            "--artifact-base".into(),
+            registry.artifact_base.clone(),
+            "--registry-auth-file".into(),
+            "/inputs/registry.json".into(),
+            "--org".into(),
+            environment.org.clone(),
+            "--project".into(),
+            environment.project.clone(),
+            "--environment".into(),
+            environment.env.clone(),
+        ],
+        ..JobRequest::default()
+    }
 }

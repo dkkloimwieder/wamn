@@ -306,7 +306,7 @@ pub(super) fn administrator(secret: &SecretData) -> anyhow::Result<JobSecret> {
     })
 }
 
-fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest; 3] {
+pub(super) fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest; 3] {
     let domain = document
         .route_hosts
         .control

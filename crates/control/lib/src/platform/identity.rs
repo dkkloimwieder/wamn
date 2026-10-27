@@ -147,31 +147,7 @@ pub(super) async fn apply(
         let mut database = url::Url::parse(&admin.value)
             .map_err(|_| anyhow::anyhow!("parse the administrator database URL"))?;
         database.set_path(credential.path());
-        let request = JobRequest {
-            name: format!("platform-session-{tenant}"),
-            image: runner.clone(),
-            arguments: [
-                "provision-project-env",
-                "--org",
-                &environment.org,
-                "--project",
-                &environment.project,
-                "--env",
-                &environment.env,
-                "--namespace",
-                "identity",
-                "--db-host",
-                DATABASE_HOST,
-                "--prepare-session-role-reader-generation",
-                "a",
-                "--emit-session-role-reader-secret",
-                "/out/secret.json",
-            ]
-            .map(str::to_owned)
-            .into(),
-            emits_secret: true,
-            ..JobRequest::default()
-        };
+        let request = session_request(&environment, &runner);
         let secrets = [
             JobSecret {
                 name: admin.name.clone(),
@@ -452,6 +428,43 @@ async fn keys(
     )
     .await?;
     Ok((changed, kid))
+}
+
+pub(super) fn session_request(
+    environment: &crate::environment::document::EnvironmentDocument,
+    runner: &str,
+) -> JobRequest {
+    let tenant = wamn_control_registry::project_env_tenant(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+
+    JobRequest {
+        name: format!("platform-session-{tenant}"),
+        image: runner.into(),
+        arguments: [
+            "provision-project-env",
+            "--org",
+            &environment.org,
+            "--project",
+            &environment.project,
+            "--env",
+            &environment.env,
+            "--namespace",
+            "identity",
+            "--db-host",
+            DATABASE_HOST,
+            "--prepare-session-role-reader-generation",
+            "a",
+            "--emit-session-role-reader-secret",
+            "/out/secret.json",
+        ]
+        .map(str::to_owned)
+        .into(),
+        emits_secret: true,
+        ..JobRequest::default()
+    }
 }
 
 #[cfg(test)]

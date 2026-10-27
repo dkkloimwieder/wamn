@@ -61,6 +61,14 @@ pub struct ProvisionSystemArgs {
     pub db_port: u16,
 }
 
+// Environment contract for this verb as invoked by platform install Jobs.
+#[cfg(test)]
+pub(crate) const PROVISION_SYSTEM_INSTALL_ENV: crate::install_job_tests::Environment =
+    crate::install_job_tests::Environment {
+        required: &["WAMN_SYSTEM_ADMIN_URL"],
+        optional: &[],
+    };
+
 /// Install the control store into an empty system database, once. With the
 /// emit flags, write only the provisioner's Secret manifest and role statement.
 pub async fn provision_system(args: ProvisionSystemArgs) -> anyhow::Result<()> {
@@ -247,6 +255,14 @@ pub struct ProvisionProjectEnvArgs {
     )]
     pub revoke_pat_prefix: Option<String>,
 }
+
+// Environment contract for this verb as invoked by platform install Jobs.
+#[cfg(test)]
+pub(crate) const PROVISION_PROJECT_ENV_INSTALL_ENV: crate::install_job_tests::Environment =
+    crate::install_job_tests::Environment {
+        required: &["WAMN_SYSTEM_ADMIN_URL", "WAMN_TARGET_ADMIN_DATABASE_URL"],
+        optional: &["WAMN_CLUSTER_NAMESPACE", "WAMN_NAMESPACE"],
+    };
 
 /// The id of the ONE group every derived workload action flag belongs to.
 ///
@@ -1203,6 +1219,22 @@ pub struct ProvisionOrgArgs {
     #[arg(long, value_name = "PATH")]
     pub emit_control_administration_secret: Option<PathBuf>,
 }
+
+// Environment contract for this verb as invoked by platform install Jobs.
+#[cfg(test)]
+pub(crate) const PROVISION_ORG_INSTALL_ENV: crate::install_job_tests::Environment =
+    crate::install_job_tests::Environment {
+        required: &["WAMN_SYSTEM_ADMIN_URL"],
+        optional: &[
+            "WAMN_CLUSTER_NAMESPACE",
+            "WAMN_NAMESPACE",
+            "WAMN_AUTH_NATS_URL",
+            "WAMN_AUTH_NATS_TLS_CA",
+            "WAMN_AUTH_NATS_TLS_CERT",
+            "WAMN_AUTH_NATS_TLS_KEY",
+            "WAMN_AUTH_NATS_TLS_SERVER_NAME",
+        ],
+    };
 
 /// Stamp one org, then print what was recorded and write the CRs it owns.
 pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
