@@ -181,8 +181,8 @@ pub fn input_digest(package_root: &Path) -> Result<String> {
 /// The build inputs of the package at `package_root`: every file of the package
 /// directory except build output and installed dependencies, the lock file of
 /// the enclosing Cargo workspace when there is one, every file of each
-/// [`PLATFORM_INPUTS`] tree that exists, the WIT paths bound by guests in the
-/// enclosing workspace, and the generator identity and fingerprint.
+/// [`PLATFORM_INPUTS`] tree that exists, the existing WIT paths bound by guests
+/// in the enclosing workspace, and the generator identity and fingerprint.
 pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
     let mut files = BTreeMap::new();
     insert_tree(&mut files, package_root, Path::new(""))?;
@@ -266,6 +266,9 @@ fn insert_guest_wit(
                     continue;
                 }
                 let root = directory.join(path);
+                if !root.exists() {
+                    continue;
+                }
                 roots.insert(
                     root.canonicalize()
                         .with_context(|| format!("resolve guest WIT {}", root.display()))?,
@@ -622,6 +625,42 @@ mod tests {
             assert_ne!(before[1], after[1], "{path}");
             before = after;
         }
+    }
+
+    #[test]
+    fn missing_bound_wit_is_omitted_until_it_exists() {
+        let scratch = scratch("missing-bound-wit");
+        let apps = scratch.0.join("apps");
+        let package = apps.join("package");
+        for (path, text) in [
+            ("Cargo.toml", ""),
+            ("package/wamn.k", "a"),
+            ("package/component/Cargo.toml", ""),
+            (
+                "package/component/src/lib.rs",
+                r#"wit_bindgen::generate!({ path: "../../../crates/shared/wit" });"#,
+            ),
+        ] {
+            let path = apps.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let before = inputs(&package).expect("read inputs without the bound WIT");
+        assert_eq!(
+            before.files.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["component/Cargo.toml", "component/src/lib.rs", "wamn.k"]
+        );
+
+        let wit = scratch.0.join("crates/shared/wit/package.wit");
+        fs::create_dir_all(wit.parent().unwrap()).unwrap();
+        fs::write(&wit, "package test:shared; interface shared {}").unwrap();
+        let after = inputs(&package).expect("read inputs with the bound WIT");
+        assert!(
+            after
+                .files
+                .contains_key("../../crates/shared/wit/package.wit")
+        );
+        assert_ne!(before.digest, after.digest);
     }
 
     #[test]

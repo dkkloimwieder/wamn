@@ -287,6 +287,7 @@ async fn statement_types_are_derived_and_nullability_only_widens() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
     let workspace = Workspace::new("stale-base-pin");
+    fs::write(workspace.root.join("Cargo.toml"), "[workspace]\n").unwrap();
     let database = wamn_test_postgres::database();
     let output_root = workspace.root.join("target/wamn");
     let base_request = BuildRequest::new(&workspace.package(), &output_root, database.url());
@@ -332,9 +333,7 @@ async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
         .expect("generate the overlay");
     let output = package_output(&output_root, &built.package.id);
     record_component(&output, b"\0asm\x0d\0\x01\0");
-    // Enable component builds only after generation, so a current build must
-    // check its base without calling Cargo.
-    fs::write(workspace.root.join("Cargo.toml"), "[workspace]\n").unwrap();
+    // A current build must check its base without calling Cargo.
     build_package(&request)
         .await
         .expect("accept the matching base pin");

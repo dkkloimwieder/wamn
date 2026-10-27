@@ -21,7 +21,7 @@ ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-syn = { version = "3.0.6", features = ["full", "visit"] }
+syn = { workspace = true, features = ["full", "visit"] }
 tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
 url = { workspace = true }
 wamn-component-policy = { workspace = true }
