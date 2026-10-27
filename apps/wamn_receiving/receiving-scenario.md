@@ -22,12 +22,20 @@ The public operations are declared in the manifest:
 | `purchase_order.update` | Change `supplier_id` with an expected `row_version`. |
 | `receipt.get` and `receipt.query` | Read receipt history. |
 | `receiving.record_receipt` | Commit one atomic receipt for each input item. |
-| `receiving.load_receipt_screen` | Read the order and line information needed for entry. |
+| `receiving.load_receipt_screen` | Read one row per order line for receipt entry. |
+| `receiving.purchase_order_summary` | Read line counts and quantity totals, filtered by supplier and status. |
 | `location.list` | Read a bounded list of available locations. |
 | `receiving.load_purchase_order_history` | Read one page of the change log of a purchase order. |
 
 Each public operation has its own operation grant. The built-in role `admin` holds every grant, and an authored role holds the stable reference of each grant selected for it.
 The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@2.2.6`, and its stable reference is `wamn-receiving:receiving/load-purchase-order-history`.
+
+The receipt screen reads `receiving.receipt_screen_line`, with one row per line, ordered by line number and line id.
+An order with no lines has no row in this view.
+The operation returns `not_found` if the order has no lines or does not exist.
+The summary reads `receiving.purchase_order_receiving_summary`, with one row per order.
+Its required filters are `supplier_id` and `status`.
+An order with no lines has a zero line count and zero quantity totals.
 
 The query filters on `supplier_id` and `status`.
 Its declared sort fields are `purchase_order_number`, `status`, and `created_at`.

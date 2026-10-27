@@ -41,7 +41,7 @@ mod tests {
     const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
     // Each export is named by reference, and `sealed` reads its version from
     // the package wamn.json.
-    const RECEIVING_EXPORTS: [&str; 11] = [
+    const RECEIVING_EXPORTS: [&str; 12] = [
         "wamn-receiving:location/list",
         "wamn-receiving:purchase-order/get",
         "wamn-receiving:purchase-order/query",
@@ -50,6 +50,7 @@ mod tests {
         "wamn-receiving:receipt/query",
         "wamn-receiving:receiving/load-purchase-order-history",
         "wamn-receiving:receiving/load-receipt-screen",
+        "wamn-receiving:receiving/purchase-order-summary",
         "wamn-receiving:receiving/record-receipt",
         "wamn-receiving:supplier/create",
         "wamn-receiving:supplier/query",

@@ -177,6 +177,54 @@
     },
     "registered-operation": "wamn-receiving:receiving/load-purchase-order-history"
   },
+  "receiving-purchase-order-summary-http": {
+    "type": "http",
+    "package-id": "wamn_receiving",
+    "component": "receiving",
+    "operation": "wamn-receiving:receiving/purchase-order-summary",
+    "definition-hash": "sha256:f8776765a7f05dee9fcaa4a111fb754c30f37aac9fc08046595fdf3fb46f7881",
+    "definition": {
+      "id": "receiving-purchase-order-summary-http",
+      "type": "http",
+      "route": {
+        "path": "/receiving/purchase_order_summary"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "supplier_id",
+            "status"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "supplier_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "open",
+                "complete",
+                "cancelled"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat", "session"]
+    },
+    "registered-operation": "wamn-receiving:receiving/purchase-order-summary"
+  },
   "location-list-http": {
     "type": "http",
     "package-id": "wamn_receiving",

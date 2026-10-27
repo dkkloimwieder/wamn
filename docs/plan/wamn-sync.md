@@ -197,7 +197,7 @@ export function syncCurrentAt<T extends object>(
 ): Accessor<string | undefined>
 export function outboxStatus(o: Outbox): Accessor<OutboxCounts>
 export function recordWrite<T extends Row>(
-  c: AnyCollection<T>,
+  c: SyncCollection<T>,
   o: Outbox,
   options?: { model?: string },
 ): {

@@ -254,23 +254,24 @@ manifest.Package {
             result = {
                 class = "bounded_list"
                 fields = [
-                    {path = "purchase_order_id", type = "uuid"}
-                    {path = "purchase_order_number", type = "text", label = "Order number", visible = True}
+                    {path = "purchase_order_id", type = "uuid", nullable = False}
+                    {path = "purchase_order_number", type = "text", nullable = False, label = "Order number", visible = True}
                     {
                         path = "purchase_order_status"
                         type = "text"
+                        nullable = False
                         values = ["open", "complete", "cancelled"]
                         label = "Status", visible = True
                     }
-                    {path = "supplier_id", type = "uuid", label = "Supplier"}
-                    {path = "row_version", type = "int32", revision = True, label = "Revision", visible = True}
-                    {path = "line_id", type = "uuid", nullable = True}
-                    {path = "line_number", type = "int32", nullable = True, label = "Line", visible = True}
-                    {path = "item_id", type = "uuid", nullable = True}
-                    {path = "item_number", type = "text", nullable = True, label = "Item", visible = True}
-                    {path = "ordered_quantity", type = "numeric", nullable = True, label = "Ordered", visible = True}
-                    {path = "received_quantity", type = "numeric", nullable = True, label = "Received", visible = True}
-                    {path = "remaining_quantity", type = "numeric", nullable = True, label = "Remaining", visible = True}
+                    {path = "supplier_id", type = "uuid", nullable = False, label = "Supplier"}
+                    {path = "row_version", type = "int32", nullable = False, revision = True, label = "Revision", visible = True}
+                    {path = "line_id", type = "uuid", nullable = False}
+                    {path = "line_number", type = "int32", nullable = False, label = "Line", visible = True}
+                    {path = "item_id", type = "uuid", nullable = False}
+                    {path = "item_number", type = "text", nullable = False, label = "Item", visible = True}
+                    {path = "ordered_quantity", type = "numeric", nullable = False, label = "Ordered", visible = True}
+                    {path = "received_quantity", type = "numeric", nullable = False, label = "Received", visible = True}
+                    {path = "remaining_quantity", type = "numeric", nullable = False, label = "Remaining", visible = True}
                 ]
             }
             errors = ["invalid_input", "not_found", *_errors_after_input]
@@ -279,18 +280,18 @@ manifest.Package {
                     fetch = "bounded_list"
                     parameters = [manifest.uuid("purchase_order_id")]
                     row = [
-                        manifest.uuid("purchase_order_id")
-                        manifest.text("purchase_order_number")
-                        manifest.text("purchase_order_status")
-                        manifest.uuid("supplier_id")
-                        manifest.int32("row_version")
-                        manifest.nullable(manifest.uuid("line_id"))
-                        manifest.nullable(manifest.int32("line_number"))
-                        manifest.nullable(manifest.uuid("item_id"))
-                        manifest.nullable(manifest.text("item_number"))
-                        manifest.nullable(manifest.numeric("ordered_quantity"))
-                        manifest.nullable(manifest.numeric("received_quantity"))
-                        manifest.nullable(manifest.numeric("remaining_quantity"))
+                        manifest.Value {name = "purchase_order_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "purchase_order_number", type = "text", nullable = False}
+                        manifest.Value {name = "purchase_order_status", type = "text", nullable = False}
+                        manifest.Value {name = "supplier_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "row_version", type = "int32", nullable = False}
+                        manifest.Value {name = "line_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "line_number", type = "int32", nullable = False}
+                        manifest.Value {name = "item_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "item_number", type = "text", nullable = False}
+                        manifest.Value {name = "ordered_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "received_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "remaining_quantity", type = "numeric", nullable = False}
                     ]
                 }
             }
@@ -340,6 +341,46 @@ manifest.Package {
                         manifest.nullable(manifest.text("before"))
                         manifest.nullable(manifest.text("after"))
                         manifest.nullable(manifest.text("current"))
+                    ]
+                }
+            }
+        }
+        "receiving.purchase_order_summary" = manifest.Projection("receiving.purchase_order_summary") {
+            label = "Purchase order receiving summary"
+            lists = {model = "purchase_order", key_field = "purchase_order_id", display_field = "purchase_order_number"}
+            input: {
+                fields = [
+                    {path = "supplier_id", type = "uuid", label = "Supplier", references = {model = "supplier"}}
+                    {path = "status", type = "text", values = ["open", "complete", "cancelled"], label = "Status"}
+                ]
+            }
+            result = {
+                class = "bounded_list"
+                fields = [
+                    {path = "purchase_order_id", type = "uuid", nullable = False}
+                    {path = "purchase_order_number", type = "text", nullable = False}
+                    {path = "status", type = "text", nullable = False}
+                    {path = "supplier_id", type = "uuid", nullable = False}
+                    {path = "supplier_name", type = "text", nullable = False}
+                    {path = "line_count", type = "int64", nullable = False}
+                    {path = "ordered_quantity", type = "numeric", nullable = False}
+                    {path = "received_quantity", type = "numeric", nullable = False}
+                ]
+            }
+            errors = ["invalid_input", *_errors_after_input]
+            statements = {
+                purchase_order_summary = manifest.Statement("query", "purchase_order_summary") {
+                    fetch = "bounded_list"
+                    parameters = [manifest.uuid("supplier_id"), manifest.text("status")]
+                    row = [
+                        manifest.Value {name = "purchase_order_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "purchase_order_number", type = "text", nullable = False}
+                        manifest.Value {name = "status", type = "text", nullable = False}
+                        manifest.Value {name = "supplier_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "supplier_name", type = "text", nullable = False}
+                        manifest.Value {name = "line_count", type = "int64", nullable = False}
+                        manifest.Value {name = "ordered_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "received_quantity", type = "numeric", nullable = False}
                     ]
                 }
             }

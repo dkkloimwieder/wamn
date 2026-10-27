@@ -17,6 +17,14 @@ mod tests {
         include_bytes!("../../../apps/target/wamn/client_acme_receiving/wamn.json");
     const MIGRATION: &str =
         include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
+    const VIEWS_MIGRATION: &str =
+        include_str!("../../../apps/wamn_receiving/migrations/0004_receiving_views.sql");
+    const SCREEN_SQL: &str =
+        include_str!("../../../apps/wamn_receiving/query/load_receipt_screen.sql");
+    const SUMMARY_SQL: &str =
+        include_str!("../../../apps/wamn_receiving/query/purchase_order_summary.sql");
+    const RELATION_FIELDS_SQL: &str = "SELECT table_name, column_name FROM information_schema.columns \
+         WHERE table_schema = $1 ORDER BY table_name, ordinal_position";
     const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
     const RECORD_HISTORY_APP_GRANTS_SQL: &str =
         include_str!("../../../deploy/sql/record-history-app-grants.sql");
@@ -162,6 +170,194 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn receiving_views_read_lines_and_filtered_totals_with_column_grants() -> Result<()> {
+        use wamn_schema_generator::{
+            DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
+            render_effective_data_access_sql,
+        };
+
+        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+        let url = server.create_database("receiving_views")?.url().to_owned();
+        let client = connect(&url).await?;
+        assert_postgres_18(&client).await?;
+        client
+            .batch_execute(
+                "BEGIN; CREATE SCHEMA receiving; \
+                 CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS",
+            )
+            .await?;
+        client.batch_execute(MIGRATION).await?;
+        client.batch_execute(VIEWS_MIGRATION).await?;
+        client
+            .batch_execute(
+                "INSERT INTO receiving.supplier (id, name) VALUES
+                ('00000000-0000-0000-0000-000000000001', 'Supplier A'),
+                ('00000000-0000-0000-0000-000000000002', 'Supplier B');
+             INSERT INTO receiving.item (id, item_number) VALUES
+                ('00000000-0000-0000-0000-000000000011', 'ITEM-1');
+             INSERT INTO receiving.purchase_order
+                (id, purchase_order_number, supplier_id, status,
+                 created_at, created_by, updated_at, updated_by)
+             SELECT id::uuid, number, supplier::uuid, status,
+                    CURRENT_TIMESTAMP, supplier::uuid, CURRENT_TIMESTAMP, supplier::uuid
+             FROM (VALUES
+                ('00000000-0000-0000-0000-000000000101', 'PO-EMPTY',
+                 '00000000-0000-0000-0000-000000000001', 'open'),
+                ('00000000-0000-0000-0000-000000000102', 'PO-LINES',
+                 '00000000-0000-0000-0000-000000000001', 'open'),
+                ('00000000-0000-0000-0000-000000000103', 'PO-COMPLETE',
+                 '00000000-0000-0000-0000-000000000001', 'complete'),
+                ('00000000-0000-0000-0000-000000000104', 'PO-OTHER',
+                 '00000000-0000-0000-0000-000000000002', 'open')
+             ) AS orders(id, number, supplier, status);
+             INSERT INTO receiving.purchase_order_line
+                (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity)
+             VALUES
+                ('00000000-0000-0000-0000-000000000202',
+                 '00000000-0000-0000-0000-000000000102', 2,
+                 '00000000-0000-0000-0000-000000000011', 4, 2),
+                ('00000000-0000-0000-0000-000000000201',
+                 '00000000-0000-0000-0000-000000000102', 1,
+                 '00000000-0000-0000-0000-000000000011', 10.2500, 1.2500);",
+            )
+            .await?;
+
+        let manifest: Value = serde_json::from_slice(MANIFEST)?;
+        for (operation, statement) in [
+            ("receiving.load_receipt_screen", "load_receipt_screen"),
+            ("receiving.purchase_order_summary", "purchase_order_summary"),
+        ] {
+            let operation = &manifest["custom_operations"][operation];
+            for field in operation["statements"][statement]["row"]
+                .as_array()
+                .unwrap()
+            {
+                ensure!(field["nullable"] == false, "nullable view row: {field}");
+            }
+            for field in operation["result"]["fields"].as_array().unwrap() {
+                ensure!(field["nullable"] == false, "nullable view result: {field}");
+            }
+        }
+
+        // Retain only the generated view grants to exercise owner rights.
+        let mut overlay: Value = serde_json::from_slice(include_bytes!(
+            "../../../apps/target/wamn/wamn_receiving/platform-policy/data-access.json"
+        ))?;
+        overlay["relations"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|relation| {
+                matches!(
+                    relation["table"].as_str(),
+                    Some("receipt_screen_line" | "purchase_order_receiving_summary")
+                )
+            });
+        ensure!(overlay["relations"].as_array().unwrap().len() == 2);
+        let overlay = DataAccessOverlay::from_slice(&serde_json::to_vec(&overlay)?)?;
+        let mut fields = BTreeMap::<String, Vec<String>>::new();
+        for row in client.query(RELATION_FIELDS_SQL, &[&"receiving"]).await? {
+            fields.entry(row.get(0)).or_default().push(row.get(1));
+        }
+        let fields = fields
+            .into_iter()
+            .map(|(table, fields)| DataAccessRelationFields::new("receiving", table, fields))
+            .collect::<Vec<_>>();
+        let authority = derive_effective_data_access(&fields, &[overlay])?;
+        client
+            .batch_execute(&render_effective_data_access_sql(&authority)?)
+            .await?;
+        select_receiving_schema(&client).await?;
+        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
+        for table in ["purchase_order", "purchase_order_line", "supplier", "item"] {
+            let relation = format!("receiving.{table}");
+            let access: bool = client
+                .query_one(
+                    "SELECT has_any_column_privilege(current_user, $1, 'SELECT')",
+                    &[&relation],
+                )
+                .await?
+                .get(0);
+            ensure!(!access, "view reader can read base table {relation}");
+        }
+
+        let empty = Uuid::from_u128(0x101);
+        ensure!(client.query(SCREEN_SQL, &[&empty]).await?.is_empty());
+        let missing = Uuid::from_u128(0x999);
+        ensure!(client.query(SCREEN_SQL, &[&missing]).await?.is_empty());
+        let order = Uuid::from_u128(0x102);
+        let screen = format!(
+            "SELECT to_jsonb(row) FROM ({}) AS row",
+            SCREEN_SQL.trim().trim_end_matches(';')
+        );
+        let rows = client.query(&screen, &[&order]).await?;
+        let rows = rows
+            .iter()
+            .map(|row| row.get::<_, Value>(0))
+            .collect::<Vec<_>>();
+        ensure!(rows.len() == 2);
+        ensure!(rows[0]["line_number"] == 1 && rows[1]["line_number"] == 2);
+        ensure!(rows.iter().all(|row| {
+            row.as_object()
+                .unwrap()
+                .values()
+                .all(|value| !value.is_null())
+        }));
+        ensure!(rows[0]["remaining_quantity"].as_f64() == Some(9.0));
+        ensure!(rows[1]["remaining_quantity"].as_f64() == Some(2.0));
+
+        let summary = format!(
+            "SELECT to_jsonb(row) FROM ({}) AS row",
+            SUMMARY_SQL.trim().trim_end_matches(';')
+        );
+        for (supplier, status, numbers) in [
+            (Uuid::from_u128(1), "open", vec!["PO-EMPTY", "PO-LINES"]),
+            (Uuid::from_u128(1), "complete", vec!["PO-COMPLETE"]),
+            (Uuid::from_u128(2), "open", vec!["PO-OTHER"]),
+            (Uuid::from_u128(2), "cancelled", vec![]),
+        ] {
+            let rows = client.query(&summary, &[&supplier, &status]).await?;
+            let rows = rows
+                .iter()
+                .map(|row| row.get::<_, Value>(0))
+                .collect::<Vec<_>>();
+            ensure!(
+                rows.iter()
+                    .map(|row| row["purchase_order_number"].as_str().unwrap())
+                    .collect::<Vec<_>>()
+                    == numbers
+            );
+            for row in rows {
+                ensure!(row["supplier_id"] == supplier.to_string());
+                ensure!(row["status"] == status);
+                ensure!(
+                    row["supplier_name"]
+                        == if supplier == Uuid::from_u128(1) {
+                            "Supplier A"
+                        } else {
+                            "Supplier B"
+                        }
+                );
+                let totals = json!([
+                    row["line_count"],
+                    row["ordered_quantity"],
+                    row["received_quantity"]
+                ]);
+                ensure!(
+                    totals
+                        == if row["purchase_order_number"] == "PO-LINES" {
+                            json!([2, 14.25, 3.25])
+                        } else {
+                            json!([0, 0, 0])
+                        }
+                );
+            }
+        }
+        client.batch_execute("ROLLBACK").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn generated_update_ignores_ungranted_additive_columns() -> Result<()> {
         use wamn_schema_generator::{
             DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
@@ -185,6 +381,7 @@ mod tests {
             )
             .await?;
         client.batch_execute(MIGRATION).await?;
+        client.batch_execute(VIEWS_MIGRATION).await?;
         install_record_history(&client, MANIFEST).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
         client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
@@ -206,13 +403,7 @@ mod tests {
             .await?;
 
         let mut fields = BTreeMap::<String, Vec<String>>::new();
-        for row in client
-            .query(
-                wamn_schema_control::select_schema_columns_sql(),
-                &[&"receiving"],
-            )
-            .await?
-        {
+        for row in client.query(RELATION_FIELDS_SQL, &[&"receiving"]).await? {
             fields.entry(row.get(0)).or_default().push(row.get(1));
         }
         let relation_fields = fields
@@ -359,6 +550,7 @@ mod tests {
             )
             .await?;
         client.batch_execute(MIGRATION).await?;
+        client.batch_execute(VIEWS_MIGRATION).await?;
         install_record_history(&client, MANIFEST).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
         client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
@@ -375,13 +567,7 @@ mod tests {
         .await?;
 
         let mut fields = BTreeMap::<String, Vec<String>>::new();
-        for row in client
-            .query(
-                wamn_schema_control::select_schema_columns_sql(),
-                &[&"receiving"],
-            )
-            .await?
-        {
+        for row in client.query(RELATION_FIELDS_SQL, &[&"receiving"]).await? {
             fields.entry(row.get(0)).or_default().push(row.get(1));
         }
         let relation_fields = fields
@@ -595,6 +781,7 @@ mod tests {
             .batch_execute(MIGRATION)
             .await
             .context("apply the exact Receiving migration")?;
+        client.batch_execute(VIEWS_MIGRATION).await?;
         install_record_history(&client, MANIFEST).await?;
         install_write_log(&client).await?;
         select_receiving_schema(&client).await?;

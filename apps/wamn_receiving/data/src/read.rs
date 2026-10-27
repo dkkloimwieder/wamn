@@ -4,12 +4,13 @@ use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
 use crate::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
-    receiving_load_receipt_screen as screen_sql,
+    receiving_load_receipt_screen as screen_sql, receiving_purchase_order_summary as summary_sql,
 };
 use wamn_postgres_statements::{Connection, Uuid};
 
 pub use location_sql::ListLocationsRow;
 pub use screen_sql::LoadReceiptScreenRow;
+pub use summary_sql::PurchaseOrderSummaryRow;
 
 /// The largest page of one purchase order history read.
 const MAX_HISTORY_PAGE: i32 = 100;
@@ -93,7 +94,7 @@ pub async fn location_list(
     Ok(rows)
 }
 
-/// Read the purchase order and its lines in one statement.
+/// Read one receipt screen row per purchase order line.
 pub async fn receipt_screen(
     connection: &mut Connection,
     id: Uuid,
@@ -104,9 +105,24 @@ pub async fn receipt_screen(
             AccessError::from_statement("load receipt screen", &source, AllowedConstraints::NONE)
         })?;
     if rows.is_empty() {
-        return Err(AccessError::not_found("purchase_order does not exist"));
+        return Err(AccessError::not_found(
+            "purchase_order has no receipt screen lines",
+        ));
     }
     Ok(rows)
+}
+
+/// Read the receiving totals for orders with the supplied supplier and status.
+pub async fn purchase_order_summary(
+    connection: &mut Connection,
+    supplier_id: Uuid,
+    status: String,
+) -> Result<Vec<PurchaseOrderSummaryRow>, AccessError> {
+    summary_sql::purchase_order_summary(connection, supplier_id, status)
+        .await
+        .map_err(|source| {
+            AccessError::from_statement("purchase order summary", &source, AllowedConstraints::NONE)
+        })
 }
 
 /// Read retained history and project the declared purchase-order image.

@@ -469,6 +469,7 @@ async fn start_with(
                 | "wamn-receiving:receiving/record-receipt"
                 | "wamn-receiving:receiving/load-receipt-screen"
                 | "wamn-receiving:receiving/load-purchase-order-history"
+                | "wamn-receiving:receiving/purchase-order-summary"
                 | "wamn-receiving:location/list"
         )
     });

@@ -71,10 +71,8 @@ static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> =
 const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 /// Domain of the platform principal emails in every test tenant.
 const PLATFORM_DOMAIN: &str = "example.invalid";
-// Twelve base operations: the supplier record (wamn-rm14.8) added
-// supplier_create and supplier_query to the nine before it, and numbering
-// (wamn-83eth.3) added purchase_order_create.
-const BASE_OPERATIONS: [(&str, &str); 12] = [
+// The base operation grants include the receiving summary projection.
+const BASE_OPERATIONS: [(&str, &str); 13] = [
     ("location_list", "wamn-receiving:location/list"),
     (
         "purchase_order_create",
@@ -98,6 +96,10 @@ const BASE_OPERATIONS: [(&str, &str); 12] = [
     (
         "receiving_load_receipt_screen",
         "wamn-receiving:receiving/load-receipt-screen",
+    ),
+    (
+        "receiving_purchase_order_summary",
+        "wamn-receiving:receiving/purchase-order-summary",
     ),
     (
         "receiving_record_receipt",
@@ -225,11 +227,8 @@ struct JourneyAttachment {
     path: &'static str,
 }
 
-// Deployment-owned route spellings live in this one publication table rather
-// than leaking into operation or component identity. The base publishes 11
-// routes: the supplier record (wamn-rm14.8) added supplier-create-http and
-// supplier-query-http. The overlay publishes 5.
-const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
+// Deployment-owned route spellings live in this one publication table.
+const JOURNEY_ATTACHMENTS: [JourneyAttachment; 17] = [
     JourneyAttachment {
         package_id: BASE_PACKAGE_ID,
         wiring_id: "location_list",
@@ -274,6 +273,11 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "receiving_load_purchase_order_history",
         path: "/receiving/load_purchase_order_history",
+    },
+    JourneyAttachment {
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "receiving_purchase_order_summary",
+        path: "/receiving/purchase_order_summary",
     },
     JourneyAttachment {
         package_id: BASE_PACKAGE_ID,
