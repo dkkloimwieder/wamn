@@ -21,6 +21,8 @@ use crate::materialize::{GENERATOR_ID, TOOLCHAIN_ID};
 pub const RECEIPT_FILE: &str = "build.json";
 /// The one receipt schema this generator writes and reads.
 pub const RECEIPT_SCHEMA: &str = "wamn.build/v1";
+/// The build-time digest of generator source, KCL templates, and embedded SQL.
+pub const GENERATOR_FINGERPRINT: &str = env!("WAMN_GENERATOR_FINGERPRINT");
 /// The SQLx version whose describe path derives statement types.
 pub(crate) const SQLX_VERSION: &str = "0.9.0";
 
@@ -68,7 +70,7 @@ pub struct ReceiptPackage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReceiptInputs {
-    /// The digest of [`input_digest`]: the files and the generator identity.
+    /// The digest of [`input_digest`]: the files, generator identity, and fingerprint.
     pub digest: String,
     /// The `sha256:` digest of each input file, by its path relative to the
     /// package root.
@@ -177,7 +179,7 @@ pub fn input_digest(package_root: &Path) -> Result<String> {
 /// The build inputs of the package at `package_root`: every file of the package
 /// directory except build output and installed dependencies, the lock file of
 /// the enclosing Cargo workspace when there is one, every file of each
-/// [`PLATFORM_INPUTS`] tree that exists, and the generator identity.
+/// [`PLATFORM_INPUTS`] tree that exists, and the generator identity and fingerprint.
 pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
     let mut files = BTreeMap::new();
     insert_tree(&mut files, package_root, Path::new(""))?;
@@ -200,11 +202,20 @@ pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
         let bytes = fs::read(&lock).with_context(|| format!("read {}", lock.display()))?;
         files.insert(WORKSPACE_LOCK.to_owned(), sha256(&bytes));
     }
-    let digest = sha256(&canonical_json_bytes(&serde_json::json!({
-        "files": files,
-        "generator": generator(),
-    })));
+    let digest = digest_inputs(&files, &generator(), GENERATOR_FINGERPRINT);
     Ok(ReceiptInputs { digest, files })
+}
+
+fn digest_inputs(
+    files: &BTreeMap<String, String>,
+    generator: &ReceiptGenerator,
+    fingerprint: &str,
+) -> String {
+    sha256(&canonical_json_bytes(&serde_json::json!({
+        "files": files,
+        "generator": generator,
+        "generator_fingerprint": fingerprint,
+    })))
 }
 
 /// Insert the digest of every input file below `root`, keyed by `prefix`
@@ -262,6 +273,18 @@ fn input_files(package_root: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generator_changes_make_identical_package_inputs_stale() {
+        let files = BTreeMap::from([("wamn.k".to_owned(), sha256(b"package"))]);
+        let generator = generator();
+        let before = digest_inputs(&files, &generator, "old templates");
+        assert_ne!(before, digest_inputs(&files, &generator, "new templates"));
+
+        let mut changed = generator.clone();
+        changed.id.push_str("-changed");
+        assert_ne!(before, digest_inputs(&files, &changed, "old templates"));
+    }
 
     struct Scratch(PathBuf);
 

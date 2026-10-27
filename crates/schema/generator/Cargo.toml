@@ -26,6 +26,10 @@ wamn-event-wire = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-number-pattern = { workspace = true }
 
+[build-dependencies]
+hex.workspace = true
+sha2.workspace = true
+
 [dev-dependencies]
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }

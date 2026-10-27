@@ -389,6 +389,8 @@ Build every package before you compile the apps workspace, the app test crates, 
 It records the input files and their digest, the base packages, the generator identity, and the digest of each output.
 The input files are the package's own files, `apps/Cargo.lock`, and the platform trees that its components link: `crates/platform/runtime/wit`, `apps/platform/data`, `apps/platform/execution/contract` and `apps/platform/execution/jsonata`.
 A change in a platform tree makes every package stale.
+The input digest also covers the generator source, KCL templates, embedded SQL, Cargo manifest, and build script through `wamn_schema_generator::receipt::GENERATOR_FINGERPRINT`.
+A change to these generator inputs makes every package stale without a version bump.
 If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
 It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
