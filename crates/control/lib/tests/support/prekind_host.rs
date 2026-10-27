@@ -28,7 +28,7 @@ fn login(url: &str, role: &str) -> anyhow::Result<String> {
 
 async fn credential_secrets(
     project: &tokio_postgres::Client,
-    system: &tokio_postgres::Client,
+    system: &mut tokio_postgres::Client,
     project_url: &str,
     system_url: &str,
     scope: &Triple,
@@ -38,7 +38,7 @@ async fn credential_secrets(
     for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
         let (client, url) = match credential.database {
             CredentialDatabase::Project => (project, project_url),
-            CredentialDatabase::Control => (system, system_url),
+            CredentialDatabase::Control => (&*system, system_url),
         };
         let database = url
             .parse::<tokio_postgres::Config>()?
@@ -86,6 +86,19 @@ async fn credential_secrets(
                 "2099-01-01T00:00:00Z",
             ))
             .await?;
+        if credential.database == CredentialDatabase::Control {
+            let tx = wamn_control::provision_project_env::provisioning_transaction(system).await?;
+            tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
+            let mapped: String = tx
+                .query_one(
+                    sql::upsert_control_author_tenant_mapping_sql(),
+                    &[&role, &tenant, &ORG, &PROJECT, &"http"],
+                )
+                .await?
+                .get("tenant_id");
+            ensure!(mapped == tenant, "host reader maps to a different tenant");
+            tx.commit().await?;
+        }
         let name =
             wamn_control_provision::workload_secret_name(credential.family, ORG, PROJECT, "http");
         let secret = secrets
@@ -339,7 +352,9 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let database = wamn_test_postgres::database();
     let control = wamn_control_provision::test_database::system();
     let (project, project_task) = connect(database.url()).await?;
-    let (system, system_task) = connect(control.url()).await?;
+    let (mut system, system_connection) =
+        tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
+    let system_task = tokio::spawn(system_connection);
     project
         .batch_execute(&sql::set_database_owner_sql(database.name()))
         .await?;
@@ -380,6 +395,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             database.name()
         ))
         .await?;
+    let peer = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("http://{}", peer.local_addr()?);
     system.batch_execute("SET ROLE wamn_system").await?;
     system.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     system.execute("INSERT INTO registry.orgs(id,placement_type,pool_cluster) VALUES ($1,'pooled','prekind')", &[&ORG]).await?;
@@ -389,8 +406,80 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             &[&ORG, &PROJECT],
         )
         .await?;
+    let policy = wamn_control_registry::EnvPolicy::dev();
+    system
+        .execute(
+            wamn_control_registry::sql::stamp_env_policy_sql(),
+            &[
+                &ORG,
+                &POLICY,
+                &serde_json::to_string(&policy.recovery_domain)?,
+                &policy.promotion_rank,
+                &policy.instances,
+                &policy.storage,
+                &policy.cpu,
+                &policy.memory,
+                &policy.image,
+                &policy.backup_cadence,
+                &policy.wal_retention,
+                &policy.hibernation,
+                &policy.durability_class.as_sql(),
+            ],
+        )
+        .await?;
+    system
+        .query_one(
+            wamn_control_registry::sql::upsert_project_env_with_policy_sql(),
+            &[
+                &ORG,
+                &PROJECT,
+                &"http",
+                &"prekind-database",
+                &Some(NAMESPACE),
+                &"aaaaaaa1",
+                &Some(true),
+                &POLICY,
+            ],
+        )
+        .await?;
     system.batch_execute("RESET ROLE").await?;
-    wamn_control::connection_configuration::import(control.url(), ORG, &json!({"orgs": {}, "projects": {PROJECT: {"upstream": json!({"headers":{"authorization":"Bearer fixture-token"}}).to_string()}}}).to_string()).await?;
+    // C3.5: a credential imports only into a declared, project-enabled connection.
+    let (mut seed, seed_connection) =
+        tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
+    let seed_task = tokio::spawn(seed_connection);
+    seed.batch_execute("SET ROLE wamn_control").await?;
+    let tx = seed.transaction().await?;
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await?;
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    wamn_platform_identity::connections::write_connection(
+        &tx,
+        ORG,
+        &wamn_platform_identity::connections::ConnectionWrite {
+            integration: "http".into(),
+            external_system: None,
+            name: "upstream".into(),
+            transport: "http".into(),
+            exchange: "request".into(),
+            parameters: json!({"primary-authority":origin,"tls-verification":"disabled"}),
+            status: "active".into(),
+        },
+        &mut drops,
+    )
+    .await?;
+    wamn_platform_identity::connections::enable_connection(&tx, ORG, PROJECT, "upstream").await?;
+    for (scope, id) in [
+        ("org", ORG.to_owned()),
+        ("project", PROJECT.to_owned()),
+        ("environment", format!("{PROJECT}/http")),
+    ] {
+        wamn_platform_identity::connections::allow_integration(&tx, ORG, scope, &id, "http")
+            .await?;
+    }
+    tx.commit().await?;
+    wamn_control::connection_configuration::import(control.url(), ORG, &json!({"orgs": {}, "projects": {PROJECT: {"upstream": {"connection": "upstream", "secret": json!({"headers":{"authorization":"Bearer fixture-token"}}).to_string()}}}}).to_string()).await?;
 
     let scheduler_address = address()?;
     let scheduler = format!("nats://{scheduler_address}");
@@ -434,8 +523,6 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         broker.create_stream(stream).await?;
     }
 
-    let peer = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let origin = format!("http://{}", peer.local_addr()?);
     let peer_task = tokio::spawn(async move {
         let mut records = Vec::new();
         for _ in 0..2 {
@@ -516,18 +603,35 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     for package in &published.manifest.release.packages {
         project.execute("INSERT INTO catalog.packages(tenant_id,package_id,package_version,artifact_digest) VALUES ($1,$2,$3,$4)", &[&tenant,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
     }
-    let definition = directory.join("http-definition.json");
-    std::fs::write(
-        &definition,
-        json!({"primary-authority":origin,"tls-verification":"disabled"}).to_string(),
-    )?;
-    let input = wamn_control::bind_connection::read_local_instance(
-        &wamn_control::bind_connection::LocalInstanceInput {
-            requirement_type: wamn_catalog::RequirementType::Http,
-            definition,
-            credential_handle: "upstream".into(),
-        },
-    )?;
+    let mut document = fixture_document("http", "http.orders.example", digest);
+    document
+        .applications
+        .get_mut(PACKAGE)
+        .context("application")?
+        .packages = [PACKAGE.into(), "http_fixture".into()].into();
+    document
+        .applications
+        .get_mut(PACKAGE)
+        .context("application")?
+        .connections = [("upstream".into(), "upstream".into())].into();
+    // Match the write mode declared by org_bindings::publish_declarations.
+    let package =
+        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&json!({
+            "package":{"id":"http_fixture","version":"1.0.0"},
+            "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
+            "models":{},"components":{},
+            "connections":{"upstream":{"integration":"http","mode":"write"}}
+        }))?)?;
+    // The system floor seeds the active cloud target used by this document.
+    let tx = wamn_control::provision_project_env::provisioning_transaction(&mut seed).await?;
+    let reserved = wamn_control::environment::bindings::reserve(&tx, &document, &[package]).await?;
+    tx.commit().await?;
+    seed_task.abort();
+    let upstream = &reserved
+        .first()
+        .context("reserved upstream connection")?
+        .resolved;
+    let input = wamn_control::bind_connection::prepare_org_instance(upstream)?;
     let mut bindings = Vec::new();
     for component in &published.manifest.components {
         for connection in &component.descriptor.connections {
@@ -572,12 +676,6 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             bindings,
         })?,
     )?;
-    let mut document = fixture_document("http", "http.orders.example", digest);
-    document
-        .applications
-        .get_mut(PACKAGE)
-        .context("application")?
-        .packages = [PACKAGE.into(), "http_fixture".into()].into();
     let (mut group, event_secret) = event_overlay(
         &document,
         fixture_host_group("registry.invalid"),
@@ -607,7 +705,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     )?;
     let documents = wamn_gate_harness::render_check::template(&rendered, NAMESPACE)?;
     let mut secrets =
-        credential_secrets(&project, &system, database.url(), control.url(), &scope).await?;
+        credential_secrets(&project, &mut system, database.url(), control.url(), &scope).await?;
     secrets.extend(wamn_gate_harness::render_check::operator_prerequisites(
         NAMESPACE,
     ));
