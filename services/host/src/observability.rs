@@ -28,6 +28,7 @@ pub fn initialize(level: Level) -> anyhow::Result<Box<dyn FnOnce()>> {
         .add_directive("wasm_pkg_core=error".parse()?);
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
+        .log_internal_errors(false)
         .with_target(false)
         .with_ansi(false)
         .with_filter(fmt_filter);

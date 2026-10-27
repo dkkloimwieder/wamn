@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
+        .log_internal_errors(false)
         .init();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let path = if args.first().map(String::as_str) == Some("--config") {
