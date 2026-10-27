@@ -511,6 +511,7 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
         wamn_execution_contract::canonical_json_bytes(&overlay),
     )
     .expect("write staged evidence");
+    wamn_test_infrastructure::fixture_digest::write_receipt(&root);
     let staged = manifest_digest(&root);
     (root, staged)
 }
@@ -645,6 +646,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
         .insert("predecessor_version".to_owned(), serde_json::json!("0.9.0"));
     let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
     std::fs::write(bumped.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
+    wamn_test_infrastructure::fixture_digest::write_receipt(&bumped);
     assert_ne!(
         manifest_digest(&bumped),
         bumped_digest,
@@ -946,6 +948,7 @@ fn change_manifest_bytes(root: &Path) -> String {
     let mut bytes = std::fs::read(&path).expect("read the staged manifest");
     bytes.push(b'\n');
     std::fs::write(&path, &bytes).expect("write the changed manifest");
+    wamn_test_infrastructure::fixture_digest::write_receipt(root);
     manifest_digest(root)
 }
 

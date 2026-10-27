@@ -36,7 +36,7 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     // Instrument the existing invoker trigger without changing the schema.
     // This observes the actual role of each backfill UPDATE, including copies
     // used by qualification, and tries a platform write under that role.
@@ -132,7 +132,7 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
         serde_json::to_vec(&competing_manifest).unwrap(),
     )
     .unwrap();
-    crate::test_support::write_receipt(&competing);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&competing);
     let error = crate::apply_package::apply_package(apply_request(
         fixture.source_database.url(),
         &competing,
@@ -245,12 +245,12 @@ async fn expand_conditions_preserve_rows_stop_on_lock_and_commit_with_evidence()
         wamn_schema_generator::compile_manifest(&candidate).unwrap(),
     )
     .unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     let generation = fixture.server.database("upgrade_generation").unwrap();
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     let result = qualify_upgrade(request(&fixture, "expand.json"))
         .await
         .unwrap();
@@ -408,7 +408,7 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
             changed["upgrade_stage"][section] = json!({"refused": sql});
         }
         fs::write(&manifest_path, serde_json::to_vec(&changed).unwrap()).unwrap();
-        crate::test_support::write_receipt(&candidate);
+        wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
         let refused = request(&fixture, &format!("dynamic-{index}.json"));
         let output = refused.result.clone();
         let error = qualify_upgrade(refused)
@@ -424,7 +424,7 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
         .unwrap_err();
         assert!(format!("{error:#}").contains(operation), "{error:#}");
         fs::write(&fixture.suffix, &suffix).unwrap();
-        crate::test_support::write_receipt(&candidate);
+        wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     }
     assert_eq!(state(&mut fixture.source).await, original);
     fixture.server.stop().unwrap();

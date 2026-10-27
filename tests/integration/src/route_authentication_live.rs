@@ -196,12 +196,25 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .await
         .context("seed the authored role's references")?;
 
+    let scratch = ScratchRoot::create()?;
+    let package = scratch.path().join("package");
+    let source = package_root();
+    std::fs::create_dir_all(package.join("migrations"))?;
+    std::fs::copy(source.join("wamn.json"), package.join("wamn.json"))?;
+    for entry in std::fs::read_dir(source.join("migrations"))? {
+        let entry = entry?;
+        std::fs::copy(
+            entry.path(),
+            package.join("migrations").join(entry.file_name()),
+        )?;
+    }
+    wamn_test_infrastructure::fixture_digest::write_receipt(&package);
     let args = || ApplyPackageRequest {
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
-            path: package_root(),
+            path: package.clone(),
             artifact_digest: Some(
-                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package_root())
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
                     .expect("read the fixture package root"),
             ),
         },

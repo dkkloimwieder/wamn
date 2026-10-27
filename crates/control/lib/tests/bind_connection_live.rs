@@ -192,7 +192,20 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         ))
         .await
         .expect("ensure the CallableHttp class ACL role the pool probes for");
-    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection");
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+    let package = scratch.path().join("package");
+    std::fs::create_dir_all(package.join("migrations")).unwrap();
+    std::fs::copy(source.join("wamn.json"), package.join("wamn.json")).unwrap();
+    for entry in std::fs::read_dir(source.join("migrations")).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(
+            entry.path(),
+            package.join("migrations").join(entry.file_name()),
+        )
+        .unwrap();
+    }
+    wamn_test_infrastructure::fixture_digest::write_receipt(&package);
     apply_package::apply_package(ApplyPackageRequest {
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {

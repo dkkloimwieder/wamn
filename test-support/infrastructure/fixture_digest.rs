@@ -50,3 +50,68 @@ pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
     }
     Ok(format!("sha256:{}", hex::encode(context.finish())))
 }
+
+/// Record output that a test writes, without compiling a guest.
+pub fn write_receipt(root: &Path) {
+    use wamn_schema_generator::receipt;
+
+    let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    let manifest_bytes = std::fs::read(manifest_path).unwrap();
+    // Refusal tests can deliberately write an invalid package declaration.
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    let output = wamn_schema_generator::output_root(root);
+    std::fs::create_dir_all(&output).unwrap();
+    let receipt = receipt::BuildReceipt {
+        schema: receipt::RECEIPT_SCHEMA.to_owned(),
+        package: receipt::ReceiptPackage {
+            id: manifest["package"]["id"]
+                .as_str()
+                .expect("fixture package id")
+                .to_owned(),
+            version: manifest["package"]["version"]
+                .as_str()
+                .expect("fixture package version")
+                .to_owned(),
+        },
+        inputs: receipt::ReceiptInputs {
+            digest: receipt::input_digest(root).unwrap(),
+            files: std::collections::BTreeMap::new(),
+        },
+        dependencies: Vec::new(),
+        generator: receipt::ReceiptGenerator {
+            id: "test".into(),
+            toolchain: "test".into(),
+            sqlx: "0.9.0".into(),
+        },
+        outputs: receipt::ReceiptOutputs {
+            manifest: format!(
+                "sha256:{}",
+                hex::encode(ring::digest::digest(&ring::digest::SHA256, &manifest_bytes))
+            ),
+            files: std::collections::BTreeMap::new(),
+            components: Vec::new(),
+            web: None,
+        },
+    };
+    std::fs::write(output.join(receipt::RECEIPT_FILE), receipt.to_bytes()).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_fixture_receipt_matches_its_tree_and_refuses_a_later_edit() {
+        let scratch = crate::scratch::ScratchRoot::create().unwrap();
+        let package = scratch.path().join("package");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("wamn.json"),
+            r#"{"package":{"id":"fixture","version":"1.0.0"}}"#,
+        )
+        .unwrap();
+        super::write_receipt(&package);
+        wamn_schema_generator::receipt::check_current(&package).unwrap();
+        std::fs::write(package.join("statement.sql"), "SELECT 1").unwrap();
+        let error = wamn_schema_generator::receipt::check_current(&package).unwrap_err();
+        assert!(error.to_string().contains("is stale"), "{error:#}");
+    }
+}

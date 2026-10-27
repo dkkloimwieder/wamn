@@ -6,41 +6,6 @@ pub(crate) fn fixture_manifest() -> Vec<u8> {
     wamn_fixture_package::manifest_bytes()
 }
 
-/// Record output that a test writes, without compiling a guest.
-pub(crate) fn write_receipt(root: &std::path::Path) {
-    use wamn_schema_generator::receipt;
-
-    let manifest_path = wamn_schema_generator::package_manifest_path(root);
-    let manifest_bytes = std::fs::read(manifest_path).unwrap();
-    let manifest = wamn_schema_generator::PackageManifest::from_slice(&manifest_bytes).unwrap();
-    let output = wamn_schema_generator::output_root(root);
-    std::fs::create_dir_all(&output).unwrap();
-    let receipt = receipt::BuildReceipt {
-        schema: receipt::RECEIPT_SCHEMA.to_owned(),
-        package: receipt::ReceiptPackage {
-            id: manifest.package.id,
-            version: manifest.package.version,
-        },
-        inputs: receipt::ReceiptInputs {
-            digest: receipt::input_digest(root).unwrap(),
-            files: std::collections::BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        generator: receipt::ReceiptGenerator {
-            id: "test".into(),
-            toolchain: "test".into(),
-            sqlx: "0.9.0".into(),
-        },
-        outputs: receipt::ReceiptOutputs {
-            manifest: wamn_engine::component_admission::component_digest(&manifest_bytes),
-            files: std::collections::BTreeMap::new(),
-            components: Vec::new(),
-            web: None,
-        },
-    };
-    std::fs::write(output.join(receipt::RECEIPT_FILE), receipt.to_bytes()).unwrap();
-}
-
 /// Copy a handwritten schema fixture, which has no generated package output.
 pub(crate) fn copy_schema_fixture(root: &std::path::Path) {
     let source =
@@ -61,5 +26,5 @@ pub(crate) fn compile_package(root: &std::path::Path) {
     let output = wamn_schema_generator::output_root(root);
     std::fs::create_dir_all(&output).unwrap();
     std::fs::write(wamn_schema_generator::package_manifest_path(root), bytes).unwrap();
-    write_receipt(root);
+    wamn_test_infrastructure::fixture_digest::write_receipt(root);
 }

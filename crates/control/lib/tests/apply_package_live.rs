@@ -8,6 +8,7 @@ use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorType};
+use wamn_test_infrastructure::fixture_digest::write_receipt;
 use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -150,6 +151,7 @@ fn declare_missing_audit_logs(root: &Path) {
         serde_json::to_vec_pretty(&manifest).expect("serialize fixture manifest declarations"),
     )
     .expect("write fixture manifest declarations");
+    write_receipt(root);
 }
 
 fn set_audit_log_columns(root: &Path, model_id: &str, columns: &[&str]) {
@@ -164,6 +166,7 @@ fn set_audit_log_columns(root: &Path, model_id: &str, columns: &[&str]) {
         serde_json::to_vec_pretty(&manifest).expect("serialize audit_log manifest"),
     )
     .expect("write audit_log manifest");
+    write_receipt(root);
 }
 
 fn set_audit_log_retention(root: &Path, model_id: &str, retention: &str) {
@@ -178,6 +181,7 @@ fn set_audit_log_retention(root: &Path, model_id: &str, retention: &str) {
         serde_json::to_vec_pretty(&manifest).expect("serialize retention manifest"),
     )
     .expect("write retention manifest");
+    write_receipt(root);
 }
 
 /// Every user trigger in the inventory schema, as the server renders it, with
@@ -236,12 +240,14 @@ fn copy_base_fixture_as(root: &Path, package_id: &str, schema: &str) {
         serde_json::to_vec_pretty(&manifest).expect("serialize copied package manifest"),
     )
     .expect("write copied package manifest");
+    write_receipt(root);
 
     let migration_path = root.join("migrations/0001_initial.sql");
     let migration = std::fs::read_to_string(&migration_path)
         .expect("read copied package migration")
         .replace("inventory.", &format!("{schema}."));
     std::fs::write(migration_path, migration).expect("write copied package migration");
+    write_receipt(root);
 }
 
 fn copy_mutated_overlay_fixture(
@@ -321,8 +327,10 @@ fn copy_mutated_overlay_fixture(
         serde_json::to_vec_pretty(&manifest).expect("serialize overlay manifest"),
     )
     .expect("write overlay manifest");
+    write_receipt(root);
     std::fs::write(root.join("migrations/0001_initial.sql"), migration)
         .expect("write exact overlay migration");
+    write_receipt(root);
 }
 
 fn set_package_identity(root: &Path, version: &str, predecessor: Option<&str>) {
@@ -349,6 +357,7 @@ fn set_package_identity(root: &Path, version: &str, predecessor: Option<&str>) {
         serde_json::to_vec_pretty(&manifest).expect("serialize package manifest identity"),
     )
     .expect("write package manifest identity");
+    write_receipt(root);
 }
 
 fn declare_ownership_only_model(root: &Path, model_id: &str, table: &str) {
@@ -371,6 +380,7 @@ fn declare_ownership_only_model(root: &Path, model_id: &str, table: &str) {
         serde_json::to_vec_pretty(&manifest).expect("serialize package manifest model vocabulary"),
     )
     .expect("write package manifest model vocabulary");
+    write_receipt(root);
 }
 
 fn rename_internal_relation(root: &Path, from: &str, to: &str) {
@@ -391,6 +401,7 @@ fn rename_internal_relation(root: &Path, from: &str, to: &str) {
         serde_json::to_vec_pretty(&manifest).expect("serialize internal-relation manifest"),
     )
     .expect("write internal-relation manifest");
+    write_receipt(root);
 }
 
 async fn apply(url: &str, package: &Path) -> anyhow::Result<apply_package::ApplyOutcome> {
@@ -599,6 +610,7 @@ async fn platform_successor_without_qualification_preserves_predecessor_state() 
     let _ = std::fs::remove_dir_all(&package);
     wamn_fixture_package::write_upgrade_package(&package);
     wamn_schema_generator::write_compiled_manifest(&package).unwrap();
+    write_receipt(&package);
     let predecessor = wamn_fixture_package::package_root();
     apply(&url, &predecessor)
         .await
@@ -694,6 +706,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         "CREATE TABLE inventory.undeclared_relation (id int);",
     )
     .expect("write undeclared-relation fixture");
+    write_receipt(&undeclared);
     let error = apply(&url, &undeclared)
         .await
         .expect_err("an undeclared created relation must refuse before writes");
@@ -734,6 +747,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         serde_json::to_vec_pretty(&manifest).expect("serialize missing-exclusion manifest"),
     )
     .expect("write missing-exclusion manifest");
+    write_receipt(&missing_exclusion);
     let error = apply(&url, &missing_exclusion)
         .await
         .expect_err("an exclusion absent from migrations must refuse before writes");
@@ -1290,6 +1304,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let mut edited = original.clone();
     edited.extend_from_slice(b"\n");
     std::fs::write(&migration, edited).expect("edit applied migration bytes");
+    write_receipt(&package);
     let conflict = apply(&url, &package)
         .await
         .expect_err("another artifact under the applied coordinate must refuse");
@@ -1305,6 +1320,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert!(drift.contains("recorded-sha256="));
     assert!(drift.contains("actual-sha256="));
     std::fs::write(&migration, &original).expect("restore exact applied bytes");
+    write_receipt(&package);
 
     std::fs::write(
         package.join("migrations/0002_candidate.sql"),
@@ -1312,12 +1328,14 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
            ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write the first pending migration");
+    write_receipt(&package);
     std::fs::write(
         package.join("migrations/0003_failure.sql"),
         "ALTER TABLE inventory.rack \
            ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write the server-refused migration after it");
+    write_receipt(&package);
     apply_as(&url, &package, &installed)
         .await
         .expect_err("a failing later statement must roll back the whole suffix");
@@ -1349,8 +1367,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     std::fs::remove_file(package.join("migrations/0002_candidate.sql"))
         .expect("remove rolled-back candidate migration");
+    write_receipt(&package);
     std::fs::remove_file(package.join("migrations/0003_failure.sql"))
         .expect("remove server-refused migration");
+    write_receipt(&package);
     client
         .execute(
             "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
@@ -1366,6 +1386,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
            ADD COLUMN sealed_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write a migration after the package coordinate was sealed");
+    write_receipt(&package);
     let sealed = apply_as(&url, &package, &installed)
         .await
         .expect_err("a sealed package version refuses an additional migration");
@@ -1417,6 +1438,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         "CREATE TABLE inventory.after_seal (id int);",
     )
     .expect("replace the refused suffix with the new version's declared model");
+    write_receipt(&package);
     let undeclared = apply(&url, &package)
         .await
         .expect_err("a new coordinate over existing history must declare its predecessor");
@@ -1452,6 +1474,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let mut divergent = original.clone();
     divergent.extend_from_slice(b"\n");
     std::fs::write(&migration, divergent).expect("diverge the cumulative predecessor prefix");
+    write_receipt(&package);
     let mismatch = apply(&url, &package)
         .await
         .expect_err("a divergent predecessor prefix refuses before writes");
@@ -1489,6 +1512,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         "predecessor mismatch refuses before executing the suffix"
     );
     std::fs::write(&migration, &original).expect("restore the cumulative predecessor prefix");
+    write_receipt(&package);
 
     let predecessor_identity = write_identity(&client).await;
     let unqualified = apply(&url, &package)
@@ -1627,6 +1651,7 @@ async fn record_history_triggers_follow_the_declaration() {
            FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');",
     )
     .expect("write a migration that carries a trigger");
+    write_receipt(&package);
     let refused = apply(&url, &package)
         .await
         .expect_err("a migration that carries a trigger still refuses");
@@ -1640,6 +1665,7 @@ async fn record_history_triggers_follow_the_declaration() {
     assert_eq!(inventory_triggers(&client).await, upgraded);
     std::fs::remove_file(package.join("migrations/0002_trigger.sql"))
         .expect("remove the refused trigger migration");
+    write_receipt(&package);
 
     set_package_identity(&package, "1.0.1", Some("1.0.0"));
     client
@@ -1957,6 +1983,7 @@ async fn record_history_log_follows_the_declaration() {
            id uuid CONSTRAINT rack_history_id_pkey PRIMARY KEY);",
     )
     .expect("write a migration that creates a history name");
+    write_receipt(&package);
     let refused = apply(&url, &package)
         .await
         .expect_err("a migration that creates a history name refuses");
@@ -2156,6 +2183,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         "ALTER TABLE inventory.dock ADD COLUMN description text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append the column migration");
+    write_receipt(&package);
     let refused = apply(&url, &package)
         .await
         .expect_err("a release apply refuses the working-tree coordinate on a marked target");
@@ -2239,6 +2267,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration after the seal");
+    write_receipt(&first_bytes_package);
     // A release apply refuses the working-tree coordinate before the seal.
     let sealed = apply(&url, &first_bytes_package)
         .await
@@ -2255,9 +2284,11 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration after the seal");
+    write_receipt(&package);
     let mut changed = std::fs::read(package.join("wamn.json")).expect("read manifest");
     changed.push(b'\n');
     std::fs::write(package.join("wamn.json"), changed).expect("change manifest bytes");
+    write_receipt(&package);
     apply_local()
         .await
         .expect("the local target records an appended migration after the seal");
@@ -2276,6 +2307,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         b"ALTER TABLE inventory.dock ADD COLUMN detail text NOT NULL DEFAULT 'not_required';",
     )
     .expect("edit an applied migration");
+    write_receipt(&package);
     let edited = apply_local()
         .await
         .expect_err("an edited applied migration refuses on a marked target");
@@ -2284,9 +2316,11 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         wamn_schema_control::PackageMigrationErrorType::MigrationDrift
     );
     std::fs::write(&edited_path, edited_bytes).expect("restore the edited migration");
+    write_receipt(&package);
     let removed_path = package.join("migrations/0003_dock_note.sql");
     let removed_bytes = std::fs::read(&removed_path).expect("read applied migration");
     std::fs::remove_file(&removed_path).expect("remove an applied migration");
+    write_receipt(&package);
     let removed = apply_local()
         .await
         .expect_err("a removed applied migration refuses on a marked target");
@@ -2295,6 +2329,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         wamn_schema_control::PackageMigrationErrorType::MigrationDrift
     );
     std::fs::write(&removed_path, removed_bytes).expect("restore the removed migration");
+    write_receipt(&package);
     assert_eq!(
         database_comment(&client).await,
         Some(recorded_comment(&third))
@@ -2306,6 +2341,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         "ALTER TABLE inventory.dock ADD COLUMN code text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration for the unmarked cases");
+    write_receipt(&package);
     for comment in [Some("wamn-local-target:"), None] {
         set_database_comment(&client, comment).await;
         let unset = record_after_seal(&client, None).await.expect_err("sealed");
@@ -2389,6 +2425,7 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
         "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration");
+    write_receipt(&package);
     assert_eq!(
         reason().await.expect("check an appended migration"),
         None,
@@ -2398,6 +2435,7 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
     let mut edited = std::fs::read(&migration).expect("read the applied migration");
     edited.extend_from_slice(b"\n");
     std::fs::write(&migration, edited).expect("edit the applied migration");
+    write_receipt(&package);
     let drift = reason()
         .await
         .expect("check an edited migration")
@@ -2452,12 +2490,14 @@ async fn apply_created_then_added(relation: &str) {
             .expect("read copied fixture file")
             .replace("dock", relation);
         std::fs::write(&path, text).expect("rename the dock relation");
+        write_receipt(&package);
     }
     std::fs::write(
         package.join(format!("migrations/0002_{relation}_note.sql")),
         format!("ALTER TABLE inventory.{relation} ADD COLUMN note text;\n"),
     )
     .expect("append a migration to the stream");
+    write_receipt(&package);
     let outcome = apply(&url, &package)
         .await
         .expect("apply a stream that creates a relation and then adds to it");

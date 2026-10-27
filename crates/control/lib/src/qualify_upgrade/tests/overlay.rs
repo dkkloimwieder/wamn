@@ -84,7 +84,7 @@ fn frozen_predecessor(source: &Path, target: &Path) {
             fs::copy(output(source, &statement.path), path).unwrap();
         }
     }
-    crate::test_support::write_receipt(target);
+    wamn_test_infrastructure::fixture_digest::write_receipt(target);
 }
 
 async fn overlay_fixture(name: &str) -> OverlayFixture {
@@ -98,7 +98,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
         &wamn_schema_generator::output_root(&overlay),
         &wamn_schema_generator::output_root(&predecessor),
     );
-    crate::test_support::write_receipt(&predecessor);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&predecessor);
     crate::apply_package::apply_package(apply_request(base.source_database.url(), &predecessor))
         .await
         .unwrap();
@@ -150,7 +150,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     )
     .await
     .unwrap();
-    crate::test_support::write_receipt(&predecessor);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&predecessor);
     let operations =
         crate::component_admission::load_package_statement_facts(&predecessor, &overlay_manifest)
             .unwrap()
@@ -226,7 +226,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     OverlayFixture {
         base,
         predecessor,
@@ -292,7 +292,9 @@ async fn nontransactional_candidate_statements_are_named_before_mutation() {
             format!("ALTER TABLE inventory.widget_maker ADD COLUMN note text;\n{statement}\n"),
         )
         .unwrap();
-        crate::test_support::write_receipt(&fixture.base.root.join("candidate"));
+        wamn_test_infrastructure::fixture_digest::write_receipt(
+            &fixture.base.root.join("candidate"),
+        );
         let qualification = overlay_request(&fixture, "nontransactional.json");
         let result = qualification.result.clone();
         let refused = qualify_upgrade(qualification).await.unwrap_err();
@@ -416,7 +418,7 @@ async fn qualification_refuses_input_changes_before_publication() {
                 fs::write(path, bytes).unwrap();
             }
             // Simulate a completed rebuild while qualification is in progress.
-            crate::test_support::write_receipt(&rebuilt);
+            wamn_test_infrastructure::fixture_digest::write_receipt(&rebuilt);
         })
         .await
         .unwrap_err();
@@ -426,7 +428,7 @@ async fn qualification_refuses_input_changes_before_publication() {
         for (path, bytes) in restore {
             fs::write(path, bytes).unwrap();
         }
-        crate::test_support::write_receipt(&fixture.predecessor);
+        wamn_test_infrastructure::fixture_digest::write_receipt(&fixture.predecessor);
     }
 }
 
@@ -616,7 +618,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut changed = migration_bytes.clone();
     changed.extend_from_slice(b"\n");
     fs::write(&migration, changed).unwrap();
-    crate::test_support::write_receipt(&fixture.predecessor);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&fixture.predecessor);
     let error = qualify_upgrade(overlay_request(
         &fixture,
         "original-migration-mismatch.json",
@@ -630,7 +632,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         "{error:#}"
     );
     fs::write(&migration, migration_bytes).unwrap();
-    crate::test_support::write_receipt(&fixture.predecessor);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&fixture.predecessor);
     assert!(
         !fixture
             .base
@@ -734,7 +736,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         "CREATE INDEX CONCURRENTLY upgrade_widget_code ON inventory.widget(code);\n",
     )
     .unwrap();
-    crate::test_support::write_receipt(&fixture.base.root.join("candidate"));
+    wamn_test_infrastructure::fixture_digest::write_receipt(&fixture.base.root.join("candidate"));
     let error = qualify_upgrade(overlay_request(&fixture, "nontransactional.json"))
         .await
         .unwrap_err();
@@ -742,7 +744,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         .is_some_and(|error| error.error_type() == wamn_schema_introspection::migration_policy::MigrationPolicyErrorType::NontransactionalOperation)), "{error:#}");
     assert!(format!("{error:#}").contains("CONCURRENTLY"), "{error:#}");
     fs::write(&fixture.base.suffix, suffix).unwrap();
-    crate::test_support::write_receipt(&fixture.base.root.join("candidate"));
+    wamn_test_infrastructure::fixture_digest::write_receipt(&fixture.base.root.join("candidate"));
     assert!(!fixture.base.root.join("nontransactional.json").exists());
     assert_eq!(state(&mut fixture.base.source).await, original);
 }
@@ -853,7 +855,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await;
     wamn_schema_generator::materialize_package_from_catalog(&projected, &predecessor).unwrap();
-    crate::test_support::write_receipt(&predecessor);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&predecessor);
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: original_package_roots.clone(),
         database_url: fixture.base.source_database.url().to_owned(),
@@ -870,7 +872,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await
     .unwrap();
-    crate::test_support::write_receipt(&predecessor);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&predecessor);
     fixture.base.source.batch_execute(
         "BEGIN; SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
          set_config('app.operation', 'admin:seed-second-overlay', true); \
@@ -958,7 +960,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await;
     wamn_schema_generator::materialize_package_from_catalog(&projected, &candidate).unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: successor_package_roots.clone(),
         database_url: generation.url().to_owned(),
@@ -975,7 +977,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     )
     .await
     .unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     let mut request = overlay_request(&fixture, "two-accepted.json");
     request.predecessor_packages = original_package_roots;
     request.presented_packages = successor_package_roots.clone();

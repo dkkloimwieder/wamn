@@ -33,7 +33,7 @@ async fn whole_row_fixture(name: &str) -> Fixture {
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     fixture
 }
 
@@ -88,7 +88,7 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     let mut changed = suffix.clone();
     changed.push(b'\n');
     fs::write(&fixture.suffix, changed).unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     let error = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
@@ -102,7 +102,7 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     );
     assert_eq!(state(&mut fixture.source).await, original);
     fs::write(&fixture.suffix, suffix).unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
 
     fixture
         .source
@@ -244,7 +244,7 @@ async fn whole_row_postcondition_failure_rolls_back_schema_grants_and_evidence()
     fs::write(&fixture.suffix,
         "ALTER TABLE inventory.widget ADD COLUMN upgrade_note text NOT NULL DEFAULT 'not_required';\n",
     ).unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     let refused = qualify_upgrade(request(&fixture, "whole-row-default-refused.json"))
         .await
         .unwrap_err();
@@ -256,7 +256,7 @@ async fn whole_row_postcondition_failure_rolls_back_schema_grants_and_evidence()
     assert!(!fixture.root.join("whole-row-default-refused.json").exists());
     assert_eq!(state(&mut fixture.source).await, original);
     fs::write(&fixture.suffix, suffix).unwrap();
-    crate::test_support::write_receipt(&candidate);
+    wamn_test_infrastructure::fixture_digest::write_receipt(&candidate);
     let qualified = qualify_upgrade(request(&fixture, "whole-row-rollback.json"))
         .await
         .unwrap();

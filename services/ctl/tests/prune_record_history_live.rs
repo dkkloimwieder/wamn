@@ -159,6 +159,7 @@ fn write_package(root: &Path) {
     .expect("write the fixture manifest");
     std::fs::write(root.join("migrations/0001_initial.sql"), migration)
         .expect("write the fixture migration");
+    wamn_test_infrastructure::fixture_digest::write_receipt(root);
 }
 
 /// Rewrite the fixture manifest as the next version, with a new retention for one relation.
@@ -175,6 +176,7 @@ fn upgrade_retention(root: &Path, table: &str, retention: &str) {
         serde_json::to_vec_pretty(&manifest).expect("serialize the upgraded manifest"),
     )
     .expect("write the upgraded manifest");
+    wamn_test_infrastructure::fixture_digest::write_receipt(root);
 }
 
 /// Apply the fixture package through the apply-package library.
