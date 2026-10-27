@@ -587,28 +587,7 @@ pub async fn exercise(
         stream_replicas: 1,
         dup_window_secs: 120,
     });
-    let mut document = EnvironmentDocument {
-        target: "cloud".into(),
-        org: ORG.into(),
-        project: PROJECT.into(),
-        env: ENVIRONMENT.into(),
-        release: DeclaredRelease::None,
-        route_host: "integration.orders.example".into(),
-        client_package: None,
-        policy: POLICY.into(),
-        // The existing consumer and integration packages put this application's
-        // models in two schemas. The connector supplies the workflow components.
-        applications: BTreeMap::from([(
-            connector.to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: [connector, "wamn_integration", CONSUMER]
-                    .map(str::to_owned)
-                    .into(),
-            },
-        )]),
-        floors: BTreeMap::new(),
-    };
+    let mut document = fixture_document(connector);
     super::org_bindings::bind(
         &platform,
         &mut document,
@@ -1077,16 +1056,61 @@ async fn event_host_group(
     let secret = run.work.join("integration-events.json");
     std::fs::write(
         &secret,
-        serde_json::to_vec(&json!({
-            "apiVersion":"v1", "kind":"Secret", "metadata":{"name":"integration-events","namespace":NAMESPACE},
-            "stringData":{"password":std::fs::read_to_string(&broker.runtime.password_file)?, "binding.json":std::fs::read_to_string(&broker.binding)?}
-        }))?,
+        serde_json::to_vec(&event_secret(
+            &std::fs::read_to_string(&broker.runtime.password_file)?,
+            &std::fs::read_to_string(&broker.binding)?,
+        ))?,
     )?;
     run.run("kubectl", &["apply", "-f", &secret.to_string_lossy()])
         .await?;
-    let mut group: Value = serde_yaml::from_slice(&std::fs::read(
+    let group: Value = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
+    let group = event_host_values(group, &broker.runtime.username, server, issuer, suffix)?;
+    let file = run.work.join("integration-host-group.yaml");
+    std::fs::write(&file, serde_yaml::to_string(&group)?)?;
+    Ok(file)
+}
+
+pub(super) fn event_secret(password: &str, binding: &str) -> Value {
+    json!({
+        "apiVersion":"v1", "kind":"Secret", "metadata":{"name":"integration-events","namespace":NAMESPACE},
+        "stringData":{"password":password, "binding.json":binding}
+    })
+}
+
+pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
+    EnvironmentDocument {
+        target: "cloud".into(),
+        org: ORG.into(),
+        project: PROJECT.into(),
+        env: ENVIRONMENT.into(),
+        release: DeclaredRelease::None,
+        route_host: "integration.orders.example".into(),
+        client_package: None,
+        policy: POLICY.into(),
+        // The existing consumer and integration packages put this application's
+        // models in two schemas. The connector supplies the workflow components.
+        applications: BTreeMap::from([(
+            connector.to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                connections: std::collections::BTreeMap::new(),
+                packages: [connector, "wamn_integration", CONSUMER]
+                    .map(str::to_owned)
+                    .into(),
+            },
+        )]),
+        floors: BTreeMap::new(),
+    }
+}
+
+pub(super) fn event_host_values(
+    mut group: Value,
+    username: &str,
+    server: &str,
+    issuer: &str,
+    suffix: &str,
+) -> anyhow::Result<Value> {
     group["env"]
         .as_array_mut()
         .context("host environment")?
@@ -1096,7 +1120,7 @@ async fn event_host_group(
                 ("WAMN_SESSION_JWKS_CA", "/integration-session/ca.crt"),
                 ("WAMN_SESSION_INSTANCE_SUFFIX", suffix),
                 ("WAMN_EVT_NATS_URL", server),
-                ("WAMN_EVT_NATS_USERNAME", &broker.runtime.username),
+                ("WAMN_EVT_NATS_USERNAME", username),
                 (
                     "WAMN_EVT_NATS_PASSWORD_FILE",
                     "/integration-events/password",
@@ -1127,9 +1151,7 @@ async fn event_host_group(
             json!({"name":"integration-events","mountPath":"/integration-events","readOnly":true}),
             json!({"name":"integration-session","mountPath":"/integration-session","readOnly":true}),
         ]);
-    let file = run.work.join("integration-host-group.yaml");
-    std::fs::write(&file, serde_yaml::to_string(&group)?)?;
-    Ok(file)
+    Ok(group)
 }
 
 fn binary(repository: &Path, name: &str) -> PathBuf {

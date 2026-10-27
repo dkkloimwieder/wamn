@@ -70,24 +70,22 @@ pub async fn write(
     for application in applications.values_mut() {
         application.connections.clear();
     }
-    let mut rendered = release_chart::values(&ValuesInput {
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
-        manifest_digest: release.digest.clone(),
-        artifact_base: platform.release_artifact_base.clone(),
-        route_host: document.route_host.clone(),
-        applications,
-        roles,
-        drain_bound_seconds: u32::try_from(policy.drain_bound_seconds)?,
-        actor: analysis.actor.clone(),
-        host_group: host_group(
-            platform.host_group.as_deref(),
-            &document.org,
-            &document.project,
-            &document.env,
-        )?,
-    })?;
+    let mut rendered = render(
+        &ValuesInput {
+            org: document.org.clone(),
+            project: document.project.clone(),
+            env: document.env.clone(),
+            manifest_digest: release.digest.clone(),
+            artifact_base: platform.release_artifact_base.clone(),
+            route_host: document.route_host.clone(),
+            applications,
+            roles,
+            drain_bound_seconds: u32::try_from(policy.drain_bound_seconds)?,
+            actor: analysis.actor.clone(),
+            host_group: Mapping::new(),
+        },
+        platform.host_group.as_deref(),
+    )?;
     rendered["webClients"] = serde_yaml::to_value(clients)?;
     let release_name = analysis.authorities.release_name.clone();
     let unchanged = analysis
@@ -131,6 +129,13 @@ pub async fn write(
         deadline,
         helm_written: true,
     })
+}
+
+/// Render apply values with the platform overlay and derived credential references.
+pub fn render(input: &ValuesInput, path: Option<&Path>) -> anyhow::Result<Value> {
+    let mut input = input.clone();
+    input.host_group = host_group(path, &input.org, &input.project, &input.env)?;
+    release_chart::values(&input)
 }
 
 /// The host group body: the platform's part, read from

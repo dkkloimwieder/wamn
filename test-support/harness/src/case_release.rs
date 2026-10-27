@@ -828,7 +828,7 @@ pub async fn install(
     )?;
     let name = release_chart::release_name(&input.org, &input.project, &input.env)?;
     let path = at.work.join(format!("values-{name}.yaml"));
-    fs::write(&path, serde_yaml::to_string(&case_values(input)?)?)?;
+    fs::write(&path, serde_yaml::to_string(&render(input)?)?)?;
     release_chart::upgrade(
         &Target {
             kubeconfig: at.work.join("kubeconfig"),
@@ -845,13 +845,15 @@ pub async fn install(
     Ok((name, label))
 }
 
+/// Render values without a cluster, registry, or running host.
+///
 /// The values of `input` for the hosts of a case, which read the case's own
 /// plain HTTP registry: `release_chart::values`, and
 /// `--allow-insecure-registries` after the release arguments. The release
 /// chart reads a registry over TLS only; without the flag every host exits at
 /// start, when it cannot read the release manifest (wamn-k8127.6). The hosts
 /// export to the kind cluster's own collector.
-fn case_values(input: &ValuesInput) -> anyhow::Result<Value> {
+pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
     let mut values = release_chart::values(input)?;
     let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
     group["extraArgs"]
@@ -1066,7 +1068,7 @@ mod tests {
     /// The case's hosts read its plain HTTP registry (wamn-k8127.6).
     #[test]
     fn the_case_hosts_read_a_plain_http_registry() {
-        let values = case_values(&ValuesInput {
+        let values = render(&ValuesInput {
             org: "acme".to_owned(),
             project: "wms".to_owned(),
             env: "dev".to_owned(),

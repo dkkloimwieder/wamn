@@ -154,7 +154,7 @@ pub(super) fn render_host(
     use wamn_control_provision::WorkloadRoleFamily;
     use wamn_test_infrastructure::rendering::{
         EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
-        overlay_values, render_host_values,
+        object_store_overlay, overlay_values, render_host_values,
     };
 
     let HostBinding {
@@ -192,6 +192,7 @@ pub(super) fn render_host(
     if candidate.is_some() {
         overlay = overlay_values(&overlay, &event)?;
     }
+    overlay = object_store_overlay(&overlay, &crate::environment::object_store_secret_name())?;
     let mut rendered = render_host_values(
         &std::fs::read_to_string(repository.join("deploy/platform/values-host-default.yaml"))?,
         &overlay,

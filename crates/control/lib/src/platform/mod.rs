@@ -1,6 +1,7 @@
 //! The declared cluster and its platform install inputs (docs/plan/platform-install.md P1).
 
 mod broker;
+pub use broker::render_event_secrets;
 pub mod build;
 mod cdc;
 mod check;
@@ -8,6 +9,7 @@ pub(crate) mod control;
 pub mod document;
 mod edge;
 mod environments;
+pub use environments::render_host_group;
 mod identity;
 pub mod install;
 mod invite;

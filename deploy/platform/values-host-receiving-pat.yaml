@@ -71,6 +71,11 @@ runtime:
         - { name: WAMN_ORG, value: acme }
         - { name: WAMN_PROJECT, value: receiving }
         - { name: WAMN_SCHEMA, value: receiving }
+        - name: WAMN_CONNECTION_STORE_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-conn-reader-acme--receiving--dev
+              key: url
         - name: WAMN_SYSTEM_URL
           valueFrom:
             secretKeyRef:

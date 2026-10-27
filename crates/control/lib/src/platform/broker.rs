@@ -169,6 +169,21 @@ pub(super) async fn apply(
     Ok(changed)
 }
 
+/// Render initial event credential Secrets without a cluster or a live broker.
+pub fn render_event_secrets(
+    document: &EnvironmentDocument,
+    manifests: &[wamn_schema_generator::PackageManifest],
+) -> anyhow::Result<Vec<Value>> {
+    render(
+        document,
+        manifests,
+        &mut Authorization { users: Vec::new() },
+    )?
+    .into_iter()
+    .map(|secret| serde_json::to_value(secret).context("encode event Secret"))
+    .collect()
+}
+
 fn render(
     document: &EnvironmentDocument,
     manifests: &[wamn_schema_generator::PackageManifest],

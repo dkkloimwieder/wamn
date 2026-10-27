@@ -160,6 +160,37 @@ pub fn overlay_values(overlay: &str, identity: &EventIdentity) -> anyhow::Result
     serde_yaml::to_string(&overlay).context("serialize host overlay values")
 }
 
+/// Mount the object-store Secret that the application fixture supplies.
+pub fn object_store_overlay(overlay: &str, secret_name: &str) -> anyhow::Result<String> {
+    let mut overlay: Value = serde_yaml::from_str(overlay)?;
+    let groups = overlay["runtime"]["hostGroups"]
+        .as_sequence_mut()
+        .context("host overlay hostGroups")?;
+    let group = one_mut(groups, "host overlay hostGroups")?;
+    group["env"]
+        .as_sequence_mut()
+        .context("host environment")?
+        .push(serde_yaml::to_value(serde_json::json!({
+            "name": "WAMN_CREDENTIALS_FILE", "value": "/etc/wamn/credentials/credentials.json"
+        }))?);
+    group["volumes"]
+        .as_sequence_mut()
+        .context("host volumes")?
+        .push(serde_yaml::to_value(serde_json::json!({
+            "name": "connection-credentials", "secret": {
+                "secretName": secret_name, "optional": false,
+                "items": [{"key": "credentials.json", "path": "credentials.json"}]
+            }
+        }))?);
+    group["volumeMounts"]
+        .as_sequence_mut()
+        .context("host mounts")?
+        .push(serde_yaml::to_value(serde_json::json!({
+            "name": "connection-credentials", "mountPath": "/etc/wamn/credentials", "readOnly": true
+        }))?);
+    serde_yaml::to_string(&overlay).context("render object-store host overlay")
+}
+
 /// All identity claims consumed by the HTTP component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

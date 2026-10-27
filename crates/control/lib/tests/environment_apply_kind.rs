@@ -187,17 +187,9 @@ const POLICY: &str = "dev";
 #[path = "support/org_bindings.rs"]
 mod org_bindings;
 
-const PACKAGE: &str = "edge_device";
-/// The fixture release A: the fixture package, no http attachment, no
-/// registration, a component no host pulls. `@VERSION@` is the package version.
-const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
-/// The second fixture release, B: the same package, another component digest.
-const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[]}"#;
-/// The third fixture release, H: the same package with one http attachment,
-/// served with no authentication, so its environments render the http role.
-/// Its one component, `null` here, is the admitted `device` component as
-/// publish projects it; `@OPERATION@` is that component's one operation.
-const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"modes":["none"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"@OPERATION@","package-id":"edge_device","type":"http"}},"components":[null],"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[{"component":"device","operation":"@OPERATION@","package-id":"edge_device","type":"get"}]}"#;
+#[path = "support/release_documents.rs"]
+mod release_documents;
+use release_documents::{MANIFEST, MANIFEST_B, MANIFEST_H, PACKAGE, release};
 /// The route guest's refusal of a path the release does not serve.
 const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
 /// Capture crash logs during rollout, before Helm can remove the pods.
@@ -1064,24 +1056,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // group has (deploy/platform/values-host-default.yaml).
     std::fs::write(
         work.join("host-group.yaml"),
-        serde_yaml::to_string(&json!({
-            "replicas": 1,
-            "http": {"enabled": true, "port": 80},
-            "env": [
-                {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
-                {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
-                {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{local}/wamn/components")},
-                {"name": "WAMN_ALLOWED_HOSTS", "value": http_connection::ORIGIN},
-            ],
-            "ociCaPaths": ["/apply-registry/ca.crt"],
-            "volumes": [
-                {"name": "apply-registry", "secret": {"secretName": "apply-registry"}},
-
-            ],
-            "volumeMounts": [
-                {"name": "apply-registry", "mountPath": "/apply-registry", "readOnly": true},
-            ],
-        }))?,
+        serde_yaml::to_string(&fixture_host_group(&local))?,
     )?;
     let event_config = work.join("apply-event-nats.json");
     let event_password = work.join("apply-event-password");
@@ -1124,27 +1099,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             dup_window_secs: 120,
         }),
     };
-    let document = |env: &str, route_host: &str| EnvironmentDocument {
-        target: "cloud".into(),
-        client_package: None,
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: env.to_owned(),
-        release: DeclaredRelease::Digest(digest.clone()),
-        route_host: route_host.to_owned(),
-        policy: POLICY.to_owned(),
-        applications: std::collections::BTreeMap::from([(
-            PACKAGE.to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
-                packages: std::collections::BTreeSet::from([
-                    PACKAGE.to_owned(),
-                    "label_fixture".to_owned(),
-                ]),
-            },
-        )]),
-        floors: std::collections::BTreeMap::new(),
-    };
+    let document = |env: &str, route_host: &str| fixture_document(env, route_host, &digest);
     let apply = async |document: &EnvironmentDocument, name: &str| -> anyhow::Result<()> {
         let mut declaration = document.clone();
         if let Some(connection) = document
@@ -1166,27 +1121,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                     json!({"provider":"s3","endpoint":"http://store.invalid","container":"labels","prefix":"a/"})).await?;
             }
         }
-        let secret_name = format!(
-            "apply-events-{}--{}--{}",
-            document.org, document.project, document.env
-        );
-        let source = wamn_control_provision::events::source_stream_config(
-            &document.triple(),
-            1,
-            Duration::from_secs(120),
-        );
-        let secret = work.join(format!("{secret_name}.json"));
-        std::fs::write(
-            &secret,
-            serde_json::to_vec(&json!({
-                "apiVersion":"v1", "kind":"Secret", "metadata":{"name":secret_name,"namespace":NAMESPACE},
-                "stringData":{"password":PASSWORD,"binding.json":json!({
-                    "servers":event_server,"username":USER,"password":PASSWORD,"inbox-prefix":format!("_INBOX_{USER}"),
-                    "stream-allow":source.name,"subject-allow":source.subjects.join(","),
-                    "subscription-capacity-bytes":"4194304","subscription-capacity":"64","max-in-flight":"64"
-                }).to_string()}
-            }))?,
-        )?;
+        let group = serde_yaml::from_slice(&std::fs::read(
+            platform.host_group.as_ref().context("host group")?,
+        )?)?;
+        let (group, secret_document) = event_overlay(document, group, &event_server)?;
+        let secret = work.join(format!("{}-events.json", document.env));
+        std::fs::write(&secret, serde_json::to_vec(&secret_document)?)?;
         wamn_control::kubectl::kubectl(
             &platform.target.kubeconfig,
             &platform.target.context,
@@ -1195,34 +1135,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             None,
         )
         .await?;
-        let mut group: Value = serde_yaml::from_slice(&std::fs::read(
-            platform.host_group.as_ref().context("host group")?,
-        )?)?;
-        group["env"]
-            .as_array_mut()
-            .context("host environment")?
-            .extend(
-                [
-                    ("WAMN_EVT_NATS_URL", event_server.as_str()),
-                    ("WAMN_EVT_NATS_USERNAME", USER),
-                    ("WAMN_EVT_NATS_PASSWORD_FILE", "/apply-events/password"),
-                    ("WAMN_MAT_NATS_BINDING_FILE", "/apply-events/binding.json"),
-                    ("WAMN_EVT_ORG", document.org.as_str()),
-                    ("WAMN_EVT_PROJECT", document.project.as_str()),
-                    ("WAMN_EVT_ENV", document.env.as_str()),
-                    ("WAMN_EVT_STREAM_REPLICAS", "1"),
-                    ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-                ]
-                .map(|(name, value)| json!({"name":name,"value":value})),
-            );
-        group["volumes"]
-            .as_array_mut()
-            .context("host volumes")?
-            .push(json!({"name":"apply-events","secret":{"secretName":secret_name}}));
-        group["volumeMounts"]
-            .as_array_mut()
-            .context("host mounts")?
-            .push(json!({"name":"apply-events","mountPath":"/apply-events","readOnly":true}));
         let file = work.join(format!("{}-event-host-group.yaml", document.env));
         std::fs::write(&file, serde_yaml::to_string(&group)?)?;
         let mut platform = platform.clone();
@@ -1770,7 +1682,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // event host group the dev applies wrote. Without it the dev host has no
     // events binding, and its materializer cannot start.
     let mut events_platform = platform.clone();
-    events_platform.host_group = Some(work.join("dev-event-host-group.yaml"));
+    events_platform.host_group = Some(rollback_host_group(&work));
     let rolled =
         Box::pin(environment::rollback::rollback(&events_platform, &dev_triple, "kind check")).await?;
     let after_rollback = run.live_digests(&name).await?;
@@ -2306,6 +2218,105 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     Ok(())
 }
 
+fn fixture_host_group(local: &str) -> Value {
+    json!({
+        "replicas": 1,
+        "http": {"enabled": true, "port": 80},
+        "env": [
+            {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
+            {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
+            {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{local}/wamn/components")},
+            {"name": "WAMN_ALLOWED_HOSTS", "value": http_connection::ORIGIN},
+        ],
+        "ociCaPaths": ["/apply-registry/ca.crt"],
+        "volumes": [
+            {"name": "apply-registry", "secret": {"secretName": "apply-registry"}},
+
+        ],
+        "volumeMounts": [
+            {"name": "apply-registry", "mountPath": "/apply-registry", "readOnly": true},
+        ],
+    })
+}
+
+fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDocument {
+    EnvironmentDocument {
+        target: "cloud".into(),
+        client_package: None,
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: env.to_owned(),
+        release: DeclaredRelease::Digest(digest.to_owned()),
+        route_host: route_host.to_owned(),
+        policy: POLICY.to_owned(),
+        applications: std::collections::BTreeMap::from([(
+            PACKAGE.to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
+                packages: std::collections::BTreeSet::from([
+                    PACKAGE.to_owned(),
+                    "label_fixture".to_owned(),
+                ]),
+            },
+        )]),
+        floors: std::collections::BTreeMap::new(),
+    }
+}
+
+fn event_overlay(
+    document: &EnvironmentDocument,
+    mut group: Value,
+    event_server: &str,
+) -> anyhow::Result<(Value, Value)> {
+    let secret_name = format!(
+        "apply-events-{}--{}--{}",
+        document.org, document.project, document.env
+    );
+    let source = wamn_control_provision::events::source_stream_config(
+        &document.triple(),
+        1,
+        Duration::from_secs(120),
+    );
+    let secret = json!({
+        "apiVersion":"v1", "kind":"Secret", "metadata":{"name":secret_name,"namespace":NAMESPACE},
+        "stringData":{"password":PASSWORD,"binding.json":json!({
+            "servers":event_server,"username":USER,"password":PASSWORD,"inbox-prefix":format!("_INBOX_{USER}"),
+            "stream-allow":source.name,"subject-allow":source.subjects.join(","),
+            "subscription-capacity-bytes":"4194304","subscription-capacity":"64","max-in-flight":"64"
+        }).to_string()}
+    });
+    group["env"]
+        .as_array_mut()
+        .context("host environment")?
+        .extend(
+            [
+                ("WAMN_EVT_NATS_URL", event_server),
+                ("WAMN_EVT_NATS_USERNAME", USER),
+                ("WAMN_EVT_NATS_PASSWORD_FILE", "/apply-events/password"),
+                ("WAMN_MAT_NATS_BINDING_FILE", "/apply-events/binding.json"),
+                ("WAMN_EVT_ORG", document.org.as_str()),
+                ("WAMN_EVT_PROJECT", document.project.as_str()),
+                ("WAMN_EVT_ENV", document.env.as_str()),
+                ("WAMN_EVT_STREAM_REPLICAS", "1"),
+                ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
+            ]
+            .map(|(name, value)| json!({"name":name,"value":value})),
+        );
+    group["volumes"]
+        .as_array_mut()
+        .context("host volumes")?
+        .push(json!({"name":"apply-events","secret":{"secretName":secret_name}}));
+    group["volumeMounts"]
+        .as_array_mut()
+        .context("host mounts")?
+        .push(json!({"name":"apply-events","mountPath":"/apply-events","readOnly":true}));
+    Ok((group, secret))
+}
+
+fn rollback_host_group(work: &Path) -> PathBuf {
+    work.join("dev-event-host-group.yaml")
+}
+
 /// What a failed run keeps before its cluster goes: every event, a
 /// description of the Deployments, WorkloadDeployments, Workloads and pods of
 /// the operator namespace, and the last 80 lines of every container's log
@@ -2494,82 +2505,14 @@ async fn compose_http_releases(
     Ok(manifests)
 }
 
-/// The canonical bytes of a fixture release: `template` with the package
-/// version, and with `device` as its one component, projected as publish
-/// projects it, and that component's one operation as the operation of its
-/// route. The host serves a route only from an operation that carries the
-/// admitted operation's facts (`validate_component_in_release`).
-fn release(
-    template: &str,
-    version: &str,
-    device: Option<&wamn_catalog::ComponentDescriptor>,
-) -> anyhow::Result<Vec<u8>> {
-    let mut text = template.replace("@VERSION@", version);
-    if let Some(device) = device {
-        ensure!(
-            device.operations.len() == 1,
-            "the device descriptor has one operation"
-        );
-        let operation = device
-            .operations
-            .keys()
-            .next()
-            .context("the device operation")?;
-        text = text.replace("@OPERATION@", operation);
-    }
-    let mut value: Value = serde_json::from_str(&text)?;
-    value["release"]["packages"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"package-id":"label_fixture","package-version":"1.0.0"}));
-    if let Some(device) = device {
-        let fact = device
-            .clone()
-            .into_admitted(wamn_catalog::ComponentPackageScope {
-                tenant_id: String::new(),
-                package_id: PACKAGE.to_owned(),
-                package_version: version.to_owned(),
-            })
-            .component;
-        value["components"][0] =
-            serde_json::to_value(wamn_catalog::ServingComponent::project(&fact, Vec::new())?)?;
-    }
-    let bytes = wamn_execution_contract::canonical_json_bytes(&value);
-    wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
-        .context("the fixture release is a valid canonical manifest")?;
-    Ok(bytes)
-}
-
-#[test]
-fn the_fixture_releases_are_canonical_manifests() {
-    for template in [MANIFEST, MANIFEST_B] {
-        release(template, "2.1.0", None).expect("a fixture release");
-    }
-    let (fixture, _) = wamn_catalog::ServingManifest::from_canonical_bytes(
-        &release(MANIFEST, "2.1.0", None).expect("release A"),
-    )
-    .expect("release A");
-    let mut device =
-        serde_json::to_value(&fixture.components.first().expect("a component").descriptor)
-            .expect("a descriptor");
-    device["component"] = json!("device");
-    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"registered-operation": wamn_catalog::operation_token("edge_device", "2.1.0", "sample", "read"),"input-ports": [], "output-ports": [], "parameters": []}});
-    let device: wamn_catalog::ComponentDescriptor =
-        serde_json::from_value(device).expect("a device descriptor");
-    let (h, _) = wamn_catalog::ServingManifest::from_canonical_bytes(
-        &release(MANIFEST_H, "2.1.0", Some(&device)).expect("release H"),
-    )
-    .expect("release H");
-    let served = &h
+fn fixture_releases() -> anyhow::Result<[Vec<u8>; 4]> {
+    let [a, b, h] = release_documents::fixture_releases()?;
+    let (h, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&h)?;
+    let device = &h
         .components
         .first()
-        .expect("the device component")
-        .operations["edge-device:sample/read@2.1.0"];
-    assert!(
-        served.carries(&device.operations["edge-device:sample/read@2.1.0"]),
-        "release H carries the admitted device operation"
-    );
-
+        .context("the device component")?
+        .descriptor;
     let components = [
         include_str!("../../../../apps/platform/no-std/transform/declaration.json.in"),
         include_str!("../../../../apps/platform/no-std/http-request/declaration.json.in"),
@@ -2578,7 +2521,7 @@ fn the_fixture_releases_are_canonical_manifests() {
     .into_iter()
     .map(|template| {
         let declaration = http_connection::declaration(template).expect("a guest declaration");
-        let mut descriptor = serde_json::to_value(&device).expect("a descriptor");
+        let mut descriptor = serde_json::to_value(device).expect("a descriptor");
         for field in [
             "component",
             "interface-version",
@@ -2605,6 +2548,28 @@ fn the_fixture_releases_are_canonical_manifests() {
         .expect("the HTTP fixture release is canonical");
     let (http, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
         .expect("the HTTP fixture release");
+    Ok([a, b, h.canonical_bytes(), http.canonical_bytes()])
+}
+
+#[test]
+fn the_fixture_releases_are_canonical_manifests() {
+    for template in [MANIFEST, MANIFEST_B] {
+        release(template, "2.1.0", None).expect("a fixture release");
+    }
+    let [_, _, h, bytes] = fixture_releases().unwrap();
+    let (h, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&h).unwrap();
+    let device = release_documents::fixture_device().unwrap();
+    let served = &h
+        .components
+        .first()
+        .expect("the device component")
+        .operations["edge-device:sample/read@2.1.0"];
+    assert!(
+        served.carries(&device.operations["edge-device:sample/read@2.1.0"]),
+        "release H carries the admitted device operation"
+    );
+
+    let (http, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes).unwrap();
     assert_eq!(
         http.components
             .iter()
@@ -2715,3 +2680,6 @@ async fn route_probe_request(
         body.to_owned(),
     ))
 }
+
+#[path = "support/prekind_render.rs"]
+mod prekind_render;

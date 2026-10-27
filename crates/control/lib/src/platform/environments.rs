@@ -156,6 +156,56 @@ pub(super) fn chart_files(
     Ok(())
 }
 
+/// Render the host overlay that platform install passes to environment apply.
+pub fn render_host_group(
+    yaml: &str,
+    environment: &crate::environment::document::EnvironmentDocument,
+    registry: &str,
+    suffix: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let mut group: serde_json::Value = serde_yaml::from_str(yaml)?;
+    let tenant = wamn_control_registry::project_env_tenant(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+    for variable in group["env"]
+        .as_array_mut()
+        .context("host group has no env list")?
+    {
+        let replacement = match variable["name"].as_str().unwrap_or_default() {
+            "WAMN_COMPONENT_ARTIFACT_BASE" => Some(format!("{registry}/components")),
+            "WAMN_EVT_ORG" => Some(environment.org.clone()),
+            "WAMN_EVT_PROJECT" => Some(environment.project.clone()),
+            "WAMN_EVT_ENV" => Some(environment.env.clone()),
+            "WAMN_SESSION_INSTANCE_SUFFIX" => Some(suffix.into()),
+            _ => None,
+        };
+        if let Some(value) = replacement {
+            variable["value"] = value.into();
+        }
+        if variable["name"] == "WAMN_EVT_NATS_USERNAME" {
+            variable["valueFrom"]["secretKeyRef"]["name"] =
+                format!("evt-nats-{tenant}-runtime").into();
+        }
+    }
+    for volume in group["volumes"]
+        .as_array_mut()
+        .context("host group has no volumes")?
+    {
+        match volume["name"].as_str().unwrap_or_default() {
+            "event-nats" => {
+                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-runtime").into();
+            }
+            "materializer-nats" => {
+                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-materializer").into();
+            }
+            _ => {}
+        }
+    }
+    Ok(group)
+}
+
 async fn release_inputs(
     target: &Target,
     document: &ClusterDocument,
@@ -205,9 +255,6 @@ async fn release_inputs(
         "/inputs/event-password".into(),
     );
     let path = cluster_directory.join(format!("host-group-{}.yaml", environment.project));
-    let mut group: serde_json::Value = serde_yaml::from_slice(
-        &std::fs::read(&path).with_context(|| format!("read host group {}", path.display()))?,
-    )?;
     let secrets = super::packages::credentials(target, environment).await?;
     let database = url::Url::parse(&secrets[1].value)
         .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
@@ -216,40 +263,13 @@ async fn release_inputs(
         .rsplit_once("--")
         .context("environment database has no instance suffix")?
         .1;
-    for variable in group["env"]
-        .as_array_mut()
-        .context("host group has no env list")?
-    {
-        let replacement = match variable["name"].as_str().unwrap_or_default() {
-            "WAMN_COMPONENT_ARTIFACT_BASE" => Some(format!("{}/components", document.registry)),
-            "WAMN_EVT_ORG" => Some(environment.org.clone()),
-            "WAMN_EVT_PROJECT" => Some(environment.project.clone()),
-            "WAMN_EVT_ENV" => Some(environment.env.clone()),
-            "WAMN_SESSION_INSTANCE_SUFFIX" => Some(suffix.into()),
-            _ => None,
-        };
-        if let Some(value) = replacement {
-            variable["value"] = value.into();
-        }
-        if variable["name"] == "WAMN_EVT_NATS_USERNAME" {
-            variable["valueFrom"]["secretKeyRef"]["name"] =
-                format!("evt-nats-{tenant}-runtime").into();
-        }
-    }
-    for volume in group["volumes"]
-        .as_array_mut()
-        .context("host group has no volumes")?
-    {
-        match volume["name"].as_str().unwrap_or_default() {
-            "event-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-runtime").into();
-            }
-            "materializer-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-materializer").into();
-            }
-            _ => {}
-        }
-    }
+    let group = render_host_group(
+        &std::fs::read_to_string(&path)
+            .with_context(|| format!("read host group {}", path.display()))?,
+        environment,
+        &document.registry,
+        suffix,
+    )?;
     request
         .files
         .insert("host-group.yaml".into(), serde_yaml::to_string(&group)?);

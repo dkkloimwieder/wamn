@@ -147,8 +147,7 @@ cluster.Cluster {{
     let chart: Value = serde_yaml::from_slice(&std::fs::read(fixture_chart.join("values.yaml"))?)?;
     let environments = directory.join("environments");
     std::fs::create_dir(&environments)?;
-    let source = repository.join("deploy/gcp/environments/dkk--receiving--dev.k");
-    let mut environment = EnvironmentDocument::compile(&source)?;
+    let (source, mut environment) = fixture_environment(&repository, "receiving")?;
     let host_group = format!("host-group-{}.yaml", environment.project);
     std::fs::copy(
         repository.join("deploy/gcp").join(&host_group),
@@ -177,8 +176,7 @@ cluster.Cluster {{
         serde_json::to_vec_pretty(&values)?,
     )?;
 
-    let wms_source = repository.join("deploy/gcp/environments/dkk--wms--dev.k");
-    let mut wms_environment = EnvironmentDocument::compile(&wms_source)?;
+    let (wms_source, mut wms_environment) = fixture_environment(&repository, "wms")?;
     std::fs::copy(
         repository.join("deploy/gcp/host-group-wms.yaml"),
         directory.join("host-group-wms.yaml"),
@@ -2150,3 +2148,59 @@ fn require_steps(lines: &[String], result: &str) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+fn fixture_environment(
+    repository: &Path,
+    project: &str,
+) -> anyhow::Result<(std::path::PathBuf, EnvironmentDocument)> {
+    let source = repository.join(format!("deploy/gcp/environments/dkk--{project}--dev.k"));
+    let document = EnvironmentDocument::compile(&source)?;
+    Ok((source, document))
+}
+
+#[test]
+fn prekind_platform_renders() -> anyhow::Result<()> {
+    use wamn_gate_harness::render_check::{
+        assert_complete, credential_secrets, environment, operator_prerequisites, template,
+    };
+    let started = Instant::now();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let work = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    // The platform publishes built application releases in kind. A fixture H
+    // document renders the same HTTP and materializer role shapes without Wasm.
+    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(
+        &release_documents::fixture_releases()?[2],
+    )?;
+    for project in ["receiving", "wms"] {
+        let (_, mut document) = fixture_environment(&repository, project)?;
+        document.org = "test".into();
+        let path = repository.join(format!("deploy/gcp/host-group-{project}.yaml"));
+        let group = wamn_control::platform::render_host_group(
+            &std::fs::read_to_string(&path)?,
+            &document,
+            "registry.invalid/wamn",
+            "render",
+        )?;
+        let path = work.path().join(format!("host-group-{project}.yaml"));
+        std::fs::write(&path, serde_yaml::to_string(&group)?)?;
+        let mut secrets = credential_secrets(&document.triple(), "hosts");
+        secrets.extend(operator_prerequisites("hosts"));
+        secrets.extend(wamn_control::platform::render_event_secrets(
+            &document,
+            &[],
+        )?);
+        assert_complete(
+            &template(&environment(&document, &manifest, &path, 70)?, "hosts")?,
+            &secrets,
+        )?;
+        println!(
+            "platform {project}: {}",
+            path.file_name().unwrap().to_string_lossy()
+        );
+    }
+    println!("prekind platform renders elapsed {:?}", started.elapsed());
+    Ok(())
+}
+
+#[path = "support/release_documents.rs"]
+mod release_documents;
