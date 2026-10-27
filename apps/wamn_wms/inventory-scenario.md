@@ -86,8 +86,6 @@ Separate cases exercise committed work while the label store is missing, browser
 The label cases read the label from the store after the workflow runs.
 These owners replace the original proposal's earlier restriction against a WMS operator interface.
 
-The simulator's `scan_event` and `seed_inventory` profiles supply deterministic traffic shapes.
-They use codes such as `PAL-000000`, `LOC-0000`, and `SKU-00000`.
 The route driver exercises actual operation permissions and commands.
 Traffic generation does not grant direct database mutation authority.
 

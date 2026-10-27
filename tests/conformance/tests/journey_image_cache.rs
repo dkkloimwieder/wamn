@@ -204,13 +204,12 @@ fn the_identity_follows_the_copied_paths_and_ignores_the_rest() {
 
 /// The copied directories that hold only test crates and test data. The tool's
 /// TEST_ONLY list names the same paths.
-const TEST_ONLY: [&str; 7] = [
+const TEST_ONLY: [&str; 6] = [
     "tests/",
     "test-support/fixture-package/",
     "test-support/fixtures/",
     "test-support/harness/",
     "test-support/infrastructure/",
-    "test-support/simulator/",
     "apps/receiving/tests/",
 ];
 
@@ -340,7 +339,7 @@ fn the_host_and_identity_binaries_reach_no_test_only_path() {
             let application_tests =
                 components.len() > 2 && components[0] == "apps" && components[2] == "tests";
             let test_only =
-                application_tests || TEST_ONLY[..6].iter().any(|path| relative.starts_with(path));
+                application_tests || TEST_ONLY[..5].iter().any(|path| relative.starts_with(path));
             assert!(
                 !test_only,
                 "{binary} builds from the test-only path {relative}"

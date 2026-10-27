@@ -36,7 +36,7 @@ readonly COPIED=(
 # the identity, because a manifest can change how the workspace resolves.
 # tests/conformance/tests/journey_image_cache.rs keeps this list outside the
 # dependency closure of wamn-host, wamn-identity and wamn-ctl with ops.
-readonly TEST_ONLY='^(tests/|test-support/(fixture-package|fixtures|harness|infrastructure|simulator)/|apps/[^/]+/tests/)'
+readonly TEST_ONLY='^(tests/|test-support/(fixture-package|fixtures|harness|infrastructure)/|apps/[^/]+/tests/)'
 
 # Identities kept per image repository, newest use first.
 readonly RETAINED=3

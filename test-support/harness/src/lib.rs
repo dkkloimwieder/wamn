@@ -9,7 +9,6 @@
 //! provisioning uses the existing control library functions.
 
 pub mod case_release;
-pub mod ceiling;
 pub mod delivery;
 pub mod environment;
 pub mod journey;
@@ -86,100 +85,6 @@ pub fn emit_csv(name: &str, csv: &str, out_dir: &Option<PathBuf>) {
 /// A JSON value as an array of values (empty if not an array).
 pub fn as_array(v: &Value) -> Vec<Value> {
     v.as_array().cloned().unwrap_or_default()
-}
-
-/// Whether any row has `.name == name`.
-pub fn has_name(rows: &[Value], name: &str) -> bool {
-    rows.iter()
-        .any(|r| r.get("name").and_then(Value::as_str) == Some(name))
-}
-
-// ---------------------------------------------------------------------------
-// PG fixture helpers (SR2): host-side flow-fixture seeding. The gates hold
-// the connection (app-role with claims, or superuser); the harness holds the
-// single copy of the fixture SQL — values always $n, jsonb via ::text::jsonb.
-// ---------------------------------------------------------------------------
-
-/// Scope a fixture session: the tenant claim (RLS) + the schema (search_path),
-/// both bound as parameters via set_config — no interpolation path.
-pub async fn scope_session(
-    client: &tokio_postgres::Client,
-    env_key: &str,
-    schema: &str,
-) -> anyhow::Result<()> {
-    client
-        .query(
-            "SELECT set_config('app.env_key', $1, false), set_config('search_path', $2, false)",
-            &[&env_key, &schema],
-        )
-        .await?;
-    Ok(())
-}
-
-/// Seed one flow-registry version row (idempotent). `activate_on_conflict`
-/// mirrors the two guest-era shapes: the S3 seed kept a re-seed from touching
-/// `active`; the S6 seed forced the row active.
-pub async fn seed_flow_version(
-    client: &tokio_postgres::Client,
-    env_key: &str,
-    flow_id: &str,
-    version: i32,
-    active: bool,
-    graph_json: &str,
-    activate_on_conflict: bool,
-) -> anyhow::Result<()> {
-    let tail = if activate_on_conflict {
-        "DO UPDATE SET graph_json = excluded.graph_json, active = true"
-    } else {
-        "DO UPDATE SET graph_json = excluded.graph_json"
-    };
-    let sql = format!(
-        "INSERT INTO flows (env_key, flow_id, version, active, graph_json) \
-         VALUES ($1, $2, $3, $4, $5::text::jsonb) \
-         ON CONFLICT (env_key, flow_id, version) {tail}"
-    );
-    client
-        .execute(&sql, &[&env_key, &flow_id, &version, &active, &graph_json])
-        .await?;
-    Ok(())
-}
-
-/// Register a flow version ONLY if absent (`ON CONFLICT DO NOTHING`) — the
-/// seed-into-a-LIVE-schema path (composition seeding must never rewrite the
-/// graph_json or active flag of a production-registered flow row).
-pub async fn seed_flow_version_if_absent(
-    client: &tokio_postgres::Client,
-    env_key: &str,
-    flow_id: &str,
-    version: i32,
-    active: bool,
-    graph_json: &str,
-) -> anyhow::Result<()> {
-    client
-        .execute(
-            "INSERT INTO flows (env_key, flow_id, version, active, graph_json) \
-             VALUES ($1, $2, $3, $4, $5::text::jsonb) \
-             ON CONFLICT (env_key, flow_id, version) DO NOTHING",
-            &[&env_key, &flow_id, &version, &active, &graph_json],
-        )
-        .await?;
-    Ok(())
-}
-
-/// Flip the active flow version: exactly one active version per flow.
-pub async fn set_active_flow_version(
-    client: &tokio_postgres::Client,
-    env_key: &str,
-    flow_id: &str,
-    version: i32,
-) -> anyhow::Result<()> {
-    client
-        .execute(
-            "UPDATE flows SET active = (version = $3) WHERE env_key = $1 AND flow_id = $2",
-            &[&env_key, &flow_id, &version],
-        )
-        .await?;
-    Ok(())
 }
 
 // The test module lives at the end so no items follow it

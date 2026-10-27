@@ -15,11 +15,8 @@ The [queue invariants](../../crates/execution/run-state/src/invariants.rs) inspe
 They do not establish database admission history, terminal-row immutability, or producer-key uniqueness.
 ## Event traffic
 
-The [simulator](../../test-support/simulator/src/lib.rs) generates canonical, repeatable event bytes from the complete seeded profile and count.
-It generates identifiers and timestamps within the stream, while the caller owns pacing and delivery.
-The [HTTP target](../../test-support/simulator/src/emit.rs) sends authenticated array envelopes to real routes.
 Simulators drive routes or consumers and never write application tables directly.
-No JetStream sink exists here, and generated traffic must not fabricate internal CDC event envelopes.
+Generated traffic must not fabricate internal CDC event envelopes.
 This controls input bytes, not database or network scheduling.
 
 ## Replay limits

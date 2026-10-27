@@ -13,8 +13,6 @@ schemars = { workspace = true }
 url = { workspace = true }
 wamn-control = { workspace = true }
 wamn-control-provision = { workspace = true }
-# The PG fixture/seed helpers (scope_session / seed_flow_version): gates hold
-# the connection, the harness holds the one copy of the fixture SQL.
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 # The session issuer of the cluster fixtures (session_issuer.rs).
 serde_yaml = { workspace = true }
