@@ -396,6 +396,13 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     }
 
     // Registry rows for the reader's registration.
+    db.batch_execute(&format!(
+        "BEGIN; {}",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    ))
+    .await?;
     db.execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
         .await
         .context("org row")?;
@@ -453,6 +460,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     )
     .await
     .context("event_readers row")?;
+    db.batch_execute("COMMIT").await?;
 
     // The same explicit measurement floor C-WAL-0 uses, plus CDC.
     db.batch_execute(&provision_sql::ensure_schema_sql("app"))

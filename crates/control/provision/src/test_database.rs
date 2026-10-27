@@ -48,8 +48,10 @@ pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
     let org = quote_literal(org);
     let project = quote_literal(project);
     let env = quote_literal(env);
+    let actor = crate::PlatformComponent::Provisioning.principal_id();
     format!(
-        "INSERT INTO registry.orgs(id,placement_type) VALUES ({org},'dedicated') ON CONFLICT DO NOTHING; \
+        "SELECT set_config('app.user_id', '{actor}', true); \
+         INSERT INTO registry.orgs(id,placement_type) VALUES ({org},'dedicated') ON CONFLICT DO NOTHING; \
          INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
          INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
          VALUES ({org},{env},'\"own\"',0,1,'1Gi','1','1Gi','postgres:18') ON CONFLICT DO NOTHING; \

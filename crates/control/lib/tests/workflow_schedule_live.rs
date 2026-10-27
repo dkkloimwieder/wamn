@@ -297,7 +297,10 @@ async fn fixture() -> Fixture {
     let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
     let control = connect(control_database.url()).await;
     control
-        .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .execute(
+            "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
+            &[&TENANT, &READER],
+        )
         .await
         .unwrap();
 

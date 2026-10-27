@@ -73,6 +73,14 @@ async fn provision_environment(
     provision_journey_control(&scope(), system_url, admin).await?;
     admin
         .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
+    admin
+        .execute(
             "UPDATE registry.meta SET platform_domain = $1",
             &[&PLATFORM_DOMAIN],
         )

@@ -98,6 +98,14 @@ pub async fn workflow_host(
         true,
     )
     .await?;
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_project_state::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
     admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&TENANT]).await?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
@@ -216,8 +224,11 @@ pub async fn schedule_run(
     let control = wamn_control_provision::test_database::system();
     let (gate, connection) = tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
     tokio::spawn(connection);
-    gate.execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
-        .await?;
+    gate.execute(
+        "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
+        &[&TENANT, &ENABLER],
+    )
+    .await?;
     gate.execute(
         "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
          VALUES ($1, $2, true, '{}'::jsonb)",
@@ -377,7 +388,14 @@ pub async fn install(
         )?)
         .await?;
     let system = wamn_control_provision::test_database::system();
-    system.execute(&["UPDATE registry.meta SET platform_domain = 'example.test'"])?;
+    system.execute(&[
+        "BEGIN",
+        &wamn_control_provision::bind_platform_principal_sql(
+            wamn_project_state::PlatformComponent::Provisioning,
+        ),
+        "UPDATE registry.meta SET platform_domain = 'example.test'",
+        "COMMIT",
+    ])?;
     let manifests = roots
         .iter()
         .map(|root| {

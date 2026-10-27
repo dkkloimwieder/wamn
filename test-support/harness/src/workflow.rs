@@ -20,11 +20,16 @@ pub async fn author_and_enable(
     let project_task = tokio::spawn(connection);
     let result = async {
         project.execute(
-            "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
+            "WITH actor AS MATERIALIZED (SELECT set_config('app.user_id', $1, true)) \
+             INSERT INTO platform.user_role (user_id, role_name) \
+             SELECT $1::text::uuid, 'admin' FROM actor WHERE true ON CONFLICT DO NOTHING",
             &[&request.created_by],
         ).await?;
         // The graph still passes the release gate in author_workflow.
-        control.execute("SELECT set_config('app.tenant', $1, false)", &[&request.tenant()]).await?;
+        control.execute(
+            "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
+            &[&request.tenant(), &request.created_by],
+        ).await?;
         control.execute(
             "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
             &[&request.tenant(), &request.document.wiring_hash().as_str()],

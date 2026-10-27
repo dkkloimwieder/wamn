@@ -114,6 +114,14 @@ async fn recover(
         // application does not provision.
         client
             .execute(
+                "SELECT set_config('app.user_id', $1, false)",
+                &[&wamn_control_provision::PlatformComponent::Provisioning
+                    .principal_id()
+                    .to_string()],
+            )
+            .await?;
+        client
+            .execute(
                 "INSERT INTO wamn_run.environment_policies \
                    (tenant_id, expected_environment, durability_class) VALUES ($1, $2, 'standard')",
                 &[&tenant, &identity.environment.as_str()],
@@ -146,7 +154,7 @@ async fn recover(
             &wamn_control_registry::Triple::new(&identity.org, &identity.project, identity.environment.as_str()),
             &wamn_control::author_workflow::AuthorWorkflowRequest {
                 org: &identity.org, project: &identity.project, environment: &identity.environment,
-                application: super::BASE_PACKAGE_ID,
+                application: "receiving",
                 declared: &queue.release.scope().applications,
                 document: wiring, trigger: wamn_control::author_workflow::WorkflowTrigger::Manual,
                 execution: wamn_control::author_workflow::WorkflowExecution::Invoker,
@@ -167,7 +175,7 @@ async fn recover(
                 "line":[{"purchase_order_line_id":LINE,"quantity":"9.0000",
                     "location_id":"00000000-0000-0000-0000-000000000201"}]}}]);
 
-        let run = application.start_workflow(super::BASE_PACKAGE_ID, &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await?;
+        let run = application.start_workflow("receiving", &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await?;
 
         let (stop_first, first) = serve(queue, "queue-recovery-first").await?;
         let (generation, backend) = blocked_attempt(&client, &run, blocker, 0).await?;
@@ -247,7 +255,7 @@ async fn recover(
             "the completed run leaves the durable queue"
         );
         ensure!(
-            application.start_workflow(super::BASE_PACKAGE_ID, &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await? == run,
+            application.start_workflow("receiving", &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await? == run,
             "admission replay returns the completed run"
         );
         println!(

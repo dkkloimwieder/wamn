@@ -885,8 +885,14 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .await?;
     system
         .execute(
-            "UPDATE registry.meta SET platform_domain = $1",
-            &[&PLATFORM_DOMAIN],
+            "WITH actor AS MATERIALIZED (SELECT set_config('app.user_id', $2, true)) \
+             UPDATE registry.meta SET platform_domain = $1 FROM actor",
+            &[
+                &PLATFORM_DOMAIN,
+                &wamn_control_provision::PlatformComponent::Provisioning
+                    .principal_id()
+                    .to_string(),
+            ],
         )
         .await?;
 
@@ -1783,6 +1789,14 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
 
     let (_, dev_url) = project_database("dev").await?;
     let (project, project_task) = connect(&dev_url).await?;
+    project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
     let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
     let result = async {
     // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
@@ -1797,8 +1811,9 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     system.batch_execute("SET ROLE wamn_system").await?;
     system
         .execute(
-            "UPDATE registry.env_policies SET drain_bound_seconds = 30 WHERE org = $1 AND name = $2",
-            &[&ORG, &POLICY],
+            "WITH actor AS MATERIALIZED (SELECT set_config('app.user_id', $3, true)) \
+             UPDATE registry.env_policies SET drain_bound_seconds = 30 FROM actor WHERE org = $1 AND name = $2",
+            &[&ORG, &POLICY, &wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
         )
         .await?;
     system_task.abort();

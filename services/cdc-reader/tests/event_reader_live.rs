@@ -392,6 +392,14 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(CATALOG_SCHEMA)
         .await
         .expect("apply the complete catalog bootstrap (the package/effective-release store)");
+    sys.execute(
+        "SELECT set_config('app.user_id', $1, false)",
+        &[&wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string()],
+    )
+    .await
+    .expect("bind the provisioning actor");
     // The registration read's own credential, minted through the REAL builders
     // now that `registry.event_readers` exists (`wamn-0h0g.12.116`). The grant
     // batch also runs inside `prepare_workload_generation_sql`; applying it

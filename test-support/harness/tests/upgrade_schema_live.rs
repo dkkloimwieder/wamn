@@ -167,6 +167,16 @@ async fn install_control(admin_url: &str, system_url: &str) {
     system
         .0
         .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .expect("bind the provisioning actor");
+    system
+        .0
+        .execute(
             "UPDATE registry.meta SET platform_domain = $1",
             &[&"example.invalid"],
         )
@@ -301,7 +311,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     // Remove the workflow table and guard added by 0032 to 0035. Restore
     // empty tables for 0034 and 0036, which only drop those tables.
     // The system database loses the integrations and target tables from
-    // system 0029, which the system upgrade below recreates and records.
+    // system 0029 and the stamps from 0032. The upgrade restores both.
     let fresh_shape = platform_shape(&project_url).await;
     let client = connect(&project_url).await;
     client
@@ -355,6 +365,34 @@ async fn upgrade_schema_applies_each_pending_file_once() {
         .expect("make the database as 0023 left it");
     close(client).await;
     let system = connect(&system_url).await;
+    for relation in [
+        "registry.meta",
+        "registry.orgs",
+        "registry.env_policies",
+        "registry.projects",
+        "registry.project_envs",
+        "registry.retired_project_envs",
+        "registry.capture_gap",
+        "registry.generation_passwords",
+        "identity.session_keys",
+        "identity.session_signing_state",
+        "identity.password_attempts",
+    ] {
+        let created = if relation == "registry.capture_gap" {
+            "ALTER COLUMN created_at SET DEFAULT now()"
+        } else {
+            "DROP COLUMN created_at"
+        };
+        system
+            .0
+            .batch_execute(&format!(
+                "DROP TRIGGER wamn_record_history_stamp ON {relation}; \
+                 ALTER TABLE {relation} {created}, DROP COLUMN created_by, \
+                 DROP COLUMN updated_at, DROP COLUMN updated_by"
+            ))
+            .await
+            .expect("restore the system tables before 0032");
+    }
     system
         .0
         .batch_execute(

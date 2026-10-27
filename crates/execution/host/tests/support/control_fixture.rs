@@ -33,7 +33,12 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
         .batch_execute("CREATE ROLE wamn_system NOLOGIN")
         .await?;
     wamn_control::provision_system::install_control_store(admin).await?;
-    admin.batch_execute("SET ROLE wamn_system").await?;
+    admin
+        .batch_execute(&format!(
+            "SET ROLE wamn_system; SET app.user_id = '{}'",
+            wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+        ))
+        .await?;
     admin
         .batch_execute(
             "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \

@@ -24,13 +24,17 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
     let mut authority = connect(system.url()).await;
-    authority.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','host-project')").await.unwrap();
+    authority
+        .batch_execute("SET ROLE wamn_system")
+        .await
+        .unwrap();
     let tx = authority.transaction().await.unwrap();
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await
     .unwrap();
+    tx.batch_execute("INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','host-project')").await.unwrap();
     tx.batch_execute("SET LOCAL ROLE wamn_control")
         .await
         .unwrap();

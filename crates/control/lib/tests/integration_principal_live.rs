@@ -54,6 +54,14 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             .actions
             .is_empty()
     );
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
     admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class) VALUES ($1, 'dev', 'standard')", &[&TENANT]).await?;
     for package in ["consumer", "integration"] {
         admin.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ($1,$2,'1.0.0',$3)", &[&TENANT, &package, &format!("sha256:{}", "a".repeat(64))]).await?;

@@ -477,7 +477,10 @@ pub async fn enable_trigger(
     }
     let (control, control_task) = connect_owned(environment.system_url).await?;
     control
-        .execute("SELECT set_config('app.tenant', $1, false)", &[&tenant])
+        .execute(
+            "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
+            &[&tenant, &ENABLER],
+        )
         .await?;
     control
         .execute(

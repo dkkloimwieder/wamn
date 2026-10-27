@@ -134,6 +134,10 @@ pub async fn install_control(admin_url: &str, system_url: &str) -> anyhow::Resul
         system.batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL).await?;
         system.batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL).await?;
         system.execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
+        ).await?;
+        system.execute(
             "UPDATE registry.meta SET platform_domain = $1",
             &[&PLATFORM_DOMAIN],
         ).await?;
