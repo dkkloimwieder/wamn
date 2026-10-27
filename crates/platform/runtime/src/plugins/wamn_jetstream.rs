@@ -375,8 +375,8 @@ fn prepare_derived_publication(
 ///
 /// Only `publish-derived` passes a `wiring`. It is the one operation this plugin
 /// performs on behalf of an admitted Emit terminal, and its native callers hand
-/// the coordinates down with the request. The other, `prepare-registration`, is
-/// plugin-initiated control work standing at no wiring node, so it records the
+/// the coordinates down with the request. The registration operations perform
+/// control work at no wiring node, so each records the
 /// keys EMPTY through
 /// [`record_wiring`]'s `None`, which reads as "this effect holds no such claim"
 /// rather than as dropped instrumentation.
@@ -1003,9 +1003,12 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
         if let Err(error) = postgres.require_event_materializer(&component, release) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
+        let claim = plugin.claim_for(&component);
+        let span = js_span(&claim, &component, "event-triggers", None);
         Ok(
             match postgres
                 .event_triggers(&plugin.event_coordinates.project, release)
+                .instrument(span)
                 .await
             {
                 Ok(triggers) => serde_json::to_string(&triggers)
@@ -1030,6 +1033,8 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
         if let Err(error) = postgres.require_event_materializer(&component, release) {
             return Ok(Err(JsError::Other(error.to_string())));
         }
+        let claim = plugin.claim_for(&component);
+        let span = js_span(&claim, &component, "admit-event-batch", None);
         Ok(postgres
             .admit_event_batch(
                 &plugin.event_coordinates.project,
@@ -1042,6 +1047,7 @@ impl<T: 'static + Send> registration::HostWithStore<T> for SharedCtx {
                     source_event_id: &source_event_id,
                 },
             )
+            .instrument(span)
             .await
             .map_err(|error| JsError::Other(error.to_string())))
     }

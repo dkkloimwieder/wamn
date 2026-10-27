@@ -249,7 +249,11 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     (
         JETSTREAM,
         "registration::HostWithStore",
-        &[("prepare", Surface::Effect)],
+        &[
+            ("triggers", Surface::Effect),
+            ("admit", Surface::Effect),
+            ("prepare", Surface::Effect),
+        ],
     ),
 ];
 
