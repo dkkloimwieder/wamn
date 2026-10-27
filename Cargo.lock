@@ -6171,6 +6171,7 @@ dependencies = [
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-session",
+ "wamn-test-infrastructure",
  "wamn-test-postgres",
  "zeroize",
 ]
@@ -6323,6 +6324,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-project-state",
  "wamn-session",
+ "wamn-test-infrastructure",
  "wamn-test-postgres",
  "zeroize",
 ]

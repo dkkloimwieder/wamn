@@ -110,6 +110,19 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
     provision_org(request("acme", &url, FIRST_EMAIL))
         .await
         .expect("provision the first org with the first admin");
+    for (relation, predicate) in [
+        ("registry.orgs", "id = 'acme'"),
+        ("registry.env_policies", "org = 'acme'"),
+    ] {
+        wamn_test_infrastructure::record_history::assert_stamp(
+            &client,
+            relation,
+            predicate,
+            PROVISIONING,
+            PROVISIONING,
+        )
+        .await;
+    }
     let created = users(&client).await;
     assert_eq!(created.len(), 1, "{created:?}");
     let first = created[0]

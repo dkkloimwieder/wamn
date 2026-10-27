@@ -251,6 +251,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         ))
         .await?;
     admin.batch_execute(&format!(r#"
+        SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b';
         INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('{ORG}', 'pooled', 'fixture');
         INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image)
           VALUES ('{ORG}','{ENVIRONMENT}','"own"',0,1,'1Gi','1','1Gi','postgres:18');

@@ -473,7 +473,7 @@ async fn prepare(
 ) -> anyhow::Result<()> {
     let role = identity_issuer_generation_role(&args.issuer, generation)?;
     let other_role = identity_issuer_generation_role(&args.issuer, generation.other())?;
-    let transaction = admin.transaction().await?;
+    let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
     public_floor(&transaction).await?;
     stable(&transaction, true).await?;
     let target = state(&transaction, &role).await?;
@@ -561,7 +561,7 @@ async fn prepare(
 }
 
 async fn deactivate(
-    admin: &Client,
+    admin: &mut Client,
     issuer: &str,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
@@ -569,9 +569,11 @@ async fn deactivate(
     admin
         .batch_execute(&retire_identity_issuer_generation_sql(issuer, generation)?)
         .await?;
-    admin
+    let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
+    transaction
         .execute(sql::forget_generation_password_sql(), &[&role])
         .await?;
+    transaction.commit().await?;
     admin
         .batch_execute(&sql::terminate_workload_generation_sessions_sql(&role))
         .await?;
@@ -593,7 +595,7 @@ async fn retire(
 ) -> anyhow::Result<()> {
     let role = identity_issuer_generation_role(issuer, generation)?;
     let replacement_role = identity_issuer_generation_role(issuer, generation.other())?;
-    let transaction = admin.transaction().await?;
+    let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
     public_floor(&transaction).await?;
     stable(&transaction, false).await?;
     let old = state(&transaction, &role)

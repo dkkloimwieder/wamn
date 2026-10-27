@@ -346,12 +346,12 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
         run(
             &a_url,
             &format!(
-                "INSERT INTO identity.session_keys (issuer, kid, public_key, private_pkcs8) VALUES \
+                "BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO identity.session_keys (issuer, kid, public_key, private_pkcs8) VALUES \
              ('{ISSUER}', '00000000-0000-0000-0000-000000000001', decode(repeat('00',32),'hex'), decode('01','hex')); \
              INSERT INTO identity.session_signing_state (issuer, active_kid) VALUES \
              ('{ISSUER}', '00000000-0000-0000-0000-000000000001'); \
              UPDATE identity.session_keys SET private_pkcs8 = decode('02','hex') WHERE issuer = '{ISSUER}'; \
-             UPDATE identity.session_signing_state SET active_kid = NULL WHERE issuer = '{ISSUER}';"
+             UPDATE identity.session_signing_state SET active_kid = NULL WHERE issuer = '{ISSUER}'; COMMIT;"
             ),
         );
         assert_eq!(

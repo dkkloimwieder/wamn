@@ -33,6 +33,7 @@ pub async fn publish_session_key(
     })?;
     let pair = Ed25519KeyPair::from_pkcs8(document.as_ref()).map_err(|_| corrupt_key())?;
     let transaction = client.transaction().await.map_err(key_database_error)?;
+    bind_provisioning(&transaction).await?;
     transaction.execute(
         "INSERT INTO identity.session_signing_state (issuer) VALUES ($1) ON CONFLICT DO NOTHING",
         &[&issuer],
@@ -60,6 +61,7 @@ pub async fn activate_session_key(
     kid: &str,
 ) -> Result<(), IdentityError> {
     let transaction = client.transaction().await.map_err(key_database_error)?;
+    bind_provisioning(&transaction).await?;
     let active = lock_issuer(&transaction, issuer).await?;
     let row = transaction
         .query_opt(
@@ -122,6 +124,7 @@ pub async fn remove_compromised_session_key(
     kid: &str,
 ) -> Result<bool, IdentityError> {
     let transaction = client.transaction().await.map_err(key_database_error)?;
+    bind_provisioning(&transaction).await?;
     lock_issuer(&transaction, issuer).await?;
     transaction
         .execute(
@@ -145,6 +148,7 @@ pub async fn remove_compromised_session_key(
 /// Delete expired retiring generations; their public projection already excludes them.
 pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u64, IdentityError> {
     let transaction = client.transaction().await.map_err(key_database_error)?;
+    bind_provisioning(&transaction).await?;
     lock_issuer(&transaction, issuer).await?;
     let removed = transaction
         .execute(
@@ -189,6 +193,22 @@ pub(crate) async fn sign_message(
         format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref()))
     };
     Ok(token)
+}
+
+/// Bind `wamn:provisioning` as the stamp actor of `transaction`.
+async fn bind_provisioning(
+    transaction: &tokio_postgres::Transaction<'_>,
+) -> Result<(), IdentityError> {
+    transaction
+        .execute(
+            "SELECT set_config('app.user_id', $1, true)",
+            &[&wamn_project_state::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .map_err(key_database_error)?;
+    Ok(())
 }
 
 async fn lock_issuer(

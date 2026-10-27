@@ -42,14 +42,6 @@ async fn platform_identity_round_trip_on_postgres() {
         .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
         .expect("apply the system schema composition");
-    client
-        .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
-             VALUES ('demo', 'pooled', 'wamn-pg'); \
-             INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');",
-        )
-        .await
-        .expect("seed registered project");
     identity_relations_carry_stamps(&client).await;
     let provisioning = provisioning_principal_is_seeded(&client).await;
     unbound_identity_writes_refuse(&client).await;
@@ -61,6 +53,15 @@ async fn platform_identity_round_trip_on_postgres() {
         )
         .await
         .expect("bind wamn:provisioning for the fixture session");
+
+    client
+        .batch_execute(
+            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
+             VALUES ('demo', 'pooled', 'wamn-pg'); \
+             INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');",
+        )
+        .await
+        .expect("seed registered project");
     platform_principal_check_refuses_other_rows(&client).await;
 
     let user = create_user(
@@ -527,9 +528,10 @@ async fn project_environment_membership_round_trip(
 /// Each identity authority relation carries the four stamp columns as NOT NULL
 /// with no default, and one static stamp trigger.
 async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
-    const RELATIONS: [&str; 10] = [
+    const RELATIONS: [&str; 13] = [
         "org_memberships",
         "org_roles",
+        "password_attempts",
         "password_credentials",
         "password_logins",
         "password_tokens",
@@ -538,6 +540,8 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
         "project_env_memberships",
         "project_roles",
         "renewal_credentials",
+        "session_keys",
+        "session_signing_state",
     ];
     let columns = client
         .query(

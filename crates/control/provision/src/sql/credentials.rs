@@ -259,7 +259,7 @@ pub fn backfill_generation_passwords_sql() -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "INSERT INTO registry.generation_passwords (role, sha256) \
+        "BEGIN; {actor} INSERT INTO registry.generation_passwords (role, sha256) \
          SELECT DISTINCT generation.rolname, \
                 encode(sha256(convert_to(generation.rolpassword, 'UTF8')), 'hex') \
            FROM pg_catalog.pg_authid generation \
@@ -267,7 +267,8 @@ pub fn backfill_generation_passwords_sql() -> String {
            JOIN pg_catalog.pg_roles parent ON parent.oid = edge.roleid \
           WHERE parent.rolname IN ({parents}) \
             AND generation.rolcanlogin AND generation.rolpassword IS NOT NULL \
-         ON CONFLICT (role) DO NOTHING;\n"
+         ON CONFLICT (role) DO NOTHING; COMMIT;\n",
+        actor = crate::bind_platform_principal_sql(crate::PlatformComponent::Provisioning),
     )
 }
 

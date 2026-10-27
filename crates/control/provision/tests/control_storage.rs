@@ -38,6 +38,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     script.push_str("\nSET ROLE wamn_system;\n");
     script.push_str(wamn_control_provision::SYSTEM_SCHEMA_SQL);
     script.push('\n');
+    script.push_str("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b';\n");
     script.push_str(ASSERTIONS);
     script.push_str(&identifier_cases());
     // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the

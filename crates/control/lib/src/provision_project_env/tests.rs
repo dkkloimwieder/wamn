@@ -1015,7 +1015,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     };
     let mut first = connect().await;
     first.batch_execute("SET ROLE wamn_system").await.unwrap();
-    first.batch_execute("INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
+    first.batch_execute("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); COMMIT;").await.unwrap();
     let triple = Triple::new("demo", "inventory", "dev");
     let other = Triple::new("demo", "shipping", "dev");
     let mut second = connect().await;
@@ -1102,6 +1102,17 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     )
     .await
     .unwrap();
+    let actor = PlatformComponent::Provisioning.principal_id().to_string();
+    for relation in ["registry.projects", "registry.project_envs"] {
+        wamn_test_infrastructure::record_history::assert_stamp(
+            &first,
+            relation,
+            "org = 'demo'",
+            &actor,
+            &actor,
+        )
+        .await;
+    }
     claim_environment_instance(&connect().await, "tenant-a", "16384")
         .await
         .unwrap();
@@ -1259,7 +1270,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         connection.await.unwrap();
     });
     client.batch_execute("SET ROLE wamn_system").await.unwrap();
-    client.batch_execute("INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
+    client.batch_execute("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); COMMIT;").await.unwrap();
     let triple = Triple::new("demo", "inventory", "dev");
     for disposable in [Some(true), None] {
         do_record_project_env(

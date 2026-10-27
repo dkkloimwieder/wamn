@@ -73,7 +73,6 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
         .expect("apply the system schema composition");
-    client.batch_execute(SEED_SQL).await.expect("seed the orgs");
     client
         .execute(
             "SELECT set_config('app.user_id', $1, false)",
@@ -81,6 +80,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
         )
         .await
         .expect("bind wamn:provisioning for the fixture session");
+    client.batch_execute(SEED_SQL).await.expect("seed the orgs");
     let ann = create_or_reuse_user(&client, "ann@example.test", "Ann")
         .await
         .expect("create ann")
@@ -221,6 +221,45 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
             .get::<_, String>(0),
         "active"
     );
+
+    client.batch_execute("BEGIN").await.unwrap();
+    client
+        .execute(
+            "SELECT set_config('app.user_id', $1, true)",
+            &[&ann.as_str()],
+        )
+        .await
+        .unwrap();
+    wamn_platform_identity::org::create_project(&client, "acme", "history")
+        .await
+        .unwrap();
+    wamn_platform_identity::org::set_environment_status(
+        &client,
+        "acme",
+        "billing",
+        &["dev".to_owned()],
+        wamn_platform_identity::org::EnvironmentStatus::Inactive,
+    )
+    .await
+    .unwrap();
+    wamn_test_infrastructure::record_history::assert_stamp(
+        &client,
+        "registry.projects",
+        "org='acme' AND id='history'",
+        ann.as_str(),
+        ann.as_str(),
+    )
+    .await;
+    let actor = PlatformComponent::Provisioning.principal_id().to_string();
+    wamn_test_infrastructure::record_history::assert_stamp(
+        &client,
+        "registry.project_envs",
+        "org='acme' AND project='billing' AND env='dev'",
+        &actor,
+        ann.as_str(),
+    )
+    .await;
+    client.batch_execute("COMMIT").await.unwrap();
 
     drop(client);
     connection_task.await.expect("close the test database");

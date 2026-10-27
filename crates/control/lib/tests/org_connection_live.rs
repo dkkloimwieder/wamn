@@ -379,7 +379,7 @@ async fn org_connection_materializes_once_per_environment() {
         .find(|m| m.ordinal() == 23)
         .unwrap();
     b.batch_execute(migration.sql).await.unwrap();
-    control.batch_execute("INSERT INTO registry.orgs (id, placement_type) VALUES ('acme', 'dedicated'), ('other', 'dedicated')").await.unwrap();
+    control.batch_execute("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id, placement_type) VALUES ('acme', 'dedicated'), ('other', 'dedicated')").await.unwrap();
 
     control.batch_execute("INSERT INTO registry.projects(org,id) VALUES ('acme','alpha'),('acme','beta'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','alpha','dev','secret','aaaaaaaa','dev'),('acme','beta','dev','secret','bbbbbbbb','dev')").await.unwrap();
     let doc_a = document("alpha");

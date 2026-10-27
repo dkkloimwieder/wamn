@@ -144,7 +144,7 @@ async fn reset_cluster(catalog: &Client, database: &str, roles: &[&str]) {
         .expect("install registry schema");
     catalog
         .batch_execute(&format!(
-            "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
+            "SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; ALTER TABLE registry.project_envs OWNER TO wamn_system; \
              INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('{ORG}', 'pooled', 'pool') ON CONFLICT (id) DO NOTHING; \
              INSERT INTO registry.env_policies \
@@ -278,6 +278,18 @@ async fn the_documented_provisioning_order_completes_end_to_end() {
     ))
     .await
     .expect("the verb's own next step must accept the state its own priv.sql produced");
+
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    wamn_test_infrastructure::record_history::assert_stamp(
+        &catalog,
+        "registry.generation_passwords",
+        "true",
+        &actor,
+        &actor,
+    )
+    .await;
 
     let target = connect(&target_url).await;
     assert_eq!(

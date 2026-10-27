@@ -31,6 +31,7 @@ wamn-project-state = { workspace = true }
 wamn-catalog = { workspace = true }
 
 [dev-dependencies]
+wamn-test-infrastructure = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
 # The live tests apply the system schema composition and bind platform principals.
 wamn-control-provision = { workspace = true, features = ["test-util"] }

@@ -46,6 +46,17 @@ async fn provision_system_runs_once_and_records_the_platform_domain() {
     provision_system(&request)
         .await
         .expect("the first run installs the control store");
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    wamn_test_infrastructure::record_history::assert_stamp(
+        &client,
+        "registry.meta",
+        "true",
+        &actor,
+        &actor,
+    )
+    .await;
     let domain: Option<String> = client
         .query_one("SELECT platform_domain FROM registry.meta", &[])
         .await

@@ -933,6 +933,10 @@ async fn admit(
     issuer: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let tx = client.transaction().await?;
+    let actor = PlatformComponent::Provisioning.principal_id().to_string();
+    tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor])
+        .await?;
+
     // Fixed-window resets do not extend on refused attempts. Global admission
     // bounds source/account row creation; pruning retains at most two minutes.
     let mut allowed = true;
@@ -944,9 +948,6 @@ async fn admit(
         }
     }
     if buckets.first().is_some_and(|(key, _)| *key == "global") {
-        let actor = PlatformComponent::Provisioning.principal_id().to_string();
-        tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor])
-            .await?;
         // Cleanup is service-owned and bounded independently of submitted credentials.
         password_login::prune_expired(&tx, issuer).await?;
         tx.execute("DELETE FROM identity.password_attempts WHERE started_at < clock_timestamp() - interval '120 seconds'", &[]).await?;
@@ -1216,6 +1217,64 @@ mod tests {
         );
         let all = discovery_page(&json!({}), &principal, &scope).unwrap();
         assert_eq!(control_window(&all), Some((None, None)));
+    }
+
+    #[tokio::test]
+    async fn admission_stamps_every_bucket_as_the_platform_principal() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let (mut client, connection) =
+            tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+                .await
+                .unwrap();
+        tokio::spawn(connection);
+        client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$").await.unwrap();
+        client
+            .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+            .await
+            .unwrap();
+        for buckets in [
+            vec![("global", 10)],
+            vec![("source:test", 5), ("account:test", 5)],
+        ] {
+            assert!(
+                super::admit(&mut client, &buckets, "https://history.invalid")
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                super::admit(&mut client, &buckets, "https://history.invalid")
+                    .await
+                    .unwrap()
+            );
+        }
+        let actor = PlatformComponent::Provisioning.principal_id().to_string();
+        wamn_test_infrastructure::record_history::assert_stamp(
+            &client,
+            "identity.password_attempts",
+            "true",
+            &actor,
+            &actor,
+        )
+        .await;
+        assert_eq!(
+            client
+                .query_one("SELECT count(*) FROM identity.password_attempts", &[])
+                .await
+                .unwrap()
+                .get::<_, i64>(0),
+            3
+        );
+        assert!(
+            client
+                .query_one(
+                    "SELECT nullif(current_setting('app.user_id', true), '') IS NULL",
+                    &[]
+                )
+                .await
+                .unwrap()
+                .get::<_, bool>(0)
+        );
     }
 
     #[tokio::test]

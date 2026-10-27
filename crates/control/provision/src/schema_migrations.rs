@@ -248,6 +248,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0032_c35_connection_authority.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0033_record_history_stamp.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0033_record_history_stamp.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

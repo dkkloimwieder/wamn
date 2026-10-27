@@ -946,7 +946,10 @@ An environment stores its target identity on first apply. The target cannot chan
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
-The registry, the session keys, the operations tables, and the control store carry no stamps.
+System migration `0033_record_history_stamp` also stamps `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
+It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
+The migration attributes existing rows to `wamn:provisioning` and keeps each available row time, or uses migration transaction time.
+The operations tables and the control store carry no stamps.
 In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.
 The system database keeps stamps only and no history table, as its [limits](#limits) state.

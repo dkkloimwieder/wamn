@@ -23,7 +23,7 @@
 -- what .6 provision-org connects as. A superuser driving the apply `SET ROLE
 -- wamn_system` first.
 --
--- RECORD HISTORY: stamped identity authority relations carry created_at,
+-- RECORD HISTORY: stamped registry and identity relations carry created_at,
 -- created_by, updated_at, and updated_by as NOT NULL columns, and a
 -- wamn_record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
@@ -126,12 +126,24 @@ CREATE TABLE registry.meta (
     id              boolean PRIMARY KEY DEFAULT true CHECK (id),
     schema_version  text NOT NULL,
     platform_domain text,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     CONSTRAINT meta_platform_domain_check
         CHECK (platform_domain IS NULL
                OR (octet_length(platform_domain) <= 253
                    AND platform_domain ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'))
 );
-INSERT INTO registry.meta (schema_version) VALUES ('0.1');
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.meta
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+-- The deployment metadata seed binds the platform actor in its transaction.
+DO $meta$ BEGIN
+  PERFORM pg_catalog.set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true);
+  INSERT INTO registry.meta (schema_version) VALUES ('0.1');
+END $meta$;
 
 -- ---------------------------------------------------------------------------
 -- Orgs — the unit of isolation and billing. Carries only the id and a minimal
@@ -157,6 +169,10 @@ CREATE TABLE registry.orgs (
     id             text PRIMARY KEY,
     placement_type text NOT NULL,
     pool_cluster   text,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     CONSTRAINT orgs_placement_type_check
         CHECK (placement_type IN ('pooled', 'dedicated')),
     CONSTRAINT orgs_pool_cluster_check
@@ -170,6 +186,10 @@ CREATE TABLE registry.orgs (
                OR (pool_cluster ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
                    AND char_length(pool_cluster) <= 63))
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.orgs
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE registry.org_connections (
     org text NOT NULL REFERENCES registry.orgs (id) ON DELETE CASCADE,
@@ -218,6 +238,10 @@ CREATE TABLE registry.env_policies (
         CONSTRAINT env_policies_readiness_budget_check CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300
         CONSTRAINT env_policies_drain_bound_check CHECK (drain_bound_seconds > 0),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (org, name),
     -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
     -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
@@ -225,6 +249,10 @@ CREATE TABLE registry.env_policies (
         CHECK (name ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(name) <= 40)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.env_policies
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- Projects — structure within an org. Unique per org (the composite PK);
@@ -233,6 +261,10 @@ CREATE TABLE registry.env_policies (
 CREATE TABLE registry.projects (
     org  text NOT NULL REFERENCES registry.orgs (id) ON DELETE CASCADE,
     id   text NOT NULL,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (org, id),
     -- cjv.20 charset backstop: project `id` is a check_id mirror (lowercase slug
     -- ≤ 40 bytes, not under the reserved `wamn` prefix — it too mints names).
@@ -241,6 +273,10 @@ CREATE TABLE registry.projects (
                AND char_length(id) <= 40
                AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.projects
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- First-party platform identity (wamn-ctc8.6). This is platform-plane
@@ -323,7 +359,7 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- The wamn:provisioning row is the first row in this database. The block binds
+-- The wamn:provisioning row is the first identity row. The block binds
 -- that principal for the current transaction, so the row stamps itself.
 DO $provisioning$ BEGIN
   PERFORM pg_catalog.set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true);
@@ -571,17 +607,33 @@ CREATE TABLE identity.session_keys (
     private_pkcs8  bytea,
     published_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
     signing_cutoff timestamptz,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (issuer, kid),
     CONSTRAINT session_keys_retirement_check
         CHECK ((signing_cutoff IS NULL) = (private_pkcs8 IS NOT NULL))
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.session_keys
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE identity.session_signing_state (
     issuer     text PRIMARY KEY CHECK (btrim(issuer) <> ''),
     active_kid uuid,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     FOREIGN KEY (issuer, active_kid)
         REFERENCES identity.session_keys (issuer, kid)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.session_signing_state
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)
@@ -648,6 +700,10 @@ CREATE TABLE registry.project_envs (
     route_host       text
         CONSTRAINT project_envs_route_host_check
         CHECK (route_host IS NULL OR route_host ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (org, project, env),
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     CONSTRAINT project_envs_policy_name_fkey
@@ -657,6 +713,10 @@ CREATE TABLE registry.project_envs (
         CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),
     CONSTRAINT project_envs_status_check CHECK (status IN ('active', 'inactive'))
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.project_envs
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- User project access is an explicit grant to one project-environment
 -- (wamn-ctc8.19). Keep the platform-issued principal UUID: platform."user"
@@ -726,8 +786,16 @@ CREATE TABLE registry.retired_project_envs (
     env             text NOT NULL,
     instance_suffix text NOT NULL,
     retired_at      timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (org, project, env, instance_suffix)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.retired_project_envs
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE FUNCTION registry.retire_project_env() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -802,11 +870,18 @@ CREATE TABLE registry.capture_gap (
     reason     text NOT NULL,
     end_lsn    pg_lsn NOT NULL,
     resync_at  timestamptz,
-    created_at timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (org, project, env, created_at),
     FOREIGN KEY (org, project, env)
         REFERENCES registry.event_readers (org, project, env) ON DELETE CASCADE
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.capture_gap
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- The password fingerprints of the credential generations (wamn-zua8.3,
@@ -818,8 +893,16 @@ CREATE TABLE registry.capture_gap (
 CREATE TABLE registry.generation_passwords (
     role        text PRIMARY KEY,
     sha256      text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
-    recorded_at timestamptz NOT NULL DEFAULT now()
+    recorded_at timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON registry.generation_passwords
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- The issuer can lock a principal without gaining principal mutation rights.
 CREATE FUNCTION identity.lock_password_principal(principal uuid) RETURNS boolean
@@ -837,7 +920,11 @@ REVOKE ALL ON FUNCTION identity.lock_password_principal(uuid) FROM PUBLIC;
 CREATE TABLE identity.password_attempts (
     bucket text PRIMARY KEY CHECK (octet_length(bucket) <= 160),
     started_at timestamptz NOT NULL,
-    attempts integer NOT NULL CHECK (attempts > 0)
+    attempts integer NOT NULL CHECK (attempts > 0),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL
 );
 
 -- Org connection authority. Historical org_connections rows remain intact.
@@ -1445,3 +1532,8 @@ DO $binding_mode_reader_acl$ BEGIN
   GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO wamn_conn_reader;
  END IF;
 END $binding_mode_reader_acl$;
+
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.password_attempts
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');

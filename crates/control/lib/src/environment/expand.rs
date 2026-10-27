@@ -48,20 +48,19 @@ pub async fn expand(
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
-    system
-        .execute(
-            UPDATE_ROW_SQL,
-            &[
-                &document.org,
-                &document.project,
-                &document.env,
-                &document.policy,
-                &document.route_host,
-            ],
-        )
-        .await
-        .context("write the policy name and the route host")?;
-    let tx = system.transaction().await?;
+    let tx = crate::provision_project_env::provisioning_transaction(&mut system).await?;
+    tx.execute(
+        UPDATE_ROW_SQL,
+        &[
+            &document.org,
+            &document.project,
+            &document.env,
+            &document.policy,
+            &document.route_host,
+        ],
+    )
+    .await
+    .context("write the policy name and the route host")?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     let bindings = super::bindings::reserve(&tx, document, &analysis.packages).await?;
     tx.commit().await?;

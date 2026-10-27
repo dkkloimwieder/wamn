@@ -49,23 +49,27 @@ impl GenerationPasswords {
             .get(0))
     }
 
-    async fn record(&self, role: &str, password: &str) -> anyhow::Result<()> {
+    async fn record(&mut self, role: &str, password: &str) -> anyhow::Result<()> {
         let sha256 = hex::encode(ring::digest::digest(
             &ring::digest::SHA256,
             password.as_bytes(),
         ));
-        self.client
+        let transaction = super::provisioning_transaction(&mut self.client).await?;
+        transaction
             .execute(sql::record_generation_password_sql(), &[&role, &sha256])
             .await
             .context("record a generation password fingerprint")?;
+        transaction.commit().await?;
         Ok(())
     }
 
-    async fn forget(&self, role: &str) -> anyhow::Result<()> {
-        self.client
+    async fn forget(&mut self, role: &str) -> anyhow::Result<()> {
+        let transaction = super::provisioning_transaction(&mut self.client).await?;
+        transaction
             .execute(sql::forget_generation_password_sql(), &[&role])
             .await
             .context("remove a generation password fingerprint")?;
+        transaction.commit().await?;
         Ok(())
     }
 }
@@ -309,7 +313,7 @@ fn workload_action_identity(
 
 async fn converge_workload_generation_state(
     client: &(impl GenericClient + Sync),
-    passwords: &GenerationPasswords,
+    passwords: &mut GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     role: &str,
 ) -> anyhow::Result<Option<WorkloadRoleState>> {
@@ -345,7 +349,7 @@ async fn converge_workload_generation_state(
 
 async fn converge_stable_workload_memberships(
     client: &(impl GenericClient + Sync),
-    passwords: &GenerationPasswords,
+    passwords: &mut GenerationPasswords,
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
 ) -> anyhow::Result<()> {
@@ -512,7 +516,7 @@ pub async fn run_workload_action(
         (admin_url, database, config, Some(instance))
     };
     let lifecycle = workload_lifecycle(family, identity, tenant, &database);
-    let passwords =
+    let mut passwords =
         GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
             .await?;
     let db_host = match (&args.db_host, &args.cluster) {
@@ -541,7 +545,7 @@ pub async fn run_workload_action(
             let key = tenant_key(tenant, &database);
             prepare_workload_generation(
                 &admin_config,
-                &passwords,
+                &mut passwords,
                 lifecycle,
                 generation,
                 &expires_at,
@@ -616,11 +620,12 @@ pub async fn run_workload_action(
             })
         }
         WorkloadActionVerb::Retire => {
-            retire_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
+            retire_workload_generation(&admin_config, &mut passwords, lifecycle, generation)
+                .await?;
             Ok(WorkloadActionOutcome::Retired)
         }
         WorkloadActionVerb::Abort => {
-            abort_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
+            abort_workload_generation(&admin_config, &mut passwords, lifecycle, generation).await?;
             Ok(WorkloadActionOutcome::Aborted)
         }
     }
@@ -656,7 +661,7 @@ pub async fn run_org_workload_action(
         },
         control_tenant: None,
     };
-    let passwords = GenerationPasswords::connect(&admin_config).await?;
+    let mut passwords = GenerationPasswords::connect(&admin_config).await?;
     match verb {
         WorkloadActionVerb::Prepare => {
             let secret_path = args.secret.as_deref().with_context(|| {
@@ -670,7 +675,7 @@ pub async fn run_org_workload_action(
             let expires_at = workload_expires_at(Utc::now());
             prepare_workload_generation(
                 &admin_config,
-                &passwords,
+                &mut passwords,
                 lifecycle,
                 generation,
                 &expires_at,
@@ -700,11 +705,12 @@ pub async fn run_org_workload_action(
             })
         }
         WorkloadActionVerb::Retire => {
-            retire_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
+            retire_workload_generation(&admin_config, &mut passwords, lifecycle, generation)
+                .await?;
             Ok(WorkloadActionOutcome::Retired)
         }
         WorkloadActionVerb::Abort => {
-            abort_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
+            abort_workload_generation(&admin_config, &mut passwords, lifecycle, generation).await?;
             Ok(WorkloadActionOutcome::Aborted)
         }
     }
@@ -733,7 +739,7 @@ pub async fn run_org_workload_action(
 /// must drop the roles themselves, not rely on a failed run to have done it.
 async fn prepare_workload_generation<F>(
     admin_config: &PgConfig,
-    passwords: &GenerationPasswords,
+    passwords: &mut GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     generation: CredentialGeneration,
     expires_at: &str,
@@ -946,7 +952,7 @@ where
 /// refused prepare leaves behind.
 async fn rollback_prepared_workload_generation(
     admin: &(impl GenericClient + Sync),
-    passwords: &GenerationPasswords,
+    passwords: &mut GenerationPasswords,
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
     role: &str,
@@ -982,7 +988,7 @@ async fn rollback_prepared_workload_generation(
 
 async fn retire_workload_generation(
     admin_config: &PgConfig,
-    passwords: &GenerationPasswords,
+    passwords: &mut GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
@@ -1073,7 +1079,7 @@ async fn retire_workload_generation(
 
 async fn abort_workload_generation(
     admin_config: &PgConfig,
-    passwords: &GenerationPasswords,
+    passwords: &mut GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
@@ -1213,7 +1219,7 @@ async fn lock_workload_family(
 
 async fn verify_stable_workload_role(
     client: &(impl GenericClient + Sync),
-    passwords: &GenerationPasswords,
+    passwords: &mut GenerationPasswords,
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
 ) -> anyhow::Result<()> {

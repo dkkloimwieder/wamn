@@ -45,7 +45,7 @@ async fn apply_refuses_each_invalid_binding_and_target_change() {
         .await
         .unwrap();
     let driver = tokio::spawn(driver);
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev'),('acme','one','other','secret','bbbbbbbb','dev')").await.unwrap();
+    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev'),('acme','one','other','secret','bbbbbbbb','dev')").await.unwrap();
     let tx = client.transaction().await.unwrap();
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,
@@ -395,7 +395,7 @@ async fn two_packages_bind_distinct_aliases_to_one_shared_org_connection() {
         .await
         .unwrap();
     let driver = tokio::spawn(driver);
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev')").await.unwrap();
+    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev')").await.unwrap();
     let tx = client.transaction().await.unwrap();
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,

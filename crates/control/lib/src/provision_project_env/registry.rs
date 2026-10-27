@@ -236,7 +236,8 @@ pub(super) async fn do_record_project_env(
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
-    client
+    let transaction = super::provisioning_transaction(client).await?;
+    transaction
         .execute(
             wamn_control_registry::sql::upsert_project_sql(),
             &[&triple.org, &triple.project],
@@ -244,7 +245,7 @@ pub(super) async fn do_record_project_env(
         .await
         .context("upsert registry.projects row")?;
     let env = triple.env.as_str();
-    let row = client
+    let row = transaction
         .query_one(
             wamn_control_registry::sql::upsert_project_env_with_policy_sql(),
             &[
@@ -263,7 +264,6 @@ pub(super) async fn do_record_project_env(
     // The current org admins and project admins reach a new project or
     // environment in the same way a grant reaches an existing one
     // (docs/plan/platform-ui.md §4.4).
-    let transaction = super::provisioning_transaction(client).await?;
     wamn_platform_identity::org::materialize_admin_grants(
         &transaction,
         &triple.org,

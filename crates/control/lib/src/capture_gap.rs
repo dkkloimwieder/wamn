@@ -106,7 +106,7 @@ pub async fn recover_capture_gap(
     let slot = cdc_object_name(&args.org, &args.project, &args.env, &instance);
     let database = project_env_database_name(&args.org, &args.project, &args.env, &instance);
 
-    let system = connect_system(&args.system_database_url).await?;
+    let mut system = connect_system(&args.system_database_url).await?;
     let env = triple.env.as_str();
     let registration = system
         .query_opt(
@@ -196,7 +196,8 @@ pub async fn recover_capture_gap(
         .context("read the new slot's first position")?
         .get(0);
 
-    let created_at: DateTime<Utc> = system
+    let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;
+    let created_at: DateTime<Utc> = transaction
         .query_one(
             insert_capture_gap_sql(),
             &[
@@ -214,6 +215,8 @@ pub async fn recover_capture_gap(
         .context("write the registry.capture_gap row")?
         .get(0);
 
+    transaction.commit().await?;
+
     Ok(RecoveredCaptureGap {
         triple,
         slot,
@@ -230,10 +233,7 @@ pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
     let mut system = connect_system(&args.system_database_url).await?;
     let env = triple.env.as_str();
-    let transaction = system
-        .transaction()
-        .await
-        .context("begin the close transaction")?;
+    let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;
     let newest = transaction
         .query_opt(
             lock_newest_capture_gap_sql(),

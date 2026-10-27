@@ -210,7 +210,7 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
         .expect("install registry schema");
     catalog
         .batch_execute(&format!(
-            "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
+            "SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; ALTER TABLE registry.project_envs OWNER TO wamn_system; \
              INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('{ORG}', 'pooled', 'pool') ON CONFLICT (id) DO NOTHING; \
              INSERT INTO registry.env_policies \

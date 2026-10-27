@@ -247,6 +247,12 @@ async fn record_org_rows(
     org: &Org,
     stamped: &[OrgEnvPolicy],
 ) -> anyhow::Result<()> {
+    client
+        .batch_execute(&bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor")?;
     let placement_type = org.placement.kind_str();
     // The pool cluster is set only for a pooled org; NULL for a dedicated org.
     let pool = org.placement.pool();
@@ -307,12 +313,6 @@ async fn record_admin_rows(
     org: &str,
     email: &str,
 ) -> anyhow::Result<PrincipalId> {
-    client
-        .batch_execute(&bind_platform_principal_sql(
-            PlatformComponent::Provisioning,
-        ))
-        .await
-        .context("bind wamn:provisioning as the actor")?;
     // Two runs on an empty store serialize here, so the second sees the
     // first's user and does not create another.
     client

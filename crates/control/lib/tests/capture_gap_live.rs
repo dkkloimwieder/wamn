@@ -99,6 +99,10 @@ async fn recover_and_close_record_each_capture_gap() {
         .await
         .expect("install the system schema");
     system
+        .batch_execute("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+        .await
+        .unwrap();
+    system
         .execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
         .await
         .expect("org row");
@@ -288,6 +292,17 @@ async fn recover_and_close_record_each_capture_gap() {
         )
     );
     let closed = close_capture_gap(&close).await.expect("close the gap");
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    wamn_test_infrastructure::record_history::assert_stamp(
+        &system,
+        "registry.capture_gap",
+        "true",
+        &actor,
+        &actor,
+    )
+    .await;
     assert_eq!(closed.created_at, row.created_at);
     let message = refusal(close_capture_gap(&close).await);
     assert!(message.contains("already has resync_at"), "{message}");

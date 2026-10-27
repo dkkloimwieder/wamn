@@ -33,6 +33,7 @@ wamn-platform-identity = { workspace = true }
 wamn-session = { workspace = true }
 
 [dev-dependencies]
+wamn-test-infrastructure = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 tokio = { workspace = true, features = ["process"] }

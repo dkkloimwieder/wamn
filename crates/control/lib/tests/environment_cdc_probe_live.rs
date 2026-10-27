@@ -36,6 +36,9 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
     db.batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
         .await
         .expect("install the system schema");
+    db.batch_execute("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+        .await
+        .unwrap();
     db.execute(upsert_org_sql(), &[&ORG, &"pooled", &"wamn-pg"])
         .await
         .expect("org row");

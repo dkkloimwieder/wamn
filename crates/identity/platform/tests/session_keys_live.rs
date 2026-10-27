@@ -30,6 +30,15 @@ async fn session_key_lifecycle_on_postgres() {
     let second = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let third = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let other = publish_session_key(&mut admin, OTHER_ISSUER).await.unwrap();
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    for relation in ["identity.session_keys", "identity.session_signing_state"] {
+        wamn_test_infrastructure::record_history::assert_stamp(
+            &admin, relation, "true", &actor, &actor,
+        )
+        .await;
+    }
     assert_ne!(first.kid, second.kid);
     assert_ne!(first.kid, third.kid);
     assert_ne!(second.kid, third.kid);
@@ -187,11 +196,16 @@ async fn session_key_lifecycle_on_postgres() {
 
     // Age only the already-retired fixture row; do not wait fifteen minutes or
     // replace the production clock/retirement query with a mock.
+    admin
+        .batch_execute("BEGIN; SET LOCAL app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'")
+        .await
+        .unwrap();
     admin.execute(
         "UPDATE identity.session_keys SET signing_cutoff = clock_timestamp() - interval '931 seconds' \
          WHERE issuer = $1 AND kid::text = $2",
         &[&ISSUER,&first.kid],
     ).await.unwrap();
+    admin.batch_execute("COMMIT").await.unwrap();
     assert!(
         session_jwks(&restarted, ISSUER)
             .await

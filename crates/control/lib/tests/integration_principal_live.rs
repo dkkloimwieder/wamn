@@ -23,7 +23,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
-    system.execute(&["UPDATE registry.meta SET platform_domain = 'example.invalid'"])?;
+    system.execute(&["SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; UPDATE registry.meta SET platform_domain = 'example.invalid'"])?;
     let project = wamn_test_postgres::database();
     let admin = connect(project.url()).await?;
     let schema = BareSchemaName::new("wamn_run")?;

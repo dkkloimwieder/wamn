@@ -12,6 +12,7 @@ pub mod operations;
 pub mod platform;
 pub use wamn_test_postgres as postgres;
 
+pub mod record_history;
 pub mod release_chart;
 pub mod rendering;
 pub mod scratch;

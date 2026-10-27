@@ -45,25 +45,30 @@ pub struct ProvisionSystemRequest {
 /// Install the control store and record the platform domain.
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
     validate_platform_domain(&request.platform_domain).context("check the platform domain")?;
-    let (client, connection) = tokio_postgres::connect(&request.system_database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&request.system_database_url, NoTls)
         .await
         .context("connect to the system database")?;
     let connection = tokio::spawn(connection);
     let result = async {
         install_control_store(&client).await?;
-        client
-            .execute(
-                "UPDATE registry.meta SET platform_domain = $1",
-                &[&request.platform_domain],
-            )
-            .await
-            .context("record the platform domain")?;
+        set_platform_domain(&mut client, &request.platform_domain).await?;
         Ok(())
     }
     .await;
     drop(client);
     let _ = connection.await;
     result
+}
+
+/// Record the deployment domain with the provisioning actor.
+pub(crate) async fn set_platform_domain(client: &mut Client, domain: &str) -> anyhow::Result<()> {
+    let transaction = crate::provision_project_env::provisioning_transaction(client).await?;
+    transaction
+        .execute("UPDATE registry.meta SET platform_domain = $1", &[&domain])
+        .await
+        .context("record the platform domain")?;
+    transaction.commit().await?;
+    Ok(())
 }
 
 /// Install [`CONTROL_BOOTSTRAP_SQL`] as `wamn_system` into the database of

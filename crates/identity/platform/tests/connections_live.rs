@@ -49,7 +49,7 @@ async fn write_connection_refuses_an_unread_http_key() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated')").await.unwrap();
+    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated')").await.unwrap();
     let tx = client.transaction().await.unwrap();
     bind(&tx).await;
     let mut drops = AuthDrops::default();
@@ -84,7 +84,7 @@ async fn fresh_connections_keep_principals_generations_and_enabled_projections()
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated'),('other','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'),('acme','two')").await.unwrap();
+    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated'),('other','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'),('acme','two')").await.unwrap();
     let tx = client.transaction().await.unwrap();
     bind(&tx).await;
     let mut drops = AuthDrops::default();
@@ -388,7 +388,7 @@ async fn migration_preserves_every_org_connection_and_its_definition() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_system; DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.org_connections(org,name,type,definition) VALUES ('acme','first','http','{\"primary-authority\":\"https://one.invalid\"}'), ('acme','second','http','{\"primary-authority\":\"https://two.invalid\"}')").await.unwrap();
+    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.org_connections(org,name,type,definition) VALUES ('acme','first','http','{\"primary-authority\":\"https://one.invalid\"}'), ('acme','second','http','{\"primary-authority\":\"https://two.invalid\"}')").await.unwrap();
     let tx = client.transaction().await.unwrap();
     bind(&tx).await;
     tx.batch_execute("SET LOCAL ROLE wamn_system")

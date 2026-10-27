@@ -162,13 +162,12 @@ pub async fn provision(
     );
     let scope = JourneyScope::receiving();
     provision_journey_control(&scope, system_url, admin).await?;
-    admin
-        .execute(
-            "UPDATE registry.meta SET platform_domain = $1",
-            &[&platform_domain],
-        )
-        .await
-        .context("record the disposable deployment platform domain")?;
+    let (mut system, connection) =
+        tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    crate::provision_system::set_platform_domain(&mut system, platform_domain).await?;
+    drop(system);
+    let _ = connection.await;
     let route_secret = root.join("operator-pat.json");
     let management_secret = root.join("management-author-pat.json");
     let mut args = provisioning_args(

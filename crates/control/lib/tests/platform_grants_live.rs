@@ -665,6 +665,26 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
     assert_eq!(seeds().await, expected);
     let target: String=admin.query_one("SELECT name || ':' || type || ':' || status FROM registry.target WHERE last_seen_at IS NULL",&[]).await.unwrap().get(0);
     assert_eq!(target, "cloud:cloud:active");
+    for relation in [
+        "registry.meta",
+        "registry.orgs",
+        "registry.env_policies",
+        "registry.projects",
+        "registry.project_envs",
+        "registry.retired_project_envs",
+        "registry.capture_gap",
+        "registry.generation_passwords",
+        "identity.session_keys",
+        "identity.session_signing_state",
+        "identity.password_attempts",
+    ] {
+        let created = if relation == "registry.capture_gap" {
+            "ALTER COLUMN created_at SET DEFAULT now()"
+        } else {
+            "DROP COLUMN created_at"
+        };
+        admin.batch_execute(&format!("DROP TRIGGER wamn_record_history_stamp ON {relation}; ALTER TABLE {relation} {created}, DROP COLUMN created_by, DROP COLUMN updated_at, DROP COLUMN updated_by")).await.unwrap();
+    }
     admin.batch_execute("DROP TABLE registry.environment_connection_binding; DROP TRIGGER environment_target_immutable ON registry.project_envs; DROP FUNCTION registry.keep_environment_target(); ALTER TABLE registry.project_envs DROP COLUMN target_id; DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); DROP FUNCTION registry.connection_integrations(); DROP TABLE registry.integrations,registry.target; DELETE FROM registry.schema_migrations WHERE ordinal>=29").await.unwrap();
     let mut owner_url = url::Url::parse(database.url()).unwrap();
     owner_url.set_username("wamn_system").unwrap();
