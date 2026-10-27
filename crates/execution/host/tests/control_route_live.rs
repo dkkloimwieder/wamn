@@ -1889,7 +1889,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         }),
     )?)?;
     let mut authority = connect(&control_url).await?;
-    let binding_tx = authority.transaction().await?;
+    let binding_tx =
+        wamn_control::provision_project_env::provisioning_transaction(&mut authority).await?;
     wamn_control::environment::bindings::reserve(
         &binding_tx,
         &applied_document,

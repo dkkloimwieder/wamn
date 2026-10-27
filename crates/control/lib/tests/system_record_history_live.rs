@@ -84,7 +84,7 @@ async fn system_history_migration_matches_fresh_schema_and_backfills_existing_ro
     .await
     .unwrap();
     let fresh = shape(&client).await;
-    // Restore the exact unstamped table shapes from before migration 0032.
+    // Restore the exact unstamped table shapes from before migration 0033.
     for (relation, history_time) in RELATIONS {
         client
             .batch_execute(&format!(
@@ -111,7 +111,7 @@ async fn system_history_migration_matches_fresh_schema_and_backfills_existing_ro
     let transaction = client.transaction().await.unwrap();
     let migration = SYSTEM_MIGRATIONS
         .iter()
-        .find(|migration| migration.ordinal() == 32)
+        .find(|migration| migration.ordinal() == 33)
         .expect("the system record history migration exists");
     transaction.batch_execute(migration.sql).await.unwrap();
     for (relation, history_time) in RELATIONS {

@@ -132,19 +132,25 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         ))
         .await
         .unwrap();
-    authority
-        .execute(
-            sql::upsert_control_author_tenant_mapping_sql(),
-            &[
-                &credential_role,
-                &"acme--host-project--prod",
-                &"acme",
-                &"host-project",
-                &"prod",
-            ],
-        )
-        .await
-        .unwrap();
+    let tx = authority.transaction().await.unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    tx.execute(
+        sql::upsert_control_author_tenant_mapping_sql(),
+        &[
+            &credential_role,
+            &"acme--host-project--prod",
+            &"acme",
+            &"host-project",
+            &"prod",
+        ],
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
     let mut credential_url = url::Url::parse(system.url()).unwrap();
     credential_url.set_username(&credential_role).unwrap();
     credential_url

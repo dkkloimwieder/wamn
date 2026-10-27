@@ -416,7 +416,12 @@ async fn a_catalog_row_without_a_connector_refuses_as_unavailable() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.integrations(code,form,exclusive) VALUES ('unimplemented','native',false)").await.unwrap();
+    client.batch_execute(&format!(
+        "SET ROLE wamn_system; {} INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.integrations(code,form,exclusive) VALUES ('unimplemented','native',false)",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    )).await.unwrap();
     let tx = client.transaction().await.unwrap();
     bind(&tx).await;
     let mut drops = AuthDrops::default();
@@ -503,7 +508,12 @@ async fn identical_configuration_writes_keep_xmin_and_generation() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let mut client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated')").await.unwrap();
+    client.batch_execute(&format!(
+        "SET ROLE wamn_system; {} INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated')",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    )).await.unwrap();
     let mut system = ExternalSystemWrite {
         integration: "http".into(),
         name: "erp".into(),

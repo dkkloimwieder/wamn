@@ -304,14 +304,14 @@ async fn upgrade_schema_applies_each_pending_file_once() {
 
     // A project database installed before 0024: the run reads the record
     // table in the old schema, applies the rename and records it in platform,
-    // then applies 0025 to 0038. It loses what 0025, 0029, 0030 and 0038 add,
+    // then applies 0025 to 0044. It loses what 0025, 0029, 0030 and 0038 add,
     // gets back what 0025 removes, has the table names from before
     // 0027 and 0028, and has the tenant floors that 0031 and 0038 drop.
     // Its platform rows and history keys carry the tenant, as before 0031.
     // Remove the workflow table and guard added by 0032 to 0035. Restore
     // empty tables for 0034 and 0036, which only drop those tables.
     // The system database loses the integrations and target tables from
-    // system 0029 and the stamps from 0032. The upgrade restores both.
+    // system 0029 and the stamps from 0033. The upgrade restores both.
     let fresh_shape = platform_shape(&project_url).await;
     let client = connect(&project_url).await;
     client
@@ -391,7 +391,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
                  DROP COLUMN updated_at, DROP COLUMN updated_by"
             ))
             .await
-            .expect("restore the system tables before 0032");
+            .expect("restore the system tables before 0033");
     }
     system
         .0
@@ -400,7 +400,7 @@ async fn upgrade_schema_applies_each_pending_file_once() {
              DROP TRIGGER environment_target_immutable ON registry.project_envs; \
              DROP FUNCTION registry.keep_environment_target(); \
              ALTER TABLE registry.project_envs DROP COLUMN target_id; \
-             DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); DROP TABLE registry.integrations, registry.target; \
+             DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); DROP FUNCTION registry.connection_integrations(); DROP TABLE registry.integrations, registry.target; \
              DELETE FROM registry.schema_migrations WHERE ordinal >= 29",
         )
         .await

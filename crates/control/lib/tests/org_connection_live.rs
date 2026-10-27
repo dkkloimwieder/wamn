@@ -132,7 +132,7 @@ async fn credential_reader(
     database: &wamn_test_postgres::Database,
     project: &str,
 ) -> WamnCredentials {
-    let admin = connect(database.url()).await;
+    let mut admin = connect(database.url()).await;
     let role = format!("c35_{}_{}", database.name(), project);
     admin
         .batch_execute(
@@ -146,7 +146,10 @@ async fn credential_reader(
         )
         .await
         .unwrap();
-    admin
+    let transaction = wamn_control::provision_project_env::provisioning_transaction(&mut admin)
+        .await
+        .unwrap();
+    transaction
         .execute(
             wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql(),
             &[
@@ -159,6 +162,7 @@ async fn credential_reader(
         )
         .await
         .unwrap();
+    transaction.commit().await.unwrap();
     let mut url = url::Url::parse(database.url()).unwrap();
     url.set_username(&role).unwrap();
     url.set_password(Some("fixture-password")).unwrap();
@@ -711,7 +715,12 @@ async fn upgrade_import_seeds_only_bound_projects_and_scopes_atomically() {
     let environment_a = wamn_project_state::test_database::tenant_platform();
     let environment_b = wamn_project_state::test_database::tenant_platform();
     let mut system = connect(database.url()).await;
-    system.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','alpha'),('acme','beta'),('acme','unrelated')").await.unwrap();
+    system.batch_execute(&format!(
+        "SET ROLE wamn_system; {} INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','alpha'),('acme','beta'),('acme','unrelated')",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    )).await.unwrap();
     for project in ["alpha", "beta"] {
         system
             .batch_execute(
@@ -928,7 +937,12 @@ async fn declaration_validation_refuses_invalid_coordinates_types_and_definition
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let system = connect(database.url()).await;
-    system.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated')").await.unwrap();
+    system.batch_execute(&format!(
+        "SET ROLE wamn_system; {} INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated')",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    )).await.unwrap();
     let valid = json!({"name":"erp","integration":"http","external_system":null,"transport":"http","exchange":"request","parameters":definition("erp.example"),"status":"active"});
     let changes = wamn_platform_identity::auth_changes::AuthChanges::default();
     wamn_control::connection_configuration::write(

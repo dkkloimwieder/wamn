@@ -1630,7 +1630,13 @@ async fn reserve_local_bindings(
 ) -> anyhow::Result<()> {
     let mut system = crate::environment::analyse::connect(config.system_database_url()).await?;
     let tx = system.transaction().await?;
-    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+    tx.batch_execute(&format!(
+        "SET LOCAL ROLE wamn_control; {}",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    ))
+    .await?;
     let bindings = crate::environment::bindings::reserve(&tx, environment, packages).await?;
     for input in prepared {
         let application =
@@ -1673,7 +1679,12 @@ async fn resolve_local_bindings(
     let mut system = crate::environment::analyse::connect(config.system_database_url()).await?;
     let authority = system.transaction().await?;
     authority
-        .batch_execute("SET LOCAL ROLE wamn_control")
+        .batch_execute(&format!(
+            "SET LOCAL ROLE wamn_control; {}",
+            wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ),
+        ))
         .await?;
     if apply.is_none() {
         crate::environment::bindings::reserve(&authority, environment, packages).await?;

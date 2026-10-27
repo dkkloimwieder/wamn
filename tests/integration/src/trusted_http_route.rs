@@ -203,12 +203,15 @@ async fn credential_fixture(
             ),
         )
         .await?;
-    admin
+    let transaction =
+        wamn_control::provision_project_env::provisioning_transaction(&mut admin).await?;
+    transaction
         .execute(
             wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql(),
             &[&role, &TENANT, &"acme", &PROJECT, &ENVIRONMENT],
         )
         .await?;
+    transaction.commit().await?;
     let (reader, connection) =
         tokio_postgres::connect(&generation_url(database.url(), &role)?, NoTls).await?;
     tokio::spawn(connection);

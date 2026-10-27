@@ -220,15 +220,19 @@ pub(crate) mod test_util {
         pub async fn reader(&self, project: &str) -> WamnCredentials {
             let role = format!("c35_{}_{}", self.database.name(), project.replace('-', "_"));
             self.admin
-                .batch_execute(
-                    &wamn_control_provision::sql::prepare_workload_generation_sql(
+                .batch_execute(&format!(
+                    "BEGIN; {} {}",
+                    wamn_control_provision::bind_platform_principal_sql(
+                        wamn_control_provision::PlatformComponent::Provisioning,
+                    ),
+                    wamn_control_provision::sql::prepare_workload_generation_sql(
                         wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
                         self.database.name(),
                         &role,
                         "fixture-password",
                         "2099-01-01T00:00:00Z",
                     ),
-                )
+                ))
                 .await
                 .unwrap();
             self.admin.batch_execute("GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO wamn_conn_reader").await.unwrap();
@@ -245,6 +249,7 @@ pub(crate) mod test_util {
                 )
                 .await
                 .unwrap();
+            self.admin.batch_execute("COMMIT").await.unwrap();
             let mut url = url::Url::parse(self.database.url()).unwrap();
             url.set_username(&role).unwrap();
             url.set_password(Some("fixture-password")).unwrap();

@@ -52,7 +52,8 @@ async fn connect(url: &str, role: Option<&str>) -> Client {
     }
     client
         .execute(
-            "SELECT set_config('app.user_id', $1, false)",
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'wamn:provisioning', false)",
             &[&actor().as_str()],
         )
         .await

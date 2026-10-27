@@ -507,7 +507,12 @@ async fn projection_retains_references_and_reapply_repairs_without_history_write
     let database = wamn_control_provision::test_database::system();
     let environment = wamn_project_state::test_database::tenant_platform();
     let mut system = connect(database.url()).await.unwrap();
-    system.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev')").await.unwrap();
+    system.batch_execute(&format!(
+        "SET ROLE wamn_system; {} INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{{}}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev')",
+        wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ),
+    )).await.unwrap();
     let project = connect(environment.url()).await.unwrap();
     project
         .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
