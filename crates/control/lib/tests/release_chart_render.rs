@@ -161,13 +161,52 @@ fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
         "helm template: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_yaml::Deserializer::from_slice(&output.stdout)
+    let documents: Vec<Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
         .map(Value::deserialize)
         .collect::<Result<Vec<_>, _>>()
         .expect("rendered YAML")
         .into_iter()
         .filter(|document| !document.is_null())
-        .collect()
+        .collect();
+    let hosts: Vec<_> = documents
+        .iter()
+        .filter(|document| document["kind"] == "Deployment")
+        .collect();
+    assert!(!hosts.is_empty(), "the release renders a host Deployment");
+    for deployment in hosts {
+        let name = deployment["metadata"]["name"].as_str().expect("host name");
+        let pod = &deployment["spec"]["template"]["spec"];
+        let containers = pod["containers"].as_sequence().expect("host containers");
+        let host = containers
+            .iter()
+            .find(|container| container["name"] == "host")
+            .expect("host container");
+        let variables = host["env"].as_sequence().expect("host variables");
+        let seconds = |key| {
+            let entries: Vec<_> = variables
+                .iter()
+                .filter(|variable| variable["name"] == key)
+                .collect();
+            assert_eq!(entries.len(), 1, "{name}: exactly one {key}");
+            entries[0]["value"]
+                .as_str()
+                .expect("seconds string")
+                .parse::<u64>()
+                .expect("seconds integer")
+        };
+        let drain = seconds("WAMN_DRAIN_BOUND_SECONDS");
+        let grace = seconds("WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS");
+        assert!(
+            grace < drain,
+            "{name}: workload grace {grace} must be shorter than drain bound {drain}"
+        );
+        assert_eq!(
+            pod["terminationGracePeriodSeconds"].as_u64(),
+            Some(drain),
+            "{name}: pod grace equals the drain bound"
+        );
+    }
+    documents
 }
 
 fn kind_name(document: &Value) -> (String, String) {

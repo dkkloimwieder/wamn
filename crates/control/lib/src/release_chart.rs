@@ -949,6 +949,7 @@ mod tests {
     #[test]
     fn values_refuse_a_materializer_bound_equal_to_or_above_the_host_bound() {
         for host_bound in [
+            0,
             MATERIALIZER_DRAIN_BOUND_SECONDS,
             MATERIALIZER_DRAIN_BOUND_SECONDS - 1,
         ] {
@@ -962,9 +963,11 @@ mod tests {
                 )
             );
         }
-        let mut input = input();
-        input.drain_bound_seconds = 30;
-        assert!(values(&input).is_ok(), "the rollback policy remains valid");
+        for host_bound in [MATERIALIZER_DRAIN_BOUND_SECONDS + 1, 30] {
+            let mut input = input();
+            input.drain_bound_seconds = host_bound;
+            assert!(values(&input).is_ok(), "host bound {host_bound} is valid");
+        }
     }
 
     #[test]
