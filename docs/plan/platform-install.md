@@ -1,7 +1,4 @@
-# Platform install — plan
-
-**Status:** live. Epic E1 is `wamn-whdih`, E2 is `wamn-1w23q`.
-**Baseline:** `main` at the 2026-10-19 greenfield; `docs/operations/gcp.md` §4 (21 steps, ~700 lines).
+# Platform install
 
 ## How this plan is worked
 
@@ -18,8 +15,6 @@ wamn-ctl platform apply <cluster.k>
 `gcp.md` §4 becomes: owner inputs, `platform apply`, done. The runbook keeps §1 (owner inputs), §2 (project resources, owner-only IAM), §3 (teardown) and §5 (operations). Nothing in §4 stays prose.
 
 One cluster document names one org. Multi-org is out of scope.
-
-Why: the 2026-10-19 greenfield stopped seven times. Four were runbook lines that had drifted since the last greenfield. A runbook rots between runs because nothing executes it. A verb cannot drift from itself, and a test runs it.
 
 ## 2. Rulings (proposed)
 

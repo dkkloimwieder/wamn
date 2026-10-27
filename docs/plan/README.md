@@ -1,43 +1,28 @@
-# Plans
+Each plan describes work or decisions for its subject. [Architecture](../architecture/README.md) describes current behavior. Beads records implementation status.
 
-Each page below is a plan with its status: done, live or deferred, and its bead. Current behavior belongs in [architecture](../architecture/README.md), and Beads records decisions and implementation status.
-
-- [CDC reader slot](cdc-reader-slot.md): done, `wamn-59z6`.
-- [Component pull](component-pull.md): done, `wamn-i87m`.
-- [Delivery](delivery.md): deferred, no bead.
-- [Docs audit](docs-audit.md): live, no bead; the 2026-10-24 audit of the docs against the source, with the decisions it needs from the owner.
-- [Environment teardown](environment-teardown.md): done, `wamn-psss`.
-- [Identity](identity.md): deferred, `wamn-jpx2`.
-- [Integrations](integrations.md): live, `wamn-lcaxg` (Epic 4, NetSuite moved to Epic 5); Epics 1 `wamn-jstjf`, 2 `wamn-5i3v9` and 3 `wamn-7e39m` are done.
-- [Manifest authoring](manifest-authoring.md): done, `wamn-j1ti`.
-- [NATS outage](nats-outage.md): deferred, `wamn-gdex` and `wamn-ifh7`.
-- [Operator image](operator-image.md): done, `wamn-n5d1` and `wamn-lo7z`.
-- [Package upgrade](package-upgrade.md): live, `wamn-eycl` (Epic 4); Epic 3 `wamn-5ihq` is deferred.
-- [Platform deploy](platform-deploy.md): done, `wamn-jqdja`.
-- [Platform install](platform-install.md): live, `wamn-whdih` (E1).
-- [Platform UI](platform-ui.md): done, `wamn-a40n`.
-- [Platform UI application](platform-ui-app.md): live, `wamn-n8q9m`. M1 through M6 merged. Server paging `wamn-n8q9m.20` remains open.
-- [Request round-trips](request-round-trips.md): live, `wamn-stxy9`.
-- [Routes, workflows, and the router](routes-router.md): done, `wamn-upl3`.
-- [Transactional composition](trx-pkg-plan.md): done, `wamn-14bx8`, `wamn-lqtai`, `wamn-ponya` and `wamn-aemxz`.
-- [wamn offline and sync](wamn-sync.md): live. Epic 1b `wamn-hhd77` is measured, and its ruling is the owner's.
-- [Web deployment](web-deployment.md): done, `wamn-xyxj`.
-- [Workflow feature](workflow-feature.md): superseded by [workflows](workflows.md), `wamn-upl3`.
-- [Workflows](workflows.md): live, `wamn-kx378` (Epic 3); Epics 1 `wamn-5ep9j` and 2 `wamn-o763w` are done.
-- [Write log](write-log.md): done, `wamn-an24`.
-
-## Moved to history
-
-- [Web operator client](../history/web-operator-client.md): closed to history under `wamn-n8q9m.6.2`. [Platform UI application](platform-ui-app.md) replaces it. Item 9 of section 7 remains deferred without a bead.
-- [Google Cloud deployment](../history/gcp-deployment.md): done, `wamn-ghx2`; [platform deploy](platform-deploy.md) replaced it.
-- [Edge](../history/edge.md): done, `wamn-e5in`; its status section is now [architecture](../architecture/edge.md).
-- [Upgrades](../history/upgrades.md): done, `wamn-orb5`.
-- [Upgrade environment](../history/upgrade-environment.md): done, `wamn-m511`; replaced by [platform deploy](platform-deploy.md) §10.
-- [Schema upgrade](../history/schema-upgrade.md): done, `wamn-o8b9`.
-- [Kind to type](../history/kind-to-type.md): done, `wamn-sfea`.
-- [Application simplification](../history/application-simplification-plan.md): superseded; [platform deploy](platform-deploy.md) is the one authority.
-- [Host-owned transaction](../history/host-transaction.md): done, `wamn-4afx`.
-- [Operation ids](../history/operation-ids.md): done, `wamn-cuqc`.
-- [User identity and login](../history/identity-plan.md): done, `wamn-a045` and `wamn-k3mu`; open work is [identity](identity.md).
-- [Platform UI history](../history/platform-ui-history.md): sections 0, 1 and 3 to 9 of platform UI; section 5 is replaced by [platform deploy](platform-deploy.md) §12.
-- [Release qualification](../history/release-qualification.md): done, `wamn-ld93.33`; it names deleted verbs, and [platform deploy](platform-deploy.md) §15 holds the current behavior.
+- [CDC reader slot](cdc-reader-slot.md): replication slot ownership.
+- [Component pull](component-pull.md): digest-addressed component loading.
+- [Delivery](delivery.md): CI integration and conditional test extensions.
+- [Docs audit](docs-audit.md): source comparisons and decisions for documentation.
+- [Environment teardown](environment-teardown.md): deletion rules.
+- [Identity](identity.md): external login adapters.
+- [Integrations](integrations.md): connector candidates and owner rulings.
+- [Manifest authoring](manifest-authoring.md): KCL package declarations.
+- [NATS outage](nats-outage.md): evidence and recovery requirements.
+- [Observability](observability.md): telemetry collection and export.
+- [Operator image](operator-image.md): image ownership.
+- [Package upgrade](package-upgrade.md): staged migration work and upgrade decisions.
+- [Performance architecture](perf-arch.md): request execution design.
+- [Platform configuration](platform-config.md): application configuration and owner rulings.
+- [Platform deploy](platform-deploy.md): environment lifecycle rules.
+- [Platform install](platform-install.md): cluster installation and project resources.
+- [Platform UI](platform-ui.md): administration rules.
+- [Platform UI application](platform-ui-app.md): the shared operator shell.
+- [Request round-trips](request-round-trips.md): request path design.
+- [Routes, workflows, and the router](routes-router.md): execution boundaries.
+- [Transactional composition](trx-pkg-plan.md): operation transactions.
+- [Offline and sync](wamn-sync.md): browser storage and generated application wiring.
+- [Web deployment](web-deployment.md): application assets.
+- [Workflow feature](workflow-feature.md): workflow execution design.
+- [Workflows](workflows.md): effect recording, node publication, and editor work.
+- [Write log](write-log.md): operation retry identity.

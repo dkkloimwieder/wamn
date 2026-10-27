@@ -33,13 +33,7 @@ One database per (org, project, environment) is the org boundary. No table below
 | level | table | columns | written by | application reads |
 | --- | --- | --- | --- | --- |
 | org | `user` | id, name, email, type (`user`, `service`, `platform`), active | platform routes | yes |
-| org | `external_system` | id, integration (catalog code), name (unique per org), parameters (jsonb: shared account id, realm, base host), status | platform routes | yes |
-| org | `connection` | id, integration (catalog code), external\_system\_id (nullable FK to `external_system`), name (unique per org), transport, exchange (`request`, `event`), parameters (jsonb), status | platform routes | yes |
 | org | `file` | id, connection\_id, name, media\_type, size, sha256, blob key, exposure (`application`, `private`, `public`), url, width, height, created\_by, created\_at | the host, in the `file.put` route, in its own commit before any application operation | yes; no INSERT |
-| org / project / environment | `integration_allow` | scope\_type, scope\_id, integration | platform routes | yes |
-| project | `project_connection` | project\_id, connection\_id | platform routes | yes |
-| application, per env | `number_sequence` | id, application, name, pattern | created at env apply from the package default; pattern edited via platform routes | yes |
-| application, per env | `number_counter` | sequence\_id, counter, key\_value, value; PK (sequence\_id, counter, key\_value) | `next_number` inside the operation transaction; `set_counter` route | yes; written only through `bump_counter`, `assign_counter` and `set_counter` |
 | application, per env | `setting` | scope\_type, scope\_id, key, value (jsonb), locked | platform routes, per environment | no (UI reads via routes) |
 | application, per env | `role`, `user_role`, `permission` | as today | as today | yes |
 
@@ -54,8 +48,6 @@ Control plane only, reached through platform routes and the host:
 - `user` is a projection: identity in the system database is authoritative, and the control host writes the projection (as it writes `app_system.users` today) and propagates deactivation on the admin-hierarchy path. It holds every org user, not only users with a role on the project, so `created_by` / `updated_by` FKs never dangle. Deactivation is `active = false`; rows are never deleted.
 - Application rows that name a user (`created_by`, `updated_by`, `employee.user_id`) carry a uuid FK to `platform.user`. The host fills `created_by` and `updated_by` from the operation caller; the payload cannot supply them.
 - `integration` is platform catalog data (code, form, digests), not a `platform.*` table: an application binds a connection, never an integration. `connection.integration` carries the catalog code for display.
-- `connection.name` is unique per org and is what `environment.k` binds; renaming a connection is refused while any applied environment binds it. `connection.external_system_id` groups the connections that reach one system; it is null for a connection with no system behind it (a serial scale, a GPIO pin). A connection says nothing about where it runs: its connector runs inside each application that binds it, on that application's target.
-- `integration_allow` narrows top down: the org allows a set of integrations, a project a subset, an environment a subset of that. A package declaring a connector not allowed at its environment is an apply refusal. Allowed is about code; enabled (`project_connection`) is about a configured instance; both must pass.
 - `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store the bytes are in: a `gcs` or `s3` bucket, or a `disk` store on a local target. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
 - Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3`, `gcs`, `disk`), declared and bound like any other with `mode = write`.
 - File routes are operations in the application's ACL: `file.put`, `file.get`, `file.delete`, `file.expose`, granted per role. `file.put` also needs a `mode = write` binding to its target store. `file.get` on a `private` file is a 403 whatever the role; only an operation that returns a signed url reaches it.
@@ -63,46 +55,18 @@ Control plane only, reached through platform routes and the host:
 - `exposure` is per file: `application` (default; any user with a role on the application, stable `/api/<app>/files/<id>` behind the session), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a cdn change.
 - A cdn is a way to expose files already in a store, not a place to put them: one hostname fronting the store's `public/` prefix, a parameter on the store connection (`cdn_host`). Exposing a file copies the object to `public/<key>` server-side and sets `url`; unexposing deletes the public object and clears it. A store with no `cdn_host` refuses `public`.
 - A local `disk` store has `max_bytes` and `max_age` parameters: a box has a disk, so retention is the admin's explicit choice on that row, and an evicted blob takes its `file` row with it — the one place a row is removed by the platform. The box serves its own files; nothing on it is `public`. Forwarding a file to the cloud is an application decision carried over a `wamn` connection (a new row in a cloud store, same `sha256`); the platform never forwards on its own.
+
+- `connection.name` is unique per org and is what `environment.k` binds; renaming a connection is refused while any applied environment binds it. `connection.external_system_id` groups the connections that reach one system; it is null for a connection with no system behind it (a serial scale, a GPIO pin). A connection says nothing about where it runs: its connector runs inside each application that binds it, on that application's target.
+
 - `external_system` holds what every connection to one system shares (account id, realm, base host) once; a connection adds only what differs (endpoint, transport, credential). A connection with an `external_system_id` has the system's `integration`; a mismatch is a route refusal. `external_system.name` is unique per org and stable while any connection or record references it. Credentials stay on connections: one system may have a read-only and a write connection. Enablement stays on connections (`project_connection`); enabling a whole system for a project is a route that enables each of its connections, not a second table.
+
 - Record provenance is the application's: a record that came from outside carries `external_system_id` (FK to the relation) and `external_id` (the record's identity in that system's namespace), never a connection id, with `UQ (external_system_id, external_id)` on the model. Which connection imported it is a fact about the run, not about the record. For a `wamn` connection the external system is the peer environment, one row per peer, created with the connection; it gives `project/environment/application` one home.
 
 ## Declaration in wamn.k
 
 A package declares each platform thing it uses by name. The declaration is the only place a default lives.
 
-```kcl
-# wamn.k
-import manifest
-
-manifest.Package {
-    package = {id = "purchasing", version = "1.0.0"}
-    required_platform_policy_contract = {id = "purchasing_data_access", state = "satisfied"}
-    targets = ["cloud"]
-    sequences = {
-        purchase_order = {pattern = "P-{seq:po,width=8}"}
-        pick_label = {pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"}
-    }
-    models = {
-        purchase_order = manifest.Model("purchase_order", "purchasing") {
-            table = "purchase_order"
-            owner = "purchasing"
-            server_owned_fields = ["id", "number"]
-            fields = {
-                number = {number = "purchase_order"}
-                created_by = {role = "actor"}
-                updated_by = {role = "actor"}
-            }
-            operations: {
-                create: {writable_fields = ["supplier_id"], result = "one"}
-            }
-        }
-    }
-    connections = ["postgres"]
-    components = {purchasing = {connections = ["postgres"]}}
-}
-```
-
-The example is the KCL that the build reads (`crates/schema/generator/kcl/manifest/manifest.k`). A column's type and key come from the table's SQL, not from `fields`, and `fields` states only `number` and `role = "actor"`. `pick_label` numbers no field: commands call it. One declaration below is not in that schema yet: `relations`. The package `connections` is a map of names to `integration` and `mode` (C3.3), and a component's `connections` is the list of the names it uses.
+The proposed `relations` declaration still needs an owner decision. See [application bindings](../architecture/data-access.md#application-connection-bindings) for connection declarations.
 
 
 ```kcl
@@ -123,31 +87,13 @@ environment = {
 - `targets`: the target types a package may run on, `cloud` by default. A package with models is `cloud` only; env apply refuses a package not allowed on its environment's target type.
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
 - `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern; after that the admin owns the pattern. A sequence is independent of the records: it needs no model field and no declared caller, and its keys need not be fields of any model (owner ruling 2026-10-24).
-- `number = "<sequence>"` on a field names one caller of the sequence. The generated insert calls `next_number` with the model fields that the pattern names. A write that supplies this field is a build refusal. The model must contain every field named by `per=`, `reset=` or `{field:}`. A numbered field must be `text`, `int32` or `int64`. Integer fields take only a bare `{seq}` pattern.
-- A key field never declares `number`. A number is a separate host-assigned field.
-- `role = "actor"` on a field: the host fills it from the operation caller. The generated insert fills every actor field from `app.user_id`. The generated update fills `updated_by` from `app.user_id` and never touches `created_by`. An update that changes no field leaves `updated_by` as it leaves the revision. An actor field is `uuid` and is named `created_by` or `updated_by`. Any other name or type is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
-- An overlay is a model whose `owner` differs from `package.id`. It inherits the owner’s `number` and `role = "actor"` declarations, even when it declares no `fields`. The build reads these facts and the sequence pattern from the base build’s compiled manifest. A conflicting number, actor declaration or sequence pattern is a build refusal.
-- Generated overlay inserts number and stamp inherited fields. Generated overlay updates fill inherited `updated_by` from `app.user_id`. A write that supplies an inherited number or actor field is a build refusal. Numbered fields, actor fields and pattern keys must belong to the relation owner. The owner’s inserts and updates do not fill fields that an overlay adds through `field_owners`.
-- `connections`: the names a package binds, each with the integration it expects and `mode = read | write`. A file store is one of them. `environment.k` maps each name to a connection name; apply refuses an unbound name, a connection the project has not enabled, an integration that differs from the declared one, or an integration not allowed at the environment.
 - `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` capability. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
 - A `wamn` connection's external system is the peer environment; its `parameters` carry `project/environment/application`. The connection adds transport and exchange only.
 - Every sequence a package declares is callable from any of its commands (`sequences::<name>::next` and `peek`). No build refusal depends on whether a field or a command uses it.
 
 ## Numbering
 
-An application is a name in the `applications` map of `environment.k`.
-Each sequence belongs to the map application that holds its declaring package.
-The host sets `app.application` to that same name for each operation.
-The numbering plugin reads the name from the operation transaction's host state.
-The `number_counter.set` route accepts only names in that map.
-
-Local candidates require an authored `environment.k` beside `dev.json` and pass the same map to the host.
-A missing file refuses startup and names the expected path.
-No runtime derives an application name from a package or composed entry.
-
-Document numbers are gapless, rendered once in the host, and advanced inside the operation transaction through counters the application cannot write. Every counter is keyed by a value; the key decides when it resets or whether a key gets the same number again.
-
-`keys` maps each value the pattern names (`per=`, `reset=` and `{field:}`) to its text. A bare `{seq}` or `{date:}` pattern takes none. The keys are not a record: any command can call either function with values of its choice, and the generated insert of a numbered field is one such caller. The renderer reads only the keys the pattern names, and refuses a key given twice.
+See [numbering](../architecture/data-access.md#numbering) for the application name, counter calls, pattern tokens, rendering, and key rules.
 
 The renderer is Rust in the `wamn:postgres` plugin, not a SQL function: the plugin already owns the session, admits every statement and will run on SQLite for local targets, so one implementation serves both engines with no second parser and no custom Postgres image. `next_number` is a plugin call inside the operation transaction:
 
@@ -161,113 +107,15 @@ platform.set_counter(sequence, counter, key, value)       // Postgres only: SECU
 
 On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses an id that is not a sequence. None reads the `app.application` claim, because guest SQL can rewrite it. The plugin knows the operation's application from host state. It resolves the application and the sequence name to the sequence id, and it passes that id to the function. An application guest runs only the statements its package declares: the raw `wamn:postgres/client` interface is denied to applications. So component admission is the guard. It parses each declared statement with PostgreSQL's own grammar (`pg_query`) and walks the whole parse tree. It refuses a statement that names `bump_counter`, `assign_counter` or `set_counter` (in any quoting, case or schema), that writes a `platform.*` relation, that holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` identifier or string, or that does not parse (owner ruling 2026-10-24). Publish runs the same check on the statements of each pushed descriptor. The host still runs its text guard on every statement it runs, declared or raw, so a release admitted before the parsed check, or a forged descriptor, is refused too. So only the plugin reaches the functions. SQLite needs the same rule, because it has no roles. The claim stays set, for logging only. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
 
-Two packages of one application can declare the same sequence name. They must then declare the same default pattern. If the patterns differ, env apply refuses before it writes anything. The refusal names the application, the sequence and the two packages. The `applications` map of `environment.k` decides which packages are one application. The check reads only the package declarations. So a `number_sequence` row whose pattern the admin edited is not a refusal (C2.4.14).
-
-### Pattern
-
-Literal text plus tokens. Options are comma-separated, order free.
-
-| token | meaning | example |
-| --- | --- | --- |
-| `{seq:<counter>}` | one counter, never resets | `17` |
-| `{seq:<counter>,reset=<key>}` | advances every call; starts at 1 for each distinct key | per facility, per year |
-| `{seq:<counter>,per=<key>}` | one value per distinct key; assigned on first sight, reused after | one number per batch |
-| `width=8` or `08` shorthand | zero-padded to width; longer values are not truncated | `00000017` |
-| `pad=_` | pad character other than `0` | `____17` |
-| `hex` | render in hex | `11` |
-| `{field:<name>}` | the key `<name>`, as text | `DAY` |
-| `{date:FMT}` | the renderer's own set, on the transaction time in the environment's `timezone` setting: `YYYY`, `YY`, `MM`, `DD`, `WW` (ISO week), `Q`; anything else is a pattern refusal. When the pattern holds `WW`, `YYYY` and `YY` are the ISO year: the year that holds the ISO week | `26`, `2610` |
-
-`<key>` is a key the caller passes, another counter's name in the same pattern, or `date:FMT`.
-
-```
-P-{seq:po,width=8}                                       P-00000017
-{field:facility}-PO-{seq:po,reset=facility,width=6}      DAY-PO-000017, CIN-PO-000003
-{date:YY}-{seq:po,reset=date:YY}                         yearly reset
-B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}
-                                                         batch abc → B0001-001, B0001-002; batch def → B0002-001
-```
-
 ### Function
 
-1. Tokenize the pattern; resolve each key from `keys`, from an already-rendered counter, or from the transaction time.
 2. For each counter in lock order: a counter keyed by another counter comes after that counter, and independent counters go in name order. The order is fixed for each pattern, so concurrent callers cannot deadlock.
    - `reset=`: `bump_counter(sequence, counter, key_value)` locks the row, inserts at 1 if absent, returns the value and increments.
    - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
-3. Render and return the text. A hex counter renders in upper case (255 is `FF`).
 
 - Rendering, preview and validation all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere. `set_counter` renders nothing.
 - Name-order locking within one call means two patterns on one sequence cannot deadlock each other. Two operations that insert into two models in opposite order can still deadlock on two sequences; Postgres detects it and one retries. The plugin guarantees no more than that.
-- A null key is a refusal with SQLSTATE `22004`. An empty key is a refusal with SQLSTATE `22023`. The renderer checks every key the pattern names before the first `bump_counter` or `assign_counter`, so a refused call advances no counter. `per=` on a model's key field is a build refusal (same key would mean same id).
-- A `timezone` setting that is not a JSON string, or that names no time zone Postgres knows, is a refusal with SQLSTATE `22023`. The renderer checks it only for a pattern that reads the date. The check runs in a savepoint, so the refusal leaves the operation transaction usable.
-- When a pattern holds `WW`, `YYYY` and `YY` render the ISO year. This also applies to a `reset=date:YYYY` or `reset=date:YY` key in that pattern. So 2027-01-01, which is in ISO week 53 of 2026, renders `2026` and `53`.
-- Uniqueness of the rendered number is the model's `UQ` on `number`; a pattern with no per-record counter fails there on the second insert, never silently.
 - Cost: locks hold until commit, so creates of one document type (or one key) serialize for the SQL of one operation. There are no outbound calls inside a transaction, so that is milliseconds. Acceptable at document rates. A Postgres sequence was rejected: non-blocking but gaps on rollback.
-
-### Host-filled and application-filled
-
-- Host-filled: `number = "<sequence>"` on a field. The generated insert calls `next_number` and passes the model's fields that the pattern names as the keys; the generated insert type has no such field, so supplying it is a compile error in the guest and a build refusal in SQL.
-- Application-filled: a command calls the sequence itself and writes the result to a plain `text` field with `UQ`. For a label printed before the record exists, a number handed to an external system first, or a batch counter assigned once and written to many records.
-- A field is one or the other, never both.
-
-```rust
-// generated from sequences.pick_label
-let n = sequences::pick_label::next(PickLabelKey { batch_id }).await?;   // "B0001-003"
-sequences::pick_label::peek(PickLabelKey { batch_id }).await             // current value, no lock, never for assignment
-sequences::purchase_order::next().await?                                // a bare pattern takes no key
-```
-
-- A fetched number advances the counter in the operation transaction: rolled back → never consumed; committed with no record → gone. Gapless means no gap from failure, not every number on a row.
-
-### Example
-
-```kcl
-sequences = {
-    purchase_order = {pattern = "P-{seq:po,width=8}"}
-    pick_label = {pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"}
-}
-models = {
-    # The table pick has id uuid PRIMARY KEY, batch_id uuid, number text UNIQUE.
-    pick = manifest.Model("pick", "wms") {
-        table = "pick"
-        owner = "wms"
-        server_owned_fields = ["id", "number"]
-        fields = {number = {number = "pick_label"}}
-        operations: {create: {writable_fields = ["batch_id"], result = "one"}}
-    }
-}
-```
-
-```sql
--- generated pick.insert: two statements in one transaction
--- 1. plugin call: next_number('pick_label', [("batch_id", $2)]) -> $number
--- 2.
-insert into pick (id, batch_id, number)
-values ($1, $2, $number)
-returning id, number;
-```
-
-```rust
-pub fn release_picks(batch_id: Uuid, lines: Vec<PickLine>) -> Result<Vec<Pick>, Refusal> {
-    lines.into_iter()
-        .map(|l| pick::insert(PickInsert { id: Uuid::new_v4(), batch_id, ..l.into() }))
-        .collect()
-}
-```
-
-The application and the actor are transaction claims the host sets at `begin-operation` (`wamn:operation`) with `set_config`: `app.application`, `app.user_id`. Generated SQL reads `app.user_id` with `current_setting`; nothing is passed as a parameter. Numbering does not read `app.application`: the plugin takes the application from host state.
-
-### Sequence and the record id
-
-A key field never declares `number = "<sequence>"`, and the build refuses it. UUID keys require a client id on create.
-Integer keys (`int4` or `int8`) must be `GENERATED AS IDENTITY` or have a sequence `DEFAULT`.
-The build refuses a plain integer key.
-The database generates the integer id, and create returns it.
-A create request cannot supply a database-generated id.
-
-Offline creates with integer keys replay by the write log’s `request_id`, not by `id`, and the client learns the id from the reply.
-
-A number is a separate host-assigned field, for example a unique `number` column beside the uuid `id`.
 
 ### Administration
 
@@ -440,30 +288,10 @@ Each rule has one check that runs in the platform test set.
 | application role: `SELECT` on the listed tables (plus `role`, `user_role`, `permission` and `environment`), `EXECUTE` on `bump_counter`, `assign_counter` and `set_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table or `schema_migrations` grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
 | no manifest model names a `platform.*` table | build refusal; fixture with such a model is refused |
 | no write statement, command claim or history trigger targets a declared relation | build refusal; fixture with an `UPDATE platform.user` is refused |
-| a host-filled `number` field is filled only by the plugin's `next_number` | build refusal on a write that supplies it; the generated insert type has no such field |
-| `created_by` / `updated_by` come from the caller | insert with either in the payload is refused; row shows the token's user id |
-| numbers are unique and gapless per counter and key | `UQ` on the model's `number`; N concurrent creates on one key yield N consecutive values, none repeated |
-| `reset=` starts at 1 per distinct key | two keys interleaved give 1, 2 on each independently |
-| `per=` assigns once per key, under concurrency | N concurrent first inserts with one batch id all carry one batch number |
-| a key must be present | a call with a key the pattern names null or absent is refused |
-| a sequence is independent of the records | a sequence no field numbers builds; a command calls `next` with no keys on a bare pattern and with a key map on a keyed one |
-| a numbered field's model has a field for each key its pattern names | build refusal |
-| `per=` on a key field, or `reset=`/`per=` on a sequence bound to a key field | build refusal |
-| a fetched number is consumed only on commit | `next` then rollback → the next call renders the same value |
-| `set_counter` serializes with inserts | set during a concurrent insert → the insert sees the set value or the one before, never a torn one |
-| `set_counter` never touches a `per=` mapping | set on a keyed `per=` row → route refuses |
 | a set below a live number is caught by the model's `UQ` | records to 17; set 10 → allowed; the insert that renders 10 is refused by the `UQ`; `set_counter` reads no application table |
-| `next_number` cannot be aimed at another application | a statement under application A calling `next_number` for a sequence of B → refused; the application in host state decides, not a claim or the SQL text; a declared statement that calls a counter function or writes `platform.*` → refused by component admission on its parse tree, and guest SQL at run time by statement admission |
-| a binding names an enabled connection of the declared integration | apply with a name the project has not enabled, or whose integration differs → refused; disabling a connection while an applied environment binds it → refused |
-| a connector not allowed at the environment is refused | `integration_allow` lacks `modbus` for the environment; apply of a package binding a modbus connection → refused; allow it → applied |
 | every bound connection has a pinned connector | `environment.k` binds a modbus connection with no `connectors.modbus` line → apply refuses |
-| a connection's name never changes | a write that names an existing connection updates it and never renames it; a direct name change → refused by `connection_name_is_immutable`; no rename route exists |
-| a connection matches its external system | connection with `external_system_id` whose `integration` differs from the system's → route refuses; an external system's name never changes either |
-| a port has one owner | two applications on one target bind a serial connection → the second apply refuses |
 | no network call inside a database transaction | a command opens `begin-operation`, then calls `file.put` or any bound connection → host refusal; the same call before `begin-operation` → allowed |
 | a target runs only what was applied to it | a target's check-in reports a bundle with no `target_application` row → flagged, not served |
-| env apply never overwrites an edited pattern | apply twice with a changed row between; the edit survives |
-| one sequence name has one default pattern in an application | two packages of one application declare one name with two patterns → env apply refuses before any write; the same pattern → applied; an edited row → applied |
 | every application user FK resolves | FK to `platform.user`; `user` holds every org user |
 | a `file` row exists only for a stored blob | application INSERT on `file` is refused; `file.put` leaves one row whose sha256 matches the blob; an unreferenced row is still there a month later; a blob with no row older than the gc age is gone; on a disk store an evicted blob's row is gone with the blob |
 | exposure is enforced per file | application: fetch by id with a role → 200, without a session → 401; private: fetch by id → 403, signed url from the operation → 200, same url after expiry → 403; public: plain url with no session → 200, after unexpose → 404; public on a store with no cdn\_host → refused |
@@ -506,7 +334,7 @@ Each rule has one check that runs in the platform test set.
 
 ### Rules
 
-Baseline: `origin/main` at `17f777f81`, then C1 done at `3bb4c488e`. C2.1 to C2.3 are done on main at `4c3725f2d`. The C2.4 decouple and counter authority work is on main at `435f82885` and `b343b608a` (platform 0.1.108). The C2.4 model, renderer, env apply and overlay inheritance work is on main at `2d7d6aebd`, `20a066d48`, `411681112` and `d78deffd6` (platform 0.1.109). The C2.4 application name, rename and test hygiene work is on main at `60d731fdf`, `7bb3a7b46` and `2e7c08cfe` (platform 0.1.111). The C2.4 error structs and live tests are on main at `6ca8fd03c` (platform 0.1.112) and `b0a46a042` (platform 0.1.113). C2 is done at `f66b79985`. C3 is `wamn-vzbx0`. C3.4 is on main at `f34621f5e` (platform 0.1.114), C3.1 at `4d7d4e4ed` (platform 0.1.119), C3.2 at `5f4c13288` and `58c451183` (platform 0.1.121), and C3.3 at `d592be98b` (platform 0.1.122, main `d7738f224`). Train 0.1.122 ran no kind, so the ruling 18 kind check has no result on C3.3. C3 stays open until that check passes or the owner rules otherwise. Epic numbering: C1 schema (done), C2 numbering (done), C3 connections/bindings/targets (code on main), C4 files (now, integrations agent after C3), C5 admin screens (UI after M6), C6 active role (UI after M4), C7 environment copy and seed rows (platform-install after E5), C8 transaction refusal (perf-arch after A5), C9 loadable connectors (integrations after C4), C10 local environments (edge owner). Queues: integrations C2 → C3 → C4 → C9; platform UI M3 → M4 → C6 → M5 → M6 → C5; platform-install E4 → E5 → C7; perf-arch M6/M7 → A5 → C8.
+C3 requires the ruling 18 kind check unless the owner rules otherwise.
 
 The rules of `platform-deploy.md` "How this plan is worked" apply (worktree lane, ≤3 issues per epic, build+clippy+fmt+unit per issue, fast-forward merge after review, report ≤10 lines at merge). Plus:
 
@@ -515,20 +343,15 @@ The rules of `platform-deploy.md` "How this plan is worked" apply (worktree lane
 - One agent per lane that touches `crates/control`. Epics C1–C4 run in sequence in the integrations agent; the UI agent and platform-install agent keep their own epics.
 - Platform version bumps as rule 6 says. C1 and C2 are host-plugin changes, so they are image bumps; plan the build with the cloud path.
 
-### What exists today (facts, main `f66b79985`, platform 0.1.113)
+### C1 schema
 
-| spec item | today | gap |
-| --- | --- | --- |
-| `platform` schema | Built in C1 and renamed to singular names in C2 (migrations 0024 to 0028). `user`, `role`, `user_role`, `permission`, `api_key`, `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence`, `number_counter` and `setting` exist. The application role holds the invariant 1 grants (`crates/control/lib/tests/platform_grants_live.rs`). The control host writes the rows as `wamn_administration`. | the application role also holds `SELECT` on `setting`, and `setting.scope_id` is text (docs audit item 5, open) |
-| org boundary | Migration 0031 removed the tenant column, the row policy and the tenant key index from `platform.user` and the configuration tables (wamn-83eth.6). wamn-dev never ran 0031, so it was rewritten in place (wamn-83eth.7). | none: C3.1 removed `tenant_id`, the row policy and the two-column foreign keys from `role`, `user_role`, `permission`, `api_key` and `environment` |
-| transaction claims | `app.user_id`, `app.role`, `app.operation` and `app.application` are set with `set_config` at the host-opened transaction. `app.application` is for logging only. | none |
-| numbering | Built in C2, see "C2 numbering" below. `next-number` and `peek-number` take a key map of the values the pattern names, and every declared sequence gets `sequences::<name>::next` and `peek`. The route is `number_counter.set`. It refuses any `per=` counter, renders nothing and answers `{"value": n}`. `peek-number` returns the last number issued, with no lock. | none |
-| counter authority | `bump_counter`, `assign_counter` and `set_counter` check only that the sequence exists. The plugin resolves the sequence id from the application in host state (wamn-9e4ks). Component admission and publish parse each declared statement with `pg_query` and refuse a counter function call, a `platform.*` write and the other constructs under Numbering (`crates/control/lib/src/component_admission/declared_sql.rs`). The run-time text check stays (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`). | who may author backfill SQL (`wamn-o1hwr`) |
-| connections | Built in C3. The system database holds org `external_system` and `connection` rows with immutable generations, `project_connection`, `integration_allow` and the credential store, written through control routes. Each connection has a service principal for inbound calls. `wamn.k` declares `connections` (integration, mode), and `environment.k` names its `target` and binds each name to an org connection, with no values. Env apply refuses the C3.3 cases as distinct errors. The `wamn_integration` application principals stay. | `wamn` connections (`wamn-ym204`), `target_application` (`wamn-ztxg2`) |
-| roles | per application environment; a request is checked against every role the token carries; the host derives a role only when the caller holds exactly one | active-role claim map and picker: C6 |
-| revocation | The host keeps an auth fact only while it watches the NATS KV bucket `wamn-auth`. A drop on that bucket reaches the next request. A host without the bucket keeps no fact and reads on every request (wamn-f2qud). | none |
-| settings | the `setting` table only, with no routes and no resolution; the numbering renderer reads the `timezone` row at application scope | C5 |
-| transaction window | `begin-operation` exists (`wamn-operation-0.1/package.wit:47-55`) | whether the "after A5" tags still apply (docs audit item 13, open) |
+See [platform schema and grants](../architecture/data-access.md#actors).
+
+### Architecture references
+
+See [numbering](../architecture/data-access.md#numbering), [org connections](../architecture/data-access.md#org-connections-and-credentials), and [application bindings](../architecture/data-access.md#application-connection-bindings).
+
+The application role reads `setting`, and `scope_id` is text. These differences still need the owner decisions below.
 
 ### Epics
 
@@ -536,9 +359,7 @@ Tag = the spec's dependency tag. Owner = which running agent takes it, in its qu
 
 | # | Epic | Tag | Owner | Done when |
 | --- | --- | --- | --- | --- |
-| C1 | **Platform schema.** Done at `3bb4c488e`. Rename `app_system` → `platform` (migration, generator, fixtures). Tables: `user` (projection, as today), `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence`, `number_counter`, `setting`; `bump_counter` as `SECURITY DEFINER`. Application role: `SELECT` on the listed tables plus roles, permissions and `environment`, `EXECUTE` on `bump_counter`, the existing `write_log` grants, nothing else. `platform.configurations` is deleted (`setting` replaces it). `app.application` claim. Control-host write path for `platform.*` rows (spec assumption 1 verified in issue 3). The integration catalog moved to C3. | now | integrations agent | Done: invariant 1 (grants) and the `app.application` claim check pass on kind; Receiving and WMS apply unchanged on the renamed schema. |
-| C2 | **Numbering.** `wamn.k`: `sequences`, `number = "<sequence>"`, `role = "actor"`, `targets`. Generator: build refusals (write supplies a number field or an actor field; sequence with no field and no caller; `per=`/`reset=` key rules; models on a `local`-only package); the two-statement generated insert; `sequences::<name>::next/peek` bindings. Plugin: the renderer in `wamn:postgres` (`next_number` plugin call, pattern tokens incl. the renderer's date set, `per=` lookup-first, name-order locking). Control route `set_counter` with the dry-render check. Env apply creates `number_sequence` rows from package defaults, never overwrites. Receiving gets one `number =` field and `role = "actor"` on `created_by`/`updated_by` (conformance). | now | integrations agent, after C1 | Numbering invariants (gapless, `reset=`, `per=` under concurrency, rollback, `set_counter` rules, cross-application refusal) pass; Receiving creates a numbered record in the local live test. C2.1 to C2.3 are done at `4c3725f2d`. C2.4 changes this scope (owner plan 2026-10-24, see "C2 numbering"). C2.4 is done at `b0a46a042`, and C2 is done at `f66b79985` (platform 0.1.113). |
-| C3 | **Connections, bindings and targets.** The integration catalog as `registry.integrations (code, form, exclusive)` in the system database, seeded by migration. `wamn.k` `connections` (integration, mode). Org `connection` and `external_system` rows and `project_connection` through control routes; `integration_allow` at org/project/environment. `environment.k` becomes `applications.<app>.connections` name bindings. Migrates the Epic 4/5 shape on main (`registry.org_connections` with the `oauth1` credential) into `connection`, `external_system` and `credential`. The `wamn_integration` application principals stay, and each connection gets its own inbound principal. Env apply refusals: unbound name, not enabled, integration mismatch, not allowed, second binding of exclusive media in one target. Connection principals: a `user` row `type = service` per connection; inbound calls from an external connection carry that principal. `wamn` connections, with service-token signing, are `wamn-ym204`. `CallableHttp` reads the row, not `environment.k`. Record provenance, when a package wants it, is `external_system_id` + `external_id`, never a connection id (generator work here, none in C1). | now | integrations agent, after C2 | Binding and principal invariants pass; the Epic 4/5 connections on main work through `connection` rows with `environment.k` holding no values; an inbound call as a service principal is granted by an ACL row. Filed as `wamn-vzbx0`, see "C3 connections, bindings and targets". |
+| C3 | **Connections, bindings and targets.** Run the ruling 18 kind check. `wamn` connections, with service-token signing, are `wamn-ym204`. Target application records and the platform connection are `wamn-ztxg2`. | now | integrations agent | The REST connection from `rest_connector` to `rest_consumer_fixture` works in the WMS dev document with no values in `environment.k`. |
 | C4 | **Files.** `file` table, `file.put/get/delete/expose` routes, exposure, cdn, disk store eviction; `file.put` before the operation. | now | integrations agent, after C3 | File invariants pass. |
 | C5 | **Admin screens.** Control: connections (create, credential write-only, enable per project, `integration_allow`), sequences (`set_counter`), settings (org/project scope with the environment picker). Application: settings at application/role/user scope, views as settings rows. Settings table semantics (resolution, lock, closed key set, copy with role). | now | platform UI agent, after M6 | Settings invariants pass; an admin creates a connection, enables it, sets a counter and locks a setting from the browser; the server refuses what the UI hides. |
 | C6 | **Active role.** Token claim `application → role` map; the auth check uses the active entry only; role picker in the shell; reissue on switch; a user with one role gets it without a choice. | now (ruled) | platform UI agent, after M4, before C5 if M4 finishes first | Invariant "one active role per application per session" passes; existing M2/M4 flows unchanged for single-role users. |
@@ -563,36 +384,7 @@ Local development requires the same authored KCL map as deployment.
 Equal defaults from two packages create one sequence row.
 Env apply and `wamn dev` refuse different defaults before any sequence write.
 
-C1 is done: `wamn-aqd0m` merged at `3bb4c488e`, and its epic-close kind run passed.
-
-C2 is `wamn-83eth`. Its code ships from platform 0.1.100. The work on main:
-
-| work | bead | main |
-| --- | --- | --- |
-| C2.1 `wamn.k` numbering declarations, the build refusals and the two-statement insert | `wamn-83eth.1` | `70953cd7f` |
-| C2.2 the renderer, `assign_counter` (migration 0029) and `peek-number` | `wamn-83eth.2` | `e853be303` |
-| C2.3 the `number_counter.set` route (migration 0030), env apply sequences, Receiving 2.2.6 and the kind check | `wamn-83eth.3` | `cb58b0e1e`, `f4c9b470c`, `4c3725f2d` |
-| `platform.users` is `platform."user"` (migration 0027) | `wamn-83eth.4` | `c87f80b2e` |
-| singular `role`, `user_role`, `permission` and `api_key` (migration 0028) | `wamn-83eth.5` | `077e89735` |
-| the tenant floor leaves `platform.user` and the configuration tables (migration 0031) | `wamn-83eth.6` | `ef095188c` |
-| the counter functions take their authority from host state, not the `app.application` claim | `wamn-9e4ks` | `5f996c73f` (0.1.102) |
-| the repository policy admits the actor stamps of generated statements | `wamn-jf1yj` | `8dba42830` (0.1.102) |
-| a host without the auth bucket keeps no auth facts | `wamn-f2qud` | `27ef3d199` (0.1.103) |
-| component Clippy passes in the integration components | `wamn-cih1c` | `ac41e969b` (0.1.104) |
-| `wamn-identity` keeps serving after its supervisor closes stderr | `wamn-dihkz` | `e8b00541a` (0.1.105) |
-| C2.4 decouple: the key map, a binding for every sequence, the numbered-field key rule, `set_counter` without the dry render, the copied date code removed | `wamn-83eth.8` to `.12`, `.21`, `.22`, `.25` | `435f82885` (0.1.108) |
-| C2.4 counter authority: the parsed check of declared SQL at admission and publish | `wamn-83eth.13` | `b343b608a` (0.1.108) |
-| C2.4 model: build refusals for numbered and actor fields, the overlay checked against the relation owner's fields | `wamn-83eth.18`, `.19` | `2d7d6aebd` (0.1.109) |
-| C2.4 renderer: the empty key refusal, the timezone refusal, the ISO year with `WW` | `wamn-83eth.14`, `.15`, `.16` | `20a066d48` (0.1.109) |
-| C2.4 env apply: one sequence name with two patterns in one application is a refusal | `wamn-83eth.20` | `411681112` (0.1.109) |
-| C2.4 overlay inheritance: an overlay inherits the owner's number and actor declarations, a numbered field is `text`, `int32` or `int64` | `wamn-83eth.17` | `d78deffd6` (0.1.109) |
-| C2.4 application name: sequence rows, `app.application` and `number_counter.set` use the `environment.k` map name, and `wamn dev` requires `environment.k` | `wamn-83eth.28` | `60d731fdf` (0.1.111) |
-| C2.4 singular names: the table constants, `user_role.rs`, `role_permission.rs` and the SQL aliases | `wamn-83eth.23` | `7bb3a7b46` (0.1.111) |
-| C2.4 test hygiene: no sleep inside the tokio test, no NATS port race, the numbering live tests reuse `test_database` | `wamn-83eth.27` | `2e7c08cfe` (0.1.111) |
-| C2.4 error structs: `CounterSetError` and `numbering::Failure` carry a kind, a source and context | `wamn-83eth.24` | `6ca8fd03c` (0.1.112) |
-| C2.4 live tests: the generator text tests are deleted, and live tests for numbering, actors, PAT revocation and `peek` replace them | `wamn-83eth.26` | `b0a46a042` (0.1.113) |
-
-The owner's review of C2 (2026-10-24) opened C2.4, `wamn-83eth.7` to `.27`. `.7` to `.28` are done, so C2 is done at `f66b79985` (platform 0.1.113). The owner ruled that no kind run follows C2.4. Its rulings replace the C2 rulings below where they differ:
+The owner ruled that no kind run follows C2.4. Its rulings replace the C2 rulings below where they differ:
 
 - Sequences and records are independent. A package declares a sequence and its default pattern, and the admin owns the pattern after that.
 - `next-number(name, keys)` and `peek-number(name, keys)` take a key map with only the values the pattern names (`per=`, `reset=`, `{field:}`). A bare `{seq}` or `{date:}` pattern takes none. Any command can call them. A field with `number = "<sequence>"` is one caller, and the generated insert passes that model's fields as the keys (C2.4.1).
@@ -600,7 +392,7 @@ The owner's review of C2 (2026-10-24) opened C2.4, `wamn-83eth.7` to `.27`. `.7`
 - `set_counter` reads and writes counter rows only. It renders no number and scans no application table. The model's `UQ` catches a set that gives a number a record already has (C2.4.4).
 - Counter authority, case 1 (C2.4.6, recorded on `wamn-83eth.13`): no application surface runs arbitrary SQL. An application guest runs only the statements its package declares, and admission denies the raw `wamn:postgres/client` interface to applications. Component admission parses each declared statement with `pg_query`, which is Postgres's own grammar. It refuses a counter function call, `DO`, dynamic `EXECUTE`, `query_to_xml*`, `cursor_to_xml*` and `U&` identifiers. `sqlparser` was refused, because a grammar difference is the bypass that the check closes.
 - Package backfill SQL is outside the counter check, because it runs as `wamn_db_owner`, which already holds more authority. Who may author backfill SQL is `wamn-o1hwr`.
-- Migration 0031 stays rewritten in place, because no wamn-dev database ran it. The last GKE apply that reached a database ran platform 0.1.98 (`wamn-83eth.7`).
+- Migration 0031 stays rewritten in place, because no wamn-dev database ran it.
 - The renderer refuses an empty or null key before the first `bump_counter` or `assign_counter` (C2.4.8). An invalid `timezone` setting is a refusal with SQLSTATE `22023` (C2.4.9). When a pattern holds `WW`, `YYYY` and `YY` render the ISO year (C2.4.10).
 - Model-side refusals: an overlay is checked against the relation owner's fields (C2.4.11). A numbered field must be `text`, `int32` or `int64`. Integer fields take only a bare `{seq}` (C2.4.12). Actor fields are `uuid` and are named only `created_by` or `updated_by` (C2.4.13). Env apply refuses one sequence name with different patterns in two packages of one application (C2.4.14, after `wamn-o763w.4` adds the `applications` map).
 - Cleanup: the WIT doc of `next-number` says that the application comes from host state (C2.4.15). One shared date function in `numbering.rs` (C2.4.16). Renames of the plural aliases, the `USERS` constant, `user_roles.rs` and `role_permissions.rs` (C2.4.17). `CounterSetError` and `numbering::Failure` become error structs with a kind (C2.4.18). The `wamn.k` example is real KCL (C2.4.19).
@@ -621,17 +413,11 @@ Rulings for C2 as filed:
 - Receiving conformance only: `purchase_order.create {writable_fields = ["supplier_id"]}` with `purchase_order_number` numbered by `PO-{seq:po,width=6}`, and `role = "actor"` on `created_by` and `updated_by`. Receiving moves to 2.2.6, and Acme moves only its Receiving pin and its `record-receipt` import to 2.2.6. WMS does not change (owner ruling 2026-10-23).
 - The kind case checks the `number_sequence` row after apply. A local live test covers the numbered create, because the kind suite has no token issuer.
 
-Issues:
-
-1. `wamn-p3x9n` first (`wamn build` sees platform interface changes), because C2 changes the plugin interface. `wamn.k` `sequences`, `number`, `role = "actor"`, `targets`; the generator refusals; the two-statement generated insert; the `sequences::<name>::next/peek` bindings. A unit test per refusal on fixtures.
-2. Plugin: `next-number` on the statements interface; the renderer (tokens, `width`/`pad`/`hex`, `field`, the `date` set); `per=` lookup-first with the `''` allocator; `reset=`; name-order locking; cross-application refusal by the application in host state. Live Postgres tests for the numbering invariants: gapless and consecutive under N concurrent creates on one key, `reset=` per key, `per=` once per key under concurrency, a rollback leaves the number unconsumed, a null key is refused.
-3. The `set_counter` route with the dry-render check and its live tests (advance, reset, below-live refused, `per=` row refused, serializes with a concurrent insert); env apply creates sequences and never overwrites an edit; Receiving conformance; kind case: Receiving creates a numbered record.
-
 Out of C2: settings resolution, the `set_counter` UI, the SQLite renderer, connections, seed rows.
 
 ### C3 connections, bindings and targets
 
-C3 is `wamn-vzbx0` (owner plan 2026-10-24). The owner answered its scoping questions on 2026-10-25. The test budget, the stops and the closeout are the same as for C2.
+The test budget, the stops and the closeout are the same as for C2.
 
 Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text below where they differ:
 
@@ -667,15 +453,11 @@ Rules:
 - Every write to a principal or a grant also deletes the matching `auth_changes` key.
 - A service principal never holds a user role through the active-role logic, and a test asserts it.
 
-Issues:
-
-1. `wamn-vzbx0.1` Finish removing the tenant. `role`, `user_role`, `permission`, `api_key` and `environment` lose `tenant_id`, row security and their tenant key indexes. `ADMINISTRATION_TENANT_RELATIONS` and the code paths of those five tables that spell tenant are deleted, except in historical migrations (ruling 1). `registry.integrations (code, form, exclusive)` is added to the system database and seeded by a migration with `http`, `gcs` and `s3` (ruling 10). The target identity row is added, and the cloud cluster is one row. The `tenant_id` inventory is on `wamn-83eth.6`.
-2. `wamn-vzbx0.2` Org `external_system`, `connection`, `project_connection` and `integration_allow` through control routes. The routes refuse an integration mismatch and refuse a rename while the row is referenced. The `wamn` connection and its peer `external_system` row are `wamn-ym204` (ruling 16). The Epic 4/5 shape moves into `connection`, `external_system`, `credential` and service principals: `registry.org_connections` and the `oauth1` credentials. The `wamn_integration` application principals stay, and each connection gets its own inbound principal (ruling 6). `CallableHttp` reads the connection row.
-3. `wamn-vzbx0.3` `wamn.k` gains `connections` (integration, mode). `environment.k` gains `target` and the `applications.<app>.connections` name bindings, with no values. The `applications` map with `packages` comes first, from `wamn-o763w.4` (workflows lane). Env apply refuses an unbound name, a connection not enabled, an integration mismatch, an integration not allowed, a second binding of exclusive media in one target (ruling 13) and a change of target. Inbound calls from an external connection arrive as the connection's service principal. Inbound authentication for `wamn` connections, with service-token signing, is `wamn-ym204` (ruling 16). Kind check: the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document works through a connection row, with no values in `environment.k` (ruling 18).
+The ruling 18 kind check must prove the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document, with no values in `environment.k`.
 
 ### Open decisions
 
-The docs audit (`docs/plan/docs-audit.md`, 2026-10-24) lists the places where this plan and the built code disagree. Each waits for an owner ruling before the spec text changes. Item 2 is settled, because C3.1 removes the remaining tenant columns.
+The docs audit (`docs/plan/docs-audit.md`, 2026-10-24) lists the places where this plan and the built code disagree. Each waits for an owner ruling before the spec text changes.
 
 - Item 3: `relations` in `wamn.k`. The manifest derives relations and has no such key.
 - Item 4: the `user` shape. The code has `display_name` and `status`, not `name` and `active`.

@@ -1,7 +1,6 @@
 # External identity providers
 
 Federated login connects an external identity provider to WAMN.
-Future work belongs to `wamn-jpx2`; historical issues `wamn-117` and `wamn-0h0g.9` remain closed.
 The [user identity plan](../history/identity-plan.md) settles password-first delivery and retains OIDC as future work.
 Reassess the preceding implementation at the OIDC epic start before planning its child issues.
 Current PAT issuance, session exchange, request authorization, and revocation limits belong in [execution](../architecture/execution.md).
@@ -22,4 +21,4 @@ The current 900-second lifetime, 30-second tolerance, and 300-second key freshne
 
 The external connection path must establish its issuer and trusted certificate roots explicitly.
 A browser login must not bypass the current request verifier, revocation checks, or operation permissions.
-Federation remains deferred and does not block the existing PAT and session paths.
+Federation does not block the existing PAT and session paths.

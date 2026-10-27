@@ -68,7 +68,7 @@ Screens that use sync read collections and record writes through the outbox.
 
 `@tanstack/db` stays as the collection and live-query engine.
 `liveRows` serves table screens, and `liveList` serves small sets.
-The measurement section supplies the evidence for this read-shape rule.
+The read-shape rule below governs the adapter.
 
 ## Ownership: `@wfe/sync` and wamn
 
@@ -347,66 +347,9 @@ wamn supplies:
 
 ## Change feed (host)
 
-`changes` is a mode of the generated list read, not a separate operation.
-The optional `feed` part selects a `changes` result instead of a `page` result.
-The list keeps one permission row, because every operation is grantable and the access-control list is never written by derivation.
+See [the change feed](../architecture/execution.md#change-feed) for the list contract, opaque cursor, snapshot handoff, paging, and retention refusals.
 
-[`manifest.rs`](../../crates/schema/generator/src/manifest.rs), `ModelDeclaration::feed_revision`, requires a generated list read, history, and a revision field.
-It skips models that lack those inputs and skips authored list SQL.
-Epic 5 adds the feed opt-out and build refusal.
-
-### Contract
-
-[`generate/wit.rs`](../../crates/schema/generator/src/generate/wit.rs), `emit_query_page`, emits `query-result` with `page` and `changes` variants.
-[`generate/component.rs`](../../crates/schema/generator/src/generate/component.rs), `handler`, selects the branch from `request.feed`.
-
-```text
-list(list arguments, feed?: { cursor?: string, limit?: integer })
-  -> page { item, next_cursor, cursor }
-   | changes { rows: [{ id, row_version, data? }], next_cursor, complete }
-```
-
-The generated client maps absent data to `deleted` and exposes a `changes` helper over the same list route.
-[`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `write_changes`, owns that helper.
-Without a feed cursor, the read starts at the current snapshot xmin and returns no history rows.
-Clients obtain their first cursor from a list page.
-
-### Cursor and snapshot handoff
-
-[`feed.rs`](../../apps/platform/data/access/src/feed.rs), `encode` and `decode`, encode the model and transaction as unpadded base64url.
-A snapshot cursor carries xmin.
-A cut page replaces the transaction with its last row's transaction and adds that row's id.
-The browser never parses either form.
-
-[`sql.rs`](../../crates/schema/generator/src/sql.rs), `query` and `SNAPSHOT_XMIN`, read rows and `pg_snapshot_xmin(pg_current_snapshot())` in one statement.
-One statement supplies one snapshot, with no shared transaction.
-An outer row supplies the cursor even when the list page contains no rows.
-
-History `position` is an insert-time identity, so it cannot order commits and cannot serve as the feed cursor.
-[`record-history.sql`](../../deploy/sql/record-history.sql), `wamn_history.create_history_table`, defines that identity.
-A feed can repeat rows visible in the initial snapshot, because xmin also covers transactions whose commit order differs from their allocation order.
-
-### Source and paging
-
-[`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`, reads history from the incoming transaction and collapses entries to one per id.
-It joins the current row and applies the list's filters.
-A missing row, or one outside the scope, returns a deletion.
-Rows follow transaction and id order.
-
-Rows below the statement's xmin page by `(transaction, id)`.
-When those rows end inside a page, visible rows at or above xmin fill the remaining space up to the limit.
-Such a page is complete and keeps its next cursor at xmin.
-Rows beyond that page wait until xmin advances.
-
-[`feed.rs`](../../apps/platform/data/access/src/feed.rs), `Changes::new`, cuts the extra row and chooses the continuation.
-An empty page returns the incoming cursor unchanged.
-Repeated rows are expected, and the browser ignores equal or lower versions on upsert.
-
-`cursor_expired` applies when the cursor transaction is at or below the pruning watermark of the history table (`wamn_history.pruning_watermarks`).
-`prune-record-history` raises that watermark in the statement that deletes, so the rule holds after pruning removes every entry.
-A table that pruning never touched has no watermark and never expires a cursor.
-[`sql.rs`](../../crates/schema/generator/src/sql.rs), `changes`, emits the predicate.
-[`generate/data.rs`](../../crates/schema/generator/src/generate/data.rs), `emit_feed`, turns it into the ordinary refusal.
+Epic 5 defines explicit feed refusal and opt-out.
 
 ### Delivery and authorization
 
@@ -481,14 +424,13 @@ Table screens use `liveRows`.
 Small sets use `liveList`.
 No custom aggregate can enforce decimal arithmetic inside `@tanstack/db`, because its aggregate surface does not accept custom aggregates.
 A live-query float sum is exact only for int32-range totals.
-The measurement section states the numeric conditions of its evidence.
 Applications keep exact decimal calculations outside that aggregate path.
 
 ### Memory
 
 Collections and live queries each retain their rows or results.
 The table cap bounds ordinary fills.
-The measurement covers 100,000 rows, but it does not establish a fixed maximum heap for every screen.
+Each screen needs a memory budget for its selected rows.
 The take-offline bench sizes its full selected set before saving it.
 
 ## Solid 2 adapter
@@ -670,19 +612,9 @@ They still undergo all ordinary host validation.
 
 ### Ids and numbers
 
-A generated create requires a client id, unless the database generates the key.
-[`key.rs`](../../crates/schema/generator/src/key.rs), `database_generated`, names that case: an integer id with an identity or a DEFAULT.
-Integer keys (`int4` or `int8`) must be database-generated, and the build refuses a plain integer key.
-For such a key, create leaves the id out of the insert and returns the generated id.
-An integer-id model is a bridge table: it syncs reads, updates and deletes, and its creates are online only.
+See [generated operations](../architecture/data-access.md#generated-operations) for client UUIDs and database-generated integer keys.
+An integer-id model syncs reads, updates, and deletes. Its creates are online only.
 [`call.ts`](../../web/runtime/src/sync/call.ts), `createCall`, generates UUIDv7 through [`ids.ts`](../../web/runtime/src/sync/ids.ts), `uuidv7`.
-[`generate/contracts.rs`](../../crates/schema/generator/src/generate/contracts.rs), `input_contract`, requires a client id.
-[`sql.rs`](../../crates/schema/generator/src/sql.rs), `create`, inserts the supplied id.
-
-Only a database-generated id can belong to `server_owned_fields`.
-[`generate/validation.rs`](../../crates/schema/generator/src/generate/validation.rs), `validate_model`, refuses a client id there.
-A key field cannot be numbered.
-[`generate/numbering.rs`](../../crates/schema/generator/src/generate/numbering.rs), `validate_numbered_field`, enforces this rule.
 
 Numbers occupy separate host-assigned fields, because offline records need stable ids before the host assigns numbers.
 [`numbers.ts`](../../web/runtime/src/sync/numbers.ts), `pendingNumber`, renders `pending·<last 4 hex>` until the feed supplies the number.
@@ -767,7 +699,7 @@ The environment comes from the page route through [`packaging-writes.ts`](../../
 `SessionPackaging` gates upload on the matching signed-in user and shows “sign in to upload” while upload waits.
 Local recording needs no token.
 
-The host applies the user's active role when it receives replayed operations.
+Replay uses the host's current authorization. The per-application active role and picker belong to [platform configuration C6](platform-config.md#roles).
 A role change can produce an ordinary refusal.
 The entry's `recorded_at` is a local display timestamp, not authoritative host time.
 Applications can declare a separate business timestamp without changing queue behavior.
@@ -893,7 +825,7 @@ Each row names a measurable rule and its test boundary.
 | Generated list pages accept 1–100 rows | `generate/validation.rs`, `validate_query`, fixes the minimum and maximum | A 20,000-row reference fill takes about 200 requests |
 | Retention covers the expected outage and recovery window | Retention declarations and host retention tests | Expired cursors require a fresh list |
 | A feed needs a generated list, history, and a revision | `ModelDeclaration::feed_revision` | Ineligible models get no feed until Epic 5 supplies explicit refusal and opt-out |
-| The selected read shape fits the screen's memory budget | The 10,000-row and 100,000-row measurement below | The application reduces its local set or uses ordinary pages |
+| The selected read shape fits the screen's memory budget | Measure the screen with its selected rows | The application reduces its local set or uses ordinary pages |
 | Keyed Solid projections preserve row identity | Adapter tests against the pinned runtime | The adapter needs a correction before adoption |
 | Host request identity deduplicates a resend | Send one entry twice and assert one effect | Replay cannot claim effective single application |
 | The browser keeps IndexedDB data during ordinary use | Browser tests on supported devices | The UI must report failed recording or unprotected storage |
@@ -918,61 +850,7 @@ Each item waits for a consumer:
 | --- | --- | --- | --- |
 | 5. Generator | wamn | Manifest fields, collection and screen emission, feed opt-out, and build refusal | Receiving and WMS regenerate without hand edits. Refusal cases fail at build. |
 
-## Read-shape measurements
+## Read-shape rule
 
 `@wfe/sync` and `@tanstack/db` stay.
 Table screens use `liveRows`, and small sets use `liveList`.
-The [`web/sync-bench`](../../web/sync-bench/README.md) measurement supplies evidence for that rule.
-
-| Input | Version |
-| --- | --- |
-| wfe pin | `fdeaacc` |
-| `@tanstack/db` | 0.15.2 |
-| `@tanstack/db-ivm` | 0.2.0 |
-| `solid-js`, `@solidjs/web` | 2.0.0-rc.18 |
-| Browser | Chrome 156.0.8078.47, headless, automation harness 1.63.0 |
-| Machine | 8 cores, shared with other agents |
-
-The screen uses the WMS packaging table and generated `PackagingQueryTable` columns over virtual rows.
-It groups by status and type, with counts, sums of `row_version`, and a totals row.
-Shape A reads a sync collection through `liveRows` and derives groups and totals through `@tanstack/db` queries.
-Shape B keeps a Solid store by id and derives sort, filters, groups, and totals through memos.
-Both shapes sort packaging codes in a memo, with the status filter set to “all”.
-
-Each cell is the median of five runs.
-Each run mounts one shape on a new production-build page and fills it from a fake feed of seeded synthetic rows.
-The shapes alternate order between repeats.
-Other agents hold new builds and test runs from 15:03:20 to 15:05:21 UTC during the measurement window.
-
-The measures use these boundaries:
-
-- Fill starts when `list` resolves and ends at the first painted row, on the frame after DOM insertion.
-- Update covers one batch of 70 updates, 20 inserts, and 10 deletes through the next frame. Ten batches per run give 50 batches.
-- Heap uses `performance.memory.usedJSHeapSize` after forced garbage collection.
-
-| Shape | Rows | Fill to first paint (ms) | Update per 100 changes (ms) | Heap after fill (MB) | Heap after 10 batches (MB) | Runs finished | Load average |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| A | 10,000 | 453.2 | 46.8 | 15.5 | 16.4 | 5/5 | 5.5–5.8 |
-| B | 10,000 | 223.4 | 68.6 | 17.2 | 17.9 | 5/5 | 5.5–5.8 |
-| A | 100,000 | 3,403.1 | 308.5 | 111.8 | 112.6 | 5/5 | 5.7–7.8 |
-| B | 100,000 | 1,634.6 | 933.0 | 141.9 | 142.6 | 5/5 | 5.7–7.8 |
-
-At 10,000 rows, individual batch updates range from 27.5–69.6 ms for A and 58.4–137.8 ms for B.
-At 100,000 rows, they range from 224.8–583.4 ms for A and 668.4–1,958.8 ms for B.
-
-The fake feed supplies `row_version` directly.
-The measured real-feed conversion copies each row to add `row_version` beside `rowVersion`.
-That separate conversion takes medians of 4.9 ms at 10,000 rows and 164.1 ms at 100,000 rows.
-Its run at 15:06 UTC has load averages of 18.6–19.1.
-It is outside the fill column.
-The version accessor avoids that copy.
-
-These conditions limit the measurement:
-
-- `row_version` stands in for a numeric business field because packaging has no other numeric column.
-- Shape A uses the float `sum` in `@tanstack/db`, with int32 inputs and an integer total below 2^53. Shape B uses an exact BigInt sum.
-- The measured package fills only. Updates enter through `applyChanges`, without a host follow loop.
-- Shape A casts the live query result for `liveRows` and uses `Table`, because the measured `ReadOnlyTable` has no virtual-row body slot.
-
-The related findings are `wamn-7e86p`, `wamn-b4icu`, `wamn-dhggm`, and `wamn-5dcm4`.
-They cover version naming, live query inputs, custom aggregates, and the table body slot.

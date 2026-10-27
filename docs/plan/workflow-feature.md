@@ -16,7 +16,7 @@ The owner set these rules in the brief, and routes-router section 2 sets the res
 - An application event starts a wiring. The workflow never sits on a request path.
 - One platform node is built: a JSONata expression node compiled to wasm. The expression is configuration, and it runs in the guest sandbox.
 - The WMS `inventory_move_and_label` graph runs as a registered workflow, off the request path.
-- Approvals and an admin UI are out of scope. Schedule triggers belong to [integrations C4](integrations.md#5-epic-2--webhook-in-schedule-webhook-out-scoped).
+- Approvals and an admin UI are out of scope. Schedule triggers belong to [schedule workflows](../architecture/execution.md#workflows).
 - A workflow calls operations through `invoke_operation`, with the same grant, intent, and never-replay rules as any client.
 - The base platform and the edge do not link the workflow crate. The dependency tests keep this rule.
 

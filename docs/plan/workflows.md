@@ -2,7 +2,7 @@
 
 ## 1. What a workflow is
 
-A workflow is environment data: a graph of nodes and edges, a trigger, an execution identity and an enabled flag, stored in the environment's database like a role or a setting. The release carries code — operations and nodes — and no workflows. A workflow is authored in the running environment and changed there; nothing is rebuilt, published or deployed.
+See [environment workflows](../architecture/execution.md#environment-workflows) for workflow identity, authoring, enablement, and manual admission.
 
 Vocabulary, one meaning each:
 
@@ -10,8 +10,6 @@ Vocabulary, one meaning each:
 - **run**: one execution of a workflow, a row in `wamn_run.runs`.
 - **node**: a compiled wasm component the graph calls — a released operation of the application or a platform node — pinned per environment by digest.
 - **route**: a single operation served on the request path. Not a workflow.
-
-There is one execution model. Every run is a graph the router walks, calling compiled nodes, under a run row. Where the definition came from (a user in the UI, `wamn-ctl`, a test) changes nothing at run time.
 
 Intended uses: reporting (long runs, start cost irrelevant); side effects (send a mail when a record changes); record-state automations (on submit, decide who must approve, validate externally, notify). Performance of this path is not a design driver.
 
@@ -35,47 +33,17 @@ Enable, disable and change of a workflow take the environment's lifecycle lock (
 
 Logic inside a workflow — shaping between nodes and conditions — is configuration, never business-authored code. Whether that configuration is an expression language (JSONata is the one node that exists), a library of small typed nodes, or both, is decided with the editor, not here.
 
-## 3. What exists and what changes
+## 3. Runtime contracts
 
-| Owner | Today | Change |
-| --- | --- | --- |
-| `catalog.wirings` (`deploy/sql/catalog-schema.sql`) | immutable graph and hash under `(tenant_id, package_id, package_version, wiring_id, version)` | untouched until epic 3. Epic 1 adds `catalog.workflows`, keyed per R8 `(tenant_id, environment, application, workflow_id, version)` with graph, hash, trigger, `execution_type`, `execution_role`, `enabled`; its readers (`author_wiring`, publish, the candidate resolver) keep their package-scoped contract until epic 3 deletes the table with them. |
-| `ServingManifest::workflow` (`crates/catalog/model/src/serving_manifest.rs`) | `wirings`, `attachments` (every attachment that targets a wiring, HTTP included, per `ServingAttachment::split`; no application has one), `registrations` (workflows and custom-operation event handlers); format 11 | the section is removed in epic 3. A synchronous HTTP route onto a wiring is retired as a capability: the attached trigger (R4) is the synchronous shape, and a route targets one operation. Route attachments that target an operation are not in this section and do not move. Publish writes no workflows or triggers. |
-| `wamn.json` / `wamn.k` `workflows` | declared per package | removed with R9. |
-| `crates/control/lib/src/author_wiring.rs::author_wiring` | hash-bound write after `gate_wiring_document`, package-scoped | `author_workflow`: hash-bound like `author_wiring`, but validated with `validate_resolved_wiring_compatibility` over facts resolved per node from the current release of the application (`gate_wiring_document` requires one `ComponentPackageScope` and cannot span packages); re-validated at enable and at admission against the release of that moment; a hash authorizes a graph, never bytes — the run's frozen digests do that. `author_wiring` stays for released wirings until epic 3. |
-| `crates/execution/workflow/src/contract/postgres.rs::PostgresWorkflows::admit` | refuses a wiring absent from `release.workflow.wirings` | admits a `catalog.workflows` row whose operations and nodes are in the pinned release (epic 1) or the environment's pins (epic 4); freezes the resolved node digests on the run. |
-| `crates/execution/workflow/src/queue.rs` `QueueDriverRequest::Released \| Candidate` | released runs resolve from the manifest; candidates from the DB with no release pin | one request. A new resolver, `resolve_workflow`, keyed by the run row (`tenant, environment, application, workflow_id, version, hash`): the graph from `catalog.workflows`, components from the run's frozen `node_digests_json` checked against the pinned release's descriptors, validated with `wiring_compatibility.rs::validate_resolved_wiring_compatibility`, executed by `RouterDriver` as today. `CANDIDATE_WIRING_SQL` is not reused: it joins `catalog.wirings` on `package_id` and `package_version`. The queue's claim scope (`queue/sql.rs`, `package_id = ANY($1)`) gains the application of the mounted release for workflow runs. The candidate case stays for `wamn dev` until epic 3. |
-| `wamn_run.runs` (`deploy/sql/run-state.sql`) | holds `wiring_id/version/hash`, `manifest_digest`, `service_principal_id`; the `event` case has no principal | gains the active role, `invoked_by`, `invoked_by_user_id` and `node_digests_json`; every case carries a principal (the `workflow` user or the invoker). |
-| `catalog.event_registrations` | written by package apply from `wamn.json`: workflows and custom-operation event handlers (`apply_package/registrations.rs::derive_catalog_registrations`) | removed; the event-trigger row is the registration, authored in the environment. |
-| `crates/platform/runtime/src/plugins/wamn_jetstream.rs::require_registration`, `prepare_consumer` | accepts manifest registrations only; attaches a consumer provisioned from the package declaration | accepts an enabled trigger row of the environment; attaches the entity's consumer. |
-| event consumers (env apply provisioning) | one per declared registration | one per captured entity, created at env apply from the installed schema, independent of workflows. Verify how consumers are keyed today before scoping; if already per entity, nothing changes here. |
-| `crates/control/lib/src/release_chart.rs::roles` | one materializer role per environment release, only when the manifest has registrations | always rendered, idle when no trigger is enabled. |
-| `crates/execution/workflow/src/wiring_delivery.rs` | `Walk` runs in-process with no row (event handlers); `Queue` admits a run | `Walk` removed; a former event handler is a one-node workflow under a row. |
-| `crates/platform/runtime/src/plugins/route_authentication.rs::queued_service_caller` | requires `users.type = 'service'`, returns the union of the user's roles | accepts the `workflow` user or a user principal; loads the principal's roles and uses the active one from the run row (`execution_role`, or the invoker's active role), as a session uses its active role. |
-| `crates/control/lib/src/environment/stage.rs::materialize_application_principals` | principal only for packages that compose `wamn_integration` | unchanged; workflows do not use it. The `workflow` user is created with the environment beside the platform principal. |
-| `wamn-ctl env apply` (`environment/lock.rs::LifecycleLock`) | checks declared workflows against the candidate release | checks every enabled workflow row; refuses by workflow and node; never disables; enable and disable take the same lock. |
+See [environment workflows](../architecture/execution.md#environment-workflows) and [event and schedule admission](../architecture/execution.md#workflows).
 
 Do not add `workflow_drafts`, `workflow_versions`, `workflow_admissions`, `workflow_activation`, an activation history, a palette table or a second run store.
 
 ## 4. Epics
 
-Only the first is scoped into issues.
-
-### Epic 1 — manual execution of an environment-authored workflow
-
-Independent of node pins and of the released-workflow migration. Nothing that reads `ServingManifest::workflow`, `catalog.wirings` or `catalog.event_registrations` changes.
-
-1. `catalog.workflows` per R8 with graph, hash, trigger (`manual` only here), `execution_type`, `execution_role`, `enabled`; `author_workflow` validating with `validate_resolved_wiring_compatibility` over per-node facts from the application's release; the `workflow` user created with the environment; enable under the lifecycle lock with the refuse-and-retry rule; a `wamn-ctl workflow` verb set (author, enable, disable, list) over the control connection, and `start` over the host route with a session token, replacing today's `workflow start`.
-2. Admission and execution: the host route `workflow.start` admits the enabled version against the release the host is serving (no caller-supplied `manifest_digest`), resolves every node against that release's descriptors (the only node source in this epic), freezes `node_digests_json`; one queue request resolving through `resolve_workflow` with the frozen digests; the run row carries the principal and active role for both execution types; `queued_service_caller` accepts a user principal for `invoker`; the per-node grant check reads current grants.
-3. Live manual run of an environment-authored workflow: a released read plus JSONata, where the fixture's release carries one released wiring naming JSONata so that `select_palette_artifacts` admits it (today's mechanism, used only to get the bytes into the release); the negative checks below. Only reads and shaping nodes in this epic's fixture: no external effect, so restart-on-reclaim is safe.
-
 ### Epic 2 — schedules from rows
 
-Built: the schedule task, schedule rows and their admission, a workflow's call of another package's operation under its role, and the application map that `environment.k` declares (application name to its packages), which the host, the gate, the executor and the queue read, are in [workflows](../architecture/execution.md#workflows). The wamn-dev cutover step is in [queued automation](../operations/queued-automation.md#cutover-the-netsuite-pull). Not built: the cutover itself on wamn-dev, and a kind run of the NetSuite pull and the rest_connector item as schedule rows.
-
-### Epic 3 — events from rows and the released-workflow retirement
-
-Consumers belong to entities, and the materializer always runs. It reads workflow rows and uses `require_registration` on rows, batch admission, and the R6 enable boundary. This epic removes `Walk`, the manifest's `workflow` section, `catalog.wirings`, `catalog.event_registrations`, `author_wiring`, the candidate request, and the direct database start. Format 11 stays unchanged, and readers ignore removed fields. `wamn.k` loses `workflows` and operation `registration`. The WMS label and Acme handler tests author their event workflows in the environment.
+Run the [wamn-dev cutover](../operations/queued-automation.md#cutover-the-netsuite-pull) and a kind case for the NetSuite pull and the rest_connector item as schedule rows.
 
 ### Epic 4 — effect writer and node publication
 
@@ -85,27 +53,11 @@ The effect writer with `output_json`, effect keys, the uncertain rule, resume an
 
 | Invariant | Check |
 | --- | --- |
-| The release carries no workflow | after epic 3: publish a package with a workflow or a registration: refused; the manifest has no `workflow` section; the digest of a release does not change when a workflow is authored, enabled or disabled |
-| One execution model | the manual, WMS, NetSuite and Acme fixtures run through the same queue request, resolver and `RouterDriver`; no run exists without a row |
 | A run executes the bytes it froze | admit a run; re-pin the node to a new minor: allowed; the run executes the frozen digest; a new run executes the new one; retire the old artifact while the run is unfinished: refused |
-| Workflow identity survives a package upgrade | workflow on package 2.1; apply 2.2 keeping the operations: the workflow row is unchanged and runs; apply a release dropping one: refused by workflow and node |
-| Enable and apply are serialized | enable during an apply's check-to-Helm window is refused naming the apply; after the apply, enable succeeds and is checked against the new release; the apply saw the workflow or the workflow sees the new release, never neither |
-| Fan-out is exact | two enabled triggers on one entity; one row change: two runs in one transaction, one message, acked once; redeliver: no new run; enable a third trigger after the message: it starts nothing |
-| Graph identity is immutable | same bytes converge; changed bytes, wrong hash, an operation or node not in the release (or, from epic 4, the pins): refused |
-| A run executes with one role | workflow with `execution_role = r`; an operation not granted to `r`: refused, even if the `workflow` user holds another role that has it; enable with a role the `workflow` user does not hold: refused; `updated_by` on the record is the `workflow` user |
-| Manual `invoker` is the caller | start through the route as user u with active role a; `updated_by` is u; an operation not granted to a: refused; a start naming another user id: no such parameter exists |
-| Invoker and executor are both recorded | user u starts a workflow with `execution_role = approval`; the record's `updated_by` is the `workflow` user; the run row shows executed as `workflow`/`approval` and invoked by u; the write log links the record change to that run |
-| A start pins the serving release | start while the host serves release R: the run pins R; after a rollout to R2, a new start pins R2 and the old run is finished by an R host or stranded per the drain rule — never admitted against a release no host serves |
-| Revocation reaches the next node | a two-node run; revoke the role's grant on node two's operation while node one runs: node two refused, run failed, node one's effect recorded |
-| Event and schedule `invoker` is admin to enable | a non-admin enabling an event workflow with `invoker`: refused; admin: allowed; the run writes as the `workflow` user |
-| No authority through a graph | enabling with a role the enabler does not hold: refused; no wasm, SQL or credential enters through authoring |
 | A run is exact and durable | queue and reclaim; hash, components, inputs and digest unchanged; a host of another release cannot claim it; a reclaimed run restarts at the first node until the effect writer lands, then resumes at the first node without a success outcome |
-| Schedules run from rows | release with no schedules; author and enable one; the task fires it; disable it; the next tick does nothing; a missed tick is skipped |
-| Events run from rows | release with no registrations; author and enable one; a row change admits exactly one run with a principal; redelivery admits no second run |
 | A deprecated major stays until unpinned | mark a major deprecated: enable of a workflow naming it warns and succeeds; unpin it while one is enabled: `env apply` refuses naming the workflow; disable the workflow: unpin succeeds |
 | A bump is what the declaration requires | publish a removed port as a minor: refused; as a major: accepted; publish unchanged bytes under an existing version: refused |
 | A minor re-pin moves workflows safely | workflow on major 1 at 1.0.1; pin 1.1.0 (new optional parameter); the workflow runs unchanged |
-| A release change never disables a workflow | enabled workflow names an operation the candidate release drops: `env apply` refuses, naming the workflow and the node; the workflow stays enabled |
 
 ### Later
 
@@ -121,26 +73,19 @@ The effect writer with `output_json`, effect keys, the uncertain rule, resume an
 
 ## 5. Cost of events from rows
 
-Runtime cost, and the option if it matters:
+See [event admission](../architecture/execution.md#workflows) for consumers and the materializer.
 
-| Cost | Today | Under R6 | Option |
-| --- | --- | --- | --- |
-| materializer | one per environment, only when the release declares a registration | one per environment, always; idle when no trigger is enabled | none needed; an idle pod |
-| row changes read | only entities with a declared registration | every captured row change is consumed, filtered against enabled rows and acked, whether or not a workflow listens; the CDC reader already publishes every change to the stream, so the added cost is the consume and filter | the materializer attaches to an entity's consumer only while an enabled trigger names that entity and detaches when none does — attach and detach, never create and retire; add after measuring a hot table |
-| JetStream state | one consumer per declared registration | one durable consumer per captured entity, present whether read or not | none; state only, no delivery until read |
-| enabling a workflow | a release | a row write; the materializer sees it on its next read of the rows | none |
-
-Measure before adding the option: messages per second on the busiest captured entity against the materializer's consume-and-filter cost.
+The materializer can attach to an entity's consumer only while an enabled trigger names that entity.
+It can detach when no enabled trigger names the entity.
+This option changes attachment only. It never creates or retires a consumer.
+Measure the busiest captured entity against the consume-and-filter cost before adding this option.
 
 ## 6. Assumptions
 
 | Assumption | Verify | If false |
 | --- | --- | --- |
-| `validate_resolved_wiring_compatibility` and `RouterDriver` serve an environment workflow unchanged once a resolver hands them the graph and the frozen facts | issue 2 runs the manual fixture through them from a queue claim | the validator gains an application-scoped fact source; no new table |
 | one row read per host per tick is acceptable | enable a schedule on a running host; it fires at the next due time; the tick's query cost is measured on a host with many schedules | reload on an enable/disable message over event NATS instead |
-| consumers can be keyed per entity, not per registration, without a stream layout change | read the provisioning code and the stream subjects; one consumer per entity is attachable by the materializer | the stream layout changes to per entity in issue 3; the subjects are the CDC reader's, not the materializer's |
 | an in-process run hands over to the queue on timeout under one lease, resuming from node outcomes | a run that times out at node two releases its lease, is reclaimed, skips node one and completes with no duplicate external effect | a timed-out attached run is failed and the row event starts a fresh one; the request answers with the record |
-| the connection redesign (org `connection` rows, `wamn.k connections`, `environment.k` bindings) lands before a workflow node binds a connection | that epic merged and a bound node runs under it | the release-keyed `connection_bindings` key is not extended for workflows; the first bound node waits |
 
 ## 7. Exclusions
 
