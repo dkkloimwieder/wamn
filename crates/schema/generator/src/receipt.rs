@@ -6,12 +6,15 @@
 //! are canonical JSON (RFC 8785). Schema `wamn.build/v1` is frozen: a change of
 //! shape is a new schema name.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
 use serde::{Deserialize, Serialize};
+use syn::ext::IdentExt as _;
+use syn::parse::Parser as _;
+use syn::visit::Visit as _;
 use wamn_execution_contract::canonical_json_bytes;
 
 use crate::generate::sha256;
@@ -33,15 +36,14 @@ const EXCLUDED_DIRECTORIES: &[&str] = &["target", "node_modules", "generated"];
 /// The lock file of the enclosing Cargo workspace, relative to the package root.
 const WORKSPACE_LOCK: &str = "../Cargo.lock";
 /// The platform trees that a package's components link, relative to the
-/// application workspace: the guest crates its generated code calls and the
-/// platform WIT its bindings read. A change in any of them changes the inputs
+/// application workspace: the guest crates its generated code calls.
+/// A change in any of them changes the inputs
 /// of every package, so `wamn build` rebuilds a component that was built
 /// against an older interface.
 const PLATFORM_INPUTS: &[&str] = &[
     "platform/data",
     "platform/execution/contract",
     "platform/execution/jsonata",
-    "../crates/platform/runtime/wit",
 ];
 
 /// One package build: `build.json`, schema `wamn.build/v1`.
@@ -179,7 +181,8 @@ pub fn input_digest(package_root: &Path) -> Result<String> {
 /// The build inputs of the package at `package_root`: every file of the package
 /// directory except build output and installed dependencies, the lock file of
 /// the enclosing Cargo workspace when there is one, every file of each
-/// [`PLATFORM_INPUTS`] tree that exists, and the generator identity and fingerprint.
+/// [`PLATFORM_INPUTS`] tree that exists, the WIT paths bound by guests in the
+/// enclosing workspace, and the generator identity and fingerprint.
 pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
     let mut files = BTreeMap::new();
     insert_tree(&mut files, package_root, Path::new(""))?;
@@ -197,6 +200,7 @@ pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
             insert_tree(&mut files, &root, &to_workspace.join(tree))?;
         }
     }
+    insert_guest_wit(&mut files, &workspace, to_workspace)?;
     let lock = package_root.join(WORKSPACE_LOCK);
     if lock.is_file() {
         let bytes = fs::read(&lock).with_context(|| format!("read {}", lock.display()))?;
@@ -216,6 +220,146 @@ fn digest_inputs(
         "generator": generator,
         "generator_fingerprint": fingerprint,
     })))
+}
+
+/// Derive shared WIT inputs from bindings, including platform guests and SDKs.
+fn insert_guest_wit(
+    files: &mut BTreeMap<String, String>,
+    workspace: &Path,
+    to_workspace: &Path,
+) -> Result<()> {
+    if !workspace.join("Cargo.toml").is_file() {
+        return Ok(());
+    }
+    let mut roots = BTreeSet::new();
+    for relative in input_files(workspace)? {
+        if relative
+            .extension()
+            .is_none_or(|extension| extension != "rs")
+        {
+            continue;
+        }
+        let source = workspace.join(relative);
+        let text = fs::read_to_string(&source)
+            .with_context(|| format!("read guest source {}", source.display()))?;
+        if !text.contains("wit_bindgen") {
+            continue;
+        }
+        let mut bindings = WitBindings::default();
+        let syntax = syn::parse_file(&text)
+            .with_context(|| format!("parse guest source {}", source.display()))?;
+        bindings.visit_file(&syntax);
+        for binding in bindings.0 {
+            let directory = source
+                .ancestors()
+                .find(|ancestor| ancestor.join("Cargo.toml").is_file())
+                .with_context(|| format!("find guest manifest for {}", source.display()))?;
+            for path in binding_paths(&binding)
+                .with_context(|| format!("read WIT paths in {}", source.display()))?
+            {
+                // Generated contracts are outputs, tracked through base receipts.
+                if Path::new(&path).components().any(|component| {
+                    EXCLUDED_DIRECTORIES
+                        .iter()
+                        .any(|excluded| component.as_os_str() == *excluded)
+                }) {
+                    continue;
+                }
+                let root = directory.join(path);
+                roots.insert(
+                    root.canonicalize()
+                        .with_context(|| format!("resolve guest WIT {}", root.display()))?,
+                );
+            }
+        }
+    }
+    let workspace = workspace
+        .canonicalize()
+        .context("resolve guest workspace")?;
+    for root in roots {
+        let mut ancestor = workspace.as_path();
+        let mut prefix = to_workspace.to_path_buf();
+        while !root.starts_with(ancestor) {
+            ancestor = ancestor.parent().context("find shared WIT ancestor")?;
+            prefix.push("..");
+        }
+        let key = prefix.join(root.strip_prefix(ancestor)?);
+        if root.is_dir() {
+            insert_tree(files, &root, &key)?;
+        } else {
+            let bytes = fs::read(&root).with_context(|| format!("read {}", root.display()))?;
+            files.insert(
+                key.to_str()
+                    .context("guest WIT path is not UTF-8")?
+                    .to_owned(),
+                sha256(&bytes),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct WitBindings(Vec<syn::Macro>);
+
+impl<'ast> syn::visit::Visit<'ast> for WitBindings {
+    fn visit_macro(&mut self, binding: &'ast syn::Macro) {
+        if binding
+            .path
+            .segments
+            .iter()
+            .map(|segment| &segment.ident)
+            .eq(["wit_bindgen", "generate"])
+        {
+            self.0.push(binding.clone());
+        }
+    }
+}
+
+fn binding_paths(binding: &syn::Macro) -> syn::Result<Vec<String>> {
+    let parser = |input: syn::parse::ParseStream<'_>| {
+        let content;
+        syn::braced!(content in input);
+        let mut paths = None;
+        let mut inline = false;
+        while !content.is_empty() {
+            if content.peek(syn::Ident::peek_any) {
+                let name = content.call(syn::Ident::parse_any)?;
+                inline |= name == "inline";
+                if name == "path" {
+                    content.parse::<syn::Token![:]>()?;
+                    paths = Some(if content.peek(syn::LitStr) {
+                        vec![content.parse::<syn::LitStr>()?.value()]
+                    } else {
+                        let array;
+                        syn::bracketed!(array in content);
+                        array
+                            .parse_terminated(
+                                syn::parse::ParseBuffer::parse::<syn::LitStr>,
+                                syn::Token![,],
+                            )?
+                            .iter()
+                            .map(syn::LitStr::value)
+                            .collect()
+                    });
+                }
+            } else {
+                // Skip one token tree so other binding options stay opaque.
+                content.step(|cursor| {
+                    let (_, next) = cursor.token_tree().expect("binding content is not empty");
+                    Ok(((), next))
+                })?;
+            }
+        }
+        Ok(paths.unwrap_or_else(|| {
+            if inline {
+                Vec::new()
+            } else {
+                vec!["wit".into()]
+            }
+        }))
+    };
+    parser.parse2(binding.tokens.clone())
 }
 
 /// Insert the digest of every input file below `root`, keyed by `prefix`
@@ -350,11 +494,19 @@ mod tests {
             .0
             .join("crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit");
         let sdk = apps.join("platform/data/postgres-statements/src/lib.rs");
+        let bindings = r#"wit_bindgen::generate!({
+            path: "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
+        });"#;
         for (path, bytes) in [
+            (apps.join("Cargo.toml"), ""),
             (apps.join("receiving/wamn.k"), "a"),
             (apps.join("platform/nested/wamn.k"), "b"),
             (wit.clone(), "interface statements {}"),
-            (sdk.clone(), "pub fn run() {}"),
+            (sdk.clone(), bindings),
+            (
+                sdk.parent().unwrap().parent().unwrap().join("Cargo.toml"),
+                "",
+            ),
         ] {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, bytes).unwrap();
@@ -387,9 +539,102 @@ mod tests {
         let after_wit = [input_digest(&top).unwrap(), input_digest(&nested).unwrap()];
         assert_ne!(before[0], after_wit[0]);
         assert_ne!(before[1], after_wit[1]);
-        fs::write(&sdk, "pub fn next_number() {}").unwrap();
+        fs::write(&sdk, format!("{bindings}\npub fn next_number() {{}}")).unwrap();
         assert_ne!(input_digest(&top).unwrap(), after_wit[0]);
         assert_ne!(input_digest(&nested).unwrap(), after_wit[1]);
+    }
+
+    #[test]
+    fn imported_wit_changes_the_key_but_unrelated_files_do_not() {
+        let scratch = scratch("bound-wit");
+        let apps = scratch.0.join("apps");
+        let package = apps.join("rest_connector");
+        let nested = apps.join("platform/nested");
+        let imported = [
+            "crates/execution/workflow/router/wit/package.wit",
+            "crates/execution/host/wit/deps/delivery/package.wit",
+            "crates/platform/component-composer/wit/package.wit",
+            "crates/new-provider/wit/deps/imported/package.wit",
+            "apps/platform/guest/wit/deps/shared/package.wit",
+        ];
+        for (path, text) in [
+            ("apps/Cargo.toml", ""),
+            ("apps/rest_connector/wamn.k", "a"),
+            ("apps/platform/nested/wamn.k", "b"),
+            ("apps/rest_connector/component/Cargo.toml", ""),
+            (
+                "apps/rest_connector/component/src/lib.rs",
+                r#"wit_bindgen::generate!({
+                    path: [
+                        "../../../crates/execution/workflow/router/wit",
+                        "../../../crates/execution/host/wit/deps/delivery",
+                        "../../target/wamn/rest_connector/wit",
+                    ],
+                });
+                wit_bindgen::generate!({ inline: "package test:inline; world inline {}" });"#,
+            ),
+            ("apps/platform/guest/Cargo.toml", ""),
+            (
+                "apps/platform/guest/src/bindings.rs",
+                r##"mod bindings {
+                    wit_bindgen::generate!({ path: r#"../../../crates/new-provider/wit"# });
+                    wit_bindgen::generate!({ path: "../../../crates/platform/component-composer/wit/package.wit" });
+                    wit_bindgen::generate!({ world: "shared" });
+                }"##,
+            ),
+        ] {
+            let path = scratch.0.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        for path in imported {
+            let path = scratch.0.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "package test:shared; interface shared {}").unwrap();
+        }
+        let mut before = [
+            input_digest(&package).unwrap(),
+            input_digest(&nested).unwrap(),
+        ];
+        // Neither an unbound interface nor another guest's source is an input.
+        for path in [
+            "crates/new-provider/unrelated.wit",
+            "apps/platform/guest/src/unrelated.rs",
+            "apps/target/wamn/rest_connector/wit/package.wit",
+        ] {
+            let path = scratch.0.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "unrelated").unwrap();
+        }
+        assert_eq!(input_digest(&package).unwrap(), before[0]);
+        assert_eq!(input_digest(&nested).unwrap(), before[1]);
+        for path in imported {
+            fs::write(
+                scratch.0.join(path),
+                "package test:shared; interface shared { run: func(); }",
+            )
+            .unwrap();
+            let after = [
+                input_digest(&package).unwrap(),
+                input_digest(&nested).unwrap(),
+            ];
+            assert_ne!(before[0], after[0], "{path}");
+            assert_ne!(before[1], after[1], "{path}");
+            before = after;
+        }
+    }
+
+    #[test]
+    fn repository_guests_contribute_their_shared_wit_inputs() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let inputs = inputs(&repository.join("apps/rest_connector")).unwrap();
+        for path in [
+            "../../crates/execution/workflow/router/wit/package.wit",
+            "../../crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit",
+            "../../crates/platform/component-composer/wit/package.wit",
+        ] {
+            assert!(inputs.files.contains_key(path), "missing {path}");
+        }
     }
 
     #[test]
