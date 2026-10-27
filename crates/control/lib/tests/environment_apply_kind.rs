@@ -2444,48 +2444,11 @@ async fn compose_http_releases(
     device: &wamn_catalog::ComponentDescriptor,
     mut manifests: [Vec<u8>; 2],
 ) -> anyhow::Result<[Vec<u8>; 2]> {
-    let package = repository.join("apps").join(PACKAGE);
-    let output = wamn_schema_generator::output_root(&package);
-    let receipt = wamn_schema_generator::receipt::read(&output)?;
-    let component = receipt
-        .outputs
-        .components
-        .iter()
-        .find(|component| component.name == device.component)
-        .context("the fixture build contains its device component")?;
-    let declaration = wamn_control::component_declaration::render_declaration_document(
-        &package.join("publication/components/device.json.in"),
-        &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
-    )?;
-    let declaration_path = run.work.join("device-declaration.json");
-    std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
-    let admission = wamn_control::component_admission::admit_component(
-        wamn_control::component_admission::AdmitComponentRequest {
-            package,
-            component_bytes: output.join(&component.path),
-            declaration: declaration_path,
-            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-            base_digests: std::collections::BTreeSet::new(),
-        },
-    )?;
+    let (admission, entry) = fixture_http_entry(&run.work, repository)?;
     ensure!(
         admission.component_digest() == device.component_digest,
         "the fixture device bytes differ from its pushed descriptor"
     );
-    let route_path = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").map_or_else(
-        || repository.join("apps/target/wasm32-wasip2/release/http_route.wasm"),
-        PathBuf::from,
-    );
-    let route = std::fs::read(&route_path)
-        .with_context(|| format!("read the pinned HTTP route guest {}", route_path.display()))?;
-    let pin = format!(
-        "sha256:{}",
-        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
-            .split_whitespace()
-            .next()
-            .context("the HTTP route guest has a digest pin")?
-    );
-    let entry = compose_application(&admission, &route, &pin)?;
     wash_runtime::oci::set_extra_ca_certificates(&[run.work.join("ca.crt")])?;
     // The entry lives under the test's component artifact base; the manifest
     // records only the path relative to it.
@@ -2517,6 +2480,55 @@ async fn compose_http_releases(
         *bytes = published.canonical_bytes;
     }
     Ok(manifests)
+}
+
+/// Compose the same pinned entry for the kind and local host paths.
+fn fixture_http_entry(
+    work: &Path,
+    repository: &Path,
+) -> anyhow::Result<(
+    wamn_control::component_admission::ComponentAdmission,
+    wamn_control::publish_release::ComposedApplication,
+)> {
+    let package = repository.join("apps").join(PACKAGE);
+    let output = wamn_schema_generator::output_root(&package);
+    let receipt = wamn_schema_generator::receipt::read(&output)?;
+    let component = receipt
+        .outputs
+        .components
+        .iter()
+        .find(|component| component.name == "device")
+        .context("the fixture build contains its device component")?;
+    let declaration = wamn_control::component_declaration::render_declaration_document(
+        &package.join("publication/components/device.json.in"),
+        &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
+    )?;
+    let declaration_path = work.join("device-declaration.json");
+    std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
+    let admission = wamn_control::component_admission::admit_component(
+        wamn_control::component_admission::AdmitComponentRequest {
+            package,
+            component_bytes: output.join(&component.path),
+            declaration: declaration_path,
+            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
+            base_digests: std::collections::BTreeSet::new(),
+        },
+    )?;
+    let route_path = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").map_or_else(
+        || repository.join("apps/target/wasm32-wasip2/release/http_route.wasm"),
+        PathBuf::from,
+    );
+    let route = std::fs::read(&route_path)
+        .with_context(|| format!("read the pinned HTTP route guest {}", route_path.display()))?;
+    let pin = format!(
+        "sha256:{}",
+        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
+            .split_whitespace()
+            .next()
+            .context("the HTTP route guest has a digest pin")?
+    );
+    let entry = compose_application(&admission, &route, &pin)?;
+    Ok((admission, entry))
 }
 
 fn fixture_releases() -> anyhow::Result<[Vec<u8>; 4]> {
@@ -2697,3 +2709,6 @@ async fn route_probe_request(
 
 #[path = "support/prekind_render.rs"]
 mod prekind_render;
+
+#[path = "support/prekind_host.rs"]
+mod prekind_host;

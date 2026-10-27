@@ -190,29 +190,7 @@ pub async fn component(
             .join("wasm32-wasip2/debug")
             .join(format!("{}.wasm", name.replace('-', "_"))),
     )?;
-    let template = std::fs::read_to_string(
-        repository.join(format!("apps/platform/no-std/{name}/declaration.json.in")),
-    )?;
-    let declaration = serde_json::from_value(declaration(
-        &template
-            .replace(
-                "__TENANT_ID__",
-                &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
-            )
-            .replace("__PACKAGE_ID__", package)
-            .replace("__PACKAGE_VERSION__", version),
-    )?)?;
-    let engine = wamn_engine::build_engine(&[])?;
-    let admitted = wamn_engine::component_admission::validate_component_admission(
-        &engine,
-        &bytes,
-        wamn_engine::component_admission::ComponentAdmissionRequest {
-            declaration,
-            admitted_platform_packages: ["wamn:node".to_owned(), "wamn:connection".to_owned()]
-                .into(),
-            base_digests: BTreeSet::new(),
-        },
-    )?;
+    let admitted = admit_guest(repository, version, package, name, &bytes)?;
     let reference = wamn_catalog::component_artifact_reference(
         &format!("{registry}/wamn/components"),
         &admitted.component.component_digest,
@@ -252,6 +230,40 @@ pub async fn component(
         admitted.component,
         admitted.connections,
     ))
+}
+
+/// Admit the built bytes with the declarations used by the kind fixture.
+pub fn admit_guest(
+    repository: &Path,
+    version: &str,
+    package: &str,
+    name: &str,
+    bytes: &[u8],
+) -> anyhow::Result<wamn_catalog::AdmittedComponentFacts> {
+    let template = std::fs::read_to_string(
+        repository.join(format!("apps/platform/no-std/{name}/declaration.json.in")),
+    )?;
+    let declaration = serde_json::from_value(declaration(
+        &template
+            .replace(
+                "__TENANT_ID__",
+                &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
+            )
+            .replace("__PACKAGE_ID__", package)
+            .replace("__PACKAGE_VERSION__", version),
+    )?)?;
+    let engine = wamn_engine::build_engine(&[])?;
+    let admitted = wamn_engine::component_admission::validate_component_admission(
+        &engine,
+        bytes,
+        wamn_engine::component_admission::ComponentAdmissionRequest {
+            declaration,
+            admitted_platform_packages: ["wamn:node".to_owned(), "wamn:connection".to_owned()]
+                .into(),
+            base_digests: BTreeSet::new(),
+        },
+    )?;
+    Ok(admitted)
 }
 
 /// Declare the outbound handles before admission for ordinary binding.

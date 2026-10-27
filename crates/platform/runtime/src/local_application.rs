@@ -226,7 +226,7 @@ async fn entry_facts(
         }
         Some(position) => {
             let Some(row) = client.query_opt(
-                "SELECT graph_json::text, wiring_hash FROM catalog.workflows WHERE tenant_id = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
+                "SELECT graph_json::text FROM catalog.workflows WHERE tenant_id = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
                 &[&scope.tenant_id, &scope.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
             ).await? else { return Ok(None); };
             let value: serde_json::Value = serde_json::from_str(&row.get::<_, String>(0))?;
@@ -245,7 +245,9 @@ async fn entry_facts(
                     .nodes
                     .get(position.node_id)
                     .is_some_and(|node| node.operation == lookup.origin_operation);
-            (Some(row.get(1)), permitted)
+            // The cluster snapshot derives the hash from the graph too
+            // (claims.rs); wamn_http_admitter holds no grant on wiring_hash.
+            (Some(document.wiring_hash().as_str().to_owned()), permitted)
         }
     }))
 }

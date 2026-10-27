@@ -207,6 +207,70 @@ WAMN_SQLX_TRANSACTION_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/sqlx_comm
     sqlx_command_commits_rolls_back_and_obeys_current_user_rls -- --ignored --exact
 ```
 
+## Prekind render and native host tests
+
+These cases use the environment release chart without a cluster.
+The render cases need Helm 4 on `PATH`.
+The native case also needs PostgreSQL 18 binaries, Go, and the guest toolchain from [building](building.md).
+Build every input in this checkout's own target directory. Replace `<checkout>` with a name for the checkout:
+
+```bash
+export CARGO_TARGET_DIR="$HOME/.cache/wamn-target/<checkout>"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
+cargo build --locked --offline -p wamn-ctl --bin wamn
+cargo build --locked --offline -p wamn-host -p wamn-test-infrastructure --bins
+GOBIN="$CARGO_TARGET_DIR/debug" GOMODCACHE="$CARGO_TARGET_DIR/go/pkg/mod" \
+  GOCACHE="$CARGO_TARGET_DIR/go/build" \
+  go install -gcflags='all=-N -l' github.com/nats-io/nats-server/v2@v2.10.29
+RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
+  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p http-route
+RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline \
+  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p materializer
+for guest in transform http-request http-page; do
+  RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline \
+    --manifest-path apps/platform/no-std/Cargo.toml --target wasm32-wasip2 -p "$guest" || exit "$?"
+done
+"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database prekind_build --url-env DATABASE_URL -- \
+  "$CARGO_TARGET_DIR/debug/wamn" build apps/edge_device
+```
+
+The HTTP route guest needs release mode because composition requires its committed SHA-256 digest.
+The package builder fixes the device guest to release mode and records its virtualized bytes in the build receipt.
+It writes the device component and receipt under `apps/target/wamn/edge_device` in this checkout.
+The native programs, materializer, and three HTTP workflow guests use debug mode.
+Go also disables optimization for the local NATS binary.
+The `wamn-control` library tests need `apps/target/wamn/platform_fixture_overlay/wamn.json` from the initial checkout preparation.
+If that file is absent, use the database runner above to build `apps/platform_fixture` and `apps/platform_fixture_overlay`, in that order.
+
+Set the paths to these built inputs, then run the native case:
+
+```bash
+export WAMN_HOST_BINARY="$CARGO_TARGET_DIR/debug/wamn-host"
+export WAMN_NATIVE_C_NATS_BIN="$CARGO_TARGET_DIR/debug/nats-server"
+export WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm"
+export WAMN_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/materializer.wasm"
+cargo test --locked --offline -p wamn-control --test environment_apply_kind \
+  prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+The case resolves rendered Secrets through the production credential provisioner and starts private PostgreSQL and NATS servers.
+It starts the debug host with rendered arguments and local component files.
+It requires readiness, running HTTP and materializer workloads, and a completed manual HTTP workflow with the expected response.
+Its old `respond` terminal must fail with `respond-without-caller` after the successful workflow.
+That failure proves that rendering alone cannot establish workflow success.
+The case prints its elapsed time and removes its temporary databases, processes, and component files.
+
+Run the phase 1 cases by their full names:
+
+```bash
+for name in prekind_environment_renders prekind_rejects_old_missing_conn_reader \
+  prekind_rejects_old_rollback_without_events prekind_receiving_pat_renders prekind_wms_pat_renders; do
+  cargo test --locked --offline -p wamn-control --test environment_apply_kind \
+    "prekind_render::$name" -- --exact --nocapture --test-threads=1 || exit "$?"
+done
+```
+
 ## Test-database isolation
 
 Tests never connect to or change an interactive development database.
