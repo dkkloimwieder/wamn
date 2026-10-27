@@ -498,7 +498,20 @@ async fn certificates(
     .map_err(|error| wait_error(step, error))?;
     let edge = objects(repository, "deploy/gcp/letsencrypt.yaml", document)?;
     for object in &edge {
-        changed |= apply_object(target, object).await?;
+        // A finished webhook rollout can still refuse connections until its
+        // Service endpoint is served, so the first apply retries that refusal.
+        let mut attempt = 1;
+        changed |= loop {
+            match apply_object(target, object).await {
+                Err(error)
+                    if attempt < 30 && format!("{error:#}").contains("failed calling webhook") =>
+                {
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                result => break result?,
+            }
+        };
     }
     let issuer = edge
         .iter()
