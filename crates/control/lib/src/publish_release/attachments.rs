@@ -416,7 +416,7 @@ mod tests {
         ),
         (
             "widget-delete-http",
-            "sha256:96d3221727142dc6745fc078b06d64c67b4e3afb95921bcbaf7b5337d296c121",
+            "sha256:502d8051e774af6572defef9bf80627a85031a45d1bc9e48509d69e603757f5d",
         ),
         (
             "widget-get-http",
@@ -452,14 +452,14 @@ mod tests {
         ),
         (
             "widget-update-http",
-            "sha256:1518132fc051dfe9e421730f88a952e1cde0bbd75ffa8e319c228a67058327d4",
+            "sha256:f2ab453cd0409ad73d373d54395af7acf7b12dbeec520bfca49a35bec05e771a",
         ),
     ];
     const FIXTURE_ATTACHMENTS_DIGEST: &str =
-        "sha256:ec745f6a368e2d65877f31a6a1cef54477b930da1cae1e5ce701217a76ba6266";
+        "sha256:5657ceb19b28ad30c47373028e2e885354d53d537c8e385365256b031a852b3e";
     /// The rendered fixture declaration with its generated route entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:f77ddfb59c66ba08b92d99016324e9f78979ac1ba0da308e32cf86e212097a28";
+        "sha256:e71c5a2ad61ed7857190e36e9f63ba807e57d8e2c7fa0ace58eba46d155cfaa3";
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they
@@ -481,7 +481,7 @@ mod tests {
             ),
             (
                 "counter-delete-http",
-                "sha256:dd7d6502bc5b547dd64e73054170b31890f0123ca936c981d0df49effaf38db1",
+                "sha256:10855ece39968535aed5b55b76251ab833ffca285455da8eadf14c4b451d818a",
             ),
             (
                 "counter-get-http",
@@ -493,7 +493,7 @@ mod tests {
             ),
             (
                 "counter-update-http",
-                "sha256:26164adfe296d3d57b4bb096324734d565cefaf7f550771f1c1bc195bf74e59b",
+                "sha256:f0d673e6fa94193685793ed728f0f0c97f010464064ddecc749f64c45de544d8",
             ),
             (
                 "number-issue-http",
