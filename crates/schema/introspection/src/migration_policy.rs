@@ -6,12 +6,13 @@
 //! boundary of `wamn:postgres@0.4.0`, where the host selects the schema
 //! and guests name relations unqualified.
 //!
-//! The validator admits only additive DDL: schema-qualified ordinary
+//! The validator admits schema-qualified views and additive table DDL: ordinary
 //! `CREATE TABLE`, plain indexes on tables created earlier in the package's migrations,
 //! one additive client column, or one named client check
 //! constraint. An added column is either nullable with a modeled type and no
 //! default, or one of the two demanded non-null default forms; every shape that
-//! rewrites existing rows stays refused. PostgreSQL remains responsible
+//! rewrites existing rows stays refused. Views admit creation, replacement, and
+//! drops without CASCADE. PostgreSQL remains responsible
 //! for parsing definitions, while post-apply catalog introspection validates
 //! their resulting objects. This layer refuses statement operations that the
 //! final catalog state cannot establish.
@@ -262,11 +263,19 @@ pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
                     | (DefinitionAction::Add, DefinitionType::Field)
             )
         ) {
+            let detail = if words(tokens, 0, &["create", "view"])
+                || words(tokens, 0, &["create", "or", "replace", "view"])
+                || words(tokens, 0, &["drop", "view"])
+            {
+                "views in a successor migration need the upgrade rule"
+            } else {
+                "predecessor-compatible upgrades admit only new ordinary tables and added columns; constraints on existing relations require an exceptional migration procedure"
+            };
             return refuse_statement(
                 MigrationPolicyErrorType::UnsupportedStatement,
                 path,
                 statement_index,
-                "predecessor-compatible upgrades admit only new ordinary tables and added columns; constraints on existing relations require an exceptional migration procedure",
+                detail,
             );
         }
     }
@@ -554,6 +563,14 @@ fn validate_statement(
     if words(tokens, 0, &["create", "table"]) {
         return validate_create_table(tokens, configured_schemas, path, statement_index);
     }
+    if words(tokens, 0, &["create", "view"])
+        || words(tokens, 0, &["create", "or", "replace", "view"])
+    {
+        return validate_create_view(tokens, configured_schemas, path, statement_index);
+    }
+    if words(tokens, 0, &["drop", "view"]) {
+        return validate_drop_view(tokens, configured_schemas, path, statement_index);
+    }
     if words(tokens, 0, &["alter", "table"]) {
         return validate_alter_table(tokens, configured_schemas, path, statement_index);
     }
@@ -571,8 +588,176 @@ fn validate_statement(
         MigrationPolicyErrorType::UnsupportedStatement,
         path,
         statement_index,
-        "only demanded schema-qualified additive table DDL is admitted",
+        "only demanded schema-qualified additive table DDL and view DDL are admitted",
     )
+}
+
+fn validate_view_target(
+    tokens: &[Token<'_>],
+    target_index: usize,
+    operation: &str,
+    configured_schemas: &[&str],
+    path: &Path,
+    statement_index: usize,
+) -> Result<(), MigrationPolicyError> {
+    let (Some(Token::Word(schema_name)), Some(Token::Symbol(b'.')), Some(Token::Word(_))) = (
+        tokens.get(target_index).copied(),
+        tokens.get(target_index + 1).copied(),
+        tokens.get(target_index + 2).copied(),
+    ) else {
+        return refuse_statement(
+            MigrationPolicyErrorType::CrossSchemaMutation,
+            path,
+            statement_index,
+            format!("{operation} must use an unquoted schema-qualified target"),
+        );
+    };
+    if !configured_schemas.contains(&schema_name) {
+        return refuse_statement(
+            MigrationPolicyErrorType::CrossSchemaMutation,
+            path,
+            statement_index,
+            format!(
+                "schema {schema_name:?} is outside configured application schemas {configured_schemas:?}"
+            ),
+        );
+    }
+    Ok(())
+}
+
+fn validate_create_view(
+    tokens: &[Token<'_>],
+    configured_schemas: &[&str],
+    path: &Path,
+    statement_index: usize,
+) -> Result<(), MigrationPolicyError> {
+    let target_index = if words(tokens, 0, &["create", "or", "replace"]) {
+        4
+    } else {
+        2
+    };
+    validate_view_target(
+        tokens,
+        target_index,
+        "CREATE VIEW",
+        configured_schemas,
+        path,
+        statement_index,
+    )?;
+    let mut cursor = target_index + 3;
+    if matches!(tokens.get(cursor), Some(Token::Symbol(b'('))) {
+        let end = tokens[cursor + 1..]
+            .iter()
+            .position(|token| matches!(token, Token::Symbol(b')')));
+        let Some(end) = end.filter(|end| {
+            tokens[cursor + 1..cursor + 1 + end]
+                .split(|token| matches!(token, Token::Symbol(b',')))
+                .all(|column| matches!(column, [Token::Word(_) | Token::QuotedIdentifier(_)]))
+        }) else {
+            return refuse_statement(
+                MigrationPolicyErrorType::UnsupportedStatement,
+                path,
+                statement_index,
+                "CREATE VIEW requires a nonempty list of column names",
+            );
+        };
+        cursor += end + 2;
+    }
+    if word(tokens, cursor, "with") {
+        let options = &tokens[cursor + 1..];
+        let end = options
+            .iter()
+            .position(|token| matches!(token, Token::Symbol(b')')));
+        let Some(end) = end.filter(|end| {
+            matches!(options.first(), Some(Token::Symbol(b'(')))
+                && options[1..*end]
+                    .split(|token| matches!(token, Token::Symbol(b',')))
+                    .all(|option| {
+                        (word(option, 0, "security_barrier")
+                            || matches!(
+                                option.first(),
+                                Some(Token::QuotedIdentifier("security_barrier"))
+                            ))
+                            && matches!(
+                                option,
+                                [_] | [
+                                    _,
+                                    Token::Symbol(b'='),
+                                    Token::Word(_) | Token::StringLiteral(_)
+                                ]
+                            )
+                    })
+        }) else {
+            return refuse_statement(
+                MigrationPolicyErrorType::UnsupportedStatement,
+                path,
+                statement_index,
+                "CREATE VIEW options admit only security_barrier",
+            );
+        };
+        cursor += end + 2;
+    }
+    if !word(tokens, cursor, "as") || cursor + 1 == tokens.len() {
+        return refuse_statement(
+            MigrationPolicyErrorType::UnsupportedStatement,
+            path,
+            statement_index,
+            "CREATE VIEW requires AS followed by a query",
+        );
+    }
+    if words(
+        tokens,
+        tokens.len().saturating_sub(3),
+        &["with", "check", "option"],
+    ) || words(
+        tokens,
+        tokens.len().saturating_sub(4),
+        &["with", "local", "check", "option"],
+    ) || words(
+        tokens,
+        tokens.len().saturating_sub(4),
+        &["with", "cascaded", "check", "option"],
+    ) {
+        return refuse_statement(
+            MigrationPolicyErrorType::UnsupportedStatement,
+            path,
+            statement_index,
+            "CREATE VIEW WITH CHECK OPTION is not admitted",
+        );
+    }
+    Ok(())
+}
+
+fn validate_drop_view(
+    tokens: &[Token<'_>],
+    configured_schemas: &[&str],
+    path: &Path,
+    statement_index: usize,
+) -> Result<(), MigrationPolicyError> {
+    let target_index = if words(tokens, 2, &["if", "exists"]) {
+        4
+    } else {
+        2
+    };
+    validate_view_target(
+        tokens,
+        target_index,
+        "DROP VIEW",
+        configured_schemas,
+        path,
+        statement_index,
+    )?;
+    let end = target_index + 3;
+    if tokens.len() == end || (tokens.len() == end + 1 && word(tokens, end, "restrict")) {
+        Ok(())
+    } else {
+        refuse_statement(
+            MigrationPolicyErrorType::UnsupportedStatement,
+            path,
+            statement_index,
+            "DROP VIEW admits one target with optional RESTRICT and without CASCADE",
+        )
+    }
 }
 
 fn validate_create_index(
@@ -940,7 +1125,7 @@ fn is_nontransactional_operation(tokens: &[Token<'_>]) -> bool {
 }
 
 fn is_ruled_operation(tokens: &[Token<'_>]) -> bool {
-    if word(tokens, 0, "do") {
+    if word(tokens, 0, "do") || words(tokens, 0, &["refresh", "materialized", "view"]) {
         return true;
     }
     if words(tokens, 0, &["alter", "table"])
@@ -967,7 +1152,6 @@ fn is_ruled_operation(tokens: &[Token<'_>]) -> bool {
         "trigger",
         "rule",
         "policy",
-        "view",
         "language",
         "type",
         "domain",

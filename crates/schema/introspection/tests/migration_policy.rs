@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorType,
-    inspect_migration_definition_mutations, validate_migration_file,
+    inspect_migration_definition_mutations, validate_migration_bytes, validate_migration_file,
     validate_migration_file_for_schemas,
     validate_predecessor_compatible_migration_bytes_for_schemas,
 };
@@ -74,6 +74,310 @@ fn admits_every_manifest_schema_and_refuses_an_out_of_set_target() {
     );
     assert_eq!(error.statement_index(), Some(2));
     assert!(error.to_string().contains("control"));
+}
+
+#[test]
+fn admits_create_view() {
+    validate_migration_bytes(
+        "initial.sql",
+        b"CREATE VIEW inventory.v AS SELECT id FROM inventory.item;",
+        "inventory",
+    )
+    .expect("an initial migration can create a view");
+}
+
+#[test]
+fn admits_create_or_replace_view() {
+    let artifact = TempArtifact::write("sql", "CREATE OR REPLACE VIEW warehouse.v AS SELECT 1;");
+    validate_migration_file_for_schemas(artifact.path(), &["inventory", "warehouse"])
+        .expect("a replacement view can target any configured schema");
+}
+
+#[test]
+fn admits_view_column_lists() {
+    for prefix in ["CREATE VIEW", "CREATE OR REPLACE VIEW"] {
+        let sql = format!("{prefix} inventory.v (id, \"Label\") AS SELECT 1, 'label';");
+        validate_migration_bytes("initial.sql", sql.as_bytes(), "inventory")
+            .unwrap_or_else(|error| panic!("{sql} must be admitted: {error}"));
+    }
+}
+
+#[test]
+fn admits_view_security_barrier_options() {
+    for options in [
+        "security_barrier",
+        "security_barrier = true",
+        "SECURITY_BARRIER = false",
+        "\"security_barrier\" = 'true'",
+    ] {
+        let sql = format!(
+            "CREATE VIEW inventory.v (id) WITH ({options}) AS SELECT id FROM inventory.item;"
+        );
+        validate_migration_bytes("initial.sql", sql.as_bytes(), "inventory")
+            .unwrap_or_else(|error| panic!("{sql} must be admitted: {error}"));
+    }
+}
+
+#[test]
+fn admits_drop_view() {
+    validate_migration_bytes("initial.sql", b"DROP VIEW inventory.v;", "inventory")
+        .expect("an initial migration can drop a view");
+}
+
+#[test]
+fn admits_drop_view_if_exists() {
+    validate_migration_bytes(
+        "initial.sql",
+        b"DROP VIEW IF EXISTS inventory.v;",
+        "inventory",
+    )
+    .expect("a view drop can use IF EXISTS");
+}
+
+#[test]
+fn admits_drop_view_restrict() {
+    for sql in [
+        "DROP VIEW inventory.v RESTRICT;",
+        "DROP VIEW IF EXISTS inventory.v RESTRICT;",
+    ] {
+        validate_migration_bytes("initial.sql", sql.as_bytes(), "inventory")
+            .unwrap_or_else(|error| panic!("{sql} must be admitted: {error}"));
+    }
+}
+
+#[test]
+fn leaves_view_queries_to_postgresql_and_catalog_inspection() {
+    let sql = br#"
+CREATE VIEW inventory.v AS
+WITH source AS (SELECT 'WITH CHECK OPTION; security_invoker' AS "security_invoker")
+SELECT source."security_invoker" FROM source JOIN other.item ON true;
+"#;
+    validate_migration_bytes("initial.sql", sql, "inventory")
+        .expect("query syntax and read access belong to PostgreSQL and catalog inspection");
+}
+
+#[test]
+fn refuses_view_targets_outside_configured_schemas() {
+    for sql in [
+        "CREATE VIEW public.v AS SELECT 1;",
+        "CREATE OR REPLACE VIEW public.v AS SELECT 1;",
+        "DROP VIEW public.v;",
+        "DROP VIEW IF EXISTS public.v;",
+    ] {
+        let error = refusal(sql);
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::CrossSchemaMutation,
+            "{sql}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("schema \"public\" is outside configured application schemas")
+        );
+    }
+}
+
+#[test]
+fn refuses_unqualified_or_quoted_view_targets() {
+    for target in ["v", "\"inventory\".v", "inventory.\"v\""] {
+        for statement in [
+            format!("CREATE VIEW {target} AS SELECT 1;"),
+            format!("CREATE OR REPLACE VIEW {target} AS SELECT 1;"),
+            format!("DROP VIEW {target};"),
+        ] {
+            let error = refusal(&statement);
+            assert_eq!(
+                error.error_type(),
+                MigrationPolicyErrorType::CrossSchemaMutation,
+                "{statement}"
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains("must use an unquoted schema-qualified target")
+            );
+        }
+    }
+}
+
+#[test]
+fn refuses_temp_views() {
+    let error = refusal("CREATE TEMP VIEW inventory.v AS SELECT 1;");
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnsupportedStatement
+    );
+}
+
+#[test]
+fn refuses_temporary_views() {
+    let error = refusal("CREATE OR REPLACE TEMPORARY VIEW inventory.v AS SELECT 1;");
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnsupportedStatement
+    );
+}
+
+#[test]
+fn refuses_recursive_views() {
+    for prefix in ["CREATE", "CREATE OR REPLACE"] {
+        let error = refusal(&format!(
+            "{prefix} RECURSIVE VIEW inventory.v (id) AS SELECT 1;"
+        ));
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::UnsupportedStatement
+        );
+    }
+}
+
+#[test]
+fn refuses_view_check_option() {
+    let error = refusal("CREATE VIEW inventory.v AS SELECT 1 WITH CHECK OPTION;");
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnsupportedStatement
+    );
+}
+
+#[test]
+fn refuses_view_local_check_option() {
+    let error = refusal("CREATE VIEW inventory.v AS SELECT 1 WITH LOCAL CHECK OPTION;");
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnsupportedStatement
+    );
+}
+
+#[test]
+fn refuses_view_cascaded_check_option() {
+    let error =
+        refusal("CREATE OR REPLACE VIEW inventory.v AS SELECT 1 WITH CASCADED CHECK OPTION;");
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnsupportedStatement
+    );
+}
+
+#[test]
+fn refuses_view_security_invoker_options() {
+    for options in [
+        "security_invoker",
+        "security_invoker = true",
+        "security_invoker = false",
+        "SECURITY_INVOKER = true",
+        "\"security_invoker\" = 'true'",
+        "security_barrier = true, security_invoker = false",
+    ] {
+        let sql = format!("CREATE VIEW inventory.v WITH ({options}) AS SELECT 1;");
+        let error = refusal(&sql);
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::UnsupportedStatement,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn refuses_other_view_option_names() {
+    for options in [
+        "unknown_option = true",
+        "security_barrier = true, unknown_option = false",
+    ] {
+        let error = refusal(&format!(
+            "CREATE VIEW inventory.v WITH ({options}) AS SELECT 1;"
+        ));
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::UnsupportedStatement
+        );
+    }
+}
+
+#[test]
+fn refuses_materialized_view_operations() {
+    for sql in [
+        "CREATE MATERIALIZED VIEW inventory.v AS SELECT 1;",
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS inventory.v AS SELECT 1 WITH NO DATA;",
+        "CREATE OR REPLACE MATERIALIZED VIEW inventory.v AS SELECT 1;",
+        "ALTER MATERIALIZED VIEW inventory.v RENAME TO renamed;",
+        "DROP MATERIALIZED VIEW IF EXISTS inventory.v;",
+        "REFRESH MATERIALIZED VIEW inventory.v;",
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY inventory.v WITH NO DATA;",
+    ] {
+        let error = refusal(sql);
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::RuledOperation,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn refuses_drop_view_cascade() {
+    for sql in [
+        "DROP VIEW inventory.v CASCADE;",
+        "DROP VIEW IF EXISTS inventory.v CASCADE;",
+    ] {
+        let error = refusal(sql);
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::UnsupportedStatement,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn refuses_view_forms_outside_the_admitted_header() {
+    for sql in [
+        "CREATE VIEW inventory.v SELECT 1;",
+        "CREATE VIEW inventory.v AS;",
+        "CREATE VIEW inventory.v () AS SELECT 1;",
+        "CREATE VIEW inventory.v (id,) AS SELECT 1;",
+        "CREATE VIEW inventory.v WITH () AS SELECT 1;",
+        "DROP VIEW inventory.v, inventory.other;",
+        "ALTER VIEW inventory.v RENAME TO renamed;",
+    ] {
+        let error = refusal(sql);
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::UnsupportedStatement,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn predecessor_upgrade_refuses_views_with_an_explicit_upgrade_reason() {
+    for sql in [
+        "CREATE VIEW inventory.v AS SELECT 1;",
+        "CREATE OR REPLACE VIEW inventory.v AS SELECT 1;",
+        "DROP VIEW inventory.v;",
+        "DROP VIEW IF EXISTS inventory.v RESTRICT;",
+    ] {
+        let sql = format!("CREATE TABLE inventory.new_table (id uuid); {sql}");
+        let error = validate_predecessor_compatible_migration_bytes_for_schemas(
+            "upgrade.sql",
+            sql.as_bytes(),
+            &["inventory"],
+        )
+        .expect_err("successor view rules belong to the upgrade implementation");
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::UnsupportedStatement,
+            "{sql}"
+        );
+        assert_eq!(error.statement_index(), Some(2));
+        assert!(
+            error
+                .to_string()
+                .contains("views in a successor migration need the upgrade rule")
+        );
+    }
 }
 
 #[test]
@@ -608,7 +912,6 @@ fn refuses_every_documented_ruled_object_class() {
         "CREATE RULE r AS ON INSERT TO inventory.item DO NOTHING;",
         "CREATE EVENT TRIGGER e ON ddl_command_start EXECUTE FUNCTION inventory.f();",
         "CREATE FOREIGN TABLE inventory.remote (id uuid) SERVER remote;",
-        "CREATE VIEW inventory.v AS SELECT 1;",
         "CREATE MATERIALIZED VIEW inventory.mv AS SELECT 1;",
         "CREATE POLICY p ON inventory.item USING (true);",
         "CREATE LANGUAGE plpython3u;",
