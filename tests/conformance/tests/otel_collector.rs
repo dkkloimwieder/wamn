@@ -4,6 +4,7 @@
 //! The test runs Docker.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -61,6 +62,14 @@ fn the_collector_configuration_passes_the_pinned_image_validate() {
         std::env::temp_dir().join(format!("wamn-otel-collector-{}", std::process::id()));
     fs::create_dir_all(&directory).expect("create the configuration directory");
     fs::write(directory.join("config.yaml"), configuration).expect("write the configuration");
+    // Docker keeps the image user, which needs access independent of the host umask.
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755))
+        .expect("make the configuration directory traversable by the image user");
+    fs::set_permissions(
+        directory.join("config.yaml"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .expect("make the configuration readable by the image user");
     let mut docker = Command::new("docker");
     docker
         .args(["run", "--rm", "-v"])
