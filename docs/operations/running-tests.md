@@ -211,7 +211,8 @@ WAMN_SQLX_TRANSACTION_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/sqlx_comm
 
 These cases use the environment release chart without a cluster.
 The render cases need Helm 4 on `PATH`.
-The native case also needs PostgreSQL 18 binaries, Go, and the guest toolchain from [building](building.md).
+The native case also needs PostgreSQL 18 binaries, a local `nats-server` executable, and the guest toolchain from [building](building.md).
+Use a prebuilt `nats-server`, as the other native cases do. Do not compile it.
 Build every input in this checkout's own target directory. Replace `<checkout>` with a name for the checkout:
 
 ```bash
@@ -219,9 +220,6 @@ export CARGO_TARGET_DIR="$HOME/.cache/wamn-target/<checkout>"
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
 cargo build --locked --offline -p wamn-ctl --bin wamn
 cargo build --locked --offline -p wamn-host -p wamn-test-infrastructure --bins
-GOBIN="$CARGO_TARGET_DIR/debug" GOMODCACHE="$CARGO_TARGET_DIR/go/pkg/mod" \
-  GOCACHE="$CARGO_TARGET_DIR/go/build" \
-  go install -gcflags='all=-N -l' github.com/nats-io/nats-server/v2@v2.10.29
 RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
   --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p http-route
 RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline \
@@ -238,7 +236,6 @@ The HTTP route guest needs release mode because composition requires its committ
 The package builder fixes the device guest to release mode and records its virtualized bytes in the build receipt.
 It writes the device component and receipt under `apps/target/wamn/edge_device` in this checkout.
 The native programs, materializer, and three HTTP workflow guests use debug mode.
-Go also disables optimization for the local NATS binary.
 The `wamn-control` library tests need `apps/target/wamn/platform_fixture_overlay/wamn.json` from the initial checkout preparation.
 If that file is absent, use the database runner above to build `apps/platform_fixture` and `apps/platform_fixture_overlay`, in that order.
 
@@ -246,7 +243,7 @@ Set the paths to these built inputs, then run the native case:
 
 ```bash
 export WAMN_HOST_BINARY="$CARGO_TARGET_DIR/debug/wamn-host"
-export WAMN_NATIVE_C_NATS_BIN="$CARGO_TARGET_DIR/debug/nats-server"
+export WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)"
 export WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm"
 export WAMN_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/materializer.wasm"
 cargo test --locked --offline -p wamn-control --test environment_apply_kind \
