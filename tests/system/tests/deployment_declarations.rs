@@ -1062,7 +1062,8 @@ fn control_edge_serves_the_platform_ui_and_forwards_its_api() {
         .split("server {")
         .next()
         .unwrap();
-    assert!(control.contains("proxy_pass http://c-dkk-http.hosts.svc.cluster.local/;"));
+    assert!(nginx.contains("server c-dkk-http.hosts.svc.cluster.local resolve;"));
+    assert!(control.contains("proxy_pass http://api_0/;"));
     assert!(control.contains("proxy_pass https://identity.identity.svc.cluster.local;"));
     assert!(control.contains("location / {"));
     assert!(control.contains("proxy_pass http://wamn-edge-web.edge.svc.cluster.local;"));

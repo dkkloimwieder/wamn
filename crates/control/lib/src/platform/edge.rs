@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires: helm"]
-    fn proxy_chart_resolves_declared_routes_at_request_time() {
+    fn proxy_chart_resolves_declared_routes_at_runtime() {
         wamn_test_postgres::require_prerequisites(&["helm"]);
         let document = document();
         let environment = serde_json::from_value(json!({
@@ -364,17 +364,20 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(config.contains("resolver kube-dns.kube-system.svc.cluster.local;"));
-        for (host, release) in &routes {
+        for (index, (host, release)) in routes.iter().enumerate() {
+            assert!(config.contains(&format!(
+                "upstream api_{index} {{\n    zone api_{index} 64k;\n    server {release}-http.hosts.svc.cluster.local resolve;"
+            )));
             let server = config
                 .split("  server {")
                 .find(|server| server.contains(&format!("server_name {host};")))
                 .unwrap();
+            assert!(server.contains("location /api/ {"));
+            assert!(server.contains(&format!("proxy_pass http://api_{index}/;")));
+            assert!(!server.contains("rewrite "));
             assert!(server.contains(&format!(
-                "set $api_upstream http://{release}-http.hosts.svc.cluster.local;"
+                "proxy_redirect http://{release}-http.hosts.svc.cluster.local/ /api/;"
             )));
-            assert!(server.contains("rewrite ^/api/(.*)$ /$1 break;"));
-            assert!(server.contains("proxy_pass $api_upstream;"));
-            assert!(!server.contains("proxy_pass $api_upstream/"));
             assert!(server.contains("proxy_set_header Host $host;"));
             assert!(server.contains("proxy_pass https://identity.identity.svc.cluster.local;"));
             assert!(server.contains("proxy_ssl_verify on;"));
