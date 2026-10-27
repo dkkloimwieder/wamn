@@ -22,7 +22,7 @@ export function rowsPersistence(database: string, shapeDigests: readonly string[
   }
 
   function prepare(): Promise<unknown> {
-    return prepared ??= transact("readwrite", (store) => {
+    return (prepared ??= transact("readwrite", (store) => {
       const request = store.openKeyCursor();
       request.onsuccess = () => {
         const cursor = request.result;
@@ -31,13 +31,10 @@ export function rowsPersistence(database: string, shapeDigests: readonly string[
         cursor.continue();
       };
       return request;
-    });
+    }));
   }
 
-  async function transact<T>(
-    mode: IDBTransactionMode,
-    run: (store: IDBObjectStore) => IDBRequest<T>,
-  ): Promise<T> {
+  async function transact<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(database, 1);
       request.onupgradeneeded = () => request.result.createObjectStore("rows");

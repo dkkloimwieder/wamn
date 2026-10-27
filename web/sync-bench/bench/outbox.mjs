@@ -26,18 +26,23 @@ const WAIT_MS = 60_000; // Includes the outbox's 30-second retry interval.
 
 function host(method, path, headers, body) {
   return new Promise((resolve, reject) => {
-    const outgoing = request({
-      hostname: endpoint.hostname,
-      port: endpoint.port,
-      method,
-      path,
-      headers: { ...headers, host: process.env.WAMN_ROUTE_HOST, authorization: `Bearer ${process.env.WAMN_BEARER}` },
-    }, (response) => {
-      const chunks = [];
-      response.on("data", (chunk) => chunks.push(chunk));
-      response.on("end", () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }));
-      response.on("error", reject);
-    });
+    const outgoing = request(
+      {
+        hostname: endpoint.hostname,
+        port: endpoint.port,
+        method,
+        path,
+        headers: { ...headers, host: process.env.WAMN_ROUTE_HOST, authorization: `Bearer ${process.env.WAMN_BEARER}` },
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }),
+        );
+        response.on("error", reject);
+      },
+    );
     outgoing.on("error", reject);
     if (body !== undefined) outgoing.write(body);
     outgoing.end();
@@ -99,7 +104,9 @@ try {
       }
       await route.fulfill({
         status: answer.status,
-        headers: Object.fromEntries(Object.entries(answer.headers).filter(([name]) => !["transfer-encoding", "connection"].includes(name))),
+        headers: Object.fromEntries(
+          Object.entries(answer.headers).filter(([name]) => !["transfer-encoding", "connection"].includes(name)),
+        ),
         body: answer.body,
       });
     } catch (error) {
@@ -111,19 +118,28 @@ try {
   const row = (id) => page.locator(`[data-shape="a"] tr[data-row="${id}"]`);
   const status = page.getByLabel("Sync status");
   async function stored(database, store) {
-    return page.evaluate(async ({ database, store }) => {
-      return new Promise((resolve, reject) => {
-        const open = indexedDB.open(database);
-        open.onerror = () => reject(open.error);
-        open.onsuccess = () => {
-          const db = open.result;
-          const tx = db.transaction(store);
-          const read = tx.objectStore(store).getAll();
-          tx.oncomplete = () => { db.close(); resolve(read.result); };
-          tx.onabort = () => { db.close(); reject(tx.error); };
-        };
-      });
-    }, { database, store });
+    return page.evaluate(
+      async ({ database, store }) => {
+        return new Promise((resolve, reject) => {
+          const open = indexedDB.open(database);
+          open.onerror = () => reject(open.error);
+          open.onsuccess = () => {
+            const db = open.result;
+            const tx = db.transaction(store);
+            const read = tx.objectStore(store).getAll();
+            tx.oncomplete = () => {
+              db.close();
+              resolve(read.result);
+            };
+            tx.onabort = () => {
+              db.close();
+              reject(tx.error);
+            };
+          };
+        });
+      },
+      { database, store },
+    );
   }
   async function until(test, message) {
     const end = Date.now() + WAIT_MS;
@@ -155,7 +171,10 @@ try {
   await page.goto(`${server.resolvedUrls.local[0]}${audience}/live.html?poll=1000`);
   await row(firstId).waitFor();
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-  await until(async () => (await stored(rowsName, "rows"))[0]?.rows.some((row) => row.id === firstId), "initial rows were not persisted");
+  await until(
+    async () => (await stored(rowsName, "rows"))[0]?.rows.some((row) => row.id === firstId),
+    "initial rows were not persisted",
+  );
   assert.equal(reads.list, 1);
   let ids;
   let firstPaint;
@@ -244,11 +263,25 @@ try {
   await setOffline(true);
   for (const prefix of ["/wamn", "/password"]) {
     const navigation = await context.newPage();
-    await assert.rejects(navigation.goto(`${server.resolvedUrls.local[0]}${prefix.slice(1)}/offline-test`), /net::ERR_/);
+    await assert.rejects(
+      navigation.goto(`${server.resolvedUrls.local[0]}${prefix.slice(1)}/offline-test`),
+      /net::ERR_/,
+    );
     await navigation.close();
   }
   assert.deepEqual(errors, []);
-  result = { ok: true, scenario, ids, reads, listsPerPage, firstPaint, refusal, sends: creates.length, echoes, dropped };
+  result = {
+    ok: true,
+    scenario,
+    ids,
+    reads,
+    listsPerPage,
+    firstPaint,
+    refusal,
+    sends: creates.length,
+    echoes,
+    dropped,
+  };
 } catch (error) {
   result = { ok: false, scenario, error: String(error), reads, listsPerPage, sends: creates.length, echoes, errors };
 } finally {

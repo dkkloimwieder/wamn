@@ -22,7 +22,9 @@ export function trackListReads(read: typeof packagingRead): void {
     window.listReads.started += 1;
     // Hold only the list, so saved rows must paint without its response.
     if (sessionStorage.getItem("hold-list") === "yes") {
-      await new Promise<void>((resolve) => { window.releaseList = resolve; });
+      await new Promise<void>((resolve) => {
+        window.releaseList = resolve;
+      });
     }
     try {
       return await fetch(...args);

@@ -464,7 +464,10 @@
       "status": 200,
       "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"surprise\"}},{\"request_id\":\"r2\",\"value\":{\"id\":\"b\"}}]",
       "expect": [
-        { "outcome": "uncertain", "reason": "the response does not establish the submission outcome; the server reported surprise" },
+        {
+          "outcome": "uncertain",
+          "reason": "the response does not establish the submission outcome; the server reported surprise"
+        },
         { "outcome": "completed", "value": { "id": "b" } }
       ]
     },
@@ -508,8 +511,14 @@
       "status": 500,
       "body": "{\"error\":{\"code\":\"internal_error\"}}",
       "expect": [
-        { "outcome": "uncertain", "reason": "the response does not establish completion; the server reported internal_error" },
-        { "outcome": "uncertain", "reason": "the response does not establish completion; the server reported internal_error" }
+        {
+          "outcome": "uncertain",
+          "reason": "the response does not establish completion; the server reported internal_error"
+        },
+        {
+          "outcome": "uncertain",
+          "reason": "the response does not establish completion; the server reported internal_error"
+        }
       ]
     },
     {
