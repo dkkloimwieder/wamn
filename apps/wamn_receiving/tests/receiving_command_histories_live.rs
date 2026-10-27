@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
 use wamn_control::user_role::{grant_role_on, revoke_role_on};
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
+use wamn_platform_identity::auth_changes::{AUTH_TTL, AuthChanges, AuthNats};
 
 use database::{
     Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
@@ -78,6 +78,28 @@ struct Response {
 }
 
 impl Route {
+    async fn wait_for_receipt_status(
+        &self,
+        body: &Value,
+        expected: reqwest::StatusCode,
+    ) -> Result<()> {
+        tokio::time::timeout(AUTH_TTL, async {
+            loop {
+                let response = self.post(RECEIPT_PATH, body).await?;
+                if response.status == expected {
+                    return Ok(());
+                }
+                ensure!(
+                    response.status == reqwest::StatusCode::OK
+                        || response.status == reqwest::StatusCode::FORBIDDEN,
+                    "REC-AUTHORITY unexpected response during auth propagation: {response:?}"
+                );
+            }
+        })
+        .await
+        .with_context(|| format!("REC-AUTHORITY did not reach {expected} within {AUTH_TTL:?}"))?
+    }
+
     async fn post(&self, path: &str, body: &Value) -> Result<Response> {
         let reply = self
             .client
@@ -876,6 +898,22 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
 }
 
 async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut File) -> Result<()> {
+    // A committed receipt makes every propagation probe a replay. The fresh
+    // receipt below must stay unwritten until the role is restored.
+    let probe_fixture = seed(db, [3, 1], "open").await?;
+    let probe_body = receipt_body(
+        &probe_fixture,
+        Receipt {
+            key: 0,
+            line: 0,
+            quantity: 2,
+        },
+        "authority-probe",
+    );
+    succeeded(
+        &route.post(RECEIPT_PATH, &probe_body).await?,
+        "authority-probe",
+    )?;
     let fixture = seed(db, [3, 1], "open").await?;
     let body = receipt_body(
         &fixture,
@@ -889,9 +927,11 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     let before = snapshot(db, &fixture).await?;
     // The caller holds `admin`, which has no permission row to remove, so the
     // fixture uses the role writer to revoke and invalidate each holder, then
-    // restore it after the denied call. The next call must refuse without a
-    // sleep. A caller without a role holds no operation, and the denial names
-    // the route's own operation.
+    // restore it after the denied call. Under docs/plan/workflows.md R3, a
+    // host drops grants on delivery of the invalidation, or at AUTH_TTL if
+    // delivery fails. Poll the replay across that boundary without a sleep.
+    // A caller without a role holds no operation, and the denial names the
+    // route's own operation.
     let auth = AuthChanges::connect(&AuthNats {
         nats_url: inputs.auth_nats.url.clone(),
         nats_tls_ca: inputs.auth_nats.ca.clone(),
@@ -927,7 +967,13 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         )
         .await?;
     }
-    let denied = route.post(RECEIPT_PATH, &body).await;
+    let denied = async {
+        route
+            .wait_for_receipt_status(&probe_body, reqwest::StatusCode::FORBIDDEN)
+            .await?;
+        route.post(RECEIPT_PATH, &body).await
+    }
+    .await;
     let denied_state = snapshot(db, &fixture).await;
     let mut restored = Ok(());
     for user in &holders {
@@ -954,6 +1000,9 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         denied_state?.value == before.value,
         "REC-AUTHORITY unauthorized business mutation"
     );
+    route
+        .wait_for_receipt_status(&probe_body, reqwest::StatusCode::OK)
+        .await?;
     succeeded(&route.post(RECEIPT_PATH, &body).await?, "authority")?;
     assert_state(&snapshot(db, &fixture).await?, [2, 0], "open", 2, 1)?;
     record(
