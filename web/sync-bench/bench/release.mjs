@@ -37,14 +37,16 @@ async function buildShell(version) {
   await build({
     root,
     build: { outDir, emptyOutDir: true },
-    plugins: [{
-      name: "release-test-shell",
-      transform(code, id) {
-        if (id.endsWith("/src/live.tsx")) {
-          return `${code}\ndocument.documentElement.dataset.testShell = ${JSON.stringify(version)};`;
-        }
+    plugins: [
+      {
+        name: "release-test-shell",
+        transform(code, id) {
+          if (id.endsWith("/src/live.tsx")) {
+            return `${code}\ndocument.documentElement.dataset.testShell = ${JSON.stringify(version)};`;
+          }
+        },
       },
-    }],
+    ],
   });
 }
 
@@ -70,20 +72,31 @@ const proxy = {
       const body = Buffer.concat(chunks);
       if (holdCreate && url.pathname.endsWith("/packaging/create")) {
         heldCreate = JSON.parse(body)[0];
-        await new Promise((resolve) => { releaseCreate = resolve; });
+        await new Promise((resolve) => {
+          releaseCreate = resolve;
+        });
       }
       const headers = { host: process.env.WAMN_ROUTE_HOST, authorization: `Bearer ${process.env.WAMN_BEARER}` };
       for (const name of ["content-type", "if-none-match"]) {
         if (incoming.headers[name]) headers[name] = incoming.headers[name];
       }
-      const upstream = request({
-        hostname: endpoint.hostname, port: endpoint.port,
-        method: incoming.method, path: url.pathname.slice("/wamn".length) + url.search, headers,
-      }, (response) => {
-        outgoing.writeHead(response.statusCode, response.headers);
-        response.pipe(outgoing);
+      const upstream = request(
+        {
+          hostname: endpoint.hostname,
+          port: endpoint.port,
+          method: incoming.method,
+          path: url.pathname.slice("/wamn".length) + url.search,
+          headers,
+        },
+        (response) => {
+          outgoing.writeHead(response.statusCode, response.headers);
+          response.pipe(outgoing);
+        },
+      );
+      upstream.on("error", (error) => {
+        errors.push(String(error));
+        outgoing.writeHead(502).end();
       });
-      upstream.on("error", (error) => { errors.push(String(error)); outgoing.writeHead(502).end(); });
       upstream.end(body);
     });
   },
@@ -97,26 +110,36 @@ try {
     await mkdir(bindings, { recursive: true });
     for (const name of ["r1.ts", "r2.ts"]) await copyFile(resolve(scratch, name), resolve(bindings, name));
     const tsconfig = resolve(scratch, "tsconfig.json");
-    await writeFile(tsconfig, JSON.stringify({
-      extends: resolve(root, "tsconfig.json"),
-      compilerOptions: { types: [], paths: {
-        "@wamn/web-runtime": [resolve(root, "../runtime/src/index.ts")],
-        "@release/r1": [resolve(bindings, "r1.ts")],
-        "@release/r2": [resolve(bindings, "r2.ts")],
-      } },
-      include: [resolve(root, "bench/old-entry.ts")],
-    }));
+    await writeFile(
+      tsconfig,
+      JSON.stringify({
+        extends: resolve(root, "tsconfig.json"),
+        compilerOptions: {
+          types: [],
+          paths: {
+            "@wamn/web-runtime": [resolve(root, "../runtime/src/index.ts")],
+            "@release/r1": [resolve(bindings, "r1.ts")],
+            "@release/r2": [resolve(bindings, "r2.ts")],
+          },
+        },
+        include: [resolve(root, "bench/old-entry.ts")],
+      }),
+    );
     execFileSync("pnpm", ["exec", "tsc", "--project", tsconfig], { cwd: root, stdio: "inherit" });
     await build({
       root,
       configFile: false,
-      resolve: { conditions: ["browser", "development|production"], alias: [
-        { find: "@wamn/web-runtime", replacement: resolve(root, "../runtime/src/index.ts") },
-        { find: "@release/r1", replacement: resolve(bindings, "r1.ts") },
-        { find: "@release/r2", replacement: resolve(bindings, "r2.ts") },
-      ] },
+      resolve: {
+        conditions: ["browser", "development|production"],
+        alias: [
+          { find: "@wamn/web-runtime", replacement: resolve(root, "../runtime/src/index.ts") },
+          { find: "@release/r1", replacement: resolve(bindings, "r1.ts") },
+          { find: "@release/r2", replacement: resolve(bindings, "r2.ts") },
+        ],
+      },
       build: {
-        outDir, emptyOutDir: true,
+        outDir,
+        emptyOutDir: true,
         rollupOptions: {
           input: resolve(root, "bench/old-entry.ts"),
           preserveEntrySignatures: "strict",
@@ -131,20 +154,35 @@ try {
   const page = await browser.newPage();
   page.setDefaultTimeout(60_000);
   const consoleMessages = [];
-  page.on("console", (message) => consoleMessages.push({
-    type: message.type(), text: message.text(), location: message.location(),
-  }));
-  const entries = () => page.evaluate(async (name) => new Promise((resolve, reject) => {
-    const open = indexedDB.open(name);
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const db = open.result;
-      const tx = db.transaction("outbox");
-      const read = tx.objectStore("outbox").getAll();
-      tx.oncomplete = () => { db.close(); resolve(read.result); };
-      tx.onabort = () => { db.close(); reject(tx.error); };
-    };
-  }), database);
+  page.on("console", (message) =>
+    consoleMessages.push({
+      type: message.type(),
+      text: message.text(),
+      location: message.location(),
+    }),
+  );
+  const entries = () =>
+    page.evaluate(
+      async (name) =>
+        new Promise((resolve, reject) => {
+          const open = indexedDB.open(name);
+          open.onerror = () => reject(open.error);
+          open.onsuccess = () => {
+            const db = open.result;
+            const tx = db.transaction("outbox");
+            const read = tx.objectStore("outbox").getAll();
+            tx.oncomplete = () => {
+              db.close();
+              resolve(read.result);
+            };
+            tx.onabort = () => {
+              db.close();
+              reject(tx.error);
+            };
+          };
+        }),
+      database,
+    );
   async function waitForStep(step, test) {
     try {
       await page.waitForFunction(test);
@@ -165,12 +203,15 @@ try {
         }),
         entries(),
       ]);
-      console.log(JSON.stringify({
-        step, error: String(error),
-        ...(state.status === "fulfilled" ? state.value : { stateError: String(state.reason) }),
-        outbox: outbox.status === "fulfilled" ? outbox.value : { error: String(outbox.reason) },
-        console: consoleMessages,
-      }));
+      console.log(
+        JSON.stringify({
+          step,
+          error: String(error),
+          ...(state.status === "fulfilled" ? state.value : { stateError: String(state.reason) }),
+          outbox: outbox.status === "fulfilled" ? outbox.value : { error: String(outbox.reason) },
+          console: consoleMessages,
+        }),
+      );
       throw new Error(`${step}: ${error}`, { cause: error });
     }
   }
@@ -178,7 +219,10 @@ try {
   const base = server.resolvedUrls.local[0];
   if (scenario === "old-entry") {
     await page.goto(`${base}test.html`);
-    const outcome = await page.evaluate(async (locationId) => (await import("/old-entry.js")).run(locationId), locationId);
+    const outcome = await page.evaluate(
+      async (locationId) => (await import("/old-entry.js")).run(locationId),
+      locationId,
+    );
     assert.equal(outcome.recorded.packaging_code, 123, "the R1 builder carried its numeric field");
     assert.equal(outcome.entry.request.packagingCode, 123, "R2 kept the saved request");
     assert.equal(outcome.entry.refusal.code, "invalid_input");
@@ -206,7 +250,10 @@ try {
       await until(async () => (await form.locator("output").textContent()) === "Recorded", "entry was not recorded");
     }
     await submit("   ");
-    await until(async () => (await entries()).some((entry) => entry.state === "refused"), "expected an ordinary refusal");
+    await until(
+      async () => (await entries()).some((entry) => entry.state === "refused"),
+      "expected an ordinary refusal",
+    );
     healthy = false;
     await submit("RELEASE");
     await until(async () => (await entries()).some((entry) => entry.state === "pending"), "expected a pending entry");
@@ -215,7 +262,9 @@ try {
     await page.getByRole("region", { name: "Not uploaded" }).locator("article").waitFor();
     await buildShell("r2");
     await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
-    await waitForStep("R2 update notice appears", () => document.querySelector('[aria-label="Sync status"]')?.textContent.includes("update available, reload"));
+    await waitForStep("R2 update notice appears", () =>
+      document.querySelector('[aria-label="Sync status"]')?.textContent.includes("update available, reload"),
+    );
     assert.equal(await page.evaluate(() => document.documentElement.dataset.testShell), "r1");
     assert.ok((await entries()).some((entry) => entry.state === "pending"));
     holdCreate = true;
@@ -229,7 +278,10 @@ try {
     releaseCreate();
     // Known flaky under load: wfe gap wamn-c361p. The waiting worker can stay
     // installed after skip-waiting while the old worker holds no fetch event.
-    await waitForStep("R2 shell loads after the outbox drains", () => document.documentElement.dataset.testShell === "r2");
+    await waitForStep(
+      "R2 shell loads after the outbox drains",
+      () => document.documentElement.dataset.testShell === "r2",
+    );
     const remaining = await entries();
     assert.equal(remaining.length, 1);
     assert.equal(remaining[0].state, "refused", "a refusal survived and did not block reload");

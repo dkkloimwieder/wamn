@@ -112,7 +112,11 @@ describe("packagingKey", () => {
     const left = packagingKey({ filter: { status: ["held"], packagingCode: ["A"] } });
     const right = packagingKey({ filter: { packagingCode: ["A"], status: ["held"] } });
     expect(left).toBe(right);
-    expect(JSON.parse(left)).toEqual(["packaging", PACKAGING_SHAPE_DIGEST, '{"filter":{"packagingCode":["A"],"status":["held"]}}']);
+    expect(JSON.parse(left)).toEqual([
+      "packaging",
+      PACKAGING_SHAPE_DIGEST,
+      '{"filter":{"packagingCode":["A"],"status":["held"]}}',
+    ]);
   });
 
   it("keeps array order, because the arguments are ordered", () => {

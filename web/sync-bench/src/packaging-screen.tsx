@@ -1,5 +1,13 @@
 import { For, Show, createMemo, createSignal, createUniqueId, latest, onCleanup, untrack } from "solid-js";
-import { liveRows, outboxStatus, syncCurrentAt, syncStatus, type Outbox, type OutboxEntry, type ShellResult } from "@wfe/sync";
+import {
+  liveRows,
+  outboxStatus,
+  syncCurrentAt,
+  syncStatus,
+  type Outbox,
+  type OutboxEntry,
+  type ShellResult,
+} from "@wfe/sync";
 import type { packagingCollection } from "./generated/wamn_wms/packaging.js";
 import { orderedIds, type StatusFilter } from "./order.js";
 import { packagingWrites, type PackagingDraft } from "./packaging-writes.js";
@@ -9,7 +17,15 @@ import { shellStatus } from "./shell-status.js";
 import { needsConnection, type OfflineResult, type packagingOffline } from "./packaging-offline.js";
 
 /** The live packaging rows, create form, and refused writes. */
-export function PackagingScreen(props: { collection: ReturnType<typeof packagingCollection>; outbox: Outbox; signedIn?: boolean; updateAvailable?: boolean; shellResult?: ShellResult; filter?: StatusFilter; offline?: ReturnType<typeof packagingOffline> }) {
+export function PackagingScreen(props: {
+  collection: ReturnType<typeof packagingCollection>;
+  outbox: Outbox;
+  signedIn?: boolean;
+  updateAvailable?: boolean;
+  shellResult?: ShellResult;
+  filter?: StatusFilter;
+  offline?: ReturnType<typeof packagingOffline>;
+}) {
   const c = props.collection;
   const o = props.outbox;
   const filter = () => props.filter ?? "all";
@@ -41,8 +57,11 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
   const missing = createMemo(() => {
     const status = source.status();
     currentAt();
-    const local = props.offline ? props.offline.packaging.local()
-      : status === "loading" ? undefined : status === "ready" || Object.keys(current).length > 0;
+    const local = props.offline
+      ? props.offline.packaging.local()
+      : status === "loading"
+        ? undefined
+        : status === "ready" || Object.keys(current).length > 0;
     return needsConnection(online(), local);
   });
   const [busy, setBusy] = createSignal(false);
@@ -58,32 +77,47 @@ export function PackagingScreen(props: { collection: ReturnType<typeof packaging
         {counts().pending + counts().sending}. Refused: {counts().refused}. Last sent: {counts().lastSentAt ?? "never"}.
         Current as of: {currentAt() ?? "not yet read"}. {shellStatus(props.shellResult)}
       </p>
-      <Show when={missing()}><p>needs a connection</p></Show>
+      <Show when={missing()}>
+        <p>needs a connection</p>
+      </Show>
       <Show when={props.offline}>
-        <button disabled={busy()} onClick={async () => {
-          setBusy(true);
-          setResult(undefined);
-          setOfflineError("");
-          try {
-            setResult(await props.offline!.takeOffline());
-            setLocations(props.offline?.location);
-          } catch (error) {
-            setOfflineError(String(error));
-          } finally {
-            setBusy(false);
-          }
-        }}>Take offline</button>
-        <Show when={props.shellResult?.persisted === false}><p>Storage is not protected.</p></Show>
+        <button
+          disabled={busy()}
+          onClick={async () => {
+            setBusy(true);
+            setResult(undefined);
+            setOfflineError("");
+            try {
+              setResult(await props.offline!.takeOffline());
+              setLocations(props.offline?.location);
+            } catch (error) {
+              setOfflineError(String(error));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Take offline
+        </button>
+        <Show when={props.shellResult?.persisted === false}>
+          <p>Storage is not protected.</p>
+        </Show>
         <p role="status" aria-label="Take offline result">
           <Show when={busy()}>Preparing local rows.</Show>
-          <Show when={result()}>{(value) => <>
-            Saved. Packaging: {value().packaging.count} rows, {value().packaging.bytes} bytes.
-            Location: {value().location.count} rows, {value().location.bytes} bytes.
-            Current as of: {value().packaging.asOf}. Location as of: {value().location.asOf}.
-          </>}</Show>
+          <Show when={result()}>
+            {(value) => (
+              <>
+                Saved. Packaging: {value().packaging.count} rows, {value().packaging.bytes} bytes. Location:{" "}
+                {value().location.count} rows, {value().location.bytes} bytes. Current as of: {value().packaging.asOf}.
+                Location as of: {value().location.asOf}.
+              </>
+            )}
+          </Show>
           {offlineError()}
         </p>
-        <Show when={locations()} keyed>{(source) => <LocalLocations source={source} />}</Show>
+        <Show when={locations()} keyed>
+          {(source) => <LocalLocations source={source} />}
+        </Show>
       </Show>
       <Show when={source.status() === "ready" || currentAt() !== undefined || Object.keys(current).length > 0}>
         <CreatePackaging create={writes.create} locations={locations()?.c} />
@@ -121,15 +155,21 @@ function LocalLocations(props: { source: NonNullable<ReturnType<typeof packaging
     const at = readAt();
     return props.source.currentAt() ?? at;
   });
-  return <Show when={currentAt()}>
-    <p aria-label="Local locations">Location: {Object.keys(rows).length} rows. Current as of: {currentAt()}.</p>
-  </Show>;
+  return (
+    <Show when={currentAt()}>
+      <p aria-label="Local locations">
+        Location: {Object.keys(rows).length} rows. Current as of: {currentAt()}.
+      </p>
+    </Show>
+  );
 }
 
 function LocationPicker(props: { collection: Locations }) {
   const id = createUniqueId();
   const rows = liveRows(props.collection);
-  const ids = createMemo(() => Object.keys(rows).sort((a, b) => rows[a]!.locationCode.localeCompare(rows[b]!.locationCode)));
+  const ids = createMemo(() =>
+    Object.keys(rows).sort((a, b) => rows[a]!.locationCode.localeCompare(rows[b]!.locationCode)),
+  );
   return (
     <>
       <label for={id}>Location</label>
@@ -173,7 +213,15 @@ function CreatePackaging(props: { create: (request: PackagingDraft) => Promise<v
       <label>
         Packaging code <input name="packagingCode" required />
       </label>
-      <Show when={props.locations} keyed fallback={<label>Location id <input name="locationId" required /></label>}>
+      <Show
+        when={props.locations}
+        keyed
+        fallback={
+          <label>
+            Location id <input name="locationId" required />
+          </label>
+        }
+      >
         {(collection) => <LocationPicker collection={collection} />}
       </Show>
       <label>

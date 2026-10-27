@@ -7,7 +7,11 @@ import { applicationConfig } from "../shell/vite.js";
 
 /** Serve the live page and install assets at the application's audience path. */
 export function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
-  if (/^\/urn(?:%3A|:)wamn(?:%3A|:)project-env[^/]+\/(?:live\.html|manifest\.webmanifest|icon\.svg)(?:\?|$)/i.test(request.url ?? "")) {
+  if (
+    /^\/urn(?:%3A|:)wamn(?:%3A|:)project-env[^/]+\/(?:live\.html|manifest\.webmanifest|icon\.svg)(?:\?|$)/i.test(
+      request.url ?? "",
+    )
+  ) {
     request.url = request.url!.replace(/^\/[^/]+\//, "/");
   }
   next();
@@ -23,7 +27,10 @@ function precacheManifest(): Plugin {
       if (chunk?.type !== "chunk") throw new Error("sw.js was not built");
       const files = Object.keys(bundle).filter((name) => name !== "sw.js");
       // Vite copies public assets separately from the bundle.
-      chunk.code = chunk.code.replace("__PRECACHE_MANIFEST__", JSON.stringify(["./", ...files, "manifest.webmanifest", "icon.svg"]));
+      chunk.code = chunk.code.replace(
+        "__PRECACHE_MANIFEST__",
+        JSON.stringify(["./", ...files, "manifest.webmanifest", "icon.svg"]),
+      );
     },
   };
 }
@@ -47,7 +54,7 @@ export default defineConfig(() => {
           live: fileURLToPath(new URL("live.html", import.meta.url)),
           sw: fileURLToPath(new URL("src/sw.ts", import.meta.url)),
         },
-        output: { entryFileNames: (chunk) => chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js" },
+        output: { entryFileNames: (chunk) => (chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js") },
       },
     },
     plugins: [
@@ -67,9 +74,7 @@ export default defineConfig(() => {
     resolve: {
       conditions: ["browser", "development|production"],
       dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals", "@tanstack/db"],
-      alias: application.resolve.alias.filter(
-        ({ find }) => find === "@wamn/web-runtime",
-      ),
+      alias: application.resolve.alias.filter(({ find }) => find === "@wamn/web-runtime"),
     },
     test: { environment: "jsdom", server: { deps: { inline: true as const } } },
   };

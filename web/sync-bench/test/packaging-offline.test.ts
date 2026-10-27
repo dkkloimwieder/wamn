@@ -6,7 +6,13 @@ import { PACKAGING_SHAPE_DIGEST } from "../src/generated/wamn_wms/packaging.js";
 import { LOCATION_SHAPE_DIGEST } from "../src/generated/wamn_wms/location.js";
 import { packagingKey, type PackagingRow, type PackagingScope } from "../src/generated/wamn_wms/packaging.js";
 import { locationKey, type LocationRow } from "../src/generated/wamn_wms/location.js";
-import { collectionBytes, needsConnection, packagingOffline, packagingScope, requireStorage } from "../src/packaging-offline.js";
+import {
+  collectionBytes,
+  needsConnection,
+  packagingOffline,
+  packagingScope,
+  requireStorage,
+} from "../src/packaging-offline.js";
 import { makeRows } from "../src/fake.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -16,10 +22,15 @@ afterEach(async () => {
 });
 
 function fixture() {
-  const rows = makeRows(3).map((row, i) => ({ ...row, status: i === 0 ? "held" as const : "available" as const }));
-  let locations = [{ id: rows[0]!.locationId, locationCode: "LOC-A", rowVersion: 1, description: null, createdAt: rows[0]!.createdAt }] as LocationRow[];
+  const rows = makeRows(3).map((row, i) => ({ ...row, status: i === 0 ? ("held" as const) : ("available" as const) }));
+  let locations = [
+    { id: rows[0]!.locationId, locationCode: "LOC-A", rowVersion: 1, description: null, createdAt: rows[0]!.createdAt },
+  ] as LocationRow[];
   const packaging: Feed<PackagingRow, PackagingScope> = {
-    list: vi.fn(async (scope) => ({ rows: rows.filter((row) => !scope.filter?.status || scope.filter.status.includes(row.status)), cursor: "p1" })),
+    list: vi.fn(async (scope) => ({
+      rows: rows.filter((row) => !scope.filter?.status || scope.filter.status.includes(row.status)),
+      cursor: "p1",
+    })),
     changes: vi.fn(async () => ({ rows: [], next_cursor: "p2", complete: true })),
   };
   const location: Feed<LocationRow, Record<string, never>> = {
@@ -29,18 +40,43 @@ function fixture() {
   const saved = new Map<string, { rows: unknown[]; cursor: string; saved_at: string }>();
   const persistence: Persistence = {
     load: vi.fn(async (key) => saved.get(key)),
-    save: vi.fn(async (key, rows, cursor) => { saved.set(key, { rows, cursor, saved_at: new Date().toISOString() }); }),
-    remove: vi.fn(async (key) => { saved.delete(key); }),
+    save: vi.fn(async (key, rows, cursor) => {
+      saved.set(key, { rows, cursor, saved_at: new Date().toISOString() });
+    }),
+    remove: vi.fn(async (key) => {
+      saved.delete(key);
+    }),
   };
   const estimate = vi.fn(async () => ({ quota: 100_000_000, usage: 0 }));
   let online = true;
   function open(scope: PackagingScope = {}) {
-    const model = packagingOffline({ packaging, location, scope, persistence, estimate, online: () => online, pollMs: 1_000_000 });
+    const model = packagingOffline({
+      packaging,
+      location,
+      scope,
+      persistence,
+      estimate,
+      online: () => online,
+      pollMs: 1_000_000,
+    });
     cleanups.push(model.close);
     return model;
   }
-  return { rows, packaging, location, saved, persistence, estimate, open,
-    locations: (value: LocationRow[]) => { locations = value; }, offline: () => { online = false; } };
+  return {
+    rows,
+    packaging,
+    location,
+    saved,
+    persistence,
+    estimate,
+    open,
+    locations: (value: LocationRow[]) => {
+      locations = value;
+    },
+    offline: () => {
+      online = false;
+    },
+  };
 }
 
 it("fills the filter scope and the whole location model, then follows both feeds", async () => {
@@ -65,7 +101,9 @@ it("fills the filter scope and the whole location model, then follows both feeds
 });
 
 it("refuses before filling when free space lacks 20% headroom and reports needed bytes", async () => {
-  expect(() => requireStorage(1000, { usage: 1, quota: 1200 })).toThrow("Need 1200 bytes including 20% headroom; 1199 bytes available.");
+  expect(() => requireStorage(1000, { usage: 1, quota: 1200 })).toThrow(
+    "Need 1200 bytes including 20% headroom; 1199 bytes available.",
+  );
   expect(requireStorage(1000, { usage: 1, quota: 1201 })).toBe(1200);
   const h = fixture();
   const model = h.open();

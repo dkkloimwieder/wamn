@@ -4,8 +4,20 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@solidjs/testing-library";
 import { Loading, flush } from "solid-js";
 import { outbox, shell, type Change, type OperationCall, type Reply } from "@wfe/sync";
-import { createCall, createSend, createTransport, outboxDatabase, requestHash, rowsPersistence } from "@wamn/web-runtime";
-import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "../src/generated/wamn_wms/packaging.js";
+import {
+  createCall,
+  createSend,
+  createTransport,
+  outboxDatabase,
+  requestHash,
+  rowsPersistence,
+} from "@wamn/web-runtime";
+import {
+  create,
+  PACKAGING_CREATE_ROUTE,
+  PACKAGING_SHAPE_DIGEST,
+  type PackagingCreateRequest,
+} from "../src/generated/wamn_wms/packaging.js";
 import { packagingCollection, packagingKey, type PackagingRow } from "../src/generated/wamn_wms/packaging.js";
 import { packagingAddress } from "../src/packaging-writes.js";
 import { PackagingScreen } from "../src/packaging-screen.js";
@@ -107,7 +119,9 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
     row,
     submit,
     changes,
-    failRead: (error: Error | undefined) => { readFailure = error; },
+    failRead: (error: Error | undefined) => {
+      readFailure = error;
+    },
     net,
     send,
     persisted,
@@ -218,7 +232,9 @@ it("keeps a create tentative when its feed echo arrives before the successful re
   h.net.up = true;
   await h.o.replay();
   expect(h.send).toHaveBeenCalledOnce();
-  await waitFor(() => expect(h.getByRole("form", { name: "Create packaging" }).querySelector("output")?.textContent).toBe("Recorded"));
+  await waitFor(() =>
+    expect(h.getByRole("form", { name: "Create packaging" }).querySelector("output")?.textContent).toBe("Recorded"),
+  );
   const id = entry.expect.id;
   const data = { ...makeRows(1)[0]!, ...(entry.request as object), id };
   h.changes.push({ id, row_version: 1, deleted: false, data });
@@ -337,7 +353,9 @@ it("paints saved rows and recovered tentative creates before the list resolves, 
     append_only: true,
   });
   let failList!: (reason: Error) => void;
-  const list = new Promise<never>((_resolve, reject) => { failList = reject; });
+  const list = new Promise<never>((_resolve, reject) => {
+    failList = reject;
+  });
   const h = await mounted({ call, row, list });
   await waitFor(() => expect(h.row(row.id)?.textContent).toContain(row.packagingCode));
   await waitFor(() => expect(h.row(id)?.textContent).toContain("RECOVERED (tentative)"));

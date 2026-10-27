@@ -3,8 +3,22 @@ import { render } from "@solidjs/web";
 import { Theme } from "@wfe/components";
 import { outbox, outboxStatus, shell, type ShellResult } from "@wfe/sync";
 import "@wfe/components/styles.css";
-import { createSend, createTransport, keepSession, outboxDatabase, renew, rowsDatabase, rowsPersistence, type SessionState } from "@wamn/web-runtime";
-import { create, PACKAGING_CREATE_ROUTE, PACKAGING_SHAPE_DIGEST, type PackagingCreateRequest } from "./generated/wamn_wms/packaging.js";
+import {
+  createSend,
+  createTransport,
+  keepSession,
+  outboxDatabase,
+  renew,
+  rowsDatabase,
+  rowsPersistence,
+  type SessionState,
+} from "@wamn/web-runtime";
+import {
+  create,
+  PACKAGING_CREATE_ROUTE,
+  PACKAGING_SHAPE_DIGEST,
+  type PackagingCreateRequest,
+} from "./generated/wamn_wms/packaging.js";
 import { packagingFeed } from "./generated/wamn_wms/packaging.js";
 import { LOCATION_SHAPE_DIGEST } from "./generated/wamn_wms/location.js";
 import { locationFeed } from "./generated/wamn_wms/location.js";
@@ -41,8 +55,8 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
   });
   const o = outbox({
     database: outboxDatabase(address.application, address.environment, userId),
-    send: (entry, signal) => props.signedIn ? send(entry, signal) : Promise.resolve({ ok: false, retriable: true }),
-    probe: async () => props.signedIn && await transport.probe(),
+    send: (entry, signal) => (props.signedIn ? send(entry, signal) : Promise.resolve({ ok: false, retriable: true })),
+    probe: async () => props.signedIn && (await transport.probe()),
   });
   const counts = outboxStatus(o);
   const [outboxReady, setOutboxReady] = createSignal(false);
@@ -53,27 +67,49 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
     if (initialCounts) initialCounts = false;
     else setOutboxReady(true);
   });
-  createEffect(() => ({ reload: waitingReload(), ready: outboxReady(), counts: counts() }), ({ reload, ready, counts }) => {
-    if (reload && ready && canReload(counts)) reload();
-  });
-  const persistence = rowsPersistence(rowsDatabase(address.application, address.environment, userId), [PACKAGING_SHAPE_DIGEST, LOCATION_SHAPE_DIGEST]);
+  createEffect(
+    () => ({ reload: waitingReload(), ready: outboxReady(), counts: counts() }),
+    ({ reload, ready, counts }) => {
+      if (reload && ready && canReload(counts)) reload();
+    },
+  );
+  const persistence = rowsPersistence(rowsDatabase(address.application, address.environment, userId), [
+    PACKAGING_SHAPE_DIGEST,
+    LOCATION_SHAPE_DIGEST,
+  ]);
   const selected = new URLSearchParams(location.search).get("status");
-  const [filter, setFilter] = createSignal<StatusFilter>(selected === "available" || selected === "held" || selected === "consumed" ? selected : "all");
+  const [filter, setFilter] = createSignal<StatusFilter>(
+    selected === "available" || selected === "held" || selected === "consumed" ? selected : "all",
+  );
   function ScopedPackaging(props: { filter: StatusFilter }) {
     const scope = props.filter;
     const offline = packagingOffline({
       packaging: packagingFeed(transport, Infinity),
       location: locationFeed(transport, Infinity),
-      scope: packagingScope(scope), persistence, pollMs,
+      scope: packagingScope(scope),
+      persistence,
+      pollMs,
     });
     onCleanup(() => queueMicrotask(() => void offline.close()));
-    return <PackagingScreen collection={offline.packaging.c} outbox={o} filter={scope} offline={offline}
-      signedIn={signedIn()} updateAvailable={waitingReload() !== undefined} shellResult={shellResult()} />;
+    return (
+      <PackagingScreen
+        collection={offline.packaging.c}
+        outbox={o}
+        filter={scope}
+        offline={offline}
+        signedIn={signedIn()}
+        updateAvailable={waitingReload() !== undefined}
+        shellResult={shellResult()}
+      />
+    );
   }
   const signedIn = () => props.signedIn;
-  createEffect(() => props.signedIn, (signedIn) => {
-    if (signedIn) void o.replay().catch(() => undefined);
-  });
+  createEffect(
+    () => props.signedIn,
+    (signedIn) => {
+      if (signedIn) void o.replay().catch(() => undefined);
+    },
+  );
   onCleanup(() => {
     stopReady();
     o.close();
@@ -81,17 +117,27 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
   return (
     <div>
       <label for="packaging-status">Packaging status</label>
-      <select id="packaging-status" value={filter()} onChange={(event) => {
-        const status = event.currentTarget.value as StatusFilter;
-        const url = new URL(location.href);
-        url.searchParams.set("status", status);
-        history.replaceState(null, "", url);
-        setFilter(status);
-      }}>
-        <option value="all">all</option><option value="available">available</option>
-        <option value="held">held</option><option value="consumed">consumed</option>
+      <select
+        id="packaging-status"
+        value={filter()}
+        onChange={(event) => {
+          const status = event.currentTarget.value as StatusFilter;
+          const url = new URL(location.href);
+          url.searchParams.set("status", status);
+          history.replaceState(null, "", url);
+          setFilter(status);
+        }}
+      >
+        <option value="all">all</option>
+        <option value="available">available</option>
+        <option value="held">held</option>
+        <option value="consumed">consumed</option>
       </select>
-      <Loading><Show when={filter()} keyed>{(status) => <ScopedPackaging filter={status} />}</Show></Loading>
+      <Loading>
+        <Show when={filter()} keyed>
+          {(status) => <ScopedPackaging filter={status} />}
+        </Show>
+      </Loading>
     </div>
   );
 }
@@ -106,8 +152,8 @@ function App() {
   };
   const options = {
     aud: address.aud,
-    fetch: ((...args: Parameters<typeof fetch>) => navigator.onLine
-      ? fetch(...args) : Promise.reject(new Error("needs a connection"))) as typeof fetch,
+    fetch: ((...args: Parameters<typeof fetch>) =>
+      navigator.onLine ? fetch(...args) : Promise.reject(new Error("needs a connection"))) as typeof fetch,
     onState: (next: SessionState) => {
       setState(next);
       if (next.status === "signedIn") {
@@ -157,7 +203,9 @@ function App() {
         </form>
       </Show>
       <main class="bench-shapes">
-        <Show when={!userId() && !navigator.onLine}><p>needs a connection</p></Show>
+        <Show when={!userId() && !navigator.onLine}>
+          <p>needs a connection</p>
+        </Show>
         <Show when={userId()} keyed>
           {(id) => <SessionPackaging userId={id} signedIn={signedIn(id)} onRenew={options.onState} />}
         </Show>

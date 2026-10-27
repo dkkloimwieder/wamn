@@ -16,8 +16,12 @@ it("restores only the last user of the same application and environment", () => 
 });
 
 it("allows the page to open when local storage refuses access", () => {
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("denied"); });
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("denied"); });
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("denied");
+  });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("denied");
+  });
   expect(savedUser("wms", "dev").load()).toBeUndefined();
   expect(() => savedUser("wms", "dev").save("user")).not.toThrow();
 });

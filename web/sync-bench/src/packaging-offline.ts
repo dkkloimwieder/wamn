@@ -40,8 +40,13 @@ function modelRows<T extends Row>(rows: T[]): T[] {
  * wfe gaps wamn-qio9a (network list after restore when offline) and
  * wamn-4qimg (empty saved collection and saved_at not restored). */
 function storedCollection<T extends Row & { rowVersion: number }, S>(
-  feed: Feed<T, S>, scope: S, key: string, persistence: Persistence, pollMs: number,
-  online: () => boolean, initial?: Page<T>,
+  feed: Feed<T, S>,
+  scope: S,
+  key: string,
+  persistence: Persistence,
+  pollMs: number,
+  online: () => boolean,
+  initial?: Page<T>,
 ) {
   let staged = initial;
   let cursor = "";
@@ -63,31 +68,35 @@ function storedCollection<T extends Row & { rowVersion: number }, S>(
       }
     },
   };
-  const c = collection<T, S>({
-    async list(scope, signal) {
-      let page = staged;
-      if (page === undefined && !online()) {
-        const entry = await persistence.load(key);
-        local = entry !== undefined;
-        if (!entry) throw new Error("needs a connection");
-        asOf = entry.saved_at;
-        page = { rows: entry.rows as T[], cursor: entry.cursor, complete: true };
-      } else {
-        page ??= await feed.list(scope, signal);
+  const c = collection<T, S>(
+    {
+      async list(scope, signal) {
+        let page = staged;
+        if (page === undefined && !online()) {
+          const entry = await persistence.load(key);
+          local = entry !== undefined;
+          if (!entry) throw new Error("needs a connection");
+          asOf = entry.saved_at;
+          page = { rows: entry.rows as T[], cursor: entry.cursor, complete: true };
+        } else {
+          page ??= await feed.list(scope, signal);
+          asOf = new Date().toISOString();
+        }
+        cursor = page.cursor;
+        return page;
+      },
+      moved: async () => online(),
+      async changes(scope, since, limit, signal) {
+        if (!online()) return { rows: [], next_cursor: since, complete: true };
+        const page = await feed.changes(scope, since, limit, signal);
+        cursor = page.next_cursor;
         asOf = new Date().toISOString();
-      }
-      cursor = page.cursor;
-      return page;
+        return page;
+      },
     },
-    moved: async () => online(),
-    async changes(scope, since, limit, signal) {
-      if (!online()) return { rows: [], next_cursor: since, complete: true };
-      const page = await feed.changes(scope, since, limit, signal);
-      cursor = page.next_cursor;
-      asOf = new Date().toISOString();
-      return page;
-    },
-  }, scope, { key, persistence: saved, pollMs, version: (row) => row.rowVersion });
+    scope,
+    { key, persistence: saved, pollMs, version: (row) => row.rowVersion },
+  );
   return {
     c,
     currentAt: () => asOf,
@@ -131,12 +140,18 @@ export function packagingOffline(options: {
   type Locations = ReturnType<typeof storedCollection<LocationRow, Record<string, never>>>;
   let location: Locations | undefined;
   let closed = false;
-  const restored = persistence.load(locationKey({})).then((entry) => {
-    if (entry && !closed) location = storedCollection(options.location, {}, locationKey({}), persistence, pollMs, online);
-  }).catch(() => undefined);
+  const restored = persistence
+    .load(locationKey({}))
+    .then((entry) => {
+      if (entry && !closed)
+        location = storedCollection(options.location, {}, locationKey({}), persistence, pollMs, online);
+    })
+    .catch(() => undefined);
   return {
     packaging,
-    get location() { return location; },
+    get location() {
+      return location;
+    },
     restored,
     async takeOffline(): Promise<OfflineResult> {
       if (!online()) throw new Error("needs a connection");

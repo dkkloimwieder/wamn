@@ -19,8 +19,11 @@ it("drops obsolete model shapes, keeps unchanged rows and leaves the outbox inta
   };
   const before = outbox(options);
   const entry = await before.enqueue({
-    operation: "packaging.create", request: { label: "old shape" },
-    request_hash: "hash", expect: { model: "packaging", id: "pending" }, append_only: true,
+    operation: "packaging.create",
+    request: { label: "old shape" },
+    request_hash: "hash",
+    expect: { model: "packaging", id: "pending" },
+    append_only: true,
   });
   before.close();
   const next = rowsPersistence(database, ["shape-new", "shape-location"]);
@@ -62,9 +65,19 @@ it("isolates application, environment and user databases", async () => {
   const user = crypto.randomUUID();
   const name = rowsDatabase("wms", "dev", user);
   expect(name).toBe(`wamn-rows:wms:dev:${user}`);
-  await rowsPersistence(name, ["shape-a"]).save(collectionKey("packaging", "shape-a", "{}"), [{ id: "private" }], "cursor");
-  for (const database of [rowsDatabase("other", "dev", user), rowsDatabase("wms", "prod", user), rowsDatabase("wms", "dev", "other")]) {
-    expect(await rowsPersistence(database, ["shape-a"]).load(collectionKey("packaging", "shape-a", "{}"))).toBeUndefined();
+  await rowsPersistence(name, ["shape-a"]).save(
+    collectionKey("packaging", "shape-a", "{}"),
+    [{ id: "private" }],
+    "cursor",
+  );
+  for (const database of [
+    rowsDatabase("other", "dev", user),
+    rowsDatabase("wms", "prod", user),
+    rowsDatabase("wms", "dev", "other"),
+  ]) {
+    expect(
+      await rowsPersistence(database, ["shape-a"]).load(collectionKey("packaging", "shape-a", "{}")),
+    ).toBeUndefined();
   }
 });
 
@@ -80,5 +93,8 @@ it("rejects a failed transaction and keeps the previous snapshot", async () => {
   } finally {
     put.mockRestore();
   }
-  expect(await persistence.load(collectionKey("packaging", "shape-a", "{}"))).toMatchObject({ rows: [{ id: "saved" }], cursor: "old" });
+  expect(await persistence.load(collectionKey("packaging", "shape-a", "{}"))).toMatchObject({
+    rows: [{ id: "saved" }],
+    cursor: "old",
+  });
 });
