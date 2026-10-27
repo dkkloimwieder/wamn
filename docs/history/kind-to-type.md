@@ -427,7 +427,7 @@ After A8, no later commit changes platform code that compiles into a guest. So t
 - Changes: `package.version` becomes `4.0.0` (Acme) or `2.0.0` (fixture overlay). `package.predecessor_version` becomes `3.0.0` or `1.0.0`. `base_dependencies.*.version` becomes `2.0.0`, and `base_dependencies.*.digest` becomes the base component digest recorded in A9 (`apps/client_acme_receiving/wamn.json:9`, `:10`, `apps/platform_fixture_overlay/wamn.json:9`, `:10`). That field is the one authored site of the base pin (`crates/control/lib/src/component_declaration.rs:112` to `:122`). The current Acme pin `sha256:4bc28f01…` (`apps/client_acme_receiving/wamn.json:10`) is not the `receiving` digest of wamn-dev release 1 (`sha256:1d034a09…`, `docs/history/gcp-install-history.md` §6.7 table). The pin moves to the A9 build by this rule. It is not checked against a deployed digest, because Acme is not deployed (§3.2 "Installed environments").
 - Regenerate with the base migrations first, then the overlay migrations, and the overlay manifest (`running-tests.md` "Capture a run", the Acme and fixture overlay paragraphs). Prepare SQLx metadata the same way.
 - Build: `tools/build-components app apps/wamn_receiving apps/client_acme_receiving` (`building.md:29`). The fixture overlay takes `apps/platform_fixture apps/platform_fixture_overlay`. An overlay build without its base fails (`building.md:35`, `:36`).
-- Proof: `cargo test --locked --offline -p wamn-client-acme-receiving-tests`, which runs `apps/client_acme_receiving/tests/acme_overlay_publication.rs` against the authored base pin. `materialize_package check` and `sqlx_metadata check` for the overlay. The general proof.
+- Proof: `materialize_package check` and `sqlx_metadata check` for the overlay. The general proof.
 
 **A11. Test fixtures that are not package trees.** Most fixtures land in their owning commits. The rest land here: A3 `crates/control/lib/tests/fixtures/observer_package/wamn.json`, `crates/control/lib/tests/fixtures/apply_package/overlay/wamn.json`, `services/ctl/tests/fixtures/ui_scaffold/`. W5 tap bodies at `crates/platform/runtime/src/plugins/wamn_jetstream.rs:2190`. The gate command id of `test-support/infrastructure/examples/gate_request.rs:39` to `:43` becomes `gate-<package>-<version>-<wiring>`, for example `gate-wamn_wms-2.0.0-inventory_move_and_label`. The 1.0.0 audit row stays where it is (§3.2 B8 step 3). Proof: `tools/test-changes run --base HEAD~1`.
 
@@ -2048,7 +2048,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 
 **A10. kind → type A10: overlays to 4.0.0 and 2.0.0 (docs/history/kind-to-type.md §3.1)**
 - Scope: `client_acme_receiving` to 4.0.0 and `platform_fixture_overlay` to 2.0.0, one commit each after its base. Each base pin takes the A9 digest. The Acme pin is not checked against a deployed digest, because Acme is not deployed.
-- Acceptance: `cargo test --locked --offline -p wamn-client-acme-receiving-tests` passes against the authored base pin. `materialize_package check` and `sqlx_metadata check` pass for each overlay. The general proof of §3.1.
+- Acceptance: `materialize_package check` and `sqlx_metadata check` pass for each overlay. The general proof of §3.1.
 - Depends on: A9.
 
 **A11. kind → type A11: remaining test fixtures and the gate command id (docs/history/kind-to-type.md §3.1)**

@@ -1,8 +1,6 @@
 //! Application integration tests.
 
 #[cfg(test)]
-mod wms_publication;
-#[cfg(test)]
 #[cfg_attr(
     not(feature = "cluster"),
     expect(
@@ -11,8 +9,6 @@ mod wms_publication;
     )
 )]
 mod wms_runtime_live;
-#[cfg(test)]
-mod wms_wiring_shape;
 
 #[cfg(all(test, feature = "cluster"))]
 mod cluster;

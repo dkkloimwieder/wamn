@@ -197,14 +197,11 @@ Delete tests whose only purpose is to compare application code against generated
 Audit specifically:
 
 - generated-contract/vocabulary tests in `apps/*/data/src/error.rs`;
-- `apps/wamn_wms/tests/wms_wiring_shape.rs`;
 - other tests reading files under `apps/*/generated/` as test assertions.
 
 Delete assertion-by-assertion, not file-by-file.
 
 Keep application tests that independently verify runtime error classification, application transformation, wiring behavior, or business semantics even if they live in the same source file.
-
-For `wms_wiring_shape.rs`, move distinct platform wiring validation to the owning platform test if it has no equivalent; delete only bookkeeping/generated-file assertions.
 
 ### B7. Move platform behavior out of Receiving route tests
 

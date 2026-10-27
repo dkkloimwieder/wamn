@@ -31,7 +31,6 @@ Measured on `main` at `e1d076e43` on 2026-09-29.
 | Authored declarations | `publication/components/*.json.in` spells the sealed id in each operation key, `registered-operation` and `pre-commit`, and repeats the version in `scope.package-version`. |
 | Wirings | A wiring node names an application operation by its sealed id, for example `apps/client_acme_receiving/publication/wirings/`. |
 | Web routes | `web/src/routes.tsx` keys `onOpen` and `onFill` by the sealed id, for example `apps/wamn_wms/web/src/routes.tsx:68`. |
-| Tests | Application tests spell sealed ids as constants, for example `apps/client_acme_receiving/tests/acme_overlay_publication.rs:17-35`. |
 | Readers | `read_package_attachments` and `render_declaration_document` merge the authored file with the generated file (`crates/schema/generator/src/route_schema.rs`, `crates/control/lib/src/component_declaration.rs`). `resolve_attachment` checks a definition hash and resolves an input schema reference (`route_schema.rs:219-243`). None of them resolves an operation id. |
 | Count | 1,416 sealed ids under `apps/`. Most are generated. The authored ones are in the places above. |
 

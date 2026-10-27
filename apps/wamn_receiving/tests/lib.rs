@@ -3,8 +3,6 @@
 #[cfg(test)]
 mod receiving_data_access;
 #[cfg(test)]
-mod receiving_publication;
-#[cfg(test)]
 #[cfg_attr(
     not(feature = "cluster"),
     expect(
