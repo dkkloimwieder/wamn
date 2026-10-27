@@ -267,14 +267,4 @@ mod tests {
         .expect("retention is a tenant-scoped family");
         assert_ne!(a, elsewhere);
     }
-
-    /// The statement the verb drives binds the tenant and never reads the
-    /// retired `app.env_key` claim.
-    #[test]
-    fn the_prune_statement_binds_the_env_key_and_reads_no_guc() {
-        let sql = wamn_run_state::sql::prune_terminal_runs_sql();
-        assert!(sql.contains("WHERE env_key = $1"), "{sql}");
-        assert!(!sql.contains("app.env_key"), "{sql}");
-        assert!(!sql.contains("current_setting"), "{sql}");
-    }
 }

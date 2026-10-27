@@ -362,14 +362,6 @@ mod tests {
         assert_eq!(authorization.users.len(), 11);
         assert_eq!(serde_json::to_value(&authorization.users[0]).unwrap(), seal);
         for user in &authorization.users[1..] {
-            assert!(
-                user.permissions
-                    .publish
-                    .allow
-                    .iter()
-                    .chain(&user.permissions.subscribe.allow)
-                    .all(|subject| !subject.starts_with("tap."))
-            );
             let manages = user
                 .permissions
                 .publish

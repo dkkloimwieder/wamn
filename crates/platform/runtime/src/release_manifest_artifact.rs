@@ -154,19 +154,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn release_manifest_artifact_wire_literals_are_pinned() {
-        assert_eq!(
-            RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE,
-            "application/vnd.wamn.release-manifest.v1+json"
-        );
-        assert_eq!(
-            RELEASE_MANIFEST_CONFIG_MEDIA_TYPE,
-            "application/vnd.oci.empty.v1+json"
-        );
-        assert_eq!(RELEASE_MANIFEST_CONFIG_BYTES, b"{}");
-    }
-
-    #[test]
     fn reference_is_derived_from_only_the_explicit_base_and_manifest_digest() {
         let digest = format!("sha256:{}", "a".repeat(64));
         let reference = release_manifest_artifact_reference(

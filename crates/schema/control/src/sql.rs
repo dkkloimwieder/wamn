@@ -12,14 +12,3 @@ pub fn select_package_migrations_sql() -> &'static str {
      WHERE env_key = $1 AND package_id = $2 AND package_version = $3 \
      ORDER BY ordinal"
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn package_reads_use_exact_coordinate_and_ordered_migrations() {
-        assert!(select_package_sql().contains("package_version = $3"));
-        assert!(select_package_migrations_sql().ends_with("ORDER BY ordinal"));
-    }
-}

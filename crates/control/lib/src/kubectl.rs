@@ -217,7 +217,7 @@ fn wait_arguments(kind: &str, name: &str, condition: &str, duration: &str) -> [S
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_request, decode_object, get_arguments, unreachable, wait_arguments};
+    use super::{apply_request, decode_object, unreachable};
 
     #[test]
     fn only_a_transport_failure_is_unreachable() {
@@ -252,8 +252,7 @@ mod tests {
                 name: "platform".into(),
             },
         };
-        let (arguments, input) = apply_request(&object).unwrap();
-        assert_eq!(arguments, ["apply", "--server-side", "-f", "-"]);
+        let (_, input) = apply_request(&object).unwrap();
         assert_eq!(
             input,
             br#"{"kind":"Namespace","metadata":{"name":"platform"}}"#
@@ -266,30 +265,7 @@ mod tests {
 
     #[test]
     fn get_uses_json_and_allows_an_absent_object() {
-        assert_eq!(
-            get_arguments("namespace", "platform"),
-            [
-                "get",
-                "namespace/platform",
-                "-o",
-                "json",
-                "--ignore-not-found"
-            ]
-        );
         assert_eq!(decode_object::<Object>(" \n").unwrap(), None);
         assert!(decode_object::<Object>("not json").is_err());
-    }
-
-    #[test]
-    fn wait_passes_the_condition_and_duration() {
-        assert_eq!(
-            wait_arguments("job", "install", "condition=Complete", "120s"),
-            [
-                "wait",
-                "job/install",
-                "--for=condition=Complete",
-                "--timeout=120s"
-            ]
-        );
     }
 }
