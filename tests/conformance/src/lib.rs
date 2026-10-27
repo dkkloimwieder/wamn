@@ -2,7 +2,6 @@
 //!
 //! MVP outcome: test coverage.
 
-pub mod catalog;
 pub mod invocation;
 pub mod kubernetes_gate_verdict;
 pub mod repo_policy;

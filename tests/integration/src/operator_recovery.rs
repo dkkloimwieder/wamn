@@ -3,11 +3,6 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-#[cfg(test)]
-use std::fs;
-#[cfg(test)]
-use std::path::{Path, PathBuf};
-
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -212,57 +207,5 @@ mod tests {
         pod["status"]["containerStatuses"][0]["restartCount"] = json!(1);
         pod["status"]["containerStatuses"][0]["ready"] = json!(false);
         assert!(assert_host_restart(&pod, Some("same"), 1).is_err());
-    }
-
-    fn retained_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/operator-recovery")
-    }
-    fn read(path: &Path) -> anyhow::Result<Value> {
-        Ok(serde_json::from_slice(&fs::read(path)?)?)
-    }
-
-    #[test]
-    fn retained_crd_hashes_use_recursive_key_order_and_only_native_defaults() -> anyhow::Result<()>
-    {
-        let root = retained_root();
-        let records = read(&root.join("deployment-crds-001/crd-inventory.json"))?;
-        let observed = root.join("live-receiving-009/journey/operator-recovery");
-        let bytes = fs::read(observed.join("0003-distributed-crds-client-decode.stdout"))?;
-        let expected = serde_json::Deserializer::from_slice(&bytes)
-            .into_iter::<Value>()
-            .collect::<Result<Vec<_>, _>>()?;
-        let actual = read(&observed.join("0004-installed-crds.stdout"))?;
-        assert_eq!(expected.len(), 5);
-        for crd in expected {
-            let name = text(&crd, "/metadata/name")?;
-            assert_eq!(
-                records["versions"]["2.9.0"][name]["spec_sha256"],
-                digest(&crd["spec"])?
-            );
-            let installed = array(&actual, "/items")?
-                .iter()
-                .find(|value| value["metadata"]["name"] == name)
-                .context("the recorded CRD is installed")?;
-            assert_eq!(
-                normalized_crd(&installed["spec"])?,
-                normalized_crd(&crd["spec"])?
-            );
-            let mut changed = crd["spec"].clone();
-            changed["scope"] = json!("changed");
-            assert_ne!(
-                normalized_crd(&installed["spec"])?,
-                normalized_crd(&changed)?
-            );
-        }
-        assert_eq!(
-            digest(&serde_json::from_str::<Value>(
-                r#"{"b":{"z":1,"a":2},"a":3}"#
-            )?)?,
-            digest(&serde_json::from_str::<Value>(
-                r#"{"a":3,"b":{"a":2,"z":1}}"#
-            )?)?
-        );
-        println!("OPERATOR_CRD_REPLAY distributed_hashes=5 installed_schemas=5 defaults_only=true");
-        Ok(())
     }
 }

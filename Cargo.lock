@@ -5734,7 +5734,6 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
- "wamn-catalog",
  "wamn-component-policy",
  "wamn-engine",
  "wamn-execution-contract",

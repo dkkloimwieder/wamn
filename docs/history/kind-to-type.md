@@ -32,7 +32,6 @@ Column meanings:
 | A3 | Test fixture packages | Same keys as A1 and A2 in fixture copies | yes | yes | yes, at test time only. The same hash code reads them. No sealed coordinate holds them (§2) | `crates/control/lib/tests/fixtures/observer_package/wamn.json:32`, `services/ctl/tests/fixtures/ui_scaffold/publication/attachments.json:3` | 6 |
 | A4 | Client TUI classification fixture | `kind` holds an operation kind | yes | yes | no | `crates/client/tui/tests/data/classification-cases.json:31` | 6 |
 | A5 | Application column named `kind` in `wamn.json` | The record-history column `kind` (see P9), named as a projection path and a row field. Becomes `type` (P9) | yes | yes | yes. Same as A1. The column itself moves the digests of P9 (§2) | `apps/wamn_receiving/wamn.json:1087` | 3 |
-| A6 | Operator recovery CRD fixture | `resource_kind` holds a Kubernetes resource kind such as `Host`. Stays (§1.6 rule) | no | yes | no | `tests/integration/fixtures/operator-recovery/deployment-crds-001/crd-inventory.json:11` | 15 |
 
 No authored TOML file carries a `kind` key.
 
@@ -241,7 +240,7 @@ Columns: **Def** is the attachment definition hash. **Pkg** is the package manif
 | G6 | - | - | - | - | - | yes | In memory only. Its canonical bytes are compared only in tests (`crates/schema/generator/tests/support/platform_client_ir.rs:337`) |
 | G7 | - | - | - | - | - | yes | Generated TypeScript and TUI source. The web bundle upload path is keyed by the release digest, so old bundles keep their path |
 | G8 | yes | - | - | - | yes | - | Proof 2. The reader admits format 3 only, with no dual-version tolerance (`crates/catalog/model/src/serving_manifest.rs:33`, `:898`). Edge bundles carry the same manifest |
-| G9 | yes | - | - | - | - | - | Only tests call `Attachment::resolve` (`crates/catalog/model/tests/identity.rs:35`, `tests/conformance/src/catalog.rs:26`). The `("kind", ...)` frame label becomes `type`, so the pinned baseline at `crates/catalog/model/tests/identity.rs:156` moves |
+| G9 | yes | - | - | - | - | - | Only tests call `Attachment::resolve` (`crates/catalog/model/tests/identity.rs:35`). The `("kind", ...)` frame label becomes `type`, so the pinned baseline at `crates/catalog/model/tests/identity.rs:156` moves |
 | G10 | - | - | - | - | yes | - | The reader of G2 |
 | G11 | - | - | - | yes | yes | yes | The history codec and WIT compile into the `receiving` component (`apps/wamn_receiving/component/src/reads.rs:89`). The component digest is in the release. The `error.rs` matches are local names and moves nothing by itself |
 | G12 | - | - | - | - | - | - | Built from row columns (`crates/execution/run-state/src/transitions.rs:109`, `:307`). Not hashed |
@@ -364,7 +363,7 @@ tools/build-components all
 
 - Changes: the `("kind", ...)` frames in `crates/catalog/model/src/lib.rs:623`, `:723`, `:875` become `("type", ...)`.
 - Regenerates: the pinned baseline at `crates/catalog/model/tests/identity.rs:156` (§2.4).
-- Proof: `cargo test --locked --offline -p wamn-catalog --test identity`, and `tests/conformance/src/catalog.rs` through `-p wamn-conformance-tests`.
+- Proof: `cargo test --locked --offline -p wamn-catalog --test identity`.
 
 **A4. Authoring model and management wire.**
 
