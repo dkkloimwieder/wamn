@@ -78,7 +78,10 @@ The same rule applies to contract-diff, owned delivery, and the upstream release
 It preserves command failures and refuses absent or entirely ignored test results.
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
-`tools/test-changes` is the broad check before integration.
+`tools/test-changes` is the broad check before integration, and it runs once per merge.
+The merge train runs it through `tools/train-run` on the combined head.
+A lane does not run it before handoff.
+A lane runs only fmt, Clippy and the tests of the packages that it changed.
 
 `tools/train-run REF [--base BASE]` tests a committed revision in a fresh detached worktree at `/var/tmp/wamn-train/worktree`.
 Its default base is the merge base of `REF` and `origin/main`.
