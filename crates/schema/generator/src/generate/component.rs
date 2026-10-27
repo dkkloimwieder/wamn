@@ -219,6 +219,11 @@ fn handler(
             // A request with the feed part reads the changes since its
             // cursor; one without it reads a page and its feed cursor.
             let body = if feed {
+                let change_id = if key == crate::key::KeyType::Uuid {
+                    "change.id.0"
+                } else {
+                    "change.id"
+                };
                 format!(
                     "{input}\
                      if let Some(part) = request.feed {{\n\
@@ -229,7 +234,7 @@ fn handler(
                      let changes = model::changes(connection, input, part).await.map_err(refuse)?;\n\
                      return Ok(contract::{contract}Result::Changes(contract::{contract}Changes {{\n\
                      rows: changes.rows.into_iter().map(|change| contract::{contract}Change {{\n\
-                     id: change.id,\n\
+                     id: {change_id},\n\
                      row_version: change.row_version,\n\
                      data: change.data.map(|row| codec::row!(row, contract::{contract}Row)),\n\
                      }}).collect(),\n\

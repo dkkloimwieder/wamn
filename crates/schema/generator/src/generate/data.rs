@@ -553,11 +553,6 @@ fn emit_query(
         .expect("query validation requires pagination");
     let tie_breaker = field_name(&pagination.tie_breaker.field);
     let id_type = key_type(table).expect("validation resolved the model key");
-    let encode_cursor = if id_type == KeyType::Uuid {
-        "encode"
-    } else {
-        "id::encode_with_id"
-    };
 
     // The request: one member for each filter, the search, the sort, the
     // cursor, and the limit the codec filled.
@@ -613,21 +608,17 @@ fn emit_query(
         let key_column = column(table, field).expect("validation resolved the sort field");
         let key_type = cursor_key_type(key_column.column_type());
         let key_member = field_name(field);
-        let decode_cursor = if id_type == KeyType::Uuid {
-            format!("decode::<{key_type}>")
-        } else {
-            format!(
-                "id::decode_with_id::<{key_type}, {}>",
-                request_type(id_type.column_type())
-            )
-        };
+        let decode_cursor = format!(
+            "id::decode_with_id::<{key_type}, {}>",
+            cursor_key_type(id_type.column_type())
+        );
         let encode = if key_column.nullable() {
             format!(
-                "row.{key_member}.as_ref().ok_or(Invalid).and_then(|key| cursor::{encode_cursor}({field:?}, {direction_type}, key, &row.{tie_breaker}))"
+                "row.{key_member}.as_ref().ok_or(Invalid).and_then(|key| cursor::id::encode_with_id({field:?}, {direction_type}, key, &row.{tie_breaker}))"
             )
         } else {
             format!(
-                "cursor::{encode_cursor}({field:?}, {direction_type}, &row.{key_member}, &row.{tie_breaker})"
+                "cursor::id::encode_with_id({field:?}, {direction_type}, &row.{key_member}, &row.{tie_breaker})"
             )
         };
         writeln!(
@@ -713,18 +704,14 @@ fn emit_feed(
     arguments: &str,
 ) {
     let key = key_type(table).expect("validated model key");
-    let (feed, id, id_type, cloned) = match key {
-        KeyType::Uuid => ("feed", "id: id.0.clone()", "", ".clone()"),
-        KeyType::Int32 => ("feed::id", "id", ", i32", ""),
-        KeyType::Int64 => ("feed::id", "id", ", i64", ""),
+    let id_type = cursor_key_type(key.column_type());
+    let id = if key == KeyType::Uuid {
+        "id: id.clone()"
+    } else {
+        "id"
     };
     // A list with no filters reads nothing from its input.
     let input = if binds.is_empty() { "_input" } else { "input" };
-    let cursor_type = if key == KeyType::Uuid {
-        String::new()
-    } else {
-        format!("::<{}>", request_type(key.column_type()))
-    };
     let members = table
         .columns()
         .iter()
@@ -769,7 +756,7 @@ fn emit_feed(
          }}\n\
          }}\n\
          let transaction = end.ok_or_else(Error::internal)?;\n\
-         let cursor = {feed}::encode{cursor_type}(MODEL, &{feed}::Cursor {{ transaction, after: None }}).map_err(|Invalid| Error::internal())?;\n\
+         let cursor = feed::id::encode::<{id_type}>(MODEL, &feed::id::Cursor {{ transaction, after: None }}).map_err(|Invalid| Error::internal())?;\n\
          Ok((cursor, page))\n\
          }}\n\n\
          /// The feed part of a `{model_name}.query` request, after its codec\n\
@@ -783,8 +770,8 @@ fn emit_feed(
          /// scope of the list's filters since the cursor, one entry per row.\n\
          ///\n/// A row that left the scope, or was deleted, is a change with no data.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn changes(connection: &mut Connection, {input}: QueryInput, part: FeedInput) -> Result<{feed}::Changes<{model_type}Row{id_type}>, Error> {{\n\
-         let cursor = part.cursor.as_deref().map(|encoded| {feed}::decode{cursor_type}(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\
+         pub async fn changes(connection: &mut Connection, {input}: QueryInput, part: FeedInput) -> Result<feed::id::Changes<{model_type}Row, {id_type}>, Error> {{\n\
+         let cursor = part.cursor.as_deref().map(|encoded| feed::id::decode::<{id_type}>(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\
          {binds}\
          let (cursor_transaction, cursor_id) = match cursor {{\n\
          Some(cursor) => (Some(cursor.transaction), cursor.after),\n\
@@ -798,21 +785,21 @@ fn emit_feed(
          return Err(Error::cursor_expired());\n\
          }}\n\
          end = end.or(row.feed_end);\n\
-         let (Some(id), Some(transaction)) = (row.change_id{cloned}, row.change_transaction) else {{\n\
+         let (Some(id), Some(transaction)) = (row.change_id, row.change_transaction) else {{\n\
          continue;\n\
          }};\n\
          let present = row.present == Some(true);\n\
          let deleted_version = row.deleted_version;\n\
          let change = match live_row!(row) {{\n\
-         Some(data) if present => {feed}::Change {{ {id}, row_version: {version}, data: Some(data) }},\n\
+         Some(data) if present => feed::id::Change {{ {id}, row_version: {version}, data: Some(data) }},\n\
          // A row that left the scope carries its live revision, and a\n\
          // deleted row the revision its delete entry left.\n\
-         live => {feed}::Change {{ {id}, row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
+         live => feed::id::Change {{ {id}, row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
          }};\n\
-         changed.push({feed}::Changed {{ transaction, id, change }});\n\
+         changed.push(feed::id::Changed {{ transaction, id, change }});\n\
          }}\n\
          let end = end.ok_or_else(Error::internal)?;\n\
-         {feed}::Changes::new(MODEL, part.cursor.as_deref(), end, changed, part.limit).map_err(|Invalid| Error::internal())\n\
+         feed::id::Changes::new(MODEL, part.cursor.as_deref(), end, changed, part.limit).map_err(|Invalid| Error::internal())\n\
          }}"
     )
     .expect("writing to a String cannot fail");

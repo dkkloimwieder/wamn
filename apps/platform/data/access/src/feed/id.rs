@@ -282,3 +282,187 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod uuid_tests {
+    use super::*;
+    use wamn_postgres_statements::Uuid;
+
+    const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
+
+    fn changed(transaction: i64, id: &str) -> Changed<(), Uuid> {
+        Changed {
+            transaction,
+            id: Uuid(id.to_owned()),
+            change: Change {
+                id: Uuid(id.to_owned()),
+                row_version: 1,
+                data: Some(()),
+            },
+        }
+    }
+
+    #[test]
+    fn a_cursor_round_trips_unchanged_and_names_its_model() {
+        for cursor in [
+            Cursor {
+                transaction: 812,
+                after: None::<Uuid>,
+            },
+            Cursor {
+                transaction: 812,
+                after: Some(Uuid(ID.to_owned())),
+            },
+        ] {
+            let encoded = encode("packaging", &cursor).unwrap();
+            assert_eq!(decode::<Uuid>(&encoded, "packaging").unwrap(), cursor);
+            assert_eq!(
+                encode("packaging", &decode::<Uuid>(&encoded, "packaging").unwrap()).unwrap(),
+                encoded
+            );
+            assert_eq!(decode::<Uuid>(&encoded, "location"), Err(Invalid));
+            assert_eq!(decode::<Uuid>(&encoded, "packagin"), Err(Invalid));
+        }
+        assert_eq!(
+            URL_SAFE_NO_PAD
+                .decode(
+                    encode(
+                        "packaging",
+                        &Cursor {
+                            transaction: 812,
+                            after: None::<Uuid>
+                        }
+                    )
+                    .unwrap()
+                )
+                .unwrap(),
+            b"packaging:812"
+        );
+    }
+
+    #[test]
+    fn a_cursor_in_another_spelling_is_refused() {
+        for text in [
+            "packaging:",
+            "packaging:x",
+            "packaging:0812",
+            "packaging:+812",
+            "packaging:812:",
+            "packaging:812:01234567-89AB-CDEF-0123-456789ABCDEF",
+            "packaging:812:not-a-uuid",
+            "packaging",
+        ] {
+            assert_eq!(
+                decode::<Uuid>(&URL_SAFE_NO_PAD.encode(text), "packaging"),
+                Err(Invalid),
+                "{text}"
+            );
+        }
+        assert_eq!(decode::<Uuid>("not base64!", "packaging"), Err(Invalid));
+        assert_eq!(
+            decode::<Uuid>(
+                &format!("{}=", URL_SAFE_NO_PAD.encode("packaging:812")),
+                "packaging"
+            ),
+            Err(Invalid)
+        );
+    }
+
+    #[test]
+    fn a_page_cut_at_its_limit_continues_after_its_last_row() {
+        let page = Changes::new(
+            "packaging",
+            Some("old"),
+            900,
+            vec![
+                changed(800, ID),
+                changed(800, "11111111-1111-7111-8111-111111111111"),
+            ],
+            1,
+        )
+        .unwrap();
+        assert!(!page.complete);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            decode::<Uuid>(&page.next_cursor, "packaging").unwrap(),
+            Cursor {
+                transaction: 800,
+                after: Some(Uuid(ID.to_owned()))
+            }
+        );
+    }
+
+    #[test]
+    fn a_page_fills_above_xmin_and_completes_even_with_an_extra_row() {
+        for count in [100, 101] {
+            let rows = (0..count)
+                .map(|index| {
+                    changed(
+                        104 + index,
+                        &format!("00000000-0000-4000-8000-{index:012x}"),
+                    )
+                })
+                .collect();
+            let page = Changes::new("packaging", Some("old"), 105, rows, 100).unwrap();
+            assert!(page.complete);
+            assert_eq!(page.rows.len(), 100);
+            assert_eq!(
+                page.rows.last().unwrap().id.0,
+                "00000000-0000-4000-8000-000000000063"
+            );
+            assert_eq!(
+                decode::<Uuid>(&page.next_cursor, "packaging").unwrap(),
+                Cursor {
+                    transaction: 105,
+                    after: None::<Uuid>,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn an_extra_row_above_xmin_does_not_complete_a_cut_page_below_it() {
+        let page = Changes::new(
+            "packaging",
+            Some("old"),
+            105,
+            vec![changed(104, ID), changed(106, ID)],
+            1,
+        )
+        .unwrap();
+        assert!(!page.complete);
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(
+            decode::<Uuid>(&page.next_cursor, "packaging").unwrap(),
+            Cursor {
+                transaction: 104,
+                after: Some(Uuid(ID.to_owned())),
+            }
+        );
+    }
+
+    #[test]
+    fn a_complete_page_continues_from_the_snapshot_and_an_empty_one_keeps_its_cursor() {
+        let page = Changes::new("packaging", Some("old"), 900, vec![changed(800, ID)], 1).unwrap();
+        assert!(page.complete);
+        assert_eq!(
+            decode::<Uuid>(&page.next_cursor, "packaging").unwrap(),
+            Cursor {
+                transaction: 900,
+                after: None::<Uuid>
+            }
+        );
+
+        let empty = Changes::<(), Uuid>::new("packaging", Some("old"), 900, Vec::new(), 1).unwrap();
+        assert!(empty.complete);
+        assert_eq!(empty.next_cursor, "old");
+
+        let start = Changes::<(), Uuid>::new("packaging", None, 900, Vec::new(), 1).unwrap();
+        assert_eq!(
+            decode::<Uuid>(&start.next_cursor, "packaging")
+                .unwrap()
+                .transaction,
+            900
+        );
+    }
+}

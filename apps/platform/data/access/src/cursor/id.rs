@@ -96,7 +96,6 @@ pub fn decode_with_id<K: Key, I: Id>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cursor::encode;
 
     const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
 
@@ -152,10 +151,6 @@ mod tests {
         let key = "same".to_owned();
         let id = Uuid(ID.to_owned());
         let encoded = encode_with_id("label", Direction::Ascending, &key, &id).unwrap();
-        assert_eq!(
-            encode("label", Direction::Ascending, &key, &id).unwrap(),
-            encoded
-        );
         assert_eq!(URL_SAFE_NO_PAD.decode(&encoded).unwrap(), br#"{"direction":"ascending","field":"label","id":"01234567-89ab-cdef-0123-456789abcdef","key":"same","v":1}"#);
         let (decoded_key, decoded_id) =
             decode_with_id::<String, Uuid>(&encoded, "label", Direction::Ascending).unwrap();
@@ -163,5 +158,71 @@ mod tests {
         assert_eq!(decoded_id.0, id.0);
         assert!(decode_with_id::<String, i32>(&encoded, "label", Direction::Ascending).is_err());
         assert!(decode_with_id::<String, i64>(&encoded, "label", Direction::Ascending).is_err());
+    }
+}
+
+#[cfg(test)]
+mod uuid_tests {
+    use super::*;
+    use wamn_postgres_statements::TimestampTz;
+
+    const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
+
+    #[test]
+    fn a_cursor_has_one_wire_spelling_and_round_trips() {
+        let key = TimestampTz("2026-08-29T14:34:56+02:00".to_owned());
+        let encoded = encode_with_id(
+            "created_at",
+            Direction::Ascending,
+            &key,
+            &Uuid(ID.to_owned()),
+        )
+        .expect("a row key encodes");
+        assert_eq!(
+            URL_SAFE_NO_PAD.decode(&encoded).expect("base64url"),
+            br#"{"direction":"ascending","field":"created_at","id":"01234567-89ab-cdef-0123-456789abcdef","key":"2026-08-29T12:34:56.000000Z","v":1}"#
+        );
+        let (key, id) =
+            decode_with_id::<TimestampTz, Uuid>(&encoded, "created_at", Direction::Ascending)
+                .expect("its own cursor decodes");
+        assert_eq!(key.0, "2026-08-29T12:34:56.000000Z");
+        assert_eq!(id.0, ID);
+    }
+
+    #[test]
+    fn a_cursor_from_another_sort_or_spelling_is_invalid() {
+        let valid = encode_with_id(
+            "packaging_code",
+            Direction::Ascending,
+            &"PAL-1".to_owned(),
+            &Uuid(ID.to_owned()),
+        )
+        .expect("a text key encodes");
+        for encoded in [
+            "not-base64!".to_owned(),
+            format!("{valid}="),
+            URL_SAFE_NO_PAD.encode(
+                br#"{"field":"packaging_code","v":1,"direction":"ascending","key":"PAL-1","id":"01234567-89ab-cdef-0123-456789abcdef"}"#,
+            ),
+            URL_SAFE_NO_PAD.encode(
+                br#"{"direction":"ascending","field":"packaging_code","id":"01234567-89AB-CDEF-0123-456789ABCDEF","key":"PAL-1","v":1}"#,
+            ),
+        ] {
+            assert_eq!(
+                decode_with_id::<String, Uuid>(&encoded, "packaging_code", Direction::Ascending),
+                Err(Invalid),
+                "{encoded}"
+            );
+        }
+        assert!(
+            decode_with_id::<String, Uuid>(&valid, "created_at", Direction::Ascending).is_err()
+        );
+        assert!(
+            decode_with_id::<String, Uuid>(&valid, "packaging_code", Direction::Descending)
+                .is_err()
+        );
+        assert!(
+            decode_with_id::<Uuid, Uuid>(&valid, "packaging_code", Direction::Ascending).is_err()
+        );
     }
 }
