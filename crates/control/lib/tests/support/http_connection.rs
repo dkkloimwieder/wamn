@@ -561,12 +561,7 @@ pub async fn assert_triggers(
     // so its execution role holds no permission.
     let document = scheduled_wiring()?;
     super::integration::enable_schedule(environment, PACKAGE, &document, SCHEDULE, &[]).await?;
-    // The fixture grants the role in SQL and drops no auth key, so a host can
-    // keep the workflow user's earlier grants for AUTH_TTL. The checked runs
-    // start after that.
-    let first_due = super::integration::next_minute(
-        Utc::now() + wamn_platform_identity::auth_changes::AUTH_TTL,
-    );
+    let first_due = super::integration::next_minute(Utc::now());
     let result = tokio::time::timeout(
         Duration::from_secs(240),
         scheduled_runs(database, environment.tenant, first_due),

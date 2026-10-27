@@ -21,9 +21,11 @@ use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_control::release_chart::ImageSet;
+use wamn_control::user_role::grant_role_on;
 use wamn_control::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
 use wamn_test_infrastructure::event_broker;
 
 use super::{
@@ -51,6 +53,7 @@ pub struct WorkflowEnvironment<'a> {
     /// The applications the environment declares, as the serving Helm
     /// revision keeps them.
     pub applications: &'a wamn_catalog::EnvironmentApplications,
+    pub auth: &'a AuthChanges,
 }
 
 impl WorkflowEnvironment<'_> {
@@ -84,6 +87,67 @@ async fn connect_owned(
         let _ = connection.await;
     });
     Ok((client, task))
+}
+
+/// Publish fixture role changes on the scheduler NATS that the hosts watch.
+pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
+    let secret = run
+        .json(
+            "kubectl",
+            &[
+                "-n",
+                NAMESPACE,
+                "get",
+                "secret",
+                "wasmcloud-runtime-tls",
+                "-o",
+                "json",
+            ],
+        )
+        .await?;
+    let files = ["ca.crt", "tls.crt", "tls.key"].map(|key| run.work.join(format!("auth-{key}")));
+    for (key, file) in ["ca.crt", "tls.crt", "tls.key"].into_iter().zip(&files) {
+        std::fs::write(
+            file,
+            STANDARD.decode(secret["data"][key].as_str().context("auth certificate")?)?,
+        )?;
+    }
+    let port = std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port();
+    let forward = Command::new("kubectl")
+        .env("KUBECONFIG", run.work.join("kubeconfig"))
+        .args([
+            "-n",
+            NAMESPACE,
+            "port-forward",
+            "svc/nats",
+            &format!("{port}:4222"),
+        ])
+        .kill_on_drop(true)
+        .spawn()
+        .context("forward the scheduler NATS for fixture role changes")?;
+    let connection = AuthNats {
+        nats_url: format!("nats://127.0.0.1:{port}"),
+        nats_tls_ca: files[0].clone(),
+        nats_tls_cert: files[1].clone(),
+        nats_tls_key: files[2].clone(),
+        nats_tls_server_name: Some(format!("nats.{NAMESPACE}.svc.cluster.local")),
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let auth = loop {
+        match AuthChanges::connect(&connection).await {
+            Ok(auth) => break Ok(auth),
+            Err(_) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(error) => break Err(error),
+        }
+    };
+    for file in files {
+        std::fs::remove_file(file)?;
+    }
+    Ok((auth?, forward))
 }
 
 /// Admit a manual fixture run through the application host route.
@@ -366,15 +430,11 @@ pub async fn enable_trigger(
             )
             .await?;
     }
-    let workflow_user = wamn_project_state::workflow_user_id().to_string();
-    for user in [ENABLER, workflow_user.as_str()] {
-        project
-            .execute(
-                "INSERT INTO platform.user_role (user_id, role_name) \
-                 VALUES ($1::text::uuid, $2)",
-                &[&user, &role],
-            )
-            .await?;
+    for user in [
+        format!("schedule-enabler@{}", super::PLATFORM_DOMAIN),
+        format!("workflow@{}", super::PLATFORM_DOMAIN),
+    ] {
+        grant_role_on(&mut project, tenant, &user, role, environment.auth).await?;
     }
     let (control, control_task) = connect_owned(environment.system_url).await?;
     control
@@ -699,6 +759,7 @@ pub async fn exercise(
     // The release declares no schedule. The pull is an environment workflow
     // of the connector, authored and enabled after apply
     // (docs/plan/workflows.md epic 2).
+    let (auth, _auth_forward) = auth_changes(run).await?;
     let workflows = WorkflowEnvironment {
         system_url: &platform.system_database_url,
         project_url: project_url.as_str(),
@@ -706,6 +767,7 @@ pub async fn exercise(
         tenant: &tenant,
         digest: &digest,
         applications: &environment::show::serving_applications(&platform, &scope).await?,
+        auth: &auth,
     };
     let source_id: String = project
         .query_one(
@@ -1143,10 +1205,6 @@ async fn assert_schema_triggers(
         )
         .await?;
     }
-    // The roles are granted in SQL, which drops no auth key, and the earlier
-    // REST runs left the workflow user's grants in the host's memory. Wait
-    // until that memory expires.
-    tokio::time::sleep(wamn_platform_identity::auth_changes::AUTH_TTL).await;
     let jetstream = async_nats::jetstream::new(
         event_broker::connect(&broker.observer, &events.nats_url).await?,
     );

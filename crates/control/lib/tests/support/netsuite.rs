@@ -206,10 +206,6 @@ pub async fn assertions(
         None,
     )
     .await?;
-    // The role is granted in SQL, which drops no auth key, and the pull and
-    // push runs left the workflow user's grants in the host's memory. Wait
-    // until that memory expires.
-    tokio::time::sleep(wamn_platform_identity::auth_changes::AUTH_TTL).await;
     let replay = super::integration::start_workflow(
         workflows,
         "netsuite",

@@ -1574,6 +1574,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             && http_revisions == http_second_revisions
             && http_revisions == http_shown_revisions,
     );
+    let (auth, _auth_forward) = integration::auth_changes(run).await?;
     http_connection::assert_triggers(
         run,
         &http_project,
@@ -1585,6 +1586,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             digest: &http_digest,
             applications: &environment::show::serving_applications(&platform, &http.triple())
                 .await?,
+            auth: &auth,
         },
     )
     .await?;
