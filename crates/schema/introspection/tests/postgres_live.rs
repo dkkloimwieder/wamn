@@ -36,6 +36,99 @@ const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-his
 /// The widget that the additive-column inspection rows reference.
 const ADDITIVE_WIDGET: &str = "00000000-0000-4000-8000-0000000004a1";
 
+#[tokio::test]
+async fn authored_views_preserve_column_order_types_and_base_tables() {
+    let database = wamn_test_postgres::database();
+    let client = connect(database.url().parse().unwrap()).await;
+    client
+        .batch_execute(
+            "CREATE SCHEMA application;
+         CREATE TABLE application.item (
+             z uuid NOT NULL, a text, b boolean, c integer, d bigint,
+             e double precision, f bytea, g numeric, h timestamptz, i jsonb);
+         CREATE TABLE application.other (id bigint);
+         CREATE VIEW application.item_view AS
+             SELECT item.* FROM application.item AS item CROSS JOIN application.other",
+        )
+        .await
+        .unwrap();
+    let catalog = read_catalog(&client, &["application"]).await.unwrap();
+    let json = serde_json::to_value(&catalog).unwrap();
+    assert_eq!(
+        json["views"],
+        serde_json::json!([{
+            "schema": "application", "name": "item_view",
+            "columns": [
+                {"name": "z", "type": "uuid"}, {"name": "a", "type": "text"},
+                {"name": "b", "type": "boolean"}, {"name": "c", "type": "int32"},
+                {"name": "d", "type": "int64"}, {"name": "e", "type": "float64"},
+                {"name": "f", "type": "bytes"}, {"name": "g", "type": "numeric"},
+                {"name": "h", "type": "timestamptz"}, {"name": "i", "type": "json"}
+            ],
+            "base_tables": [
+                {"schema": "application", "name": "item"},
+                {"schema": "application", "name": "other"}
+            ]
+        }])
+    );
+}
+
+#[tokio::test]
+async fn authored_views_follow_nested_views_and_retain_external_base_tables() {
+    let database = wamn_test_postgres::database();
+    let client = connect(database.url().parse().unwrap()).await;
+    client
+        .batch_execute(
+            "CREATE SCHEMA application;
+         CREATE SCHEMA external;
+         CREATE TABLE external.item (id bigint);
+         CREATE VIEW application.inner_view AS SELECT count(*) AS total FROM external.item;
+         CREATE VIEW application.outer_view AS
+             SELECT a.total FROM application.inner_view a CROSS JOIN application.inner_view b",
+        )
+        .await
+        .unwrap();
+    let catalog = read_catalog(&client, &["application"]).await.unwrap();
+    let json = serde_json::to_value(&catalog).unwrap();
+    let views = json["views"].as_array().unwrap();
+    assert_eq!(views.len(), 2);
+    for view in views {
+        assert_eq!(
+            view["columns"],
+            serde_json::json!([{"name": "total", "type": "int64"}])
+        );
+        assert_eq!(
+            view["base_tables"],
+            serde_json::json!([{"schema": "external", "name": "item"}])
+        );
+    }
+}
+
+#[tokio::test]
+async fn authored_views_refuse_row_security_and_name_the_view_and_base_table() {
+    let database = wamn_test_postgres::database();
+    let client = connect(database.url().parse().unwrap()).await;
+    client
+        .batch_execute(
+            "CREATE SCHEMA application;
+         CREATE SCHEMA external;
+         CREATE TABLE external.item (id bigint);
+         ALTER TABLE external.item ENABLE ROW LEVEL SECURITY;
+         CREATE VIEW application.inner_view AS SELECT id FROM external.item;
+         CREATE VIEW application.outer_view AS SELECT id FROM application.inner_view",
+        )
+        .await
+        .unwrap();
+    let error = read_catalog(&client, &["application"]).await.unwrap_err();
+    assert_eq!(
+        error.error_type(),
+        PostgresIntrospectionErrorType::UnsupportedPolicy
+    );
+    let message = error.to_string();
+    assert!(message.contains("inner_view"), "{message}");
+    assert!(message.contains("external.item"), "{message}");
+}
+
 struct Fixture {
     database: String,
     role: String,
@@ -745,13 +838,14 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     .await;
     refusal_case(
         matrix,
-        "view",
-        "CREATE VIEW inventory.refused_view AS SELECT 1::bigint AS id",
-        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
-          ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_view' \
-          AND c.relkind='v')",
-        "DROP VIEW inventory.refused_view",
-        PostgresIntrospectionErrorType::UnsupportedView,
+        "view over row security",
+        "ALTER TABLE inventory.widget ENABLE ROW LEVEL SECURITY; \
+         CREATE VIEW inventory.refused_view AS SELECT id FROM inventory.widget",
+        "SELECT relrowsecurity FROM pg_catalog.pg_class \
+          WHERE oid='inventory.widget'::regclass",
+        "DROP VIEW inventory.refused_view; \
+         ALTER TABLE inventory.widget DISABLE ROW LEVEL SECURITY",
+        PostgresIntrospectionErrorType::UnsupportedPolicy,
     )
     .await;
     refusal_case(

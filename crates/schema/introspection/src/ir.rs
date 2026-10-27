@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogIr {
     tables: Box<[Table]>,
+    #[serde(default, skip_serializing_if = "<[View]>::is_empty")]
+    views: Box<[View]>,
 }
 
 impl CatalogIr {
@@ -24,7 +26,16 @@ impl CatalogIr {
         tables.sort();
         Self {
             tables: tables.into_boxed_slice(),
+            views: Box::default(),
         }
+    }
+
+    /// Attach views in canonical order, preserving each view's column order.
+    #[must_use]
+    pub fn with_views(mut self, mut views: Vec<View>) -> Self {
+        views.sort();
+        self.views = views.into_boxed_slice();
+        self
     }
 
     /// Ordinary application tables, ordered by schema and table name.
@@ -32,9 +43,117 @@ impl CatalogIr {
         &self.tables
     }
 
+    /// Application views, ordered by schema and name.
+    pub fn views(&self) -> &[View] {
+        &self.views
+    }
+
     /// Serialize the complete normalized IR as stable compact JSON.
     pub fn canonical_json_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("the schema IR always serializes")
+    }
+}
+
+/// One authored view, with columns and transitive base tables.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct View {
+    schema: Box<str>,
+    name: Box<str>,
+    columns: Box<[ViewColumn]>,
+    base_tables: Box<[ViewBaseTable]>,
+}
+
+impl View {
+    /// Construct a view with columns in declaration order and sorted base tables.
+    pub fn new(
+        schema: impl Into<Box<str>>,
+        name: impl Into<Box<str>>,
+        columns: Vec<ViewColumn>,
+        mut base_tables: Vec<ViewBaseTable>,
+    ) -> Self {
+        base_tables.sort();
+        base_tables.dedup();
+        Self {
+            schema: schema.into(),
+            name: name.into(),
+            columns: columns.into_boxed_slice(),
+            base_tables: base_tables.into_boxed_slice(),
+        }
+    }
+
+    /// PostgreSQL schema name.
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    /// Unqualified view name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Columns in declaration order, without inferred nullability.
+    pub fn columns(&self) -> &[ViewColumn] {
+        &self.columns
+    }
+
+    /// Transitive base tables, ordered by schema and name.
+    pub fn base_tables(&self) -> &[ViewBaseTable] {
+        &self.base_tables
+    }
+}
+
+/// One view column with its PostgreSQL type mapped to the transport vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ViewColumn {
+    name: Box<str>,
+    #[serde(rename = "type")]
+    ty: ColumnType,
+}
+
+impl ViewColumn {
+    /// Construct one view column without nullability metadata.
+    pub fn new(name: impl Into<Box<str>>, column_type: ColumnType) -> Self {
+        Self {
+            name: name.into(),
+            ty: column_type,
+        }
+    }
+
+    /// Column name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Frozen `wamn:postgres` transport type.
+    pub const fn column_type(&self) -> ColumnType {
+        self.ty
+    }
+}
+
+/// A schema-qualified base table of a view.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ViewBaseTable {
+    schema: Box<str>,
+    name: Box<str>,
+}
+
+impl ViewBaseTable {
+    /// Construct a base table reference.
+    pub fn new(schema: impl Into<Box<str>>, name: impl Into<Box<str>>) -> Self {
+        Self {
+            schema: schema.into(),
+            name: name.into(),
+        }
+    }
+
+    /// PostgreSQL schema name.
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    /// Unqualified table name.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -847,4 +966,30 @@ fn nonempty_name(name: impl Into<Box<str>>, object: &'static str) -> Result<Box<
         });
     }
     Ok(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_retains_view_columns_and_dependencies() {
+        let bytes = br#"{"tables":[],"views":[{"schema":"app","name":"item_view","columns":[{"name":"z","type":"int64"},{"name":"a","type":"text"}],"base_tables":[{"schema":"app","name":"item"}]}]}"#;
+        let catalog: CatalogIr = serde_json::from_slice(bytes).unwrap();
+        assert_eq!(catalog.canonical_json_bytes(), bytes);
+    }
+
+    #[test]
+    fn catalog_without_views_keeps_canonical_bytes() {
+        let bytes = br#"{"tables":[{"schema":"app","name":"item","columns":[{"name":"id","type":"int64","nullable":false,"default":null,"generation":null}],"constraints":[],"indexes":[]}]}"#;
+        let catalog = CatalogIr::new(vec![Table::new(
+            "app",
+            "item",
+            vec![Column::new("id", ColumnType::Int64, false, None, None)],
+            Vec::new(),
+            Vec::new(),
+        )]);
+        assert_eq!(catalog.canonical_json_bytes(), bytes);
+        assert_eq!(serde_json::from_slice::<CatalogIr>(bytes).unwrap(), catalog);
+    }
 }

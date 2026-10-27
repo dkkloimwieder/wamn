@@ -85,7 +85,22 @@ pub(crate) async fn introspect_with_manifest(
         .await
         .context("join PostgreSQL connection task")?
         .context("drive PostgreSQL connection")?;
-    catalog_result.context("introspect package schemas")
+    let catalog = catalog_result.context("introspect package schemas")?;
+    for view in catalog.views() {
+        for table in view.base_tables() {
+            if !schemas.iter().any(|schema| schema == table.schema()) {
+                anyhow::bail!(
+                    "view `{}.{}` reads relation `{}.{}` outside the application schemas. \
+                     External reads require data access derivation, which runs after introspection",
+                    view.schema(),
+                    view.name(),
+                    table.schema(),
+                    table.name(),
+                );
+            }
+        }
+    }
+    Ok(catalog)
 }
 
 /// Ask PostgreSQL which of these statements need a transaction.
@@ -1105,6 +1120,27 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.scratch).expect("remove test package");
         }
+    }
+
+    #[tokio::test]
+    async fn introspection_refuses_a_view_over_an_unread_external_relation() {
+        let package = TestPackage::new("external-view");
+        let (_, manifest) = load_manifest(&package.root).unwrap();
+        let database = wamn_test_postgres::database();
+        database
+            .execute(&["CREATE SCHEMA application;
+             CREATE SCHEMA external;
+             CREATE TABLE application.thing (id uuid);
+             CREATE TABLE external.item (id bigint);
+             CREATE VIEW application.item_view AS SELECT id FROM external.item"])
+            .unwrap();
+        let error = introspect_with_manifest(database.url(), &package.root, &manifest)
+            .await
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("application.item_view"), "{message}");
+        assert!(message.contains("external.item"), "{message}");
+        assert!(message.contains("data access"), "{message}");
     }
 
     fn consumer(package: &TestPackage) -> PathBuf {

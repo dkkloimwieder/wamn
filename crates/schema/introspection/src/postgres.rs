@@ -11,7 +11,8 @@ use wamn_record_history::{
 use crate::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
     ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn, IdentityMode, Index,
-    IndexColumn, IndexDirection, IrError, IrErrorType, Table, postgres_default, postgres_type,
+    IndexColumn, IndexDirection, IrError, IrErrorType, Table, View, ViewBaseTable, ViewColumn,
+    postgres_default, postgres_type,
 };
 
 mod synchronization;
@@ -379,8 +380,74 @@ SELECT namespace.nspname::text AS schema_name,
   JOIN pg_catalog.pg_namespace AS namespace
     ON namespace.oid = relation.relnamespace
  WHERE namespace.nspname = ANY($1::text[])
-   AND rewrite.rulename <> '_RETURN'
+   AND NOT (rewrite.rulename = '_RETURN' AND EXISTS (
+       SELECT FROM pg_catalog.pg_views AS admitted
+        WHERE admitted.schemaname = namespace.nspname
+          AND admitted.viewname = relation.relname
+   ))
  ORDER BY namespace.nspname, relation.relname, rewrite.rulename
+";
+
+const VIEW_COLUMNS_SQL: &str = r"
+SELECT namespace.nspname::text AS schema_name,
+       relation.relname::text AS view_name,
+       attribute.attname::text AS column_name,
+       pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) AS type_name,
+       attribute.attcollation = catalog_type.typcollation AS has_default_collation,
+       EXISTS (
+           SELECT FROM pg_catalog.aclexplode(attribute.attacl) AS entry
+            WHERE entry.grantee <> relation.relowner
+              AND entry.grantee NOT IN (
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role
+                   WHERE role.rolname = ANY($2::text[])
+              )
+       ) AS has_acl
+  FROM pg_catalog.pg_views AS view_catalog
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = view_catalog.schemaname
+  JOIN pg_catalog.pg_class AS relation
+    ON relation.relnamespace = namespace.oid AND relation.relname = view_catalog.viewname
+  LEFT JOIN pg_catalog.pg_attribute AS attribute
+    ON attribute.attrelid = relation.oid AND attribute.attnum > 0 AND NOT attribute.attisdropped
+  LEFT JOIN pg_catalog.pg_type AS catalog_type ON catalog_type.oid = attribute.atttypid
+ WHERE namespace.nspname = ANY($1::text[])
+ ORDER BY namespace.nspname, relation.relname, attribute.attnum
+";
+
+const VIEW_BASE_TABLES_SQL: &str = r"
+WITH RECURSIVE dependencies(view_oid, relation_oid) AS (
+    SELECT relation.oid, relation.oid
+      FROM pg_catalog.pg_views AS view_catalog
+      JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = view_catalog.schemaname
+      JOIN pg_catalog.pg_class AS relation
+        ON relation.relnamespace = namespace.oid AND relation.relname = view_catalog.viewname
+     WHERE namespace.nspname = ANY($1::text[])
+    UNION
+    SELECT dependencies.view_oid, dependency.refobjid
+      FROM dependencies
+      JOIN pg_catalog.pg_rewrite AS rewrite
+        ON rewrite.ev_class = dependencies.relation_oid AND rewrite.rulename = '_RETURN'
+      JOIN pg_catalog.pg_depend AS dependency
+        ON dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+       AND dependency.objid = rewrite.oid
+       AND dependency.refclassid = 'pg_catalog.pg_class'::regclass
+       AND dependency.refobjid <> rewrite.ev_class
+)
+SELECT view_namespace.nspname::text AS view_schema,
+       view_relation.relname::text AS view_name,
+       base_namespace.nspname::text AS base_schema,
+       base_relation.relname::text AS base_name,
+       base_relation.relrowsecurity AS row_security
+  FROM dependencies
+  JOIN pg_catalog.pg_class AS view_relation ON view_relation.oid = dependencies.view_oid
+  JOIN pg_catalog.pg_namespace AS view_namespace ON view_namespace.oid = view_relation.relnamespace
+  JOIN pg_catalog.pg_class AS base_relation ON base_relation.oid = dependencies.relation_oid
+  JOIN pg_catalog.pg_namespace AS base_namespace ON base_namespace.oid = base_relation.relnamespace
+ WHERE dependencies.relation_oid <> dependencies.view_oid
+   AND NOT EXISTS (
+       SELECT FROM pg_catalog.pg_rewrite AS rewrite
+        WHERE rewrite.ev_class = base_relation.oid AND rewrite.rulename = '_RETURN'
+   )
+ ORDER BY view_namespace.nspname, view_relation.relname, base_namespace.nspname, base_relation.relname
 ";
 
 const POLICIES_SQL: &str = r"
@@ -762,6 +829,86 @@ async fn validate_schemas(
     Ok(())
 }
 
+async fn load_views(
+    client: &Client,
+    schemas: &[String],
+    excluded_relations: &[(&str, &str)],
+) -> Result<Vec<View>, PostgresIntrospectionError> {
+    let mut columns = BTreeMap::<TableKey, Vec<ViewColumn>>::new();
+    for row in client
+        .query(VIEW_COLUMNS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
+        .await
+        .map_err(|error| database_error("query configured-schema view columns", error))?
+    {
+        let schema = row.get::<_, String>("schema_name");
+        let name = row.get::<_, String>("view_name");
+        if relation_is_excluded(excluded_relations, &schema, &name) {
+            continue;
+        }
+        let view_columns = columns.entry((schema.clone(), name.clone())).or_default();
+        let Some(column) = row.get::<_, Option<String>>("column_name") else {
+            continue;
+        };
+        let object = format!("{name}.{column}");
+        if row.get::<_, bool>("has_acl") {
+            return Err(refusal(
+                PostgresIntrospectionErrorType::UnsupportedAcl,
+                Some(&schema),
+                Some(&object),
+                "column has an explicit ACL",
+            ));
+        }
+        if !row.get::<_, bool>("has_default_collation") {
+            return Err(refusal(
+                PostgresIntrospectionErrorType::UnsupportedColumnCollation,
+                Some(&schema),
+                Some(&object),
+                "column must use its PostgreSQL type default collation",
+            ));
+        }
+        let column_type = postgres_type(&row.get::<_, String>("type_name"))
+            .map_err(|error| ir_error(&schema, &object, &error))?;
+        view_columns.push(ViewColumn::new(column, column_type));
+    }
+    let mut base_tables = BTreeMap::<TableKey, Vec<ViewBaseTable>>::new();
+    for row in client
+        .query(VIEW_BASE_TABLES_SQL, &[&schemas])
+        .await
+        .map_err(|error| database_error("query view base tables", error))?
+    {
+        let schema = row.get::<_, String>("view_schema");
+        let name = row.get::<_, String>("view_name");
+        if relation_is_excluded(excluded_relations, &schema, &name) {
+            continue;
+        }
+        let base_schema = row.get::<_, String>("base_schema");
+        let base_name = row.get::<_, String>("base_name");
+        if row.get::<_, bool>("row_security") {
+            return Err(refusal(
+                PostgresIntrospectionErrorType::UnsupportedPolicy,
+                Some(&schema),
+                Some(&name),
+                format!(
+                    "view reads table `{base_schema}.{base_name}` with row-level security enabled"
+                ),
+            ));
+        }
+        base_tables
+            .entry((schema, name))
+            .or_default()
+            .push(ViewBaseTable::new(base_schema, base_name));
+    }
+    Ok(columns
+        .into_iter()
+        .map(|((schema, name), columns)| {
+            let dependencies = base_tables
+                .remove(&(schema.clone(), name.clone()))
+                .unwrap_or_default();
+            View::new(schema, name, columns, dependencies)
+        })
+        .collect())
+}
+
 async fn load_relations(
     client: &Client,
     schemas: &[String],
@@ -852,12 +999,14 @@ fn validate_relations(
             }
             "i" | "S" | "c" => {}
             "v" => {
-                return Err(refusal(
-                    PostgresIntrospectionErrorType::UnsupportedView,
-                    Some(&relation.schema),
-                    Some(&relation.name),
-                    "views are outside the supported catalog set",
-                ));
+                if relation.has_acl {
+                    return Err(refusal(
+                        PostgresIntrospectionErrorType::UnsupportedAcl,
+                        Some(&relation.schema),
+                        Some(&relation.name),
+                        "view has an explicit ACL",
+                    ));
+                }
             }
             "m" => {
                 return Err(refusal(
@@ -1030,6 +1179,7 @@ async fn validate_types(
     client: &Client,
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
+    views: &[View],
 ) -> Result<(), PostgresIntrospectionError> {
     let rows = client
         .query(TYPES_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
@@ -1048,6 +1198,13 @@ async fn validate_types(
         let is_table_row_array = element_schema.as_deref() == Some(schema.as_str())
             && element_relation_kind.as_deref() == Some("r");
         let is_generated_local_array = element_schema.as_deref() == Some(schema.as_str());
+        let is_view_row = views
+            .iter()
+            .any(|view| view.schema() == schema && Some(view.name()) == relation_name.as_deref());
+        let is_view_row_array = views.iter().any(|view| {
+            Some(view.schema()) == element_schema.as_deref()
+                && Some(view.name()) == element_relation_name.as_deref()
+        });
 
         let excluded_table_row = relation_name
             .as_deref()
@@ -1062,7 +1219,7 @@ async fn validate_types(
             continue;
         }
 
-        if is_table_row || is_table_row_array {
+        if is_table_row || is_table_row_array || is_view_row || is_view_row_array {
             if row.get::<_, bool>("has_acl") {
                 return Err(refusal(
                     PostgresIntrospectionErrorType::UnsupportedAcl,
@@ -2090,6 +2247,7 @@ pub async fn read_catalog_with_synchronizations(
             !relation_is_excluded(excluded_relations, &relation.schema, &relation.name)
         })
         .collect::<Vec<_>>();
+    let views = load_views(client, &schemas, excluded_relations).await?;
     let mut tables = validate_relations(&relations)?;
     if expected.is_empty() {
         refuse_routines(client, &schemas).await?;
@@ -2105,7 +2263,7 @@ pub async fn read_catalog_with_synchronizations(
     }
     refuse_rules(client, &schemas, excluded_relations).await?;
     refuse_policies(client, &schemas, excluded_relations).await?;
-    validate_types(client, &schemas, excluded_relations).await?;
+    validate_types(client, &schemas, excluded_relations, &views).await?;
     refuse_default_acls(client, &schemas).await?;
 
     let columns = load_columns(client, &schemas)
@@ -2162,7 +2320,8 @@ pub async fn read_catalog_with_synchronizations(
                 .with_exclusions(parts.exclusions)
             })
             .collect(),
-    ))
+    )
+    .with_views(views))
 }
 
 #[cfg(test)]
