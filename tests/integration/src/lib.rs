@@ -4,7 +4,6 @@
 
 pub use wamn_test_infrastructure::ctl_process;
 
-pub mod agent_pilot;
 mod cdc_reader_process;
 pub mod cdcbench;
 #[cfg(test)]

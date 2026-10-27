@@ -46,7 +46,7 @@ The observation reader follows complete records in `<local_artifacts.directory>/
 It groups spans by trace ID and filters them by `env_key`, project, and environment.
 It keeps bounded summaries and accepts an empty sample without blocking activation.
 Supply the published collector address through `--otel-exporter-otlp-endpoint`.
-The benchmark and pilot render and start this collector themselves.
+The benchmark renders and starts this collector.
 
 Supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
 Supply `--materializer-component` with the absolute path to a `materializer.wasm` built with the guest RUSTFLAGS of [building](building.md#native-programs-and-app-components).
@@ -335,50 +335,6 @@ The `wamn-ctl` verbs that mint PATs take the flags `--pat-issuer`, `--pat-client
 A deployed identity service uses `--operator-ca` or `WAMN_IDENTITY_OPERATOR_CA` for client certificates.
 Keep certificate keys and issued tokens out of committed files and published logs.
 [Execution](../architecture/execution.md) explains session authority.
-
-## [AGENT-PILOT] Authoring experiment
-
-The pilot measures package authoring from declared task inputs.
-Read the [protocol](../../tests/integration/fixtures/agent-pilot/protocol.md) before running or grading it.
-`tests/integration/src/agent_pilot` owns preparation, grading, interpretation, and cleanup.
-
-```bash
-cargo build --locked --offline -p wamn-gates --bin wamn-gates
-cargo test --locked --offline -p wamn-integration-tests --lib agent_pilot:: -- --nocapture
-tools/agent-pilot-run all --run 001 --agent claude \
-  --task tests/integration/fixtures/agent-pilot/tasks/dock-appointments
-```
-
-Choose an unused run identifier. Run only one pilot at a time, separately from cluster tests.
-The runner refuses occupied ports `54332`, `4224`, and `4319`.
-`CARGO_TARGET_DIR` selects the built native entrypoint, with `target/debug/wamn-gates` as the fallback.
-The separate actions are `up`, `launch`, `grade`, and `down`.
-`--agent stub` selects the local driver, without completing or grading a Dock implementation.
-
-The runner builds its prepared source into a separate target and records source comparisons and binary hashes.
-Keep that source unchanged until `up` succeeds.
-Preparation removes grading inputs and this marked section from the measured worktree.
-The measured agent cannot push or use `bd` through its supplied environment.
-
-Run data initially lives under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs`.
-Report the command, source, outcome, and whether the agent or only the stub ran.
-Stop the owned environment when the run ends:
-
-```bash
-tools/agent-pilot-run down --run 001
-```
-
-Repeated `down` is safe.
-The existing cleanup guard preserves unexported run data and targets still used by another run.
-It does not require publishing ordinary test logs.
-
-Use `tools/agent-pilot-report --run 001` only for an explicitly requested grading export.
-That exporter requires completed human inputs and refuses credentials that survive its scrubber.
-It writes output under `evidence/experiments/agent-authoring/`.
-
-For a recorded run, `tools/agent-pilot-grade --replay RUN_DIRECTORY` preserves its original grading files.
-`--placement` and `--contract` also take an explicit recorded run directory.
-Missing request logs cannot establish replayed execution.
 
 ## Platform UI build
 

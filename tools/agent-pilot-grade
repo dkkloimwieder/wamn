@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# Grade with the existing native test owner.
-set -euo pipefail
-root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-target=${CARGO_TARGET_DIR:-$root/target}
-[[ $target = /* ]] || target="$root/$target"
-[[ -x $target/debug/wamn-gates ]] || { printf '%s\n' 'Build wamn-gates before grading the pilot.' >&2; exit 10; }
-exec "$target/debug/wamn-gates" agent-pilot-grade "$@"
