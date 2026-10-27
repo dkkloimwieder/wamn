@@ -178,7 +178,11 @@ export function identity(
   };
   const times = () =>
     new Response(
-      JSON.stringify({ expires_at: Date.now() / 1000 + 3600, login_expires_at: Date.now() / 1000 + 86400 }),
+      JSON.stringify({
+        sub: "00000000-0000-4000-8000-0000000000a1",
+        expires_at: Date.now() / 1000 + 3600,
+        login_expires_at: Date.now() / 1000 + 86400,
+      }),
       { status: 200 },
     );
   const fetch = (url: string | URL | Request, init?: RequestInit) => {
