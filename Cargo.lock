@@ -6612,6 +6612,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-submodule-check"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tempfile",
+]
+
+[[package]]
 name = "wamn-system-tests"
 version = "0.1.0"
 dependencies = [

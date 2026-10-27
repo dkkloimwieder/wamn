@@ -1,0 +1,16 @@
+[package]
+name = "wamn-submodule-check"
+description = "Train guard for declared submodule pin changes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

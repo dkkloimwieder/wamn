@@ -91,6 +91,9 @@ Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 It reports each command and returns a nonzero status if any command fails.
 The policy lints reject duplicate numeric prefixes among `NNNN_[a-z0-9_]+.sql` files within each directory under `deploy/sql/migrations`.
 
+Before integration, the train runs `cargo run -p wamn-submodule-check -- main` with Git history and initialized submodules.
+Changed pins require a commit subject that names the submodule path or its last segment and says `bump` or `pin`, plus `revert` when the pin does not descend from main.
+
 ## What a test asserts
 
 A test stays only if a realistic defect fails it, and nothing else rejects that defect more strongly.
