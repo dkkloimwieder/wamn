@@ -614,6 +614,16 @@ pub(crate) fn derive_data_access_overlay(
                     .collect(),
             )
         })
+        .chain(catalog.views().iter().map(|view| {
+            DataAccessRelationFields::new(
+                view.schema(),
+                view.name(),
+                view.columns()
+                    .iter()
+                    .map(|column| column.name().to_owned())
+                    .collect(),
+            )
+        }))
         // A history table stays out of the catalog, and its columns are fixed.
         .chain(logged_history_tables(manifest).map(|(schema, history)| {
             DataAccessRelationFields::new(

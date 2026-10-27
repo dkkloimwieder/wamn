@@ -592,7 +592,7 @@ async fn load_relation_fields(
            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
            JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
           WHERE namespace.nspname = ANY($1::text[]) \
-            AND relation.relkind = 'r' \
+            AND relation.relkind IN ('r', 'v') \
             AND relation.relname <> ALL($2::text[]) \
             AND attribute.attnum > 0 AND NOT attribute.attisdropped \
           GROUP BY namespace.nspname, relation.relname \

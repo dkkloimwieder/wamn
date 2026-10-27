@@ -12,6 +12,7 @@ use super::{
 use crate::FilterMatch;
 use crate::manifest::StaticSqlRelationDeclaration;
 use wamn_record_history::HISTORY_COLUMNS;
+use wamn_schema_introspection::ir::ViewColumn;
 
 /// Refuse a client package name that a package manifest cannot carry.
 ///
@@ -936,22 +937,31 @@ fn validate_custom_operation_sql(
             .tables()
             .iter()
             .find(|table| table.schema() == relation.schema && table.name() == relation.table);
+        let view = catalog
+            .views()
+            .iter()
+            .find(|view| view.schema() == relation.schema && view.name() == relation.table);
         // A history table has the fixed columns and no constraint that an operation maps.
-        let (columns, constraints) = match table {
-            Some(table) => (
+        let (columns, constraints) = match (table, view) {
+            (Some(table), _) => (
                 table.columns().iter().map(Column::name).collect(),
                 table.constraints().iter().map(Constraint::name).collect(),
             ),
-            None if logged_history_tables(manifest).any(|(schema, history)| {
-                schema == relation.schema && history == relation.table
-            }) =>
+            (None, Some(view)) => (
+                view.columns().iter().map(ViewColumn::name).collect(),
+                BTreeSet::new(),
+            ),
+            (None, None)
+                if logged_history_tables(manifest).any(|(schema, history)| {
+                    schema == relation.schema && history == relation.table
+                }) =>
             {
                 (
                     HISTORY_COLUMNS.iter().map(|(name, _)| *name).collect(),
                     BTreeSet::new(),
                 )
             }
-            None => {
+            (None, None) => {
                 return Err(GenerateError::for_object(
                     GenerateErrorType::UnknownRelation,
                     format!("{operation} references an unknown relation"),
@@ -1092,6 +1102,26 @@ pub(super) fn derive_relation_access(
                     statement.path.as_str(),
                 )
             })?;
+        for (table, access) in &statement_access {
+            if (!access.insert_fields.is_empty()
+                || !access.update_fields.is_empty()
+                || access.delete
+                || access.lock)
+                && catalog
+                    .views()
+                    .iter()
+                    .any(|view| view.schema() == owners[table] && view.name() == table.as_str())
+            {
+                return Err(GenerateError::for_path(
+                    GenerateErrorType::InvalidOperation,
+                    format!(
+                        "{} writes or locks a read-only view {}.{table}",
+                        statement.path, owners[table]
+                    ),
+                    statement.path.as_str(),
+                ));
+            }
+        }
         let deleted = crate::sql_lex::delete_targets(source.bytes).map_err(lexed)?;
         for target in &deleted {
             validate_delete_target(manifest, &schemas, operation, &statement.path, target)?;
@@ -1130,15 +1160,15 @@ pub(super) fn derive_relation_access(
 }
 
 /// The relations of the package's own schemas that its SQL can name: each
-/// table's schema and columns, keyed by table name, as the lexer reads them.
+/// relation's schema and columns, keyed by name, as the lexer reads them.
 struct PackageRelations {
     schemas: Vec<String>,
     owners: BTreeMap<String, String>,
     fields: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// Read the package's relations from the catalog, with each logged history
-/// table. A table name that two of the package's schemas share refuses.
+/// Read tables, views, and logged history tables from the package catalog.
+/// A relation name that two package schemas share refuses.
 fn package_relations(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
@@ -1163,6 +1193,22 @@ fn package_relations(
                     .collect::<BTreeSet<_>>(),
             )
         })
+        .chain(
+            catalog
+                .views()
+                .iter()
+                .filter(|view| schema_set.contains(view.schema()))
+                .map(|view| {
+                    (
+                        view.schema(),
+                        view.name().to_owned(),
+                        view.columns()
+                            .iter()
+                            .map(|column| column.name().to_owned())
+                            .collect::<BTreeSet<_>>(),
+                    )
+                }),
+        )
         .chain(
             logged_history_tables(manifest)
                 .filter(|(schema, _)| schema_set.contains(schema))
@@ -1645,4 +1691,117 @@ fn safe_sql_path(path: &str) -> bool {
         && path
             .split('/')
             .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{derive_relations, validate_custom_operation_sql};
+    use crate::data_access::{derive_data_access_overlay, validate_data_access_contribution};
+    use crate::{AuthoredSql, PackageManifest};
+    use serde_json::json;
+    use wamn_schema_introspection::ir::{
+        CatalogIr, Column, ColumnType, Table, View, ViewBaseTable, ViewColumn,
+    };
+
+    #[test]
+    fn authored_view_access_grants_only_selected_view_columns() {
+        let catalog = CatalogIr::new(vec![Table::new(
+            "inventory",
+            "private_item",
+            vec![Column::new("id", ColumnType::Uuid, false, None, None)],
+            vec![],
+            vec![],
+        )])
+        .with_views(vec![View::new(
+            "inventory",
+            "item_report",
+            vec![
+                ViewColumn::new("id", ColumnType::Uuid),
+                ViewColumn::new("label", ColumnType::Text),
+                ViewColumn::new("private_note", ColumnType::Text),
+            ],
+            vec![ViewBaseTable::new("inventory", "private_item")],
+        )]);
+        let mut manifest = PackageManifest::from_slice(
+            &serde_json::to_vec(&json!({
+                "package": {"id": "view_fixture", "version": "1.0.0"},
+                "required_platform_policy_contract": {"id": "view_access", "state": "satisfied"},
+                "models": {"private_item": {
+                    "schema": "inventory", "table": "private_item", "owner": "view_fixture",
+                    "operations": {}, "audit_log": {"columns": [], "retention": "none"}
+                }},
+                "components": {"inventory": {"connections": ["postgres"]}},
+                "connections": {},
+                "custom_operations": {"inventory.report": {
+                    "type": "projection", "visibility": "public", "permission": "inventory.report",
+                    "connection": "postgres", "input": {"fields": []},
+                    "result": {"class": "one", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
+                    "errors": ["invalid_input", "not_found", "retry", "timeout", "permission_denied", "internal_error"],
+                    "statements": {"report": {"path": "query/report.sql", "fetch": "optional_one",
+                        "parameters": [], "row": [{"name": "id", "type": "uuid", "nullable": false}]}}
+                }}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let sources = [AuthoredSql::new(
+            "query/report.sql",
+            b"SELECT id FROM item_report WHERE label = 'visible'",
+        )];
+        let declaration = &manifest.custom_operations["inventory.report"];
+        let relations = derive_relations(
+            &catalog,
+            &manifest,
+            &sources,
+            "inventory.report",
+            declaration,
+        )
+        .expect("derive the view access from its statement");
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].table, "item_report");
+        assert_eq!(relations[0].select_fields, ["id", "label"]);
+        manifest
+            .custom_operations
+            .get_mut("inventory.report")
+            .unwrap()
+            .relations = relations;
+        validate_custom_operation_sql(
+            &catalog,
+            &manifest,
+            &sources,
+            "inventory.report",
+            &manifest.custom_operations["inventory.report"],
+        )
+        .expect("accept the derived view relation");
+        let overlay = derive_data_access_overlay(&catalog, &manifest).unwrap();
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        validate_data_access_contribution(&overlay, &bytes).unwrap();
+        let grants = serde_json::to_value(&overlay).unwrap();
+        assert_eq!(grants["relations"][0]["table"], "item_report");
+        assert_eq!(
+            grants["relations"][0]["select_fields"],
+            json!(["id", "label"])
+        );
+        assert_eq!(grants["relations"][0]["insert_fields"], json!([]));
+        assert_eq!(grants["relations"][0]["update_fields"], json!([]));
+        assert_eq!(grants["relations"][1]["table"], "private_item");
+        assert_eq!(grants["relations"][1]["select_fields"], json!([]));
+        for sql in [
+            "INSERT INTO item_report (id) VALUES ($1)",
+            "UPDATE item_report SET label = $1",
+            "DELETE FROM item_report",
+            "SELECT id FROM item_report FOR UPDATE",
+        ] {
+            let sources = [AuthoredSql::new("query/report.sql", sql.as_bytes())];
+            let error = derive_relations(
+                &catalog,
+                &manifest,
+                &sources,
+                "inventory.report",
+                &manifest.custom_operations["inventory.report"],
+            )
+            .expect_err("a view cannot derive write grants");
+            assert!(error.context().contains("read-only view"), "{error}");
+        }
+    }
 }

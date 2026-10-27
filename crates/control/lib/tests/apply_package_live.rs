@@ -90,6 +90,178 @@ fn fixture_root() -> PathBuf {
         .join(format!("apply-package-live-{}", std::process::id()))
 }
 
+#[tokio::test]
+async fn migrated_view_uses_owner_rights_and_operation_grants() {
+    use serde_json::json;
+    use wamn_control::reconcile_package_data_access::{
+        ReconcilePackageDataAccessRequest, reconcile_package_data_access,
+    };
+    use wamn_schema_generator::{
+        DATA_ACCESS_OVERLAY_PATH, DataAccessRelationFields,
+        derive_data_access_overlay_from_relation_fields,
+    };
+    use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
+
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    install(&client).await;
+    let package = fixture_root().with_file_name(format!("view-access-{}", std::process::id()));
+    std::fs::create_dir_all(package.join("migrations")).unwrap();
+    std::fs::create_dir_all(package.join("query")).unwrap();
+    let manifest = serde_json::to_vec(&json!({
+        "package": {"id": "view_fixture", "version": "1.0.0"},
+        "required_platform_policy_contract": {"id": "view_access", "state": "satisfied"},
+        "models": {"private_item": {
+            "schema": "inventory", "table": "private_item", "owner": "view_fixture",
+            "operations": {}, "audit_log": {"columns": [], "retention": "none"}
+        }},
+        "components": {"inventory": {"connections": ["postgres"]}}, "connections": {},
+        "custom_operations": {"inventory.report": {
+            "type": "projection", "visibility": "public", "permission": "inventory.report",
+            "connection": "postgres", "input": {"fields": []},
+            "result": {"class": "one", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
+            "errors": ["invalid_input", "not_found", "retry", "timeout", "permission_denied", "internal_error"],
+            "relations": [{"schema": "inventory", "table": "item_report",
+                "select_fields": ["id", "label"], "insert_fields": [], "update_fields": [],
+                "lock": false, "constraints": []}],
+            "statements": {"report": {"path": "query/report.sql", "fetch": "optional_one",
+                "parameters": [], "row": [{"name": "id", "type": "uuid", "nullable": false}]}}
+        }}
+    })).unwrap();
+    std::fs::write(package.join("wamn.json"), &manifest).unwrap();
+    std::fs::write(
+        package.join("migrations/0001_initial.sql"),
+        "CREATE TABLE inventory.private_item (
+             id uuid CONSTRAINT private_item_id_pkey PRIMARY KEY,
+             label text NOT NULL, private_note text);
+         CREATE VIEW inventory.item_report AS SELECT id, label, private_note FROM inventory.private_item;
+         CREATE VIEW inventory.ungranted_report AS SELECT id FROM inventory.private_item;",
+    ).unwrap();
+    std::fs::write(
+        package.join("query/report.sql"),
+        "SELECT id FROM item_report WHERE label = 'visible'",
+    )
+    .unwrap();
+    let fields = [
+        DataAccessRelationFields::new(
+            "inventory",
+            "private_item",
+            vec!["id".into(), "label".into(), "private_note".into()],
+        ),
+        DataAccessRelationFields::new(
+            "inventory",
+            "item_report",
+            vec!["id".into(), "label".into(), "private_note".into()],
+        ),
+        DataAccessRelationFields::new("inventory", "ungranted_report", vec!["id".into()]),
+    ];
+    let overlay = derive_data_access_overlay_from_relation_fields(&fields, &manifest).unwrap();
+    let evidence = package.join(DATA_ACCESS_OVERLAY_PATH);
+    std::fs::create_dir_all(evidence.parent().unwrap()).unwrap();
+    std::fs::write(evidence, overlay.canonical_bytes()).unwrap();
+    write_receipt(&package);
+    apply(&url, &package)
+        .await
+        .expect("apply the authored view migration");
+    let owner: String = client.query_one(
+        "SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='inventory.item_report'::regclass",
+        &[],
+    ).await.unwrap().get(0);
+    assert_eq!(
+        owner,
+        wamn_control_provision::package_owner_role("view_fixture")
+    );
+    let no_history: bool = client
+        .query_one(
+            "SELECT to_regclass('inventory.item_report_history') IS NULL",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(no_history);
+    client.batch_execute(
+        "INSERT INTO inventory.private_item VALUES ('00000000-0000-4000-8000-000000000001', 'visible', 'private');
+         GRANT SELECT ON inventory.ungranted_report TO wamn_app;
+         GRANT SELECT (private_note) ON inventory.item_report TO wamn_app;",
+    ).await.unwrap();
+    let request = || ReconcilePackageDataAccessRequest {
+        packages: vec![apply_package::PackageRoot {
+            path: package.clone(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
+                    .unwrap(),
+            ),
+        }],
+        database_url: url.to_string(),
+        org: "package-runner-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
+    };
+    assert!(
+        !reconcile_package_data_access(request())
+            .await
+            .unwrap()
+            .is_noop()
+    );
+    let excluded = [
+        ("inventory", "wamn_entities"),
+        ("inventory", "wamn_cdc_exclusions"),
+    ];
+    let catalog = read_catalog_excluding_relations(&client, &["inventory"], &excluded)
+        .await
+        .expect("platform column grants do not refuse view introspection");
+    assert_eq!(catalog.views().len(), 2);
+    let guest = connect(&url).await;
+    guest.batch_execute("SET ROLE wamn_app").await.unwrap();
+    let rows = guest
+        .query(
+            "SELECT id FROM inventory.item_report WHERE label = 'visible'",
+            &[],
+        )
+        .await
+        .expect("the application reads a view through its owner rights");
+    assert_eq!(rows.len(), 1);
+    for sql in [
+        "SELECT id FROM inventory.private_item",
+        "SELECT private_note FROM inventory.item_report",
+        "SELECT id FROM inventory.ungranted_report",
+    ] {
+        let error = guest
+            .query(sql, &[])
+            .await
+            .expect_err("undeclared access refuses");
+        assert_eq!(error.as_db_error().unwrap().code().code(), "42501", "{sql}");
+    }
+    assert!(
+        reconcile_package_data_access(request())
+            .await
+            .unwrap()
+            .is_noop()
+    );
+    for (grant, revoke) in [
+        (
+            "GRANT SELECT ON inventory.item_report TO PUBLIC",
+            "REVOKE SELECT ON inventory.item_report FROM PUBLIC",
+        ),
+        (
+            "GRANT SELECT (id) ON inventory.item_report TO PUBLIC",
+            "REVOKE SELECT (id) ON inventory.item_report FROM PUBLIC",
+        ),
+    ] {
+        client.batch_execute(grant).await.unwrap();
+        let error = read_catalog_excluding_relations(&client, &["inventory"], &excluded)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.error_type(),
+            wamn_schema_introspection::postgres::PostgresIntrospectionErrorType::UnsupportedAcl
+        );
+        client.batch_execute(revoke).await.unwrap();
+    }
+    std::fs::remove_dir_all(package).unwrap();
+}
+
 fn package_fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/apply_package")
